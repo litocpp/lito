@@ -579,21 +579,21 @@ auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirem
                 expected.target.as_str()));
         }
         auto executable = PathBuf::from(targeted->template get<1>());
-        auto metadata   = rstd::fs::symlink_metadata(executable.as_path());
-        if (metadata.is_err()) {
-            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("inspect CMake host tool"_str,
-                                                                executable.as_path(),
-                                                                rstd::move(metadata).unwrap_err());
-        }
-        if (! metadata->is_file()) {
-            return cmake_failure<Vec<CMakeHostToolSnapshot>>(
-                rstd::format("CMake host tool '{}' is not a file", executable.as_path()));
-        }
-        auto canonical = rstd::fs::canonicalize(executable.as_path());
+        auto canonical  = rstd::fs::canonicalize(executable.as_path());
         if (canonical.is_err()) {
             return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("resolve CMake host tool"_str,
                                                                 executable.as_path(),
                                                                 rstd::move(canonical).unwrap_err());
+        }
+        auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
+        if (metadata.is_err()) {
+            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("inspect CMake host tool"_str,
+                                                                canonical->as_path(),
+                                                                rstd::move(metadata).unwrap_err());
+        }
+        if (! metadata->is_file()) {
+            return cmake_failure<Vec<CMakeHostToolSnapshot>>(
+                rstd::format("CMake host tool '{}' is not a file", canonical->as_path()));
         }
         auto bytes = rstd::fs::read(canonical->as_path());
         if (bytes.is_err()) {

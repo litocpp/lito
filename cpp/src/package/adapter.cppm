@@ -1432,6 +1432,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         .default_targets   = rstd::move(default_targets),
         .available_targets = rstd::move(selectable_targets),
         .selected_packages = rstd::move(selected_packages),
+        .external_sources  = rstd::move(external_sources.sources),
         .build_tools       = rstd::move(build_tools),
         .toolchain =
             lito::config::ToolchainSpec {

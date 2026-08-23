@@ -41,6 +41,7 @@ struct PackageCompileMetadata {
 
 struct ExternalSourceRoot {
     usize   package {};
+    String  package_name;
     String  name;
     PathBuf root;
     String  identity;
@@ -185,6 +186,7 @@ struct PackageMetadata {
     Vec<lito::package::PackageTargetId> default_targets;
     Vec<lito::package::PackageTargetId> available_targets;
     Vec<SelectedPackageMetadata>        selected_packages;
+    Vec<ExternalSourceRoot>             external_sources;
     Vec<PackageBuildToolRequirement>    build_tools;
     lito::config::ToolchainSpec         toolchain;
     Vec<ProfileSpec>                    profiles;

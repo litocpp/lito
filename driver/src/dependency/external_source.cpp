@@ -338,13 +338,21 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             "source fetch jobs must be greater than zero"_str);
     }
     rstd_try(validate_cmake_build_overrides(graph, overrides));
-    auto       options         = rstd::move(declared.options);
-    auto       package_owned   = rstd::move(declared.package_owned);
-    auto       tasks           = Vec<ExternalAcquisitionTask>::make();
-    auto       active_sources  = Vec<ActiveExternalSourceTask>::make();
-    auto       active_indices  = rstd::collections::BTreeMap<String, usize>::make();
-    auto       fetch_requests  = Vec<lito::source::PackageSourceFetchRequest>::make();
-    auto       fetch_indices   = rstd::collections::BTreeMap<String, usize>::make();
+    auto options              = rstd::move(declared.options);
+    auto package_owned        = rstd::move(declared.package_owned);
+    auto tasks                = Vec<ExternalAcquisitionTask>::make();
+    auto active_sources       = Vec<ActiveExternalSourceTask>::make();
+    auto active_indices       = rstd::collections::BTreeMap<String, usize>::make();
+    auto fetch_requests       = Vec<lito::source::PackageSourceFetchRequest>::make();
+    auto fetch_indices        = rstd::collections::BTreeMap<String, usize>::make();
+    auto workspace_script     = graph.root_directory.join(PathBuf::from("build.lua"_str).as_path());
+    auto has_workspace_script = rstd::fs::exists(workspace_script.as_path());
+    if (has_workspace_script.is_err()) {
+        return Err(lito::dependency::DependencyError::Io(
+            String::make("inspect workspace build script"_str),
+            rstd::move(workspace_script),
+            rstd::move(has_workspace_script).unwrap_err()));
+    }
     const auto activate_source = [&](usize    package_index,
                                      ref<str> name) -> lito::dependency::DependencyResult<usize> {
         const auto& package = graph.packages[package_index];
@@ -411,6 +419,19 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         const auto& package = graph.packages[package_index];
         if (! package_selected(selected_packages, package.manifest.name.as_str())) continue;
+        auto package_script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path());
+        auto has_package_script = rstd::fs::exists(package_script.as_path());
+        if (has_package_script.is_err()) {
+            return Err(lito::dependency::DependencyError::Io(
+                String::make("inspect package build script"_str),
+                rstd::move(package_script),
+                rstd::move(has_package_script).unwrap_err()));
+        }
+        if (*has_workspace_script || *has_package_script) {
+            for (const auto& declaration : package.manifest.external_sources) {
+                rstd_try(activate_source(package_index, declaration.name.as_str()));
+            }
+        }
         for (usize declaration_index {};
              declaration_index < package.manifest.cmake_external_dependencies.len();
              ++declaration_index) {

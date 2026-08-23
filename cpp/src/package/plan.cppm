@@ -538,6 +538,69 @@ auto add_private_include_directory(CompileContext& context, PathBuf path) -> boo
     return true;
 }
 
+auto add_private_definition(ResolvedTarget& target, CompileContext& context, String definition)
+    -> Result<bool, String> {
+    auto separator = definition.as_str().find("="_str);
+    auto name = separator.is_some() ? definition.as_str().split_at(*separator).template get<0>()
+                                    : definition.as_str();
+    if (name.is_empty()) {
+        return Err(String::make("generated definition must have a macro name"_str));
+    }
+    for (usize index {}; index < name.len(); ++index) {
+        auto byte  = name.as_bytes()[index];
+        auto valid = byte == u8('_') || (byte >= u8('A') && byte <= u8('Z')) ||
+                     (byte >= u8('a') && byte <= u8('z')) ||
+                     (index != usize {} && byte >= u8('0') && byte <= u8('9'));
+        if (! valid) {
+            return Err(rstd::format("generated definition '{}' has an invalid macro name",
+                                    definition.as_str()));
+        }
+    }
+    for (auto byte : definition.as_str().as_bytes()) {
+        if (byte < u8(0x20) || byte == u8(0x7f)) {
+            return Err(rstd::format("generated definition '{}' contains a control character",
+                                    definition.as_str()));
+        }
+    }
+    if (is_profile_owned_definition(definition.as_str()) || name == "LITO_PKG_VERSION"_str ||
+        name.starts_with("LITO_FEAT_"_str)) {
+        return Err(rstd::format("generated definition '{}' overrides a Lito-owned setting",
+                                definition.as_str()));
+    }
+    const auto check_existing = [&](auto action, ref<str> value) -> Result<Option<bool>, String> {
+        auto existing_separator = value.find("="_str);
+        auto existing_name      = existing_separator.is_some()
+                                      ? value.split_at(*existing_separator).template get<0>()
+                                      : value;
+        if (existing_name != name) return Ok(Option<bool> {});
+        using Action = decltype(action);
+        if (action == Action::Define && value == definition.as_str()) return Ok(Some(false));
+        return Err(rstd::format("generated definition '{}' conflicts with existing macro '{}'",
+                                definition.as_str(),
+                                value));
+    };
+    if (context.language.is_C()) {
+        for (const auto& macro : context.language.as_C().options.macros) {
+            auto checked = rstd_try(check_existing(macro.action, macro.value.as_str()));
+            if (checked.is_some()) return Ok(*checked);
+        }
+        context.language.as_C().options.macros.push(lito::c::CMacroDirective {
+            .value = definition.clone(),
+        });
+    } else {
+        for (const auto& macro : context.language.as_Cpp().options.preprocessor.macros) {
+            auto checked = rstd_try(check_existing(macro.action, macro.value.as_str()));
+            if (checked.is_some()) return Ok(*checked);
+        }
+        context.language.as_Cpp().options.preprocessor.macros.push(CppMacroDirective {
+            .value = definition.clone(),
+        });
+    }
+    target.usage.private_definitions.push(rstd::move(definition));
+    refresh_compile_context_identity(context);
+    return Ok(true);
+}
+
 auto add_generated_artifact_identity(CompileContext& context, ref<str> identity) -> bool {
     for (const auto& existing : context.external_identities) {
         if (existing == identity) return false;

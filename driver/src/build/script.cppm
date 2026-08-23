@@ -29,7 +29,27 @@ namespace lito
 
 using Json = rstd::json::Value;
 
-constexpr auto build_host_api_identity = "lito:build-host-api:v1"_str;
+constexpr auto build_host_api_identity = "lito:build-host-api:v2"_str;
+
+constexpr auto build_host_lua_api = R"lua(local native_external_source = lito._external_source
+local native_external_source_file = lito._external_source_file
+
+lito.external_source = function(target, alias)
+  local handle = native_external_source(target, alias)
+  return setmetatable({ _handle = handle }, {
+    __index = function(_, key)
+      if key == "file" then
+        return function(path)
+          return native_external_source_file(handle, path)
+        end
+      end
+      return nil
+    end,
+  })
+end
+lito._external_source = nil
+lito._external_source_file = nil
+)lua"_str;
 
 template<typename T>
 auto script_failure(String message) -> BuildScriptResult<T> {
@@ -873,6 +893,25 @@ struct ResolvedActionInput {
     Option<usize> producer;
 };
 
+struct ResolvedExternalSourceFile {
+    const cpp::ExternalSourceRoot* source {};
+    PathBuf                        relative;
+    PathBuf                        path;
+};
+
+struct ResolvedActionTool {
+    String  package;
+    String  alias;
+    String  identity;
+    String  digest;
+    PathBuf executable;
+};
+
+struct ResolvedActionInputRoot {
+    const cpp::ExternalSourceRoot* source {};
+    PathBuf                        path;
+};
+
 enum class RegisteredActionKind
 {
     Process,
@@ -882,19 +921,21 @@ enum class RegisteredActionKind
 };
 
 struct RegisteredAction {
-    RegisteredActionKind     kind { RegisteredActionKind::Process };
-    String                   package;
-    String                   identity;
-    String                   label;
-    PathBuf                  working_directory;
-    PathBuf                  executable;
-    Vec<String>              arguments;
-    Vec<ResolvedActionInput> inputs;
-    Vec<PathBuf>             outputs;
-    Option<usize>            output_working_directory;
-    Option<usize>            depfile_output;
-    Vec<PathBuf>             depfile_roots;
-    String                   content;
+    RegisteredActionKind         kind { RegisteredActionKind::Process };
+    String                       package;
+    String                       identity;
+    String                       label;
+    PathBuf                      working_directory;
+    PathBuf                      executable;
+    Vec<ResolvedActionTool>      tools;
+    Vec<ResolvedActionInputRoot> input_roots;
+    Vec<String>                  arguments;
+    Vec<ResolvedActionInput>     inputs;
+    Vec<PathBuf>                 outputs;
+    Option<usize>                output_working_directory;
+    Option<usize>                depfile_output;
+    Vec<PathBuf>                 depfile_roots;
+    String                       content;
 };
 
 auto replace_all(String& value, ref<str> marker, ref<str> replacement) -> usize {
@@ -1068,6 +1109,68 @@ public:
                          alias));
     }
 
+    auto external_source(luato::OpaqueHandle target_handle, ref<str> alias) const
+        -> BuildScriptResult<luato::OpaqueHandle> {
+        auto target = target_index(target_handle);
+        if (target.is_none()) {
+            return action_request_failure<luato::OpaqueHandle>(
+                "target handle does not belong to this build script"_str);
+        }
+        for (const auto& source : metadata_->external_sources) {
+            if (source.package_name == metadata_->targets[*target].id.package.as_str() &&
+                source.name == alias) {
+                return Ok(luato::OpaqueHandle { .identity = rstd::addressof(source) });
+            }
+        }
+        return action_request_failure<luato::OpaqueHandle>(
+            rstd::format("target '{}::{}' has no active external source '{}'",
+                         metadata_->targets[*target].id.package.as_str(),
+                         metadata_->targets[*target].id.name.as_str(),
+                         alias));
+    }
+
+    auto external_source_file(luato::OpaqueHandle source_handle, String relative)
+        -> BuildScriptResult<luato::OpaqueHandle> {
+        auto source = external_source_root(source_handle);
+        if (source == nullptr) {
+            return action_request_failure<luato::OpaqueHandle>(
+                "external source handle does not belong to this build script"_str);
+        }
+        auto normalized =
+            rstd_try(normal_relative_path(rstd::move(relative), "external source file"_str));
+        auto source_root = rstd::fs::canonicalize(source->root.as_path());
+        if (source_root.is_err()) {
+            return script_io_failure<luato::OpaqueHandle>("resolve external source root"_str,
+                                                          source->root.as_path(),
+                                                          rstd::move(source_root).unwrap_err());
+        }
+        auto requested = source->root.join(normalized.as_path());
+        auto inspected = rstd::fs::symlink_metadata(requested.as_path());
+        if (inspected.is_err() || inspected->is_symlink() || ! inspected->is_file()) {
+            return action_failure<luato::OpaqueHandle>(BuildToolActionError::InvalidInput(
+                rstd::move(requested),
+                String::make("external source path is not a regular file"_str)));
+        }
+        auto canonical = rstd::fs::canonicalize(requested.as_path());
+        if (canonical.is_err()) {
+            return script_io_failure<luato::OpaqueHandle>("resolve external source file"_str,
+                                                          requested.as_path(),
+                                                          rstd::move(canonical).unwrap_err());
+        }
+        if (canonical->as_path().strip_prefix(source_root->as_path()).is_none()) {
+            return action_failure<luato::OpaqueHandle>(BuildToolActionError::InvalidInput(
+                canonical->clone(), String::make("external source path escapes source root"_str)));
+        }
+        auto owned  = Box<ResolvedExternalSourceFile>::make(ResolvedExternalSourceFile {
+            .source   = source,
+            .relative = rstd::move(normalized),
+            .path     = rstd::move(canonical).unwrap(),
+        });
+        auto handle = luato::OpaqueHandle { .identity = rstd::addressof(*owned) };
+        external_source_files_.push(rstd::move(owned));
+        return Ok(handle);
+    }
+
     auto external_tool(luato::OpaqueHandle dependency_handle, ref<str> name) const
         -> BuildScriptResult<luato::OpaqueHandle> {
         const cpp::ResolvedExternalDependency* dependency = nullptr;
@@ -1202,6 +1305,25 @@ public:
         auto context_changed = cpp::add_private_include_directory(target_plan_->contexts[*target],
                                                                   rstd::move(requested));
         return Ok(metadata_changed || context_changed);
+    }
+
+    auto add_generated_definition(luato::OpaqueHandle target_handle, String definition)
+        -> BuildScriptResult<bool> {
+        auto target = target_index(target_handle);
+        if (target.is_none()) {
+            return action_request_failure<bool>(
+                "target handle does not belong to this build script"_str);
+        }
+        if (*target >= target_plan_->contexts.len()) {
+            return action_request_failure<bool>(
+                "target handle has no resolved compile environment"_str);
+        }
+        auto added = cpp::add_private_definition(
+            metadata_->targets[*target], target_plan_->contexts[*target], rstd::move(definition));
+        if (added.is_err()) {
+            return action_request_failure<bool>(rstd::move(added).unwrap_err());
+        }
+        return Ok(*added);
     }
 
     auto add_generated_artifact(luato::OpaqueHandle        target_handle,
@@ -1549,10 +1671,12 @@ public:
     auto run(const luato::Table& request) -> BuildScriptResult<ToolActionOutcome> {
         auto known = Vec<String>::make();
         known.push(String::make("tool"_str));
+        known.push(String::make("tools"_str));
         known.push(String::make("package"_str));
         known.push(String::make("cwd"_str));
         known.push(String::make("args"_str));
         known.push(String::make("inputs"_str));
+        known.push(String::make("input_roots"_str));
         known.push(String::make("outputs"_str));
         known.push(String::make("depfile"_str));
         known.push(String::make("output_cwd"_str));
@@ -1569,10 +1693,28 @@ public:
         } else if (default_package_.is_some()) {
             package = Ok(default_package_->clone());
         }
-        auto cwd     = request.required<String>("cwd"_str);
-        auto args    = request.required<luato::Array>("args"_str);
-        auto inputs  = request.required<luato::Array>("inputs"_str);
-        auto outputs = request.required<luato::Array>("outputs"_str);
+        auto cwd               = request.required<String>("cwd"_str);
+        auto args              = request.required<luato::Array>("args"_str);
+        auto inputs            = request.required<luato::Array>("inputs"_str);
+        auto outputs           = request.required<luato::Array>("outputs"_str);
+        auto secondary_handles = luato::Array::make();
+        if (request.contains("tools"_str)) {
+            auto parsed = request.required<luato::Array>("tools"_str);
+            if (parsed.is_err()) {
+                return action_request_failure<ToolActionOutcome>(
+                    rstd::format("{}", parsed.unwrap_err()));
+            }
+            secondary_handles = rstd::move(parsed).unwrap();
+        }
+        auto input_root_handles = luato::Array::make();
+        if (request.contains("input_roots"_str)) {
+            auto parsed = request.required<luato::Array>("input_roots"_str);
+            if (parsed.is_err()) {
+                return action_request_failure<ToolActionOutcome>(
+                    rstd::format("{}", parsed.unwrap_err()));
+            }
+            input_root_handles = rstd::move(parsed).unwrap();
+        }
         if (handle.is_err())
             return action_request_failure<ToolActionOutcome>(
                 rstd::format("{}", handle.unwrap_err()));
@@ -1589,42 +1731,59 @@ public:
         if (outputs.is_err())
             return action_request_failure<ToolActionOutcome>(
                 rstd::format("{}", outputs.unwrap_err()));
-        auto                              resolved_tool   = tools_->from_identity(handle->identity);
-        const cpp::ExternalHostToolUsage* external_tool   = nullptr;
-        auto                              tool_package    = String::make();
-        auto                              tool_alias      = String::make();
-        auto                              tool_identity   = String::make();
-        auto                              tool_executable = PathBuf::make();
-        if (resolved_tool.is_some()) {
-            tool_package    = (**resolved_tool).package.clone();
-            tool_alias      = (**resolved_tool).alias.clone();
-            tool_identity   = (**resolved_tool).receipt_identity.clone();
-            tool_executable = (**resolved_tool).executable.clone();
-        } else {
-            for (const auto& target : metadata_->targets) {
-                for (const auto& dependency : target.external_dependencies) {
-                    for (const auto& candidate : dependency.host_tools) {
-                        if (rstd::addressof(candidate) != handle->identity) continue;
-                        external_tool = rstd::addressof(candidate);
-                        tool_package  = target.id.package.clone();
-                        tool_alias    = rstd::format(
-                            "{}:{}", dependency.alias.as_str(), candidate.name.as_str());
-                        tool_identity   = candidate.identity.clone();
-                        tool_executable = candidate.executable.clone();
-                    }
-                }
-            }
-        }
-        if (resolved_tool.is_none() && external_tool == nullptr) {
-            return action_request_failure<ToolActionOutcome>(
-                "tool handle does not belong to this build script"_str);
-        }
-        if (tool_package != package->as_str()) {
+        auto primary_tool = rstd_try(resolve_action_tool(*handle));
+        if (primary_tool.package != package->as_str()) {
             return action_request_failure<ToolActionOutcome>(
                 rstd::format("build-tool '{}' belongs to package '{}', not '{}'",
-                             tool_alias.as_str(),
-                             tool_package.as_str(),
+                             primary_tool.alias.as_str(),
+                             primary_tool.package.as_str(),
                              package->as_str()));
+        }
+        auto secondary_tools = Vec<ResolvedActionTool>::with_capacity(secondary_handles.len());
+        for (usize index {}; index < secondary_handles.len(); ++index) {
+            const auto& value = secondary_handles.values()[index];
+            if (! value.is_Opaque()) {
+                return action_request_failure<ToolActionOutcome>(
+                    rstd::format("lito.run.tools[{}] must be a tool handle", index + usize(1)));
+            }
+            auto tool = rstd_try(
+                resolve_action_tool(luato::OpaqueHandle { .identity = value.as_Opaque().value }));
+            if (tool.package != package->as_str()) {
+                return action_request_failure<ToolActionOutcome>(
+                    rstd::format("build-tool '{}' belongs to package '{}', not '{}'",
+                                 tool.alias.as_str(),
+                                 tool.package.as_str(),
+                                 package->as_str()));
+            }
+            secondary_tools.push(rstd::move(tool));
+        }
+        auto input_roots = Vec<ResolvedActionInputRoot>::with_capacity(input_root_handles.len());
+        for (usize index {}; index < input_root_handles.len(); ++index) {
+            auto source = rstd_try(action_external_source(
+                input_root_handles.values()[index], "lito.run.input_roots"_str, index));
+            if (source->package_name != package->as_str()) {
+                return action_request_failure<ToolActionOutcome>(
+                    rstd::format("external source '{}' belongs to package '{}', not '{}'",
+                                 source->name.as_str(),
+                                 source->package_name.as_str(),
+                                 package->as_str()));
+            }
+            auto canonical = rstd::fs::canonicalize(source->root.as_path());
+            if (canonical.is_err()) {
+                return script_io_failure<ToolActionOutcome>("resolve build-tool input root"_str,
+                                                            source->root.as_path(),
+                                                            rstd::move(canonical).unwrap_err());
+            }
+            auto inspected = rstd::fs::symlink_metadata(canonical->as_path());
+            if (inspected.is_err() || ! inspected->is_dir()) {
+                return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidInput(
+                    canonical->clone(),
+                    String::make("build-tool input root is not a directory"_str)));
+            }
+            input_roots.push(ResolvedActionInputRoot {
+                .source = source,
+                .path   = rstd::move(canonical).unwrap(),
+            });
         }
         auto package_root = find_package_root(*metadata_, package->as_str());
         if (package_root.is_none()) {
@@ -1717,14 +1876,18 @@ public:
                     rstd::format("{}", depfile_checked.unwrap_err()));
             }
             auto output = depfile->required<i64>("output"_str);
-            auto roots  = depfile->required<luato::Array>("roots"_str);
+            auto roots  = luato::Array::make();
             if (output.is_err()) {
                 return action_request_failure<ToolActionOutcome>(
                     rstd::format("{}", output.unwrap_err()));
             }
-            if (roots.is_err()) {
-                return action_request_failure<ToolActionOutcome>(
-                    rstd::format("{}", roots.unwrap_err()));
+            if (depfile->contains("roots"_str)) {
+                auto parsed = depfile->required<luato::Array>("roots"_str);
+                if (parsed.is_err()) {
+                    return action_request_failure<ToolActionOutcome>(
+                        rstd::format("{}", parsed.unwrap_err()));
+                }
+                roots = rstd::move(parsed).unwrap();
             }
             auto output_index = usize(static_cast<size_t>(output->to_primitive()));
             if (*output < i64(1) || output_index > output_paths.len()) {
@@ -1732,8 +1895,8 @@ public:
                     "lito.run.depfile.output must identify a declared output"_str);
             }
             depfile_output_index = Some(output_index - usize(1));
-            for (usize index {}; index < roots->len(); ++index) {
-                const auto& value = roots->values()[index];
+            for (usize index {}; index < roots.len(); ++index) {
+                const auto& value = roots.values()[index];
                 if (! value.is_String()) {
                     return action_request_failure<ToolActionOutcome>(rstd::format(
                         "lito.run.depfile.roots[{}] must be a string", index + usize(1)));
@@ -1758,13 +1921,14 @@ public:
                 depfile_roots.push(rstd::move(canonical).unwrap());
             }
         }
+        for (const auto& root : input_roots) depfile_roots.push(root.path.clone());
         depfile_roots.push(PathBuf::from(*package_root));
         depfile_roots.push(generated_root.clone());
         auto script_digest = rstd_try(action_file_digest(script_.as_path()));
         auto identity_text = rstd::format("build-tool-action-v1\n{}\n{}\n{}\n{}\n{}",
                                           package->as_str(),
                                           profile_.as_str(),
-                                          tool_identity.as_str(),
+                                          primary_tool.identity.as_str(),
                                           cwd_relative.as_path(),
                                           script_digest.as_str());
         identity_text.push_str("\nmodule-resolver=lito-restricted-v1"_str);
@@ -1782,6 +1946,22 @@ public:
         for (const auto& argument : arguments) {
             identity_text.push_ascii('\n');
             identity_text.push_str(argument.as_str());
+        }
+        for (const auto& tool : secondary_tools) {
+            identity_text.push_str("\nsecondary-tool:"_str);
+            identity_text.push_str(tool.alias.as_str());
+            identity_text.push_ascii(':');
+            identity_text.push_str(tool.identity.as_str());
+            identity_text.push_ascii(':');
+            identity_text.push_str(tool.digest.as_str());
+            identity_text.push_ascii(':');
+            identity_text.push_str(tool.executable.as_path().to_string_lossy().as_str());
+        }
+        for (const auto& root : input_roots) {
+            identity_text.push_str("\ninput-root:"_str);
+            identity_text.push_str(root.source->identity.as_str());
+            identity_text.push_ascii(':');
+            identity_text.push_str(root.path.as_path().to_string_lossy().as_str());
         }
         for (usize index {}; index < input_records.len(); ++index) {
             identity_text.push_ascii('\n');
@@ -1814,9 +1994,11 @@ public:
             .kind                     = RegisteredActionKind::Process,
             .package                  = package->clone(),
             .identity                 = identity.clone(),
-            .label                    = rstd::move(tool_alias),
+            .label                    = rstd::move(primary_tool.alias),
             .working_directory        = rstd::move(working_directory).unwrap(),
-            .executable               = rstd::move(tool_executable),
+            .executable               = rstd::move(primary_tool.executable),
+            .tools                    = rstd::move(secondary_tools),
+            .input_roots              = rstd::move(input_roots),
             .arguments                = rstd::move(arguments),
             .inputs                   = rstd::move(input_records),
             .outputs                  = output_paths.clone(),
@@ -2089,11 +2271,29 @@ private:
                             marker.as_str(),
                             action.inputs[input_index].path.as_path().to_string_lossy().as_str());
             }
+            for (usize tool_index {}; tool_index < action.tools.len(); ++tool_index) {
+                auto marker = rstd::format("@TOOL:{}@", tool_index + usize(1));
+                replace_all(
+                    argument,
+                    marker.as_str(),
+                    action.tools[tool_index].executable.as_path().to_string_lossy().as_str());
+            }
+            for (usize root_index {}; root_index < action.input_roots.len(); ++root_index) {
+                auto marker = rstd::format("@INPUT_ROOT:{}@", root_index + usize(1));
+                replace_all(
+                    argument,
+                    marker.as_str(),
+                    action.input_roots[root_index].path.as_path().to_string_lossy().as_str());
+            }
             if (argument.as_str().contains("@INPUT:"_str) ||
+                argument.as_str().contains("@TOOL@"_str) ||
+                argument.as_str().contains("@TOOL:"_str) ||
+                argument.as_str().contains("@INPUT_ROOT@"_str) ||
+                argument.as_str().contains("@INPUT_ROOT:"_str) ||
                 argument.as_str().contains("@OUTPUT:"_str) ||
                 argument.as_str().contains("@OUTPUT_NAME:"_str)) {
                 return action_request_failure<Vec<String>>(
-                    "build-tool action contains an unresolved input or output marker"_str);
+                    "build-tool action contains an unresolved input, tool, root, or output marker"_str);
             }
             invocation.push(rstd::move(argument));
         }
@@ -2309,8 +2509,14 @@ private:
             auto staged_depfile = staging.join(action.outputs[*action.depfile_output].as_path());
             auto direct_inputs  = Vec<PathBuf>::with_capacity(action.inputs.len());
             for (const auto& input : action.inputs) direct_inputs.push(input.path.clone());
+            auto depfile_working_directory = action.working_directory.clone();
+            if (action.output_working_directory.is_some()) {
+                auto output =
+                    staging.join(action.outputs[*action.output_working_directory].as_path());
+                depfile_working_directory = PathBuf::from(output.as_path().parent().unwrap());
+            }
             auto depfile = rstd_try(load_action_dependencies(staged_depfile.as_path(),
-                                                             action.working_directory.as_path(),
+                                                             depfile_working_directory.as_path(),
                                                              action.depfile_roots,
                                                              direct_inputs));
             merge_action_dependencies(dependencies, rstd::move(depfile));
@@ -2358,6 +2564,78 @@ private:
         return Ok(empty {});
     }
 
+    auto resolve_action_tool(luato::OpaqueHandle handle) const
+        -> BuildScriptResult<ResolvedActionTool> {
+        auto resolved = tools_->from_identity(handle.identity);
+        if (resolved.is_some()) {
+            auto digest = rstd_try(action_file_digest((**resolved).executable.as_path()));
+            return Ok(ResolvedActionTool {
+                .package    = (**resolved).package.clone(),
+                .alias      = (**resolved).alias.clone(),
+                .identity   = (**resolved).receipt_identity.clone(),
+                .digest     = rstd::move(digest),
+                .executable = (**resolved).executable.clone(),
+            });
+        }
+        for (const auto& target : metadata_->targets) {
+            for (const auto& dependency : target.external_dependencies) {
+                for (const auto& candidate : dependency.host_tools) {
+                    if (rstd::addressof(candidate) != handle.identity) continue;
+                    return Ok(ResolvedActionTool {
+                        .package = target.id.package.clone(),
+                        .alias   = rstd::format(
+                            "{}:{}", dependency.alias.as_str(), candidate.name.as_str()),
+                        .identity   = candidate.identity.clone(),
+                        .digest     = candidate.digest.clone(),
+                        .executable = candidate.executable.clone(),
+                    });
+                }
+            }
+        }
+        return action_request_failure<ResolvedActionTool>(
+            "tool handle does not belong to this build script"_str);
+    }
+
+    auto external_source_root(luato::OpaqueHandle handle) const noexcept
+        -> const cpp::ExternalSourceRoot* {
+        for (const auto& source : metadata_->external_sources) {
+            if (rstd::addressof(source) == handle.identity) return rstd::addressof(source);
+        }
+        return nullptr;
+    }
+
+    auto external_source_file(luato::OpaqueHandle handle) const noexcept
+        -> const ResolvedExternalSourceFile* {
+        for (const auto& file : external_source_files_) {
+            if (rstd::addressof(*file) == handle.identity) return rstd::addressof(*file);
+        }
+        return nullptr;
+    }
+
+    auto action_external_source(const luato::Value& value, ref<str> context, usize index) const
+        -> BuildScriptResult<const cpp::ExternalSourceRoot*> {
+        auto handle = luato::OpaqueHandle {};
+        if (value.is_Opaque()) {
+            handle.identity = value.as_Opaque().value;
+        } else if (value.is_Table()) {
+            auto parsed = value.as_Table().value->required<luato::OpaqueHandle>("_handle"_str);
+            if (parsed.is_err()) {
+                return action_request_failure<const cpp::ExternalSourceRoot*>(rstd::format(
+                    "{}[{}] must be an external source object", context, index + usize(1)));
+            }
+            handle = *parsed;
+        } else {
+            return action_request_failure<const cpp::ExternalSourceRoot*>(rstd::format(
+                "{}[{}] must be an external source object", context, index + usize(1)));
+        }
+        auto source = external_source_root(handle);
+        if (source == nullptr) {
+            return action_request_failure<const cpp::ExternalSourceRoot*>(rstd::format(
+                "{}[{}] does not belong to this build script", context, index + usize(1)));
+        }
+        return Ok(source);
+    }
+
     auto resolve_action_input(const luato::Value&   input,
                               ref<str>              package,
                               ref<rstd::path::Path> working_directory,
@@ -2384,14 +2662,39 @@ private:
             }
             canonical = rstd::move(resolved).unwrap();
         } else if (input.is_Opaque()) {
-            auto output =
-                generated_output(luato::OpaqueHandle { .identity = input.as_Opaque().value });
+            auto handle = luato::OpaqueHandle { .identity = input.as_Opaque().value };
+            auto file   = external_source_file(handle);
+            if (file != nullptr) {
+                if (file->source->package_name != package) {
+                    return action_request_failure<ResolvedActionInput>(
+                        rstd::format("{}[{}] is not an external source file owned by package '{}'",
+                                     context,
+                                     index + usize(1),
+                                     package));
+                }
+                auto metadata = rstd::fs::symlink_metadata(file->path.as_path());
+                if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
+                    return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
+                        file->path.clone(),
+                        String::make("external source path is not a regular file"_str)));
+                }
+                auto file_digest = rstd_try(action_file_digest(file->path.as_path()));
+                return Ok(ResolvedActionInput {
+                    .path     = file->path.clone(),
+                    .digest   = rstd::format("external:{}:{}:{}",
+                                             file->source->identity.as_str(),
+                                             file->relative.as_path(),
+                                             file_digest.as_str()),
+                    .producer = None(),
+                });
+            }
+            auto output = generated_output(handle);
             if (output == nullptr || output->package != package) {
-                return action_request_failure<ResolvedActionInput>(
-                    rstd::format("{}[{}] is not a generated output owned by package '{}'",
-                                 context,
-                                 index + usize(1),
-                                 package));
+                return action_request_failure<ResolvedActionInput>(rstd::format(
+                    "{}[{}] is not a source file or generated output owned by package '{}'",
+                    context,
+                    index + usize(1),
+                    package));
             }
             auto generated = rstd_try(layout_->generated_package_directory(package));
             canonical      = generated.join(output->relative.as_path());
@@ -2482,6 +2785,8 @@ private:
     const luato::State*               lua_state_ {};
     Vec<RegisteredAction>             actions_           = Vec<RegisteredAction>::make();
     Vec<Box<GeneratedActionOutput>>   generated_outputs_ = Vec<Box<GeneratedActionOutput>>::make();
+    Vec<Box<ResolvedExternalSourceFile>> external_source_files_ =
+        Vec<Box<ResolvedExternalSourceFile>>::make();
 };
 
 auto binding_error(BuildScriptError error) -> luato::Error {
@@ -2585,6 +2890,30 @@ auto external_dependency_callback(ToolActionSession& session, luato::CallFrame& 
     return Ok(usize(1));
 }
 
+auto external_source_callback(ToolActionSession& session, luato::CallFrame& frame)
+    -> luato::BindingResult {
+    auto target = frame.required<luato::OpaqueHandle>(usize {});
+    auto alias  = frame.required<String>(usize(1));
+    if (target.is_err()) return Err(rstd::move(target).unwrap_err_unchecked());
+    if (alias.is_err()) return Err(rstd::move(alias).unwrap_err_unchecked());
+    auto source = session.external_source(*target, alias->as_str());
+    if (source.is_err()) return Err(binding_error(rstd::move(source).unwrap_err()));
+    frame.push(*source);
+    return Ok(usize(1));
+}
+
+auto external_source_file_callback(ToolActionSession& session, luato::CallFrame& frame)
+    -> luato::BindingResult {
+    auto source   = frame.required<luato::OpaqueHandle>(usize {});
+    auto relative = frame.required<String>(usize(1));
+    if (source.is_err()) return Err(rstd::move(source).unwrap_err_unchecked());
+    if (relative.is_err()) return Err(rstd::move(relative).unwrap_err_unchecked());
+    auto file = session.external_source_file(*source, rstd::move(relative).unwrap_unchecked());
+    if (file.is_err()) return Err(binding_error(rstd::move(file).unwrap_err()));
+    frame.push(*file);
+    return Ok(usize(1));
+}
+
 auto external_tool_callback(ToolActionSession& session, luato::CallFrame& frame)
     -> luato::BindingResult {
     auto dependency = frame.required<luato::OpaqueHandle>(usize {});
@@ -2636,6 +2965,19 @@ auto add_generated_include_callback(ToolActionSession& session, luato::CallFrame
     if (target.is_err()) return Err(rstd::move(target).unwrap_err_unchecked());
     if (relative.is_err()) return Err(rstd::move(relative).unwrap_err_unchecked());
     auto added = session.add_generated_include(*target, rstd::move(relative).unwrap_unchecked());
+    if (added.is_err()) return Err(binding_error(rstd::move(added).unwrap_err()));
+    frame.push(*added);
+    return Ok(usize(1));
+}
+
+auto add_generated_definition_callback(ToolActionSession& session, luato::CallFrame& frame)
+    -> luato::BindingResult {
+    auto target     = frame.required<luato::OpaqueHandle>(usize {});
+    auto definition = frame.required<String>(usize(1));
+    if (target.is_err()) return Err(rstd::move(target).unwrap_err_unchecked());
+    if (definition.is_err()) return Err(rstd::move(definition).unwrap_err_unchecked());
+    auto added =
+        session.add_generated_definition(*target, rstd::move(definition).unwrap_unchecked());
     if (added.is_err()) return Err(binding_error(rstd::move(added).unwrap_err()));
     frame.push(*added);
     return Ok(usize(1));
@@ -2963,6 +3305,18 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
             return external_dependency_callback(actions, frame);
         }));
     module.add(luato::NativeFunctionSpec::make(
+        String::make("_external_source"_str),
+        usize(2),
+        [&actions](luato::CallFrame& frame) -> luato::BindingResult {
+            return external_source_callback(actions, frame);
+        }));
+    module.add(luato::NativeFunctionSpec::make(
+        String::make("_external_source_file"_str),
+        usize(2),
+        [&actions](luato::CallFrame& frame) -> luato::BindingResult {
+            return external_source_file_callback(actions, frame);
+        }));
+    module.add(luato::NativeFunctionSpec::make(
         String::make("external_tool"_str),
         usize(2),
         [&actions](luato::CallFrame& frame) -> luato::BindingResult {
@@ -2991,6 +3345,12 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
         usize(2),
         [&actions](luato::CallFrame& frame) -> luato::BindingResult {
             return add_generated_include_callback(actions, frame);
+        }));
+    module.add(luato::NativeFunctionSpec::make(
+        String::make("target_add_generated_definition"_str),
+        usize(2),
+        [&actions](luato::CallFrame& frame) -> luato::BindingResult {
+            return add_generated_definition_callback(actions, frame);
         }));
     module.add(luato::NativeFunctionSpec::make(
         String::make("target_add_resource"_str),
@@ -3045,6 +3405,17 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
         return Err(BuildScriptError::Lua(String::make("register build script API"_str),
                                          None(),
                                          rstd::move(registered).unwrap_err_unchecked()));
+    }
+    auto initialized = lua.execute_entry(luato::LuaModuleSource {
+        .logical_name = String::make("@lito/bootstrap"_str),
+        .identity     = String::make(build_host_api_identity),
+        .display_path = String::make("@lito/bootstrap.lua"_str),
+        .bytes        = Vec<u8>::from(build_host_lua_api.as_bytes()),
+    });
+    if (initialized.is_err()) {
+        return Err(BuildScriptError::Lua(String::make("initialize build script API"_str),
+                                         None(),
+                                         rstd::move(initialized).unwrap_err_unchecked()));
     }
     auto entry = modules.entry(invocation.script.as_path(), invocation.owner.as_str());
     if (entry.is_err()) {

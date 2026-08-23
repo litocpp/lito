@@ -514,6 +514,385 @@ export auto generated_answer() noexcept -> int;
     EXPECT_EQ(second->frontend.persistent_scan_hits, usize(2));
 }
 
+TEST_F(BuildCommand, BuildScriptConsumesDeclaredExternalSourceObjects) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-build-script-external-source"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-build-script-external-source"
+sources = ["main.cpp"]
+
+[external-sources.fixture]
+path = "external"
+)toml"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({
+  kind = "bin",
+  name = "fixture-build-script-external-source",
+})
+local source = lito.external_source(target, "fixture")
+local copied = lito.copy({
+  input = source.file("generated.hpp"),
+  output = "include/generated.hpp",
+})
+lito.target_add_generated_include(target, "include")
+lito.target_add_generated_definition(target, "FIXTURE_GENERATED=42")
+)lua"_str },
+        { "external/generated.hpp"_str, R"cpp(#pragma once
+
+constexpr auto fixture_generated_value() noexcept -> int {
+    return FIXTURE_GENERATED;
+}
+)cpp"_str },
+        { "main.cpp"_str, R"cpp(#include <generated.hpp>
+
+auto main() -> int {
+    return fixture_generated_value() == 42 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("build-script-external-source"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("build-script-external-source"_str);
+    auto request = build_request(project->root.as_path(),
+                                 output.as_path(),
+                                 strings("fixture-build-script-external-source"_str));
+    auto first   = lito::build(request);
+    if (first.is_err()) {
+        auto message = error_chain_text(first.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(first->script.executed);
+    EXPECT_EQ(first->compiled, usize(1));
+    auto generated = output.join(
+        PathBuf::from("generated/fixture-build-script-external-source/include/generated.hpp"_str)
+            .as_path());
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+
+    auto second = lito::build(request);
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(second->compiled, usize {});
+}
+
+TEST_F(BuildCommand, BuildScriptRendersSecondaryToolsAndExternalInputRoots) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-build-script-secondary-tool"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-build-script-secondary-tool"
+sources = ["main.cpp"]
+
+[external-sources.payload]
+path = "payload"
+
+[external-sources.tools]
+path = "tools"
+
+[external-dependencies.cmake.fixture-tools]
+package = "FixtureTools"
+source = "tools"
+adapter = "tools/adapter.cmake"
+targets = [{ name = "FixtureTools::usage", visibility = "private" }]
+host-tools = [
+  { name = "shell", target = "FixtureTools::shell" },
+  { name = "copy", target = "FixtureTools::copy" },
+]
+)toml"_str },
+        { "tools/adapter.cmake"_str, R"cmake(find_program(FIXTURE_SHELL sh REQUIRED)
+find_program(FIXTURE_COPY cp REQUIRED)
+add_executable(FixtureTools::shell IMPORTED GLOBAL)
+set_property(TARGET FixtureTools::shell PROPERTY IMPORTED_LOCATION "${FIXTURE_SHELL}")
+add_executable(FixtureTools::copy IMPORTED GLOBAL)
+set_property(TARGET FixtureTools::copy PROPERTY IMPORTED_LOCATION "${FIXTURE_COPY}")
+add_library(FixtureTools::usage INTERFACE IMPORTED GLOBAL)
+set(FixtureTools_VERSION "1.0.0")
+)cmake"_str },
+        { "payload/generated.hpp"_str, R"cpp(#pragma once
+
+constexpr auto fixture_action_value() noexcept -> int {
+    return 7;
+}
+)cpp"_str },
+        { "payload/transitive.txt"_str, "tracked\n"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({
+  kind = "bin",
+  name = "fixture-build-script-secondary-tool",
+})
+local dependency = lito.external_dependency(target, "fixture-tools")
+local source = lito.external_source(target, "payload")
+local command = "'@TOOL:1@' '@INPUT:1@' '@OUTPUT:1@'; " ..
+    "printf '%s: %s/transitive.txt\\n' '@OUTPUT:1@' '@INPUT_ROOT:1@' > '@OUTPUT:2@'"
+local generated = lito.run({
+  tool = lito.external_tool(dependency, "shell"),
+  tools = { lito.external_tool(dependency, "copy") },
+  input_roots = { source },
+  cwd = ".",
+  args = { "-c", command },
+  inputs = { source.file("generated.hpp") },
+  outputs = { "include/generated.hpp", "include/generated.d" },
+  depfile = { output = 2 },
+})
+lito.target_add_generated_include(target, "include")
+)lua"_str },
+        { "main.cpp"_str, R"cpp(#include <generated.hpp>
+
+auto main() -> int {
+    return fixture_action_value() == 7 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("build-script-secondary-tool"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output   = build_root("build-script-secondary-tool"_str);
+    auto request  = build_request(project->root.as_path(),
+                                  output.as_path(),
+                                  strings("fixture-build-script-secondary-tool"_str));
+    request.cmake = fixture_cmake();
+    auto first    = lito::build(request);
+    if (first.is_err()) {
+        auto message = error_chain_text(first.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(first->compiled, usize(1));
+    auto generated = output.join(
+        PathBuf::from("generated/fixture-build-script-secondary-tool/include/generated.hpp"_str)
+            .as_path());
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+
+    auto second = lito::build(request);
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(second->compiled, usize {});
+}
+
+TEST_F(BuildCommand, QtBuildScriptGeneratesCodeOnlyQmlAndTranslations) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-qt-protobuf"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-qt-protobuf"
+sources = ["main.cpp"]
+
+[dependencies.lito-qt]
+builtin = "qt"
+
+[external-sources.schema]
+path = "proto"
+
+[external-sources.tools]
+path = "tools"
+
+[external-dependencies.cmake.qt6]
+package = "Qt6"
+source = "tools"
+adapter = "tools/adapter.cmake"
+targets = [
+  { name = "Qt6::Protobuf", visibility = "private" },
+  { name = "Qt6::ProtobufQuick", visibility = "private" },
+]
+host-tools = [
+  { name = "moc", target = "Qt6::moc" },
+  { name = "qmltyperegistrar", target = "Qt6::qmltyperegistrar" },
+  { name = "rcc", target = "Qt6::rcc" },
+  { name = "lrelease", target = "Qt6::lrelease" },
+  { name = "protoc", target = "WrapProtoc::WrapProtoc" },
+  { name = "qtprotobufgen", target = "Qt6::qtprotobufgen" },
+]
+)toml"_str },
+        { "tools/adapter.cmake"_str, R"cmake(add_library(Qt6::Protobuf INTERFACE IMPORTED GLOBAL)
+add_library(Qt6::ProtobufQuick INTERFACE IMPORTED GLOBAL)
+foreach(_tool IN ITEMS moc qmltyperegistrar rcc lrelease qtprotobufgen)
+  add_executable(Qt6::${_tool} IMPORTED GLOBAL)
+  set_property(TARGET Qt6::${_tool} PROPERTY IMPORTED_LOCATION
+               "${CMAKE_CURRENT_LIST_DIR}/fixture-tool")
+endforeach()
+add_executable(WrapProtoc::WrapProtoc IMPORTED GLOBAL)
+set_property(TARGET WrapProtoc::WrapProtoc PROPERTY IMPORTED_LOCATION
+             "${CMAKE_CURRENT_LIST_DIR}/fixture-tool")
+set(Qt6_VERSION "6.11.1")
+)cmake"_str },
+        { "tools/fixture-tool"_str,
+          R"sh(#!/bin/sh
+set -eu
+
+protoc=false
+qml=false
+for argument in "$@"; do
+  case "$argument" in
+    --plugin=protoc-gen-qtprotobufgen=*) protoc=true ;;
+    "--qtprotobufgen_opt=QML;QML=true") qml=true ;;
+  esac
+done
+
+if "$protoc"; then
+  if ! "$qml"; then
+    echo "missing Qt Protobuf QML generation option" >&2
+    exit 1
+  fi
+  input=""
+  depfile=""
+  for argument in "$@"; do
+    input="$argument"
+    case "$argument" in
+      --dependency_out=*) depfile=${argument#*=} ;;
+    esac
+  done
+  filename=${input##*/}
+  basename=${filename%.proto}
+  printf '#pragma once\n' > "${basename}.qpb.h"
+  printf '// generated protobuf source\n' > "${basename}.qpb.cpp"
+  printf '// generated protobuf registrar\n' > "${basename}_qtprotoreg.cpp"
+  printf '%s: %s\n' "${basename}.qpb.h" "$input" > "$depfile"
+  exit 0
+fi
+
+output=""
+qmltypes=""
+depfile=""
+input=""
+pending=""
+collect=false
+output_json=false
+for argument in "$@"; do
+  if [ -n "$pending" ]; then
+    case "$pending" in
+      output) output="$argument" ;;
+      depfile) depfile="$argument" ;;
+    esac
+    pending=""
+    continue
+  fi
+  input="$argument"
+  case "$argument" in
+    -o|--output|-qm) pending=output ;;
+    --dep-file-path) pending=depfile ;;
+    --generate-qmltypes=*) qmltypes=${argument#*=} ;;
+    --collect-json) collect=true ;;
+    --output-json) output_json=true ;;
+  esac
+done
+
+if "$collect"; then
+  printf '{}\n' > "$output"
+else
+  printf '// %s\n' "$*" > "$output"
+fi
+if [ -n "$qmltypes" ]; then
+  printf 'import QtQuick.tooling 1.2\nModule {}\n' > "$qmltypes"
+fi
+if "$output_json"; then
+  printf '{}\n' > "${output}.json"
+fi
+if [ -n "$depfile" ]; then
+  printf '%s: %s\n' "$output" "$input" > "$depfile"
+fi
+)sh"_str,
+          lito::source::SourceFileMode::Executable },
+        { "proto/message.proto"_str, R"proto(syntax = "proto3";
+
+package fixture.control;
+
+message Status {
+  string text = 1;
+}
+)proto"_str },
+        { "i18n/fixture_zh_CN.ts"_str, R"xml(<?xml version="1.0" encoding="utf-8"?>
+<TS version="2.1" language="zh_CN">
+<context>
+  <name>Fixture</name>
+  <message>
+    <source>Hello</source>
+    <translation>你好</translation>
+  </message>
+</context>
+</TS>
+)xml"_str },
+        { "build.lua"_str, R"lua(local qt = require("@lito.qt")
+local target = lito.target({
+  kind = "bin",
+  name = "fixture-qt-protobuf",
+})
+local qt6 = lito.external_dependency(target, "qt6")
+local schema = lito.external_source(target, "schema")
+qt.protobuf({
+  target = target,
+  qt = qt6,
+  source = schema,
+  proto_files = { "message.proto" },
+  output = "protobuf/control",
+  qml_uri = "fixture.control",
+})
+qt.translations({
+  target = target,
+  qt = qt6,
+  name = "fixture_ui",
+  ts_files = { "i18n/fixture_zh_CN.ts" },
+})
+)lua"_str },
+        { "main.cpp"_str, R"cpp(#include <message.qpb.h>
+
+#ifndef QT_USE_PROTOBUF_LIST_ALIASES
+#error "Qt Protobuf generated definition is missing"
+#endif
+
+auto main() -> int {
+    return 0;
+}
+)cpp"_str },
+    };
+    auto project = materialize("qt-protobuf-build-script"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("qt-protobuf-build-script"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-qt-protobuf"_str));
+    request.cmake = fixture_cmake();
+    auto built    = lito::build(request);
+    if (built.is_err()) {
+        auto message = error_chain_text(built.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+
+    auto generated = output.join(
+        PathBuf::from("generated/fixture-qt-protobuf/protobuf/control/qml"_str).as_path());
+    auto plugin_moc = rstd::fs::read_to_string(
+        generated.join(PathBuf::from("moc_fixture_controlPlugin.cpp"_str).as_path()).as_path());
+    ASSERT_TRUE(plugin_moc.is_ok());
+    EXPECT_TRUE(plugin_moc->as_str().contains("-Muri=fixture.control"_str));
+    auto plugin = rstd::fs::read_to_string(
+        generated.join(PathBuf::from("fixture_controlPlugin.hpp"_str).as_path()).as_path());
+    ASSERT_TRUE(plugin.is_ok());
+    EXPECT_FALSE(plugin->as_str().contains("fixture_control_raw"_str));
+    EXPECT_FALSE(
+        rstd::fs::exists(generated.join(PathBuf::from("imports.json"_str).as_path()).as_path())
+            .unwrap_or(true));
+    EXPECT_FALSE(rstd::fs::exists(generated.join(PathBuf::from("raw.qrc"_str).as_path()).as_path())
+                     .unwrap_or(true));
+    EXPECT_TRUE(
+        rstd::fs::exists(generated.join(PathBuf::from("module.qmltypes"_str).as_path()).as_path())
+            .unwrap_or(false));
+    auto translation_root = output.join(
+        PathBuf::from("generated/fixture-qt-protobuf/lito-translations/fixture_ui"_str).as_path());
+    EXPECT_TRUE(
+        rstd::fs::exists(
+            translation_root.join(PathBuf::from("fixture_zh_CN.qm"_str).as_path()).as_path())
+            .unwrap_or(false));
+    auto translation_qrc = rstd::fs::read_to_string(
+        translation_root.join(PathBuf::from("translations.qrc"_str).as_path()).as_path());
+    ASSERT_TRUE(translation_qrc.is_ok());
+    EXPECT_TRUE(translation_qrc->as_str().contains("prefix=\"/i18n\""_str));
+    EXPECT_TRUE(translation_qrc->as_str().contains("alias=\"fixture_zh_CN.qm\""_str));
+}
+
 TEST_F(BuildCommand, BuildScriptLoadsRequiredScriptPackageAndSourceRootFiles) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

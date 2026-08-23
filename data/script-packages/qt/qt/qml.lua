@@ -1,5 +1,6 @@
 local lito = require("@lito")
 local moc = require("qt/moc.lua")
+local resource = require("qt/resource.lua")
 
 local qml = {}
 
@@ -44,14 +45,6 @@ local function resource_prefix(value)
   return value
 end
 
-local function xml_escape(value)
-  value = value:gsub("&", "&amp;")
-  value = value:gsub("<", "&lt;")
-  value = value:gsub(">", "&gt;")
-  value = value:gsub("\"", "&quot;")
-  return value:gsub("'", "&apos;")
-end
-
 local function checked_files(values, context)
   local result = {}
   for index, value in ipairs(values) do
@@ -93,32 +86,6 @@ local function contains(values, expected)
   end
   return false
 end
-
-local function write_qrc(output, prefix, files)
-  local inputs = {}
-  local content = "<RCC>\n  <qresource prefix=\"" .. xml_escape(prefix) .. "\">\n"
-  for index, file in ipairs(files) do
-    append(inputs, file.input)
-    content = content .. "    <file alias=\"" .. xml_escape(file.alias) ..
-        "\">@INPUT_XML:" .. index .. "@</file>\n"
-  end
-  content = content .. "  </qresource>\n</RCC>\n"
-  return lito.write({ output = output, content = content, inputs = inputs }).output
-end
-
-local function compile_qrc(target, tool, name, qrc, output)
-  local generated = lito.run({
-    tool = tool,
-    cwd = ".",
-    args = { "--output", "@OUTPUT@", "--name", name, "@INPUT:1@" },
-    inputs = { qrc },
-    outputs = { output },
-  }).outputs[1]
-  lito.target_add_resource(target, qrc)
-  lito.target_add_generated_source(target, generated)
-  return generated
-end
-
 
 local function generate_registration(request, prefix, major, minor)
   local moc_files = request.moc_files or {}
@@ -347,10 +314,14 @@ local function generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
   return generated
 end
 
-local function generate_static_plugin(request, prefix, registration, cache_enabled)
+local function generate_static_plugin(request, prefix, registration, cache_enabled,
+                                      raw_resource)
   local name = output_name(request.uri)
   local plugin_name = name .. "Plugin"
-  local resources = { name .. "_module", name .. "_raw" }
+  local resources = { name .. "_module" }
+  if raw_resource then
+    append(resources, name .. "_raw")
+  end
   if cache_enabled then
     append(resources, "qmlcache_" .. name)
   end
@@ -416,9 +387,6 @@ function qml.generate_module(request)
   end
   local qml_files = checked_files(require_field(request, "qml_files", "table"),
                                   "qt.qml_module.qml_files")
-  if #qml_files == 0 then
-    error("qt.qml_module.qml_files must not be empty")
-  end
   local singletons = checked_files(request.singletons or {}, "qt.qml_module.singletons")
   for _, path in ipairs(singletons) do
     if not contains(qml_files, path) then
@@ -427,6 +395,9 @@ function qml.generate_module(request)
   end
   request.singletons = singletons
   local resources = checked_files(request.resources or {}, "qt.qml_module.resources")
+  if #qml_files == 0 and #(request.moc_files or {}) == 0 and #resources == 0 then
+    error("qt.qml_module requires QML files, moc files, or resources")
+  end
   local plugin = request.plugin or "static"
   if plugin ~= "static" and plugin ~= "none" then
     error("qt.qml_module.plugin must be 'static' or 'none'")
@@ -444,7 +415,10 @@ function qml.generate_module(request)
   local registration = generate_registration(request, prefix, major, minor)
   local qmldir = generate_qmldir(request, prefix, resource_prefix, version, qml_files,
                                  registration)
-  local import_metadata = scan_imports(request, prefix, qml_files)
+  local import_metadata = nil
+  if #qml_files ~= 0 then
+    import_metadata = scan_imports(request, prefix, qml_files)
+  end
 
   local raw_files = {}
   for _, path in ipairs(qml_files) do
@@ -453,26 +427,44 @@ function qml.generate_module(request)
   for _, path in ipairs(resources) do
     append(raw_files, { alias = path, input = path })
   end
-  local raw_qrc = write_qrc(prefix .. "/raw.qrc", resource_prefix, raw_files)
+  local raw_qrc = nil
+  if #raw_files ~= 0 then
+    raw_qrc = resource.compile({
+      target = request.target,
+      qt = request.qt,
+      name = output_name(uri) .. "_raw",
+      prefix = resource_prefix,
+      files = raw_files,
+      qrc_output = prefix .. "/raw.qrc",
+      cpp_output = prefix .. "/qrc_raw.cpp",
+    }).qrc
+  end
 
   local module_files = { { alias = "qmldir", input = qmldir } }
   if registration ~= nil then
     append(module_files, { alias = "module.qmltypes", input = registration.qmltypes })
   end
-  local module_qrc = write_qrc(prefix .. "/module.qrc", resource_prefix, module_files)
-  local rcc = lito.external_tool(request.qt, "rcc")
-  compile_qrc(request.target, rcc, output_name(uri) .. "_module", module_qrc,
-              prefix .. "/qrc_module.cpp")
-  compile_qrc(request.target, rcc, output_name(uri) .. "_raw", raw_qrc,
-              prefix .. "/qrc_raw.cpp")
-  local cache_sources = generate_cache(request, prefix, resource_prefix, qml_files, qmldir,
-                                       module_qrc, raw_qrc)
-  local type_sources = generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
-                                      information)
+  local module_qrc = resource.compile({
+    target = request.target,
+    qt = request.qt,
+    name = output_name(uri) .. "_module",
+    prefix = resource_prefix,
+    files = module_files,
+    qrc_output = prefix .. "/module.qrc",
+    cpp_output = prefix .. "/qrc_module.cpp",
+  }).qrc
+  local cache_sources = {}
+  local type_sources = {}
+  if #qml_files ~= 0 then
+    cache_sources = generate_cache(request, prefix, resource_prefix, qml_files, qmldir,
+                                   module_qrc, raw_qrc)
+    type_sources = generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
+                                  information)
+  end
   local plugin_artifact = nil
   if plugin == "static" then
     plugin_artifact = generate_static_plugin(request, prefix, registration,
-                                             #cache_sources ~= 0)
+                                             #cache_sources ~= 0, raw_qrc ~= nil)
     lito.target_add_auxiliary_artifact(request.target, module_qrc)
   end
   return {

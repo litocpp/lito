@@ -23,6 +23,15 @@ static constexpr unsigned char QT_PACKAGE_MOC[] = {
 static constexpr unsigned char QT_PACKAGE_QML[] = {
 #embed "../../../data/script-packages/qt/qt/qml.lua"
 };
+static constexpr unsigned char QT_PACKAGE_PROTOBUF[] = {
+#embed "../../../data/script-packages/qt/qt/protobuf.lua"
+};
+static constexpr unsigned char QT_PACKAGE_RESOURCE[] = {
+#embed "../../../data/script-packages/qt/qt/resource.lua"
+};
+static constexpr unsigned char QT_PACKAGE_TRANSLATIONS[] = {
+#embed "../../../data/script-packages/qt/qt/translations.lua"
+};
 
 template<rstd::size_t Size>
 auto embedded_text(const unsigned char (&contents)[Size]) noexcept -> ref<str> {
@@ -44,6 +53,9 @@ auto qt_source_tree() -> lito::package::PackageResult<lito::source::SourceTree> 
         { "lib.lua"_str, embedded_text(QT_PACKAGE_MODULE) },
         { "qt/moc.lua"_str, embedded_text(QT_PACKAGE_MOC) },
         { "qt/qml.lua"_str, embedded_text(QT_PACKAGE_QML) },
+        { "qt/protobuf.lua"_str, embedded_text(QT_PACKAGE_PROTOBUF) },
+        { "qt/resource.lua"_str, embedded_text(QT_PACKAGE_RESOURCE) },
+        { "qt/translations.lua"_str, embedded_text(QT_PACKAGE_TRANSLATIONS) },
     };
     for (const auto& file : files) {
         auto added = tree.add_text(file.path, file.contents);

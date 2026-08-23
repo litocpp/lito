@@ -145,10 +145,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         const auto& source = external_sources.sources[index];
         if (source.acquired.is_some()) {
             source_catalog.sources.push(cpp::ExternalSourceRoot {
-                .package  = source.package,
-                .name     = source.name.clone(),
-                .root     = source.acquired->root.clone(),
-                .identity = source.acquired->identity.clone(),
+                .package      = source.package,
+                .package_name = graph.packages[source.package].manifest.name.clone(),
+                .name         = source.name.clone(),
+                .root         = source.acquired->root.clone(),
+                .identity     = source.acquired->identity.clone(),
             });
             continue;
         }
@@ -204,10 +205,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         for (usize index {}; index < fetched->len(); ++index) {
             const auto& source = external_sources.sources[archive_sources[index]];
             source_catalog.sources.push(cpp::ExternalSourceRoot {
-                .package  = source.package,
-                .name     = source.name.clone(),
-                .root     = (*fetched)[index].root.clone(),
-                .identity = (*fetched)[index].identity.clone(),
+                .package      = source.package,
+                .package_name = graph.packages[source.package].manifest.name.clone(),
+                .name         = source.name.clone(),
+                .root         = (*fetched)[index].root.clone(),
+                .identity     = (*fetched)[index].identity.clone(),
             });
         }
     }
