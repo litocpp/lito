@@ -88,15 +88,22 @@ A Cargo dependency builds one library package as a Rust `staticlib` and links it
 consuming C or C++ target:
 
 ```toml
+# Cargo.toml
+[lib]
+crate-type = ["staticlib"]
+```
+
+```toml
+# lito.toml
 [external-sources.rust-math]
 path = "../rust-math"
 
 [external-dependencies.cargo.rust-math]
 source = "rust-math"
 package = "rust-math-ffi"
-crate-type = "staticlib"
 features = ["simd"]
 default-features = false
+usage = "link"
 visibility = "private"
 ```
 
@@ -115,6 +122,20 @@ Lito obtains the exact archive and ordered native library closure from Cargo and
 and `native-static-libs` output. One final native link may contain only one distinct Rust static
 runtime closure. If several Rust crates are needed, aggregate them behind one Cargo façade crate
 that produces the single `staticlib`.
+
+A Cargo package can instead publish its binary targets as runtime assets without entering the C++
+link closure:
+
+```toml
+[external-dependencies.cargo.daemon]
+source = "rust-application"
+package = "rust-application"
+usage = "runtime"
+```
+
+Lito obtains the bin list and executable paths from Cargo metadata and build JSON. Every emitted
+binary is exposed as an external asset set named after the Cargo target. The package install recipe
+selects the required executables, for example `dependency = "daemon", set = "rust-application"`.
 
 Cargo source and build scripts are trusted build inputs. Lito fixes the package, features, profile,
 native target, lock policy, and output location, but it does not sandbox `build.rs`, proc macros, or

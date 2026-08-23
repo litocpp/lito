@@ -34,10 +34,10 @@ path = "rust"
 source = "rust"
 package = "fixture-ffi"
 manifest-path = "crates/ffi/Cargo.toml"
-crate-type = "staticlib"
 features = ["zeta", "alpha"]
 default-features = false
 profile = "ffi-release"
+usage = "link"
 visibility = "link"
 condition = "feature.rust"
 )toml"_str },
@@ -54,14 +54,15 @@ condition = "feature.rust"
     EXPECT_EQ(cargo.recipe.source.as_str(), "rust"_str);
     EXPECT_EQ(cargo.recipe.package.as_str(), "fixture-ffi"_str);
     EXPECT_EQ(cargo.recipe.manifest_path.as_path().to_str().unwrap(), "crates/ffi/Cargo.toml"_str);
-    EXPECT_EQ(cargo.recipe.crate_type, lito::dependency::CargoCrateType::StaticLibrary);
     ASSERT_EQ(cargo.consumption.features.len(), usize(2));
     EXPECT_EQ(cargo.consumption.features[usize {}].as_str(), "alpha"_str);
     EXPECT_EQ(cargo.consumption.features[usize(1)].as_str(), "zeta"_str);
     EXPECT_FALSE(cargo.consumption.default_features);
     ASSERT_TRUE(cargo.consumption.profile.is_some());
     EXPECT_EQ(cargo.consumption.profile->as_str(), "ffi-release"_str);
-    EXPECT_EQ(cargo.consumption.visibility, lito::dependency::DependencyVisibility::LinkOnly);
+    EXPECT_EQ(cargo.consumption.usage, lito::dependency::CargoDependencyUsage::Link);
+    ASSERT_TRUE(cargo.consumption.visibility.is_some());
+    EXPECT_EQ(*cargo.consumption.visibility, lito::dependency::DependencyVisibility::LinkOnly);
     ASSERT_TRUE(cargo.consumption.condition.is_some());
     EXPECT_EQ(cargo.consumption.condition->source.as_str(), "feature.rust"_str);
     ASSERT_TRUE(cargo.declaration_root.is_some());
@@ -76,6 +77,8 @@ condition = "feature.rust"
     ASSERT_TRUE(standalone.is_ok());
     EXPECT_TRUE(standalone->as_str().contains("[external-dependencies.cargo.ffi]"_str));
     EXPECT_TRUE(standalone->as_str().contains("manifest-path = \"crates/ffi/Cargo.toml\""_str));
+    EXPECT_TRUE(standalone->as_str().contains("usage = \"link\""_str));
+    EXPECT_FALSE(standalone->as_str().contains("crate-type"_str));
     EXPECT_TRUE(standalone->as_str().contains("features = [\"alpha\", \"zeta\"]"_str));
     EXPECT_TRUE(standalone->as_str().contains("default-features = false"_str));
 }
@@ -86,23 +89,28 @@ TEST_F(CargoManifest, CargoSchemaRejectsInvalidProviderContracts) {
         ref<str> declaration;
     };
     constexpr InvalidCase cases[] = {
-        { "crate-type"_str, R"toml(source = "rust"
+        { "removed-crate-type"_str, R"toml(source = "rust"
 package = "fixture-ffi"
-crate-type = "rlib"
+crate-type = "staticlib"
+visibility = "private")toml"_str },
+        { "invalid-usage"_str, R"toml(source = "rust"
+package = "fixture-ffi"
+usage = "build"
 visibility = "private")toml"_str },
         { "manifest-escape"_str, R"toml(source = "rust"
 package = "fixture-ffi"
 manifest-path = "../Cargo.toml"
-crate-type = "staticlib"
 visibility = "private")toml"_str },
         { "duplicate-feature"_str, R"toml(source = "rust"
 package = "fixture-ffi"
-crate-type = "staticlib"
 features = ["same", "same"]
 visibility = "private")toml"_str },
         { "missing-visibility"_str, R"toml(source = "rust"
+package = "fixture-ffi")toml"_str },
+        { "runtime-visibility"_str, R"toml(source = "rust"
 package = "fixture-ffi"
-crate-type = "staticlib")toml"_str },
+usage = "runtime"
+visibility = "private")toml"_str },
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.name);
@@ -144,7 +152,6 @@ path = "rust"
 [workspace.external-dependencies.cargo.ffi]
 source = "rust"
 package = "fixture-ffi"
-crate-type = "staticlib"
 )toml"_str },
         { "app/lito.toml"_str, R"toml([package]
 name = "cargo-workspace-app"
@@ -160,7 +167,7 @@ workspace = true
 features = ["member"]
 default-features = false
 profile = "release"
-visibility = "private"
+usage = "runtime"
 condition = "true"
 )toml"_str },
         { "rust/Cargo.toml"_str, "[package]\nname = \"fixture-ffi\"\n"_str },
@@ -176,6 +183,8 @@ condition = "true"
     const auto& cargo = manifest.cargo_external_dependencies[usize {}];
     EXPECT_EQ(cargo.recipe.source.as_str(), "rust"_str);
     EXPECT_EQ(cargo.recipe.package.as_str(), "fixture-ffi"_str);
+    EXPECT_EQ(cargo.consumption.usage, lito::dependency::CargoDependencyUsage::Runtime);
+    EXPECT_TRUE(cargo.consumption.visibility.is_none());
     ASSERT_EQ(cargo.consumption.features.len(), usize(1));
     EXPECT_EQ(cargo.consumption.features[usize {}].as_str(), "member"_str);
     ASSERT_TRUE(cargo.declaration_root.is_some());

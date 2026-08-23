@@ -22,6 +22,8 @@ target_sources(
          src/condition/mod.cppm
          src/crypto.cppm
          src/lib.cppm
+         src/dependency/asset.cppm
+         src/dependency/cargo.cppm
          src/dependency/condition.cppm
          src/dependency/cmake.cppm
          src/dependency/error.cppm

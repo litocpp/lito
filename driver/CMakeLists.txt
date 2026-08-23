@@ -66,6 +66,7 @@ target_sources(
          src/config/registry.cppm
          src/config/schema.cppm
          src/config/wire.cppm
+         src/dependency/cargo.cppm
          src/dependency/cmake.cppm
          src/dependency/catalog.cppm
          src/dependency/external_source.cppm

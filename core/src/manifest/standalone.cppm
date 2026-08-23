@@ -409,7 +409,11 @@ auto cargo_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
         value.insert(String::make("source"_str), string_value(dependency.recipe.source.as_str()));
         value.insert(String::make("package"_str), string_value(dependency.recipe.package.as_str()));
         value.insert(String::make("manifest-path"_str), string_value(*manifest_path));
-        value.insert(String::make("crate-type"_str), string_value("staticlib"_str));
+        value.insert(String::make("usage"_str),
+                     string_value(dependency.consumption.usage ==
+                                          lito::dependency::CargoDependencyUsage::Link
+                                      ? "link"_str
+                                      : "runtime"_str));
         if (! dependency.consumption.features.is_empty()) {
             value.insert(String::make("features"_str),
                          string_array(dependency.consumption.features));
@@ -421,8 +425,10 @@ auto cargo_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
             value.insert(String::make("profile"_str),
                          string_value(dependency.consumption.profile->as_str()));
         }
-        value.insert(String::make("visibility"_str),
-                     string_value(visibility_text(dependency.consumption.visibility)));
+        if (dependency.consumption.visibility.is_some()) {
+            value.insert(String::make("visibility"_str),
+                         string_value(visibility_text(*dependency.consumption.visibility)));
+        }
         if (dependency.consumption.condition.is_some()) {
             value.insert(String::make("condition"_str),
                          string_value(dependency.consumption.condition->source.as_str()));

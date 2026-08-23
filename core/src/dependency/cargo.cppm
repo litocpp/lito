@@ -10,23 +10,22 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito::dependency
 {
 
-enum class CargoCrateType
+enum class CargoDependencyUsage
 {
-    StaticLibrary,
+    Link,
+    Runtime,
 };
 
 struct CargoDependencyRecipe {
-    String         package;
-    String         source;
-    PathBuf        manifest_path;
-    CargoCrateType crate_type { CargoCrateType::StaticLibrary };
+    String  package;
+    String  source;
+    PathBuf manifest_path;
 
     auto clone() const -> CargoDependencyRecipe {
         return CargoDependencyRecipe {
             .package       = package.clone(),
             .source        = source.clone(),
             .manifest_path = manifest_path.clone(),
-            .crate_type    = crate_type,
         };
     }
 };
@@ -35,16 +34,18 @@ struct CargoDependencyConsumption {
     Vec<String>                         features;
     bool                                default_features { true };
     Option<String>                      profile;
-    DependencyVisibility                visibility { DependencyVisibility::Private };
+    CargoDependencyUsage                usage { CargoDependencyUsage::Link };
+    Option<DependencyVisibility>        visibility;
     Option<ExternalDependencyCondition> condition;
 
     auto clone() const -> CargoDependencyConsumption {
         auto result = CargoDependencyConsumption {
             .features         = as<Clone>(features).clone(),
             .default_features = default_features,
-            .visibility       = visibility,
+            .usage            = usage,
         };
         if (profile.is_some()) result.profile = Some(profile->clone());
+        result.visibility = visibility;
         if (condition.is_some()) result.condition = Some(condition->clone());
         return result;
     }

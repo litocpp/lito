@@ -8,6 +8,10 @@ target_sources(
          CXX_MODULES
          FILES
          src/acquisition.cppm
+         src/cargo/executor.cppm
+         src/cargo/mod.cppm
+         src/cargo/model.cppm
+         src/cargo/request.cppm
          src/clang_format.cppm
          src/cmake/request.cppm
          src/cmake/executor.cppm

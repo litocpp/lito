@@ -39,9 +39,9 @@ struct ResolvedCMakeDependencyRequirement {
     Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
 };
 
-using ExternalAssetEntry       = lito::tools::cmake::ExternalAssetEntry;
-using ExternalAssetDisposition = lito::tools::cmake::ExternalAssetDisposition;
-using ExternalAssetSet         = lito::tools::cmake::ExternalAssetSet;
+using ExternalAssetEntry       = lito::dependency::ExternalAssetEntry;
+using ExternalAssetDisposition = lito::dependency::ExternalAssetDisposition;
+using ExternalAssetSet         = lito::dependency::ExternalAssetSet;
 using CMakePackageOperation    = lito::tools::cmake::CMakePackageOperation;
 using CMakeUsageSnapshot       = lito::tools::cmake::CMakeUsageSnapshot;
 

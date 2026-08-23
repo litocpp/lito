@@ -1114,9 +1114,8 @@ auto parse_cargo_manifest_path(const Toml& specification, ref<str> context)
 
 auto parse_cargo_recipe(const Toml& specification, ref<str> context)
     -> ManifestSchemaResult<lito::dependency::CargoDependencyRecipe> {
-    auto source     = rstd_try(required_string(specification, "source"_str, context));
-    auto package    = rstd_try(required_string(specification, "package"_str, context));
-    auto crate_type = rstd_try(required_string(specification, "crate-type"_str, context));
+    auto source  = rstd_try(required_string(specification, "source"_str, context));
+    auto package = rstd_try(required_string(specification, "package"_str, context));
     if (! package_name_is_valid(source.as_str())) {
         return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
             rstd::format("{}.source must name a package external source", context));
@@ -1125,15 +1124,10 @@ auto parse_cargo_recipe(const Toml& specification, ref<str> context)
         return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
             rstd::format("{}.package must be a valid Cargo package name", context));
     }
-    if (crate_type.as_str() != "staticlib"_str) {
-        return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
-            rstd::format("{}.crate-type must be 'staticlib'", context));
-    }
     return Ok(lito::dependency::CargoDependencyRecipe {
         .package       = rstd::move(package),
         .source        = rstd::move(source),
         .manifest_path = rstd_try(parse_cargo_manifest_path(specification, context)),
-        .crate_type    = lito::dependency::CargoCrateType::StaticLibrary,
     });
 }
 
@@ -1155,14 +1149,36 @@ auto parse_cargo_consumption(const Toml& specification, ref<str> context)
         return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
             rstd::format("{}.profile must be a valid Cargo profile name", context));
     }
-    auto visibility = rstd_try(required_string(specification, "visibility"_str, context));
+    auto usage_text = rstd_try(optional_string(specification, "usage"_str, context));
+    auto usage      = lito::dependency::CargoDependencyUsage::Link;
+    if (usage_text.is_some()) {
+        if (usage_text->as_str() == "runtime"_str) {
+            usage = lito::dependency::CargoDependencyUsage::Runtime;
+        } else if (usage_text->as_str() != "link"_str) {
+            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+                rstd::format("{}.usage must be 'link' or 'runtime'", context));
+        }
+    }
+    auto visibility_text = rstd_try(optional_string(specification, "visibility"_str, context));
+    auto visibility      = Option<lito::dependency::DependencyVisibility> {};
+    if (usage == lito::dependency::CargoDependencyUsage::Link) {
+        if (visibility_text.is_none()) {
+            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+                rstd::format("{}.visibility is required when usage is 'link'", context));
+        }
+        visibility = Some(
+            rstd_try(parse_visibility(visibility_text->as_str(), "external Cargo visibility"_str)));
+    } else if (visibility_text.is_some()) {
+        return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+            rstd::format("{}.visibility is not accepted when usage is 'runtime'", context));
+    }
     return Ok(lito::dependency::CargoDependencyConsumption {
         .features         = rstd::move(features),
         .default_features = default_features,
         .profile          = rstd::move(profile),
-        .visibility =
-            rstd_try(parse_visibility(visibility.as_str(), "external Cargo visibility"_str)),
-        .condition = rstd_try(parse_external_dependency_condition(specification, context)),
+        .usage            = usage,
+        .visibility       = rstd::move(visibility),
+        .condition        = rstd_try(parse_external_dependency_condition(specification, context)),
     });
 }
 

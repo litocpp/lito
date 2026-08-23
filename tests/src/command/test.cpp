@@ -407,7 +407,6 @@ path = "rust"
 [external-dependencies.cargo.ffi]
 source = "rust"
 package = "lito-cargo-ffi-fixture"
-crate-type = "staticlib"
 features = ["ffi"]
 default-features = false
 visibility = "private"
@@ -431,6 +430,7 @@ edition = "2024"
 
 [lib]
 name = "lito_cargo_ffi_fixture"
+crate-type = ["staticlib"]
 
 [features]
 default = ["unused-default"]
@@ -514,7 +514,6 @@ path = "missing-rust-source"
 [external-dependencies.cargo.ffi]
 source = "rust"
 package = "missing-cargo-package"
-crate-type = "staticlib"
 visibility = "private"
 condition = "false"
 )toml"_str },

@@ -24,7 +24,8 @@ A package manifest accepts:
 - `[usage]` and `[[when]]`;
 - `[features.NAME]`;
 - `[dependencies.NAME]`, `[dev-dependencies.NAME]`, and `[runtime-dependencies.NAME]`;
-- `[external-dependencies.pkg-config.NAME]` and `[external-dependencies.cmake.NAME]`;
+- `[external-dependencies.pkg-config.NAME]`, `[external-dependencies.cmake.NAME]`, and
+  `[external-dependencies.cargo.NAME]`;
 - `[external-sources.NAME]` and `[source-groups.NAME]`;
 - `[build-tools.NAME]`;
 - `[profile]` and `[profile.NAME]`.

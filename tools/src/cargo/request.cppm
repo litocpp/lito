@@ -37,7 +37,6 @@ struct BuildRequest {
     bool        default_features { true };
     String      profile;
     String      target;
-    String      archive_suffix;
     String      request_identity;
     PathBuf     work_root;
     PathBuf     target_directory;

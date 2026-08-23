@@ -83,14 +83,29 @@ auto cargo_environment() -> CommandEnvironment {
 
 auto invoke_cargo(const Vec<String>&                arguments,
                   const ResolvedProcessEnvironment& environment,
-                  Option<ref<rstd::path::Path>>     working_directory = None())
-    -> lito::tools::ToolResult<CommandOutput> {
-    auto overrides = cargo_environment();
-    auto output =
-        run_command(arguments,
-                    environment,
-                    working_directory,
-                    Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides))));
+                  Option<ref<rstd::path::Path>>     working_directory = None(),
+                  bool stream_output = false) -> lito::tools::ToolResult<CommandOutput> {
+    auto overrides    = cargo_environment();
+    auto override_ref = Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides)));
+    auto output       = [&]() {
+        if (! stream_output) {
+            return run_command(arguments, environment, working_directory, override_ref);
+        }
+        auto observer = rstd::process::OutputObserver {
+            .notify =
+                +[](void*, rstd::process::OutputStream stream, slice<u8> chunk) noexcept {
+                    if (stream == rstd::process::OutputStream::Stdout) {
+                        auto output = rstd::io::stdout();
+                        (void)rstd::io::write_all(output, chunk);
+                    } else {
+                        auto output = rstd::io::stderr();
+                        (void)rstd::io::write_all(output, chunk);
+                    }
+                },
+        };
+        return run_command_observed(
+            arguments, environment, observer, working_directory, override_ref);
+    }();
     if (output.is_err()) {
         return Err(rstd::into<lito::tools::ToolError>(rstd::move(output).unwrap_err()));
     }
@@ -146,6 +161,20 @@ auto string_array_contains(const JsonArray& values, ref<str> expected, ref<str> 
         if (*text == expected) return Ok(true);
     }
     return Ok(false);
+}
+
+auto string_array(const JsonArray& values, ref<str> context)
+    -> lito::tools::ToolResult<Vec<String>> {
+    auto result = Vec<String>::with_capacity(values.len());
+    for (const auto& value : values) {
+        auto text = value.as_str();
+        if (text.is_none()) {
+            return cargo_failure<Vec<String>>(
+                rstd::format("{} contains a non-string value", context));
+        }
+        result.push(String::make(*text));
+    }
+    return Ok(rstd::move(result));
 }
 
 auto canonical_owned_path(ref<rstd::path::Path> path,
@@ -314,33 +343,49 @@ auto query_metadata(const Provider&                   provider,
                                       source_root.as_path(),
                                       "Cargo package manifest"_str,
                                       true));
-    auto targets     = rstd_try(required_array(package, "targets"_str, "Cargo package"_str));
-    auto target_name = Option<String> {};
+    auto targets  = rstd_try(required_array(package, "targets"_str, "Cargo package"_str));
+    auto library  = Option<TargetMetadata> {};
+    auto binaries = Vec<TargetMetadata>::make();
     for (const auto& target : *targets) {
-        auto kinds = rstd_try(required_array(target, "kind"_str, "Cargo target"_str));
-        auto library =
+        auto kinds       = rstd_try(required_array(target, "kind"_str, "Cargo target"_str));
+        auto crate_types = rstd_try(required_array(target, "crate_types"_str, "Cargo target"_str));
+        auto metadata    = TargetMetadata {
+            .name = String::make(rstd_try(required_string(target, "name"_str, "Cargo target"_str))),
+            .crate_types = rstd_try(string_array(*crate_types, "Cargo target.crate_types"_str)),
+        };
+        auto is_library =
             rstd_try(string_array_contains(*kinds, "lib"_str, "Cargo target.kind"_str)) ||
             rstd_try(string_array_contains(*kinds, "rlib"_str, "Cargo target.kind"_str)) ||
             rstd_try(string_array_contains(*kinds, "dylib"_str, "Cargo target.kind"_str)) ||
             rstd_try(string_array_contains(*kinds, "cdylib"_str, "Cargo target.kind"_str)) ||
             rstd_try(string_array_contains(*kinds, "staticlib"_str, "Cargo target.kind"_str));
-        if (! library) continue;
-        if (target_name.is_some()) {
+        if (is_library && library.is_some()) {
             return cargo_failure<PackageMetadata>(rstd::format(
                 "Cargo package '{}' contains more than one library target", request.package));
         }
-        target_name =
-            Some(String::make(rstd_try(required_string(target, "name"_str, "Cargo target"_str))));
+        if (is_library) library = Some(metadata.clone());
+        if (rstd_try(string_array_contains(*kinds, "bin"_str, "Cargo target.kind"_str))) {
+            for (const auto& existing : binaries) {
+                if (existing.name == metadata.name.as_str()) {
+                    return cargo_failure<PackageMetadata>(
+                        rstd::format("Cargo package '{}' repeats binary target '{}'",
+                                     request.package,
+                                     metadata.name.as_str()));
+                }
+            }
+            binaries.push(rstd::move(metadata));
+        }
     }
-    if (target_name.is_none()) {
-        return cargo_failure<PackageMetadata>(
-            rstd::format("Cargo package '{}' contains no library target", request.package));
-    }
+    rstd::slice_::sort_unstable_by(binaries.as_mut_slice().as_mut_ref(),
+                                   [](const TargetMetadata& left, const TargetMetadata& right) {
+                                       return left.name < right.name;
+                                   });
     return Ok(PackageMetadata {
         .id             = String::make(id),
         .name           = String::make(name),
         .version        = String::make(version),
-        .target_name    = rstd::move(target_name).unwrap(),
+        .library        = rstd::move(library),
+        .binaries       = rstd::move(binaries),
         .source_root    = rstd::move(source_root),
         .workspace_root = rstd::move(workspace),
         .manifest       = rstd::move(package_manifest),
@@ -423,6 +468,7 @@ auto parse_native_arguments(ref<str> message) -> lito::tools::ToolResult<Vec<Str
 auto parse_build_message(const Json&            message,
                          const PackageMetadata& metadata,
                          const BuildRequest&    request,
+                         ref<str>               archive_suffix,
                          ParsedBuildMessages&   result) -> lito::tools::ToolResult<empty> {
     auto reason = rstd_try(required_string(message, "reason"_str, "Cargo build message"_str));
     if (reason == "compiler-artifact"_str) {
@@ -432,7 +478,8 @@ auto parse_build_message(const Json&            message,
         auto target =
             rstd_try(required_member(message, "target"_str, "Cargo compiler-artifact"_str));
         auto name = rstd_try(required_string(*target, "name"_str, "Cargo artifact target"_str));
-        if (name != metadata.target_name.as_str()) return Ok(empty {});
+        if (metadata.library.is_none() || name != metadata.library->name.as_str())
+            return Ok(empty {});
         auto crate_types =
             rstd_try(required_array(*target, "crate_types"_str, "Cargo artifact target"_str));
         if (! rstd_try(string_array_contains(
@@ -450,7 +497,7 @@ auto parse_build_message(const Json&            message,
             if (text.is_none()) {
                 return cargo_failure<empty>("Cargo artifact filename must be a string"_str);
             }
-            if (! text->ends_with(request.archive_suffix.as_str())) continue;
+            if (! text->ends_with(archive_suffix)) continue;
             if (archive.is_some()) {
                 return cargo_failure<empty>(
                     "Cargo root artifact contains multiple static archives"_str);
@@ -458,8 +505,8 @@ auto parse_build_message(const Json&            message,
             archive = Some(PathBuf::from(*text));
         }
         if (archive.is_none()) {
-            return cargo_failure<empty>(rstd::format("Cargo root artifact contains no '{}' archive",
-                                                     request.archive_suffix));
+            return cargo_failure<empty>(
+                rstd::format("Cargo root artifact contains no '{}' archive", archive_suffix));
         }
         result.archive = rstd::move(archive);
         result.artifact_fresh =
@@ -474,7 +521,8 @@ auto parse_build_message(const Json&            message,
         auto target =
             rstd_try(required_member(message, "target"_str, "Cargo compiler-message"_str));
         auto name = rstd_try(required_string(*target, "name"_str, "Cargo message target"_str));
-        if (name != metadata.target_name.as_str()) return Ok(empty {});
+        if (metadata.library.is_none() || name != metadata.library->name.as_str())
+            return Ok(empty {});
         auto diagnostic =
             rstd_try(required_member(message, "message"_str, "Cargo compiler-message"_str));
         auto level = rstd_try(required_string(*diagnostic, "level"_str, "Cargo diagnostic"_str));
@@ -503,8 +551,8 @@ auto parse_build_message(const Json&            message,
 
 auto parse_build_messages(ref<str>               output,
                           const PackageMetadata& metadata,
-                          const BuildRequest&    request)
-    -> lito::tools::ToolResult<ParsedBuildMessages> {
+                          const BuildRequest&    request,
+                          ref<str> archive_suffix) -> lito::tools::ToolResult<ParsedBuildMessages> {
     auto result    = ParsedBuildMessages {};
     auto remaining = output;
     while (! remaining.is_empty()) {
@@ -518,7 +566,7 @@ auto parse_build_messages(ref<str>               output,
             }
             auto message = rstd::move(parsed).unwrap();
             if (message.get("reason"_str).is_some()) {
-                rstd_try(parse_build_message(message, metadata, request, result));
+                rstd_try(parse_build_message(message, metadata, request, archive_suffix, result));
             }
         }
         if (split.is_none()) break;
@@ -539,12 +587,27 @@ auto parse_build_messages(ref<str>               output,
 auto build_static_library(const Provider&                   provider,
                           const PackageMetadata&            metadata,
                           const BuildRequest&               request,
+                          ref<str>                          archive_suffix,
                           const ResolvedProcessEnvironment& environment,
                           const Option<EventSink>&          observer = None())
     -> lito::tools::ToolResult<StaticLibrarySnapshot> {
     if (request.jobs == usize {}) {
         return cargo_failure<StaticLibrarySnapshot>(
             "Cargo build jobs must be greater than zero"_str);
+    }
+    if (metadata.library.is_none()) {
+        return cargo_failure<StaticLibrarySnapshot>(
+            rstd::format("Cargo package '{}' contains no library target", metadata.name));
+    }
+    auto static_library = false;
+    for (const auto& crate_type : metadata.library->crate_types) {
+        if (crate_type.as_str() == "staticlib"_str) static_library = true;
+    }
+    if (! static_library) {
+        return cargo_failure<StaticLibrarySnapshot>(rstd::format(
+            "Cargo package '{}' library target '{}' does not declare crate-type 'staticlib'",
+            metadata.name,
+            metadata.library->name));
     }
     auto created = rstd::fs::create_dir_all(request.work_root.as_path());
     if (created.is_err()) {
@@ -574,8 +637,6 @@ auto build_static_library(const Provider&                   provider,
     arguments.push(String::make("--package"_str));
     arguments.push(request.package.clone());
     arguments.push(String::make("--lib"_str));
-    arguments.push(String::make("--crate-type"_str));
-    arguments.push(String::make("staticlib"_str));
     arguments.push(String::make("--profile"_str));
     arguments.push(request.profile.clone());
     arguments.push(String::make("--target"_str));
@@ -604,8 +665,8 @@ auto build_static_library(const Provider&                   provider,
     arguments.push(String::make("--print"_str));
     arguments.push(String::make("native-static-libs"_str));
     emit_cargo(observer, EventKind::Build, request.alias.as_str(), request.work_root.as_path());
-    auto output =
-        rstd_try(invoke_cargo(arguments, environment, Some(metadata.workspace_root.as_path())));
+    auto output = rstd_try(
+        invoke_cargo(arguments, environment, Some(metadata.workspace_root.as_path()), true));
     if (output.exit_code != i32 {}) {
         return Err(lito::tools::ToolError::Execution(
             rstd::format("Cargo dependency '{}' build", request.alias),
@@ -613,8 +674,8 @@ auto build_static_library(const Provider&                   provider,
             rstd::move(output.standard_output),
             rstd::move(output.standard_error)));
     }
-    auto messages =
-        rstd_try(parse_build_messages(output.standard_output.as_str(), metadata, request));
+    auto messages = rstd_try(
+        parse_build_messages(output.standard_output.as_str(), metadata, request, archive_suffix));
     auto archive  = rstd_try(canonical_owned_path(messages.archive->as_path(),
                                                   request.target_directory.as_path(),
                                                   "Cargo staticlib artifact"_str,
@@ -633,7 +694,7 @@ auto build_static_library(const Provider&                   provider,
     identity_text.push_ascii(u8('\n'));
     identity_text.push_str(metadata.version.as_str());
     identity_text.push_ascii(u8('\n'));
-    identity_text.push_str(metadata.target_name.as_str());
+    identity_text.push_str(metadata.library->name.as_str());
     identity_text.push_ascii(u8('\n'));
     identity_text.push_str(digest.as_str());
     identity_text.push_ascii(u8('\n'));
@@ -656,6 +717,227 @@ auto build_static_library(const Provider&                   provider,
         .identity              = rstd::move(identity),
         .fresh                 = messages.artifact_fresh,
         .elapsed               = output.elapsed,
+    });
+}
+
+struct ParsedBinaryArtifact {
+    String  name;
+    PathBuf executable;
+    bool    fresh { false };
+};
+
+struct ParsedBinaryMessages {
+    Vec<ParsedBinaryArtifact> artifacts;
+    bool                      found_finished { false };
+};
+
+auto binary_target(const PackageMetadata& metadata, ref<str> name) -> bool {
+    for (const auto& target : metadata.binaries) {
+        if (target.name == name) return true;
+    }
+    return false;
+}
+
+auto parse_binary_message(const Json&            message,
+                          const PackageMetadata& metadata,
+                          ParsedBinaryMessages&  result) -> lito::tools::ToolResult<empty> {
+    auto reason = rstd_try(required_string(message, "reason"_str, "Cargo build message"_str));
+    if (reason == "compiler-artifact"_str) {
+        auto package =
+            rstd_try(required_string(message, "package_id"_str, "Cargo compiler-artifact"_str));
+        if (package != metadata.id.as_str()) return Ok(empty {});
+        auto target =
+            rstd_try(required_member(message, "target"_str, "Cargo compiler-artifact"_str));
+        auto kinds = rstd_try(required_array(*target, "kind"_str, "Cargo artifact target"_str));
+        if (! rstd_try(
+                string_array_contains(*kinds, "bin"_str, "Cargo artifact target.kind"_str))) {
+            return Ok(empty {});
+        }
+        auto name = rstd_try(required_string(*target, "name"_str, "Cargo artifact target"_str));
+        if (! binary_target(metadata, name)) return Ok(empty {});
+        for (const auto& artifact : result.artifacts) {
+            if (artifact.name == name) {
+                return cargo_failure<empty>(
+                    rstd::format("Cargo emitted duplicate binary artifact '{}'", name));
+            }
+        }
+        auto executable =
+            rstd_try(required_string(message, "executable"_str, "Cargo compiler-artifact"_str));
+        result.artifacts.push(ParsedBinaryArtifact {
+            .name       = String::make(name),
+            .executable = PathBuf::from(executable),
+            .fresh = rstd_try(required_bool(message, "fresh"_str, "Cargo compiler-artifact"_str)),
+        });
+        return Ok(empty {});
+    }
+    if (reason == "build-finished"_str) {
+        if (result.found_finished) {
+            return cargo_failure<empty>("Cargo emitted duplicate build-finished messages"_str);
+        }
+        if (! rstd_try(required_bool(message, "success"_str, "Cargo build-finished"_str))) {
+            return cargo_failure<empty>("Cargo build-finished reported failure"_str);
+        }
+        result.found_finished = true;
+    }
+    return Ok(empty {});
+}
+
+auto parse_binary_messages(ref<str> output, const PackageMetadata& metadata)
+    -> lito::tools::ToolResult<ParsedBinaryMessages> {
+    auto result    = ParsedBinaryMessages {};
+    auto remaining = output;
+    while (! remaining.is_empty()) {
+        auto split = remaining.split_once("\n"_str);
+        auto line  = (split.is_some() ? split->template get<0>() : remaining).trim_ascii();
+        if (! line.is_empty() && line.starts_with("{"_str)) {
+            auto parsed = rstd::json::from_str(line);
+            if (parsed.is_err()) {
+                return cargo_failure<ParsedBinaryMessages>(rstd::format(
+                    "cannot parse Cargo build JSON message: {}", rstd::move(parsed).unwrap_err()));
+            }
+            auto message = rstd::move(parsed).unwrap();
+            if (message.get("reason"_str).is_some()) {
+                rstd_try(parse_binary_message(message, metadata, result));
+            }
+        }
+        if (split.is_none()) break;
+        remaining = split->template get<1>();
+    }
+    if (result.artifacts.is_empty()) {
+        return cargo_failure<ParsedBinaryMessages>(
+            rstd::format("Cargo package '{}' emitted no binary artifacts", metadata.name));
+    }
+    if (! result.found_finished) {
+        return cargo_failure<ParsedBinaryMessages>("Cargo emitted no build-finished message"_str);
+    }
+    rstd::slice_::sort_unstable_by(
+        result.artifacts.as_mut_slice().as_mut_ref(),
+        [](const ParsedBinaryArtifact& left, const ParsedBinaryArtifact& right) {
+            return left.name < right.name;
+        });
+    return Ok(rstd::move(result));
+}
+
+auto build_binaries(const Provider&                   provider,
+                    const PackageMetadata&            metadata,
+                    const BuildRequest&               request,
+                    const ResolvedProcessEnvironment& environment,
+                    const Option<EventSink>&          observer = None())
+    -> lito::tools::ToolResult<BinarySnapshot> {
+    if (request.jobs == usize {}) {
+        return cargo_failure<BinarySnapshot>("Cargo build jobs must be greater than zero"_str);
+    }
+    if (metadata.binaries.is_empty()) {
+        return cargo_failure<BinarySnapshot>(
+            rstd::format("Cargo package '{}' contains no binary targets", metadata.name));
+    }
+    auto created = rstd::fs::create_dir_all(request.work_root.as_path());
+    if (created.is_err()) {
+        return cargo_io_failure<BinarySnapshot>("create Cargo work directory"_str,
+                                                request.work_root.as_path(),
+                                                rstd::move(created).unwrap_err());
+    }
+    auto lock_path = request.work_root.join(PathBuf::from("lock"_str).as_path());
+    auto lock_file = rstd::fs::File::create(lock_path.as_path());
+    if (lock_file.is_err()) {
+        return cargo_io_failure<BinarySnapshot>("open Cargo dependency lock"_str,
+                                                lock_path.as_path(),
+                                                rstd::move(lock_file).unwrap_err());
+    }
+    auto locked = rstd::fs::FileLock::acquire(rstd::move(lock_file).unwrap(),
+                                              rstd::fs::FileLockMode::Exclusive);
+    if (locked.is_err()) {
+        return cargo_io_failure<BinarySnapshot>(
+            "lock Cargo dependency"_str, lock_path.as_path(), rstd::move(locked).unwrap_err());
+    }
+    auto arguments = Vec<String>::make();
+    arguments.push(
+        rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    arguments.push(String::make("build"_str));
+    arguments.push(String::make("--manifest-path"_str));
+    arguments.push(rstd_try(cargo_path_text(request.manifest.as_path(), "Cargo manifest"_str)));
+    arguments.push(String::make("--package"_str));
+    arguments.push(request.package.clone());
+    arguments.push(String::make("--bins"_str));
+    arguments.push(String::make("--profile"_str));
+    arguments.push(request.profile.clone());
+    arguments.push(String::make("--target"_str));
+    arguments.push(request.target.clone());
+    arguments.push(String::make("--target-dir"_str));
+    arguments.push(rstd_try(
+        cargo_path_text(request.target_directory.as_path(), "Cargo target directory"_str)));
+    arguments.push(String::make("--jobs"_str));
+    arguments.push(rstd::format("{}", request.jobs));
+    arguments.push(String::make("--message-format"_str));
+    arguments.push(String::make("json"_str));
+    arguments.push(String::make("--locked"_str));
+    if (! request.features.is_empty()) {
+        auto features = String::make();
+        for (usize index {}; index < request.features.len(); ++index) {
+            if (index != usize {}) features.push_ascii(u8(','));
+            features.push_str(request.features[index].as_str());
+        }
+        arguments.push(String::make("--features"_str));
+        arguments.push(rstd::move(features));
+    }
+    if (! request.default_features) {
+        arguments.push(String::make("--no-default-features"_str));
+    }
+    emit_cargo(observer, EventKind::Build, request.alias.as_str(), request.work_root.as_path());
+    auto output = rstd_try(
+        invoke_cargo(arguments, environment, Some(metadata.workspace_root.as_path()), true));
+    if (output.exit_code != i32 {}) {
+        return Err(lito::tools::ToolError::Execution(
+            rstd::format("Cargo dependency '{}' build", request.alias),
+            output.exit_code,
+            rstd::move(output.standard_output),
+            rstd::move(output.standard_error)));
+    }
+    auto parsed    = rstd_try(parse_binary_messages(output.standard_output.as_str(), metadata));
+    auto artifacts = Vec<BinaryArtifactSnapshot>::with_capacity(parsed.artifacts.len());
+    for (auto& artifact : parsed.artifacts) {
+        auto executable = rstd_try(canonical_owned_path(artifact.executable.as_path(),
+                                                        request.target_directory.as_path(),
+                                                        "Cargo binary artifact"_str,
+                                                        true));
+        auto contents   = rstd::fs::read(executable.as_path());
+        if (contents.is_err()) {
+            return cargo_io_failure<BinarySnapshot>("read Cargo binary artifact"_str,
+                                                    executable.as_path(),
+                                                    rstd::move(contents).unwrap_err());
+        }
+        auto digest        = lito::crypto::sha256_hex(contents->as_slice());
+        auto identity_text = String::make("lito-cargo-bin-v1\n"_str);
+        identity_text.push_str(request.request_identity.as_str());
+        identity_text.push_ascii(u8('\n'));
+        identity_text.push_str(metadata.id.as_str());
+        identity_text.push_ascii(u8('\n'));
+        identity_text.push_str(metadata.version.as_str());
+        identity_text.push_ascii(u8('\n'));
+        identity_text.push_str(artifact.name.as_str());
+        identity_text.push_ascii(u8('\n'));
+        identity_text.push_str(digest.as_str());
+        identity_text.push_ascii(u8('\n'));
+        auto identity = lito::crypto::sha256_hex(identity_text.as_str());
+        emit_cargo(observer,
+                   artifact.fresh ? EventKind::Reuse : EventKind::Build,
+                   request.alias.as_str(),
+                   executable.as_path(),
+                   output.elapsed,
+                   true);
+        artifacts.push(BinaryArtifactSnapshot {
+            .name              = rstd::move(artifact.name),
+            .executable        = rstd::move(executable),
+            .executable_digest = rstd::move(digest),
+            .executable_size   = u64(contents->len().to_primitive()),
+            .identity          = rstd::move(identity),
+            .fresh             = artifact.fresh,
+        });
+    }
+    return Ok(BinarySnapshot {
+        .package   = metadata.clone(),
+        .artifacts = rstd::move(artifacts),
+        .elapsed   = output.elapsed,
     });
 }
 

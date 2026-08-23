@@ -120,19 +120,19 @@ auto external_dependencies_key(ref<str> key) -> bool {
 
 auto cargo_external_key(ref<str> key) -> bool {
     return key == "source"_str || key == "package"_str || key == "manifest-path"_str ||
-           key == "crate-type"_str || key == "features"_str || key == "default-features"_str ||
-           key == "profile"_str || key == "visibility"_str || key == "condition"_str ||
+           key == "features"_str || key == "default-features"_str || key == "profile"_str ||
+           key == "usage"_str || key == "visibility"_str || key == "condition"_str ||
            key == "workspace"_str;
 }
 
 auto workspace_cargo_external_key(ref<str> key) -> bool {
-    return key == "source"_str || key == "package"_str || key == "manifest-path"_str ||
-           key == "crate-type"_str;
+    return key == "source"_str || key == "package"_str || key == "manifest-path"_str;
 }
 
 auto workspace_cargo_external_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "features"_str || key == "default-features"_str ||
-           key == "profile"_str || key == "visibility"_str || key == "condition"_str;
+           key == "profile"_str || key == "usage"_str || key == "visibility"_str ||
+           key == "condition"_str;
 }
 
 auto cmake_external_key(ref<str> key) -> bool {

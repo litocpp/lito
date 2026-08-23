@@ -108,7 +108,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
                                                          metadata.lock_file.clone(),
                                                          rstd::move(lock).unwrap_err()));
     }
-    auto       text   = String::make("lito-cargo-request-v1\n"_str);
+    auto       text   = String::make("lito-cargo-request-v2\n"_str);
     const auto append = [&](ref<str> value) {
         text.push_str(rstd::format("{}:{}\n", value.len(), value).as_str());
     };
@@ -119,6 +119,9 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     append(declaration.recipe.manifest_path.as_path().to_string_lossy().as_str());
     append(profile);
     append(target);
+    append(declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Link
+               ? "link"_str
+               : "runtime"_str);
     append(declaration.consumption.default_features ? "default-features"_str
                                                     : "no-default-features"_str);
     for (const auto& feature : declaration.consumption.features) append(feature.as_str());
@@ -129,6 +132,11 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
 
 export namespace lito
 {
+
+struct ResolvedCargoDependencies {
+    Vec<cpp::ExternalDependencyUsage>       usage;
+    Vec<lito::dependency::ExternalAssetSet> assets;
+};
 
 auto resolve_cargo_dependencies(
     const Vec<lito::dependency::CargoDependencyRequirement>& declarations,
@@ -143,8 +151,8 @@ auto resolve_cargo_dependencies(
     usize                                                    jobs,
     Option<lito::tools::cargo::Provider>&                    provider_cache,
     const Option<BuildEventSink>&                            observer = None())
-    -> lito::dependency::DependencyResult<Vec<cpp::ExternalDependencyUsage>> {
-    auto result = Vec<cpp::ExternalDependencyUsage>::make();
+    -> lito::dependency::DependencyResult<ResolvedCargoDependencies> {
+    auto result = ResolvedCargoDependencies {};
     if (declarations.is_empty()) return Ok(rstd::move(result));
     if (provider_cache.is_none()) {
         const auto requirement = lito::tools::external_dependency_tool_requirement(
@@ -196,28 +204,59 @@ auto resolve_cargo_dependencies(
                                                                 target.as_str()));
         auto work_root        = layout.cargo_work_root(request_identity.as_str());
         auto target_directory = work_root.join(PathBuf::from("target"_str).as_path());
+        auto request          = lito::tools::cargo::BuildRequest {
+            .alias            = declaration.alias.clone(),
+            .source_root      = source->root.clone(),
+            .manifest         = metadata->manifest.clone(),
+            .package          = declaration.recipe.package.clone(),
+            .features         = as<Clone>(declaration.consumption.features).clone(),
+            .default_features = declaration.consumption.default_features,
+            .profile          = resolved_profile.clone(),
+            .target           = target.clone(),
+            .request_identity = request_identity.clone(),
+            .work_root        = rstd::move(work_root),
+            .target_directory = rstd::move(target_directory),
+            .jobs             = jobs,
+        };
+        if (declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Runtime) {
+            auto snapshot = lito::tools::cargo::build_binaries(
+                *provider_cache, *metadata, request, environment, cargo_observer(observer));
+            if (snapshot.is_err()) {
+                return Err(cargo_error(
+                    rstd::format("build Cargo runtime dependency '{}:{}' with profile '{}' for "
+                                 "target '{}'",
+                                 owner,
+                                 declaration.alias.as_str(),
+                                 resolved_profile.as_str(),
+                                 target.as_str())
+                        .as_str(),
+                    rstd::move(snapshot).unwrap_err()));
+            }
+            for (auto& artifact : snapshot->artifacts) {
+                auto name = artifact.executable.as_path().file_name();
+                if (name.is_none()) {
+                    return lito::dependency::dependency_failure<ResolvedCargoDependencies>(
+                        rstd::format("Cargo binary artifact '{}' has no file name",
+                                     artifact.executable.as_path()));
+                }
+                auto entries = Vec<lito::dependency::ExternalAssetEntry>::make();
+                entries.push(lito::dependency::ExternalAssetEntry {
+                    .logical_path = PathBuf::from(*name),
+                    .source       = rstd::move(artifact.executable),
+                });
+                result.assets.push(lito::dependency::ExternalAssetSet {
+                    .alias       = declaration.alias.clone(),
+                    .name        = rstd::move(artifact.name),
+                    .disposition = lito::dependency::ExternalAssetDisposition::Materialized,
+                    .entries     = rstd::move(entries),
+                });
+            }
+            continue;
+        }
         auto suffix =
             platform.effective_target.family == TargetFamily::Windows ? ".lib"_str : ".a"_str;
         auto snapshot = lito::tools::cargo::build_static_library(
-            *provider_cache,
-            *metadata,
-            lito::tools::cargo::BuildRequest {
-                .alias            = declaration.alias.clone(),
-                .source_root      = source->root.clone(),
-                .manifest         = metadata->manifest.clone(),
-                .package          = declaration.recipe.package.clone(),
-                .features         = as<Clone>(declaration.consumption.features).clone(),
-                .default_features = declaration.consumption.default_features,
-                .profile          = resolved_profile.clone(),
-                .target           = target.clone(),
-                .archive_suffix   = String::make(suffix),
-                .request_identity = request_identity.clone(),
-                .work_root        = rstd::move(work_root),
-                .target_directory = rstd::move(target_directory),
-                .jobs             = jobs,
-            },
-            environment,
-            cargo_observer(observer));
+            *provider_cache, *metadata, request, suffix, environment, cargo_observer(observer));
         if (snapshot.is_err()) {
             return Err(cargo_error(rstd::format("build Cargo dependency '{}:{}' with profile '{}' "
                                                 "for target '{}'",
@@ -230,9 +269,8 @@ auto resolve_cargo_dependencies(
         }
         auto archive = snapshot->archive.as_path().to_str();
         if (archive.is_none()) {
-            return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
-                rstd::format("Cargo artifact '{}' is not valid UTF-8",
-                             snapshot->archive.as_path()));
+            return lito::dependency::dependency_failure<ResolvedCargoDependencies>(rstd::format(
+                "Cargo artifact '{}' is not valid UTF-8", snapshot->archive.as_path()));
         }
         auto link_arguments =
             Vec<String>::with_capacity(snapshot->native_link_arguments.len() + usize(1));
@@ -243,14 +281,18 @@ auto resolve_cargo_dependencies(
         auto source_text = rstd::format("Cargo dependency '{}' package '{}'",
                                         declaration.alias.as_str(),
                                         declaration.recipe.package.as_str());
-        auto targets     = Vec<cpp::ExternalTargetUsage>::make();
+        if (declaration.consumption.visibility.is_none()) {
+            return lito::dependency::dependency_failure<ResolvedCargoDependencies>(rstd::format(
+                "Cargo link dependency '{}' is missing visibility", declaration.alias.as_str()));
+        }
+        auto targets = Vec<cpp::ExternalTargetUsage>::make();
         targets.push(cpp::ExternalTargetUsage {
-            .name           = snapshot->package.target_name.clone(),
-            .visibility     = declaration.consumption.visibility,
+            .name           = snapshot->package.library->name.clone(),
+            .visibility     = *declaration.consumption.visibility,
             .compile_source = source_text.clone(),
             .identity       = snapshot->identity.clone(),
         });
-        result.push(cpp::ExternalDependencyUsage {
+        result.usage.push(cpp::ExternalDependencyUsage {
             .alias    = declaration.alias.clone(),
             .provider = String::make("cargo"_str),
             .version  = snapshot->package.version.clone(),

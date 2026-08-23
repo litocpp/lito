@@ -267,6 +267,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     }
 
     auto cargo_provider = Option<lito::tools::cargo::Provider> {};
+    auto assets         = ExternalAssetCatalog {};
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         if (catalog_indices[package_index].is_none()) continue;
         const auto& package = graph.packages[package_index];
@@ -284,7 +285,14 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                                        observer);
         if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
         auto& destination = result.packages[*catalog_indices[package_index]].dependencies;
-        for (auto& dependency : *dependencies) destination.push(rstd::move(dependency));
+        for (auto& dependency : dependencies->usage) destination.push(rstd::move(dependency));
+        for (auto& asset : dependencies->assets) {
+            auto inserted = assets.insert(rstd::move(asset));
+            if (inserted.is_err()) {
+                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+                    rstd::move(inserted).unwrap_err());
+            }
+        }
     }
 
     if (bindings.is_empty()) {
@@ -292,6 +300,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         return Ok(PreparedExternalCatalog {
             .usage      = rstd::move(result),
             .sources    = rstd::move(source_catalog),
+            .assets     = rstd::move(assets),
             .provenance = rstd::move(provenance),
         });
     }
@@ -315,7 +324,6 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     resolved_cmake = rstd::move(identified).unwrap();
 
     auto snapshots       = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
-    auto assets          = ExternalAssetCatalog {};
     auto cmake_work_root = layout.cmake_work_root();
     for (auto& binding : bindings) {
         auto requirement = materialize_cmake_requirement(binding.requirement);
@@ -369,35 +377,13 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 String::make("CMake usage snapshot was not retained"_str));
         }
         for (const auto& set : (**snapshot).assets) {
-            auto copied    = set.clone();
-            copied.alias   = binding.requirement.alias.clone();
-            auto duplicate = false;
-            for (const auto& prior : assets.sets) {
-                if (prior.alias == copied.alias.as_str() && prior.name == copied.name.as_str()) {
-                    if (prior.disposition != copied.disposition ||
-                        prior.entries.len() != copied.entries.len()) {
-                        return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                            rstd::format("external asset set '{}:{}' has conflicting definitions",
-                                         copied.alias.as_str(),
-                                         copied.name.as_str()));
-                    }
-                    for (usize index {}; index < prior.entries.len(); ++index) {
-                        if (prior.entries[index].logical_path.as_path() !=
-                                copied.entries[index].logical_path.as_path() ||
-                            prior.entries[index].source.as_path() !=
-                                copied.entries[index].source.as_path()) {
-                            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                                rstd::format(
-                                    "external asset set '{}:{}' has conflicting definitions",
-                                    copied.alias.as_str(),
-                                    copied.name.as_str()));
-                        }
-                    }
-                    duplicate = true;
-                    break;
-                }
+            auto copied   = set.clone();
+            copied.alias  = binding.requirement.alias.clone();
+            auto inserted = assets.insert(rstd::move(copied));
+            if (inserted.is_err()) {
+                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+                    rstd::move(inserted).unwrap_err());
             }
-            if (! duplicate) assets.sets.push(rstd::move(copied));
         }
     }
     auto provenance = rstd_try(project_external_source_provenance(graph, source_catalog));

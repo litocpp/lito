@@ -100,31 +100,36 @@ the files compile or link inputs.
 `[external-dependencies.cargo.NAME]` requires:
 
 - `source`: a package external source name;
-- `package`: the exact Cargo workspace package name;
-- `crate-type = "staticlib"`;
-- `visibility = "public" | "private" | "link"`.
+- `package`: the exact Cargo workspace package name.
 
 Optional fields are:
 
 - `manifest-path`, a normal relative path below the external source, defaulting to `Cargo.toml`;
+- `usage = "link" | "runtime"`, defaulting to `link`;
 - `features`, a unique list of Cargo feature names;
 - `default-features`, defaulting to `true`;
 - `profile`, a Cargo profile name;
+- `visibility = "public" | "private" | "link"`, required for link usage and rejected for runtime
+  usage;
 - `condition`, evaluated in the consuming Lito package context.
 
 Cargo features are sorted before they enter the request. Without `profile`, Lito debug and release
 families select Cargo `dev` and `release`; the plain family requires an explicit Cargo profile.
-There is no manifest target override: Lito validates Cargo's reported host triple against the
-effective native target.
+There is no manifest target override. For link usage, Lito discovers the package library target
+and requires Cargo metadata to report `staticlib` among its crate types. For runtime usage, Lito
+builds the package binary targets and publishes each emitted executable as a materialized external
+asset set named after the Cargo binary target. Lito validates Cargo's reported host triple against
+the effective native target.
 
-`[workspace.external-dependencies.cargo.NAME]` owns `source`, `package`, `manifest-path`, and
-`crate-type`. A member reference sets `workspace = true` and owns `features`, `default-features`,
-`profile`, `visibility`, and `condition`. The referenced external source must also be declared by
-the workspace.
+`[workspace.external-dependencies.cargo.NAME]` owns `source`, `package`, and `manifest-path`. A
+member reference sets `workspace = true` and owns `usage`, `features`, `default-features`, `profile`,
+`visibility`, and `condition`. The referenced external source must also be declared by the
+workspace.
 
-The Cargo workspace must already contain `Cargo.lock`. Lito never creates or updates it. The
-provider produces only link usage; headers, C++ wrappers, and include visibility remain normal
-package usage.
+The Cargo workspace must already contain `Cargo.lock`. Lito never creates or updates it. Link usage
+contributes only the discovered static library and its native link closure; headers, C++ wrappers,
+and include visibility remain normal package usage. Runtime usage contributes no C++ compile or
+link requirements. An `install.lua` recipe selects its binary asset sets through `external_assets`.
 
 ## Owner boundary
 
