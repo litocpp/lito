@@ -27,6 +27,7 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 
 set(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY "" CACHE STRING
     "Base64url Ed25519 public key embedded for the official Registry")
+option(LITO_USE_SYSTEM_ZSTD "Use the system zstd package" OFF)
 
 add_compile_options(
   "$<$<COMPILE_LANGUAGE:CXX>:-fmodules-reduced-bmi>"
@@ -67,6 +68,23 @@ FetchContent_Declare(
   GIT_TAG 00d5cfacd85f44f98727d3cd7e2f78ec96689552)
 FetchContent_MakeAvailable(luato)
 
+if(NOT LITO_USE_SYSTEM_ZSTD)
+  FetchContent_Declare(
+    zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG f8745da6ff1ad1e7bab384bd1f9d742439278e99)
+  FetchContent_MakeAvailable(zstd)
+endif()
+
+FetchContent_Declare(
+  sodium
+  GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
+  GIT_TAG 77e1ce5d6dee871c49ef211222ba18ef0c486bda)
+FetchContent_MakeAvailable(sodium)
+
+add_subdirectory(third-party/zstd)
+add_subdirectory(third-party/libsodium)
+add_subdirectory(archive)
 add_subdirectory(frontend)
 add_subdirectory(core)
 add_subdirectory(cpp)
@@ -77,3 +95,9 @@ add_subdirectory(cli)
 
 install(FILES schema/lito.schema.json DESTINATION ${CMAKE_INSTALL_DATADIR}/lito)
 install(FILES LICENSE-MIT LICENSE-APACHE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/lito)
+if(NOT LITO_USE_SYSTEM_ZSTD)
+  install(FILES third-party/zstd/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/zstd)
+endif()
+install(FILES third-party/libsodium/LICENSE-ISC
+              third-party/libsodium/LICENSE-BSD-2-Clause
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/libsodium)

@@ -1,6 +1,4 @@
 add_library(lito.driver STATIC)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LITO_ARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 target_compile_features(lito.driver PUBLIC cxx_std_20)
 target_sources(
   lito.driver
@@ -138,7 +136,7 @@ target_sources(
 target_link_libraries(
   lito.driver
   PUBLIC lito.core lito.cpp lito.tools lito.toolchain lito.frontend rstd.std
-  PRIVATE luato::luato rstd.bench rstd.json rstd.serde rstd.toml PkgConfig::LITO_ARCHIVE)
+  PRIVATE luato::luato rstd.bench rstd.json rstd.serde rstd.toml lito.archive)
 
 if(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY)
   target_compile_definitions(

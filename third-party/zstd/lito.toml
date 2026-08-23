@@ -1,0 +1,60 @@
+[package]
+name = "lito-zstd"
+version.workspace = true
+standard = "c17"
+license = "BSD-3-Clause"
+
+[external-sources.zstd]
+workspace = true
+
+[source-groups.runtime]
+external-source = "zstd"
+sources = [
+  "lib/common/debug.c",
+  "lib/common/entropy_common.c",
+  "lib/common/error_private.c",
+  "lib/common/fse_decompress.c",
+  "lib/common/pool.c",
+  "lib/common/threading.c",
+  "lib/common/xxhash.c",
+  "lib/common/zstd_common.c",
+  "lib/compress/fse_compress.c",
+  "lib/compress/hist.c",
+  "lib/compress/huf_compress.c",
+  "lib/compress/zstd_compress.c",
+  "lib/compress/zstd_compress_literals.c",
+  "lib/compress/zstd_compress_sequences.c",
+  "lib/compress/zstd_compress_superblock.c",
+  "lib/compress/zstd_double_fast.c",
+  "lib/compress/zstd_fast.c",
+  "lib/compress/zstd_lazy.c",
+  "lib/compress/zstd_ldm.c",
+  "lib/compress/zstd_opt.c",
+  "lib/compress/zstd_preSplit.c",
+  "lib/compress/zstdmt_compress.c",
+  "lib/decompress/huf_decompress.c",
+  "lib/decompress/zstd_ddict.c",
+  "lib/decompress/zstd_decompress.c",
+  "lib/decompress/zstd_decompress_block.c",
+]
+
+[lib]
+name = "lito-zstd"
+archive = "lito.zstd"
+source-groups = ["runtime"]
+
+[usage]
+public-include-directories = [{ external-source = "zstd", path = "lib" }]
+private-include-directories = [
+  { external-source = "zstd", path = "lib/common" },
+  { external-source = "zstd", path = "lib/compress" },
+  { external-source = "zstd", path = "lib/decompress" },
+]
+private-definitions = [
+  "ZSTD_MULTITHREAD",
+  "ZSTD_LEGACY_SUPPORT=0",
+  "ZSTD_LIB_DICTBUILDER=0",
+  "ZSTD_LIB_DEPRECATED=0",
+  "ZSTD_DISABLE_ASM",
+]
+threads = true

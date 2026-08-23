@@ -19,6 +19,7 @@ sources = [
   "src/build/profile.cpp",
   "src/build/profile_execution.cpp",
   "src/build/profiling.cpp",
+  "src/archive.cpp",
   "src/cache/scan.cpp",
   "src/condition.cpp",
   "src/command/bench.cpp",
@@ -78,6 +79,10 @@ sources = [
 ]
 
 [dependencies.lito-core]
+workspace = true
+visibility = "private"
+
+[dependencies.lito-archive]
 workspace = true
 visibility = "private"
 

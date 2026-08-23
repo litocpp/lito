@@ -1,6 +1,7 @@
 module;
 #include <rstd/enum.hpp>
-#include <sodium.h>
+#include <sodium/crypto_hash_sha256.h>
+#include <sodium/crypto_verify_32.h>
 
 export module lito.crypto;
 
@@ -69,9 +70,11 @@ public:
     auto clone() const -> Sha256Digest { return from_bytes(bytes_); }
 
     friend auto operator==(const Sha256Digest& left, const Sha256Digest& right) noexcept -> bool {
-        return sodium_memcmp(left.bytes_.as_slice().as_raw_ptr(),
-                             right.bytes_.as_slice().as_raw_ptr(),
-                             crypto_hash_sha256_BYTES) == 0;
+        return crypto_verify_32(
+                   reinterpret_cast<const unsigned char*>(
+                       left.bytes_.as_slice().as_raw_ptr()),
+                   reinterpret_cast<const unsigned char*>(
+                       right.bytes_.as_slice().as_raw_ptr())) == 0;
     }
 };
 
@@ -79,7 +82,7 @@ class Sha256 {
     crypto_hash_sha256_state state_ {};
 
     Sha256() noexcept {
-        if (sodium_init() < 0 || crypto_hash_sha256_init(&state_) != 0) {
+        if (crypto_hash_sha256_init(&state_) != 0) {
             rstd::panic("cannot initialize libsodium SHA-256");
         }
     }

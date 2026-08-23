@@ -1,14 +1,11 @@
 module;
-#include <archive.h>
-#include <archive_entry.h>
-#include <cstddef>
-#include <cstring>
 #include <rstd/macro.hpp>
 
 export module lito.driver:registry.archive;
 
 import rstd;
 import lito.core;
+import lito.archive;
 import :registry.blob;
 
 using namespace rstd::prelude;
@@ -92,65 +89,27 @@ auto archive_failure(const RegistryPackageId& package, ref<str> message)
     return archive_failure<T>(RegistryArtifactErrorKind::Archive, package, String::make(message));
 }
 
-class ArchiveReader {
-    archive* value_ {};
-
-public:
-    explicit ArchiveReader(archive* value): value_(value) {}
-    ArchiveReader(const ArchiveReader&)                    = delete;
-    auto operator=(const ArchiveReader&) -> ArchiveReader& = delete;
-    ~ArchiveReader() {
-        if (value_ != nullptr) archive_read_free(value_);
-    }
-    auto get() const noexcept -> archive* { return value_; }
-};
-
-class ArchiveWriter {
-    archive* value_ {};
-
-public:
-    explicit ArchiveWriter(archive* value): value_(value) {}
-    ArchiveWriter(const ArchiveWriter&)                    = delete;
-    auto operator=(const ArchiveWriter&) -> ArchiveWriter& = delete;
-    ~ArchiveWriter() {
-        if (value_ != nullptr) archive_write_free(value_);
-    }
-    auto get() const noexcept -> archive* { return value_; }
-};
-
-class ArchiveEntry {
-    archive_entry* value_ {};
-
-public:
-    ArchiveEntry(): value_(archive_entry_new()) {}
-    ArchiveEntry(const ArchiveEntry&)                    = delete;
-    auto operator=(const ArchiveEntry&) -> ArchiveEntry& = delete;
-    ~ArchiveEntry() {
-        if (value_ != nullptr) archive_entry_free(value_);
-    }
-    auto get() const noexcept -> archive_entry* { return value_; }
-};
-
-auto archive_message(archive* reader, ref<str> operation) -> String {
-    auto message = archive_error_string(reader);
-    if (message == nullptr) return String::make(operation);
-    auto text = rstd::ffi::CStr::from_ptr(message).to_str();
-    return text.is_err() ? String::make(operation)
-                         : rstd::format("{}: {}", operation, text.unwrap());
+template<typename T>
+auto archive_library_failure(const RegistryPackageId& package, lito::archive::ArchiveError error)
+    -> RegistryArtifactResult<T> {
+    return archive_failure<T>(error.kind == lito::archive::ArchiveErrorKind::Io
+                                  ? RegistryArtifactErrorKind::Io
+                                  : RegistryArtifactErrorKind::Archive,
+                              package,
+                              rstd::move(error.message));
 }
 
-auto archive_path(archive_entry* entry, const RegistryPackageId& package)
-    -> RegistryArtifactResult<String> {
-    auto raw = archive_entry_pathname_utf8(entry);
-    if (raw == nullptr) {
-        return archive_failure<String>(package, "archive entry path is not valid UTF-8"_str);
+auto archive_decoded_size_limit(RegistryArchiveLimits limits, const RegistryPackageId& package)
+    -> RegistryArtifactResult<u64> {
+    auto entries  = u64(limits.maximum_entries.to_primitive());
+    auto overhead = u64(6144);
+    if (limits.maximum_unpacked_size > u64::MAX - u64(1024)) {
+        return archive_failure<u64>(package, "archive limits overflow the decoded size bound"_str);
     }
-    auto bytes   = Vec<u8>::from(rstd::ffi::CStr::from_ptr(raw).to_bytes());
-    auto decoded = String::from_utf8(rstd::move(bytes));
-    if (decoded.is_err()) {
-        return archive_failure<String>(package, "archive entry path is not valid UTF-8"_str);
+    if (entries > (u64::MAX - limits.maximum_unpacked_size - u64(1024)) / overhead) {
+        return archive_failure<u64>(package, "archive limits overflow the decoded size bound"_str);
     }
-    return Ok(rstd::move(decoded).unwrap());
+    return Ok(limits.maximum_unpacked_size + entries * overhead + u64(1024));
 }
 
 struct RelativeArchivePath {
@@ -208,82 +167,44 @@ auto decode_archive(const VerifiedRegistryBlob& blob,
                     const SemanticVersion&      version,
                     RegistryArchiveLimits       limits)
     -> RegistryArtifactResult<lito::source::SourceTree> {
-    auto reader = ArchiveReader(archive_read_new());
-    if (reader.get() == nullptr) {
-        return archive_failure<lito::source::SourceTree>(package,
-                                                         "cannot allocate archive reader"_str);
+    auto reader_result = lito::archive::TarZstdReader::open(
+        blob.path.as_path(), rstd_try(archive_decoded_size_limit(limits, package)));
+    if (reader_result.is_err()) {
+        return archive_library_failure<lito::source::SourceTree>(
+            package, rstd::move(reader_result).unwrap_err());
     }
-    if (archive_read_support_filter_zstd(reader.get()) != ARCHIVE_OK ||
-        archive_read_support_format_tar(reader.get()) != ARCHIVE_OK) {
-        return archive_failure<lito::source::SourceTree>(
-            RegistryArtifactErrorKind::Archive,
-            package,
-            archive_message(reader.get(), "cannot enable tar.zstd decoder"_str));
-    }
-    auto path = blob.path.as_path().to_str();
-    if (path.is_none()) {
-        return archive_failure<lito::source::SourceTree>(package,
-                                                         "archive path is not valid UTF-8"_str);
-    }
-    auto c_path = alloc::ffi::CString::make(String::make(*path));
-    if (c_path.is_err()) {
-        return archive_failure<lito::source::SourceTree>(package,
-                                                         "archive path contains a nul byte"_str);
-    }
-    if (archive_read_open_filename(reader.get(), c_path->as_ptr(), std::size_t(65536)) !=
-        ARCHIVE_OK) {
-        return archive_failure<lito::source::SourceTree>(
-            RegistryArtifactErrorKind::Archive,
-            package,
-            archive_message(reader.get(), "cannot open tar.zstd archive"_str));
-    }
-    auto top_root       = rstd::format("{}-{}", package.name.as_str(), version.text().as_str());
-    auto tree           = lito::source::SourceTree::make();
-    auto entry_count    = usize {};
-    auto unpacked       = u64 {};
-    auto root_entries   = usize {};
-    auto checked_format = false;
+    auto reader       = rstd::move(reader_result).unwrap();
+    auto top_root     = rstd::format("{}-{}", package.name.as_str(), version.text().as_str());
+    auto tree         = lito::source::SourceTree::make();
+    auto entry_count  = usize {};
+    auto unpacked     = u64 {};
+    auto root_entries = usize {};
     while (true) {
-        archive_entry* entry  = nullptr;
-        auto           status = archive_read_next_header(reader.get(), &entry);
-        if (status == ARCHIVE_EOF) break;
-        if (status != ARCHIVE_OK || entry == nullptr) {
-            return archive_failure<lito::source::SourceTree>(
-                RegistryArtifactErrorKind::Archive,
-                package,
-                archive_message(reader.get(), "cannot read archive header"_str));
+        auto next = reader.next_entry();
+        if (next.is_err()) {
+            return archive_library_failure<lito::source::SourceTree>(package,
+                                                                     rstd::move(next).unwrap_err());
         }
-        if (! checked_format) {
-            checked_format = true;
-            if (archive_filter_code(reader.get(), 0) != ARCHIVE_FILTER_ZSTD ||
-                (archive_format(reader.get()) & ARCHIVE_FORMAT_BASE_MASK) != ARCHIVE_FORMAT_TAR) {
-                return archive_failure<lito::source::SourceTree>(
-                    package, "archive must be a zstd-compressed tar stream"_str);
-            }
-        }
+        auto optional = rstd::move(next).unwrap();
+        if (optional.is_none()) break;
+        auto entry = rstd::move(optional).unwrap();
         ++entry_count;
         if (entry_count > limits.maximum_entries) {
             return archive_failure<lito::source::SourceTree>(package,
                                                              "archive has too many entries"_str);
         }
-        if (archive_entry_hardlink(entry) != nullptr || archive_entry_symlink(entry) != nullptr ||
-            archive_entry_sparse_count(entry) != 0 || archive_entry_is_encrypted(entry) == 1) {
+        auto decoded_path = String::from_utf8(rstd::move(entry.path));
+        if (decoded_path.is_err()) {
             return archive_failure<lito::source::SourceTree>(
-                package, "archive links, sparse files, and encrypted entries are forbidden"_str);
+                package, "archive entry path is not valid UTF-8"_str);
         }
-        auto file_type    = archive_entry_filetype(entry);
-        auto is_directory = file_type == AE_IFDIR;
-        auto is_file      = file_type == AE_IFREG;
-        if (! is_directory && ! is_file) {
-            return archive_failure<lito::source::SourceTree>(
-                package, "archive entry must be a directory or regular file"_str);
-        }
-        auto raw_path = rstd_try(archive_path(entry, package));
+        auto raw_path     = rstd::move(decoded_path).unwrap();
+        auto is_directory = entry.kind == lito::archive::TarEntryKind::Directory;
         auto relative =
             rstd_try(relative_path(raw_path.as_str(), top_root.as_str(), is_directory, package));
-        auto permissions = archive_entry_perm(entry);
+        auto permissions = entry.mode;
         if (is_directory) {
-            if (permissions != 0755) {
+            if (permissions != u32(0755) || entry.size != u64 {}) {
                 return archive_failure<lito::source::SourceTree>(
                     package, rstd::format("archive directory '{}' must use mode 0755", raw_path));
             }
@@ -296,61 +217,56 @@ auto decode_archive(const VerifiedRegistryBlob& blob,
             } else {
                 rstd_try(add_directory(tree, relative.path.as_str(), package));
             }
-            if (archive_read_data_skip(reader.get()) != ARCHIVE_OK) {
-                return archive_failure<lito::source::SourceTree>(
-                    RegistryArtifactErrorKind::Archive,
-                    package,
-                    archive_message(reader.get(), "cannot skip archive directory data"_str));
+            auto skipped = reader.skip_entry_data();
+            if (skipped.is_err()) {
+                return archive_library_failure<lito::source::SourceTree>(
+                    package, rstd::move(skipped).unwrap_err());
             }
             continue;
         }
-        if (relative.root || (permissions != 0644 && permissions != 0755)) {
+        if (relative.root || (permissions != u32(0644) && permissions != u32(0755))) {
             return archive_failure<lito::source::SourceTree>(
                 package, rstd::format("archive file '{}' has an invalid path or mode", raw_path));
         }
-        auto declared_size = archive_entry_size(entry);
-        if (declared_size < 0 || static_cast<unsigned long long>(declared_size) >
-                                     limits.maximum_file_size.to_primitive()) {
+        if (entry.size > limits.maximum_file_size) {
             return archive_failure<lito::source::SourceTree>(
                 package, rstd::format("archive file '{}' exceeds the file size limit", raw_path));
         }
-        auto size = u64(static_cast<unsigned long long>(declared_size));
-        if (unpacked > limits.maximum_unpacked_size - size) {
+        if (entry.size > limits.maximum_unpacked_size - unpacked) {
             return archive_failure<lito::source::SourceTree>(
                 package, "archive exceeds the unpacked size limit"_str);
         }
-        unpacked += size;
-        auto bytes  = Vec<u8>::with_capacity(usize(size.to_primitive()));
+        unpacked += entry.size;
+        auto bytes  = Vec<u8>::with_capacity(usize(entry.size.to_primitive()));
         auto buffer = array<u8, 65536> {};
-        while (true) {
-            auto read = archive_read_data(
-                reader.get(), buffer.as_mut_ptr().as_raw_ptr(), buffer.len().to_primitive());
-            if (read < 0) {
-                return archive_failure<lito::source::SourceTree>(
-                    RegistryArtifactErrorKind::Archive,
-                    package,
-                    archive_message(reader.get(), "cannot read archive file data"_str));
+        while (bytes.len() < usize(entry.size.to_primitive())) {
+            auto wanted = usize(entry.size.to_primitive()) - bytes.len();
+            if (wanted > buffer.len()) wanted = buffer.len();
+            auto read = reader.read_entry_data(
+                mut_ref<u8[]>::from_raw_parts(buffer.as_mut_ptr().as_raw_ptr(), wanted));
+            if (read.is_err()) {
+                return archive_library_failure<lito::source::SourceTree>(
+                    package, rstd::move(read).unwrap_err());
             }
-            if (read == 0) break;
-            bytes.extend_from_slice(slice<u8>::from_raw_parts(
-                buffer.as_ptr().as_raw_ptr(), usize(static_cast<std::size_t>(read))));
-            if (bytes.len() > usize(size.to_primitive())) {
+            if (*read == usize {}) {
                 return archive_failure<lito::source::SourceTree>(
-                    package, "archive file data exceeds its declared size"_str);
+                    package, "archive file data does not match its declared size"_str);
             }
-        }
-        if (bytes.len() != usize(size.to_primitive())) {
-            return archive_failure<lito::source::SourceTree>(
-                package, "archive file data does not match its declared size"_str);
+            bytes.extend_from_slice(slice<u8>::from_raw_parts(buffer.as_ptr().as_raw_ptr(), *read));
         }
         rstd_try(add_file(tree,
                           relative.path.as_str(),
                           bytes.as_slice(),
-                          permissions == 0755 ? lito::source::SourceFileMode::Executable
-                                              : lito::source::SourceFileMode::Regular,
+                          permissions == u32(0755) ? lito::source::SourceFileMode::Executable
+                                                   : lito::source::SourceFileMode::Regular,
                           package));
     }
-    if (! checked_format || root_entries != usize(1)) {
+    auto finished = reader.finish();
+    if (finished.is_err()) {
+        return archive_library_failure<lito::source::SourceTree>(package,
+                                                                 rstd::move(finished).unwrap_err());
+    }
+    if (root_entries != usize(1)) {
         return archive_failure<lito::source::SourceTree>(
             package, "archive has no unique top-level package root"_str);
     }
@@ -386,58 +302,6 @@ auto archive_directories(const lito::source::SourceTree& tree) -> Vec<String> {
                                        return left < right.as_str();
                                    });
     return directories;
-}
-
-auto write_archive_entry(archive*                     writer,
-                         ref<str>                     path,
-                         bool                         directory,
-                         slice<u8>                    contents,
-                         lito::source::SourceFileMode mode,
-                         const RegistryPackageId&     package) -> RegistryArtifactResult<empty> {
-    auto c_path = alloc::ffi::CString::make(String::make(path));
-    if (c_path.is_err()) {
-        return archive_failure<empty>(package, "archive path contains a nul byte"_str);
-    }
-    auto entry = ArchiveEntry {};
-    if (entry.get() == nullptr) {
-        return archive_failure<empty>(package, "cannot allocate archive entry"_str);
-    }
-    archive_entry_set_pathname_utf8(entry.get(), c_path->as_ptr());
-    archive_entry_set_filetype(entry.get(), directory ? AE_IFDIR : AE_IFREG);
-    archive_entry_set_perm(
-        entry.get(), directory || mode == lito::source::SourceFileMode::Executable ? 0755 : 0644);
-    archive_entry_set_size(entry.get(), directory ? 0 : contents.len().to_primitive());
-    archive_entry_set_uid(entry.get(), 0);
-    archive_entry_set_gid(entry.get(), 0);
-    archive_entry_set_uname(entry.get(), "");
-    archive_entry_set_gname(entry.get(), "");
-    archive_entry_set_mtime(entry.get(), 0, 0);
-    archive_entry_set_atime(entry.get(), 0, 0);
-    archive_entry_set_ctime(entry.get(), 0, 0);
-    if (archive_write_header(writer, entry.get()) != ARCHIVE_OK) {
-        return archive_failure<empty>(RegistryArtifactErrorKind::Archive,
-                                      package,
-                                      archive_message(writer, "cannot write archive header"_str));
-    }
-    auto remaining = contents;
-    while (! remaining.is_empty()) {
-        auto written =
-            archive_write_data(writer, remaining.as_raw_ptr(), remaining.len().to_primitive());
-        if (written <= 0) {
-            return archive_failure<empty>(RegistryArtifactErrorKind::Archive,
-                                          package,
-                                          archive_message(writer, "cannot write archive data"_str));
-        }
-        auto consumed = usize(static_cast<std::size_t>(written));
-        remaining     = slice<u8>::from_raw_parts(remaining.as_raw_ptr() + consumed.to_primitive(),
-                                                  remaining.len() - consumed);
-    }
-    if (archive_write_finish_entry(writer) != ARCHIVE_OK) {
-        return archive_failure<empty>(RegistryArtifactErrorKind::Archive,
-                                      package,
-                                      archive_message(writer, "cannot finish archive entry"_str));
-    }
-    return Ok(empty {});
 }
 
 auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
@@ -564,53 +428,42 @@ auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree
                              rstd::move(created).unwrap_err()));
         }
     }
-    auto writer = ArchiveWriter(archive_write_new());
-    if (writer.get() == nullptr) {
-        return archive_failure<InspectedRegistryArchive>(package,
-                                                         "cannot allocate archive writer"_str);
+    auto writer_result = lito::archive::TarZstdWriter::create(destination.as_path());
+    if (writer_result.is_err()) {
+        return archive_library_failure<InspectedRegistryArchive>(
+            package, rstd::move(writer_result).unwrap_err());
     }
-    if (archive_write_set_format_pax_restricted(writer.get()) != ARCHIVE_OK ||
-        archive_write_add_filter_zstd(writer.get()) != ARCHIVE_OK ||
-        archive_write_set_filter_option(writer.get(), "zstd", "compression-level", "19") !=
-            ARCHIVE_OK ||
-        archive_write_set_filter_option(writer.get(), "zstd", "threads", "1") != ARCHIVE_OK) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Archive,
-            package,
-            archive_message(writer.get(), "cannot configure deterministic tar.zstd writer"_str));
+    auto writer     = rstd::move(writer_result).unwrap();
+    auto root       = rstd::format("{}-{}", package.name.as_str(), version.text());
+    auto wrote_root = writer.write_directory(root.as_str().as_bytes(), u32(0755));
+    if (wrote_root.is_err()) {
+        return archive_library_failure<InspectedRegistryArchive>(
+            package, rstd::move(wrote_root).unwrap_err());
     }
-    auto output = destination.as_path().to_str();
-    if (output.is_none()) {
-        return archive_failure<InspectedRegistryArchive>(package,
-                                                         "archive output path is not UTF-8"_str);
-    }
-    auto c_output = alloc::ffi::CString::make(String::make(*output));
-    if (c_output.is_err() ||
-        archive_write_open_filename(writer.get(), c_output->as_ptr()) != ARCHIVE_OK) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Archive,
-            package,
-            archive_message(writer.get(), "cannot open tar.zstd archive output"_str));
-    }
-    auto root = rstd::format("{}-{}", package.name.as_str(), version.text());
-    rstd_try(write_archive_entry(
-        writer.get(), root.as_str(), true, {}, lito::source::SourceFileMode::Regular, package));
     for (const auto& directory : archive_directories(tree)) {
-        auto path = rstd::format("{}/{}", root, directory);
-        rstd_try(write_archive_entry(
-            writer.get(), path.as_str(), true, {}, lito::source::SourceFileMode::Regular, package));
+        auto path  = rstd::format("{}/{}", root, directory);
+        auto wrote = writer.write_directory(path.as_str().as_bytes(), u32(0755));
+        if (wrote.is_err()) {
+            return archive_library_failure<InspectedRegistryArchive>(
+                package, rstd::move(wrote).unwrap_err());
+        }
     }
     for (const auto& entry : tree.entries()) {
         if (entry.kind() != lito::source::SourceEntryKind::File) continue;
-        auto path = rstd::format("{}/{}", root, entry.path().as_str());
-        rstd_try(write_archive_entry(
-            writer.get(), path.as_str(), false, entry.contents(), entry.mode(), package));
+        auto path  = rstd::format("{}/{}", root, entry.path().as_str());
+        auto wrote = writer.write_file(
+            path.as_str().as_bytes(),
+            entry.mode() == lito::source::SourceFileMode::Executable ? u32(0755) : u32(0644),
+            entry.contents());
+        if (wrote.is_err()) {
+            return archive_library_failure<InspectedRegistryArchive>(
+                package, rstd::move(wrote).unwrap_err());
+        }
     }
-    if (archive_write_close(writer.get()) != ARCHIVE_OK) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Archive,
-            package,
-            archive_message(writer.get(), "cannot finish tar.zstd archive"_str));
+    auto finished = writer.finish();
+    if (finished.is_err()) {
+        return archive_library_failure<InspectedRegistryArchive>(package,
+                                                                 rstd::move(finished).unwrap_err());
     }
     auto blob     = rstd_try(registry_blob_projection_from_file(destination.as_path(), package));
     auto verified = rstd_try(verify_registry_blob_file(destination.clone(), package, blob));

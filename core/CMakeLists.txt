@@ -117,8 +117,4 @@ target_sources(
 target_link_libraries(
   lito.core
   PUBLIC rstd.std
-  PRIVATE rstd.json rstd.serde rstd.toml)
-
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LITO_SODIUM REQUIRED IMPORTED_TARGET libsodium)
-target_link_libraries(lito.core PRIVATE PkgConfig::LITO_SODIUM)
+  PRIVATE rstd.json rstd.serde rstd.toml lito.sodium)

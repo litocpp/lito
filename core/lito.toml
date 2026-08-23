@@ -27,6 +27,6 @@ visibility = "private"
 workspace = true
 visibility = "link"
 
-[external-dependencies.pkg-config.libsodium]
-module = "libsodium"
-visibility = "link"
+[dependencies.lito-sodium]
+workspace = true
+visibility = "private"

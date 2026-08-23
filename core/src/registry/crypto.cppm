@@ -1,7 +1,8 @@
 module;
-#include <sodium.h>
 #include <cstddef>
 #include <rstd/macro.hpp>
+#include <sodium/crypto_sign_ed25519.h>
+#include <sodium/utils.h>
 
 export module lito.core:registry.crypto;
 
@@ -38,18 +39,9 @@ auto verify_ed25519(const Ed25519PublicKey& public_key,
 namespace
 {
 
-auto ensure_sodium() -> lito::registry::RegistryValueResult<empty> {
-    if (sodium_init() < 0) {
-        return lito::registry::registry_value_failure<empty>(
-            "cannot initialize the Ed25519 verifier"_str);
-    }
-    return Ok(empty {});
-}
-
 template<rstd::size_t Size>
 auto decode_base64url(ref<str> value, ref<str> description)
     -> lito::registry::RegistryValueResult<array<u8, Size>> {
-    rstd_try(ensure_sodium());
     auto result = array<u8, Size> {};
     auto length = std::size_t {};
     auto status =
@@ -110,7 +102,7 @@ auto lito::registry::verify_ed25519(const Ed25519PublicKey& public_key,
     auto key = rstd_try(decode_base64url<32>(public_key.base64url(), "Ed25519 public key"_str));
     auto decoded_signature =
         rstd_try(decode_base64url<64>(signature.base64url(), "Ed25519 signature"_str));
-    auto status = crypto_sign_verify_detached(
+    auto status = crypto_sign_ed25519_verify_detached(
         reinterpret_cast<const unsigned char*>(decoded_signature.as_slice().as_raw_ptr()),
         reinterpret_cast<const unsigned char*>(message.as_raw_ptr()),
         message.len().to_primitive(),
