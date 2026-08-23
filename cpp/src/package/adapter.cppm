@@ -233,7 +233,7 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
     rstd_try(validate_definitions(usage.private_definitions, "private-definitions"_str));
     if (! has_link_action && ! usage.linker_options.is_empty()) {
         return adapter_failure<empty>(
-            rstd::format("{} requires a binary, test, or benchmark target",
+            rstd::format("{} requires a shared library, binary, test, or benchmark target",
                          usage_source(package, "usage.linker-options"_str).as_str()));
     }
     for (auto index = usize {}; index < usage.linker_options.len(); ++index) {

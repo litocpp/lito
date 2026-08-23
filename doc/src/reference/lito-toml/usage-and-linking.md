@@ -30,8 +30,15 @@ them to C++ targets, and vice versa. Known options enter typed compatibility dom
 standard library, threading, language-standard, exception, RTTI, visibility, LTO, and other owned
 settings are diagnosed.
 
-`linker-options` is an array applied to package link actions. A package without a binary, test, or
-benchmark cannot declare linker options.
+`linker-options` is an array applied to the package's own link actions. It is not a public usage
+requirement and is never copied to a consuming target. A package without a shared library, binary,
+test, or benchmark cannot declare linker options.
+
+A shared library is a native link boundary. Its private and link-only dependencies are consumed
+while producing the shared object, but their link arguments and typed link requirements are not
+replayed when another target links that shared object. Dependencies declared public remain part of
+the shared library's explicit consumer interface. Static libraries retain their native link closure
+because the final linker must resolve archive members.
 
 Raw `-pthread` is not accepted as a substitute for `threads`.
 

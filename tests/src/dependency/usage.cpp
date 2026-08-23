@@ -98,6 +98,54 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
               "platform-api"_str);
 }
 
+TEST(DependencyUsage, SharedLibraryStopsPrivateNativeLinkClosure) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto metadata =
+        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    ASSERT_TRUE(metadata.is_ok());
+
+    auto& library         = metadata->targets[usize {}];
+    library.artifact_kind = lito::cpp::ArtifactKind::SharedLibrary;
+    library.usage.linker_options.push(String::make("-Wl,--version-script=library.map"_str));
+    library.usage.link_requirements.system_libraries.push(lito::link::SystemLibraryRequirement {
+        .name   = String::make("private-platform-api"_str),
+        .source = String::make("shared library usage"_str),
+    });
+    library.external_dependencies[usize {}].link_requirements.system_libraries.push(
+        lito::link::SystemLibraryRequirement {
+            .name   = String::make("private-external-api"_str),
+            .source = String::make("shared library external usage"_str),
+        });
+
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_ok());
+    ASSERT_EQ(planned->link_inputs[usize {}].len(), usize(1));
+    EXPECT_TRUE(planned->link_inputs[usize {}][usize {}].is_External());
+    ASSERT_EQ(planned->link_requirements[usize {}].system_libraries.len(), usize(2));
+    ASSERT_EQ(planned->linker_options[usize {}].len(), usize(1));
+
+    ASSERT_EQ(planned->link_inputs[usize(1)].len(), usize(1));
+    EXPECT_TRUE(planned->link_inputs[usize(1)][usize {}].is_Target());
+    EXPECT_TRUE(planned->link_requirements[usize(1)].system_libraries.is_empty());
+    EXPECT_TRUE(planned->linker_options[usize(1)].is_empty());
+}
+
+TEST(DependencyUsage, SharedLibraryRetainsExplicitPublicLinkInterface) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto metadata =
+        external_usage_metadata(lito::dependency::DependencyVisibility::Public, *parser);
+    ASSERT_TRUE(metadata.is_ok());
+    metadata->targets[usize {}].artifact_kind = lito::cpp::ArtifactKind::SharedLibrary;
+
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_ok());
+    ASSERT_EQ(planned->link_inputs[usize(1)].len(), usize(2));
+    EXPECT_TRUE(planned->link_inputs[usize(1)][usize {}].is_Target());
+    EXPECT_TRUE(planned->link_inputs[usize(1)][usize(1)].is_External());
+}
+
 TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

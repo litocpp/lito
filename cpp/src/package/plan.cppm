@@ -276,6 +276,56 @@ auto visit_target(const PackageMetadata& package,
     return Ok(empty {});
 }
 
+auto visit_link_target(const PackageMetadata& package,
+                       TargetId               target,
+                       bool                   public_interface_only,
+                       Vec<uint8_t>&          colors,
+                       Vec<TargetId>&         target_order) -> lito::package::PackageResult<empty> {
+    auto& color = colors[target];
+    if (color == 2) return Ok(empty {});
+    if (color == 1) {
+        return plan_failure<empty>(rstd::format("target dependency cycle at '{}'",
+                                                target_text(package.targets[target].id).as_str()));
+    }
+
+    color = 1;
+    for (auto pass = usize {}; pass < usize(2); ++pass) {
+        const auto link_only = pass == usize {};
+        for (const auto& dependency : package.targets[target].dependencies) {
+            if (public_interface_only &&
+                dependency.visibility != lito::dependency::DependencyVisibility::Public) {
+                continue;
+            }
+            if ((dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) !=
+                link_only) {
+                continue;
+            }
+            auto found = target_index(package, dependency.target);
+            if (found.is_none()) {
+                return plan_failure<empty>(
+                    rstd::format("target '{}' depends on unknown target '{}'",
+                                 target_text(package.targets[target].id).as_str(),
+                                 target_text(dependency.target).as_str()));
+            }
+            const auto nested_public_interface_only =
+                package.targets[*found].artifact_kind == ArtifactKind::SharedLibrary;
+            auto nested = visit_link_target(
+                package, *found, nested_public_interface_only, colors, target_order);
+            if (nested.is_err()) return nested;
+        }
+    }
+    color = 2;
+    target_order.emplace_back(target);
+    return Ok(empty {});
+}
+
+auto external_has_public_link_usage(const ResolvedExternalDependency& dependency) -> bool {
+    for (const auto& target : dependency.targets) {
+        if (target.visibility == lito::dependency::DependencyVisibility::Public) return true;
+    }
+    return false;
+}
+
 auto resolve_import_requirements(const PackageMetadata& package,
                                  const Vec<TargetId>&   target_order,
                                  Vec<CompileContext>&   contexts)
@@ -933,7 +983,7 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             colors.emplace_back(uint8_t {});
         }
         auto dependency_order = Vec<TargetId>::make();
-        auto ordered          = visit_target(package, target, colors, dependency_order);
+        auto ordered          = visit_link_target(package, target, false, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& inputs               = link_inputs[target];
         auto& requirements         = link_requirements[target];
@@ -964,9 +1014,14 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                     target_text(package.targets[candidate].id).as_str(),
                     abi_difference->provider.as_str()));
             }
-            append_unique(requirements, package.targets[candidate].usage.link_requirements);
+            const auto shared_boundary =
+                package.targets[candidate].artifact_kind == ArtifactKind::SharedLibrary;
+            if (! shared_boundary) {
+                append_unique(requirements, package.targets[candidate].usage.link_requirements);
+            }
             inputs.push(PlannedLinkInput::Target(candidate));
             for (const auto& external : package.targets[candidate].external_dependencies) {
+                if (shared_boundary && ! external_has_public_link_usage(external)) continue;
                 append_unique(requirements, external);
                 rstd_try(
                     append_external_link_input(inputs,
