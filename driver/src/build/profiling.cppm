@@ -70,6 +70,26 @@ enum class BuildOperation
     Strip,
 };
 
+enum class BuildStage
+{
+    Total,
+    ProductBegin,
+    Environment,
+    ProjectPrepare,
+    TargetPrepare,
+    Script,
+    RuntimeResource,
+    Scan,
+    CompilePlan,
+    CompileExecute,
+    CompileCacheFinish,
+    Archive,
+    Link,
+    ProductFinalize,
+    ProductPublish,
+    Count,
+};
+
 enum class ExternalPreparationOperation
 {
     CMakeConfigure,
@@ -78,6 +98,9 @@ enum class ExternalPreparationOperation
     CMakeQuery,
     CMakeQueryBuild,
     CMakeSnapshot,
+    CargoMetadata,
+    CargoBuild,
+    CargoReuse,
 };
 
 enum class ScanTimingCategory
@@ -108,6 +131,28 @@ auto build_operation_label(BuildOperation operation) noexcept -> ref<str> {
     return "build.unknown"_str;
 }
 
+auto build_stage_label(BuildStage stage) noexcept -> ref<str> {
+    switch (stage) {
+    case BuildStage::Total: return "build.total"_str;
+    case BuildStage::ProductBegin: return "build.product.begin"_str;
+    case BuildStage::Environment: return "build.environment"_str;
+    case BuildStage::ProjectPrepare: return "build.project-prepare"_str;
+    case BuildStage::TargetPrepare: return "build.target-prepare"_str;
+    case BuildStage::Script: return "build.script"_str;
+    case BuildStage::RuntimeResource: return "build.runtime-resource"_str;
+    case BuildStage::Scan: return "build.scan"_str;
+    case BuildStage::CompilePlan: return "build.compile-plan"_str;
+    case BuildStage::CompileExecute: return "build.compile-execute"_str;
+    case BuildStage::CompileCacheFinish: return "build.compile-cache-finish"_str;
+    case BuildStage::Archive: return "build.archive"_str;
+    case BuildStage::Link: return "build.link"_str;
+    case BuildStage::ProductFinalize: return "build.product-finalize"_str;
+    case BuildStage::ProductPublish: return "build.product-publish"_str;
+    case BuildStage::Count: break;
+    }
+    return "build.unknown"_str;
+}
+
 auto external_preparation_operation_label(ExternalPreparationOperation operation) noexcept
     -> ref<str> {
     switch (operation) {
@@ -117,6 +162,9 @@ auto external_preparation_operation_label(ExternalPreparationOperation operation
     case ExternalPreparationOperation::CMakeQuery: return "external.cmake.query"_str;
     case ExternalPreparationOperation::CMakeQueryBuild: return "external.cmake.query-build"_str;
     case ExternalPreparationOperation::CMakeSnapshot: return "external.cmake.snapshot"_str;
+    case ExternalPreparationOperation::CargoMetadata: return "external.cargo.metadata"_str;
+    case ExternalPreparationOperation::CargoBuild: return "external.cargo.build"_str;
+    case ExternalPreparationOperation::CargoReuse: return "external.cargo.reuse"_str;
     }
     return "external.cmake.unknown"_str;
 }
@@ -133,6 +181,9 @@ class ExternalPreparationTimingReport {
     BuildOperationTiming cmake_query_;
     BuildOperationTiming cmake_query_build_;
     BuildOperationTiming cmake_snapshot_;
+    BuildOperationTiming cargo_metadata_;
+    BuildOperationTiming cargo_build_;
+    BuildOperationTiming cargo_reuse_;
 
     auto timing_mut(ExternalPreparationOperation operation) noexcept -> BuildOperationTiming& {
         switch (operation) {
@@ -142,6 +193,9 @@ class ExternalPreparationTimingReport {
         case ExternalPreparationOperation::CMakeQuery: return cmake_query_;
         case ExternalPreparationOperation::CMakeQueryBuild: return cmake_query_build_;
         case ExternalPreparationOperation::CMakeSnapshot: return cmake_snapshot_;
+        case ExternalPreparationOperation::CargoMetadata: return cargo_metadata_;
+        case ExternalPreparationOperation::CargoBuild: return cargo_build_;
+        case ExternalPreparationOperation::CargoReuse: return cargo_reuse_;
         }
         return cmake_snapshot_;
     }
@@ -162,8 +216,51 @@ public:
         case ExternalPreparationOperation::CMakeQuery: return cmake_query_;
         case ExternalPreparationOperation::CMakeQueryBuild: return cmake_query_build_;
         case ExternalPreparationOperation::CMakeSnapshot: return cmake_snapshot_;
+        case ExternalPreparationOperation::CargoMetadata: return cargo_metadata_;
+        case ExternalPreparationOperation::CargoBuild: return cargo_build_;
+        case ExternalPreparationOperation::CargoReuse: return cargo_reuse_;
         }
         return cmake_snapshot_;
+    }
+};
+
+class BuildStageTimingReport {
+    array<BuildOperationTiming, 15> timings_;
+
+    static auto index(BuildStage stage) noexcept -> usize {
+        return usize(static_cast<rstd::size_t>(stage));
+    }
+
+public:
+    void record(BuildStage stage, rstd::time::Duration elapsed) noexcept {
+        if (stage == BuildStage::Count) return;
+        auto& timing = timings_[index(stage)];
+        if (timing.count != usize::MAX) ++timing.count;
+        timing.total = timing.total.saturating_add(elapsed);
+    }
+
+    template<typename F>
+    auto measure(BuildStage stage, F&& function) -> decltype(function()) {
+        auto started = rstd::time::Instant::now();
+        auto result  = function();
+        record(stage, started.elapsed());
+        return result;
+    }
+
+    auto timing(BuildStage stage) const noexcept -> const BuildOperationTiming& {
+        return timings_[index(stage)];
+    }
+
+    auto attributed() const noexcept -> rstd::time::Duration {
+        auto total = rstd::time::Duration {};
+        for (auto index = usize(1); index < usize(15); ++index) {
+            total = total.saturating_add(timings_[index].total);
+        }
+        return total;
+    }
+
+    auto unattributed() const noexcept -> rstd::time::Duration {
+        return timing(BuildStage::Total).total.saturating_sub(attributed());
     }
 };
 

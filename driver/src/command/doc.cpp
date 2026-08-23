@@ -52,7 +52,7 @@ auto doc_json_string(ref<str> text) -> Json {
 
 auto selected_package(const BuildSummary& summary, ref<str> name)
     -> Option<ref<cpp::SelectedPackageMetadata>> {
-    for (const auto& package : summary.product.selected_packages) {
+    for (const auto& package : summary.selected_packages) {
         if (package.name.as_str() == name) {
             return Some(
                 ref<cpp::SelectedPackageMetadata>::from_raw_parts(rstd::addressof(package)));
@@ -64,7 +64,7 @@ auto selected_package(const BuildSummary& summary, ref<str> name)
 auto selected_library_target(const BuildSummary&                   summary,
                              const lito::package::PackageTargetId& target) -> bool {
     if (target.kind != lito::package::PackageTargetKind::Library) return false;
-    for (const auto& selected : summary.product.selected_targets) {
+    for (const auto& selected : summary.selected_targets) {
         if (selected == target) return true;
     }
     return false;
@@ -392,7 +392,7 @@ auto site_manifest_json(const BuildSummary&     summary,
                         bool                    data_only,
                         bool                    package_publication) -> DocResult<String> {
     auto packages = Vec<PackageResponses>::make();
-    for (const auto& selected : summary.product.selected_packages) {
+    for (const auto& selected : summary.selected_packages) {
         packages.push(PackageResponses { .package = rstd::addressof(selected) });
     }
     for (const auto& plan : plans) {
@@ -464,7 +464,7 @@ auto site_manifest_json(const BuildSummary&     summary,
     auto root        = JsonMap::make();
     root.insert(String::make("format"_str), doc_json_string("litodoc-site"_str));
     root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("title"_str), doc_json_string(summary.product.package.as_str()));
+    root.insert(String::make("title"_str), doc_json_string(summary.package.as_str()));
     root.insert(String::make("output"_str), Json::String(rstd::move(output_text)));
     root.insert(String::make("data_output"_str), Json::String(rstd::move(data_text)));
     if (frontend.is_some()) {
@@ -572,10 +572,7 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
                                             request.package_publication);
     if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
     rstd_try(write_extraction_request(manifest_path.as_path(), manifest->as_str()));
-    emit_doc(request.observer,
-             DocEventKind::Generate,
-             summary.product.package.as_str(),
-             output.as_path());
+    emit_doc(request.observer, DocEventKind::Generate, summary.package.as_str(), output.as_path());
     rstd_try(run_generate(*tool, manifest_path.as_path(), *environment));
     auto publication_receipt = Option<PathBuf> {};
     if (request.package_publication) {

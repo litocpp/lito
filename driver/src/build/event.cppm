@@ -41,6 +41,8 @@ enum class BuildEventKind
     CargoMetadata,
     CargoBuild,
     CargoReuse,
+    ProductFinalize,
+    ProductPublish,
 };
 
 struct BuildProgress {
@@ -101,6 +103,8 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::CargoMetadata: name = "cargo-metadata"_str; break;
         case lito::BuildEventKind::CargoBuild: name = "cargo-build"_str; break;
         case lito::BuildEventKind::CargoReuse: name = "cargo-reuse"_str; break;
+        case lito::BuildEventKind::ProductFinalize: name = "product-finalize"_str; break;
+        case lito::BuildEventKind::ProductPublish: name = "product-publish"_str; break;
         }
         return formatter.write_str(name);
     }

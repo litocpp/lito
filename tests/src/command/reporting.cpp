@@ -21,6 +21,10 @@ TEST(Reporting, UserFacingEnumsImplementDisplay) {
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Extract).as_str(), "extract"_str);
     EXPECT_EQ(rstd::to_string(lito::BuildEventKind::CMakeQueryBuild).as_str(),
               "cmake-query-build"_str);
+    EXPECT_EQ(rstd::to_string(lito::BuildEventKind::ProductFinalize).as_str(),
+              "product-finalize"_str);
+    EXPECT_EQ(rstd::to_string(lito::BuildEventKind::ProductPublish).as_str(),
+              "product-publish"_str);
     EXPECT_EQ(rstd::format("{}", lito::package::PackageSelectionPurpose::Benchmark).as_str(),
               "benchmark"_str);
     EXPECT_EQ(rstd::format("{}", lito::package::PackageSelectionPurpose::Install).as_str(),

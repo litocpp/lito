@@ -245,8 +245,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
             request.build.registries.is_some() ? rstd::addressof(*request.build.registries)
                                                : nullptr,
             registry)));
-        rstd_try(validate_completed_build_selection(product, selection));
-        auto recipes = rstd_try(
+        auto recipes   = rstd_try(
             resolve_install_recipes(selection, effective_target, request.binaries, profile));
         auto requirements =
             rstd_try(resolve_install_build_requirements(selection, recipes, effective_target));

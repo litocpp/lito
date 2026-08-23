@@ -87,6 +87,9 @@ auto external_preparation_operation(BuildEventKind kind) -> Option<ExternalPrepa
     case BuildEventKind::CMakeQueryBuild:
         return Some(ExternalPreparationOperation::CMakeQueryBuild);
     case BuildEventKind::CMakeSnapshot: return Some(ExternalPreparationOperation::CMakeSnapshot);
+    case BuildEventKind::CargoMetadata: return Some(ExternalPreparationOperation::CargoMetadata);
+    case BuildEventKind::CargoBuild: return Some(ExternalPreparationOperation::CargoBuild);
+    case BuildEventKind::CargoReuse: return Some(ExternalPreparationOperation::CargoReuse);
     default: return None();
     }
 }
@@ -133,8 +136,8 @@ namespace lito
 auto build_with_environment_impl(const BuildRequest&                       request,
                                  const ResolvedProcessEnvironment&         process_environment,
                                  Option<lito::workspace::WorkspaceCatalog> catalog,
-                                 Option<PreparedBuildProject>              prepared = None())
-    -> BuildResult<BuildSummary> {
+                                 Option<PreparedBuildProject>              prepared,
+                                 BuildStageTimingReport stage_timing) -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return build_failure<BuildSummary>("build project root is required"_str);
     }
@@ -163,29 +166,32 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto supplied_prepared    = prepared.is_some();
     auto resolved_project     = [&]() -> BuildResult<PreparedBuildProject> {
         if (prepared.is_some()) return Ok(rstd::move(prepared).unwrap());
-        auto project = prepare_build_project(
-            request.selection,
-            request.configuration,
-            profile,
-            request.build_directory.as_path(),
-            request.sources,
-            request.lock,
-            request.pkg_config,
-            request.cmake,
-            request.cmake_build_overrides,
-            tool_resolver,
-            process_environment,
-            request.locked,
-            request.purpose,
-            execution->jobs,
-            preparation_observer,
-            rstd::move(catalog),
-            request.setup_reporter,
-            request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
-        if (project.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(project).unwrap_err()));
-        }
-        return Ok(rstd::move(project).unwrap());
+        return stage_timing.measure(
+            BuildStage::ProjectPrepare, [&]() -> BuildResult<PreparedBuildProject> {
+                auto project = prepare_build_project(
+                    request.selection,
+                    request.configuration,
+                    profile,
+                    request.build_directory.as_path(),
+                    request.sources,
+                    request.lock,
+                    request.pkg_config,
+                    request.cmake,
+                    request.cmake_build_overrides,
+                    tool_resolver,
+                    process_environment,
+                    request.locked,
+                    request.purpose,
+                    execution->jobs,
+                    preparation_observer,
+                    rstd::move(catalog),
+                    request.setup_reporter,
+                    request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
+                if (project.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(project).unwrap_err()));
+                }
+                return Ok(rstd::move(project).unwrap());
+            });
     }();
     if (resolved_project.is_err()) return Err(rstd::move(resolved_project).unwrap_err());
     auto  project   = rstd::move(resolved_project).unwrap();
@@ -217,7 +223,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                              canonical_output->as_path()));
         }
     }
-    auto created_profiler = ScanProfiler::create();
+    auto target_prepare_started = rstd::time::Instant::now();
+    auto created_profiler       = ScanProfiler::create();
     if (created_profiler.is_err()) {
         return build_failure<BuildSummary>(rstd::move(created_profiler).unwrap_err_unchecked());
     }
@@ -270,30 +277,13 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(script_packages).unwrap_err()));
     }
 
-    auto scan_span = profiler.span(ScanProbe::Total);
-    auto resolved  = profiler.measure(ScanProbe::Plan, [&] {
+    auto resolved = profiler.measure(ScanProbe::Plan, [&] {
         return cpp::resolve_native_targets(metadata, selected->clone());
     });
     if (resolved.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
     }
     auto native_target_plan = rstd::move(resolved).unwrap();
-
-    auto script_report = rstd_try(execute_build_script(metadata,
-                                                       native_target_plan,
-                                                       layout,
-                                                       metadata.default_profile.as_str(),
-                                                       *script_packages,
-                                                       *selected,
-                                                       request.observer,
-                                                       project.platform.host,
-                                                       project.platform.effective_target,
-                                                       tool_resolver,
-                                                       process_environment,
-                                                       request.sources,
-                                                       execution->jobs));
-    auto runtime_resources =
-        rstd_try(resolve_runtime_resources(metadata, layout, selected_targets, request.observer));
 
     auto needs_strip_tool = false;
     for (const auto target : selected->target_order) {
@@ -338,7 +328,31 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto analysis_service =
         FrontendAnalysisService::make(layout, toolchain, frontend_service, scan_cache, profiler);
 
-    auto discovered = profiler.measure(ScanProbe::Discovery, [&] {
+    stage_timing.record(BuildStage::TargetPrepare, target_prepare_started.elapsed());
+    auto script_result     = stage_timing.measure(BuildStage::Script, [&] {
+        return execute_build_script(metadata,
+                                    native_target_plan,
+                                    layout,
+                                    metadata.default_profile.as_str(),
+                                    *script_packages,
+                                    *selected,
+                                    request.observer,
+                                    project.platform.host,
+                                    project.platform.effective_target,
+                                    tool_resolver,
+                                    process_environment,
+                                    request.sources,
+                                    execution->jobs);
+    });
+    auto script_report     = rstd_try(rstd::move(script_result));
+    auto runtime_result    = stage_timing.measure(BuildStage::RuntimeResource, [&] {
+        return resolve_runtime_resources(metadata, layout, selected_targets, request.observer);
+    });
+    auto runtime_resources = rstd_try(rstd::move(runtime_result));
+
+    auto scan_started = rstd::time::Instant::now();
+    auto scan_span    = profiler.span(ScanProbe::Total);
+    auto discovered   = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_sources(metadata,
                                         native_target_plan,
                                         analysis_service,
@@ -444,9 +458,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_fingerprint_waits  = scan_cache_statistics.fingerprint_waits;
     frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
     analysis_service.release_source_cache();
+    stage_timing.record(BuildStage::Scan, scan_started.elapsed());
 
-    auto cache        = CompileCacheSession::create(cache_environment, layout.output());
-    auto materialized = materialize_compile_plan(
+    auto compile_plan_started = rstd::time::Instant::now();
+    auto cache                = CompileCacheSession::create(cache_environment, layout.output());
+    auto materialized         = materialize_compile_plan(
         package, layout, toolchain, bmi_format, units, scans, semantic_graph);
     if (materialized.is_err()) {
         return Err(rstd::move(materialized).unwrap_err());
@@ -456,13 +472,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (documentation_units.is_err()) {
         return Err(rstd::move(documentation_units).unwrap_err());
     }
-    auto executed = execute_compile_plan(package,
-                                         units,
-                                         rstd::move(materialized).unwrap(),
-                                         cache,
-                                         toolchain.compile_executor(),
-                                         request.observer,
-                                         *compile_execution);
+    stage_timing.record(BuildStage::CompilePlan, compile_plan_started.elapsed());
+    auto executed = stage_timing.measure(BuildStage::CompileExecute, [&] {
+        return execute_compile_plan(package,
+                                    units,
+                                    rstd::move(materialized).unwrap(),
+                                    cache,
+                                    toolchain.compile_executor(),
+                                    request.observer,
+                                    *compile_execution);
+    });
     if (executed.is_err()) {
         return Err(rstd::move(executed).unwrap_err());
     }
@@ -473,6 +492,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto compile_statistics = compile_result.statistics;
     auto build_timing       = rstd::move(compile_result.timing);
 
+    auto cache_finish_started = rstd::time::Instant::now();
     for (auto target : package_plan.target_order) {
         auto records = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) {
@@ -490,6 +510,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             return Err(rstd::into<BuildError>(rstd::move(finished).unwrap_err()));
         }
     }
+    stage_timing.record(BuildStage::CompileCacheFinish, cache_finish_started.elapsed());
 
     auto artifacts     = Vec<BuiltArtifact>::make();
     auto library_paths = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
@@ -502,6 +523,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             target_spec.artifact_kind != cpp::ArtifactKind::TestAttachmentArchive) {
             continue;
         }
+        auto archive_started = rstd::time::Instant::now();
         auto archive_path =
             target_spec.test_attachment.is_some()
                 ? layout.test_attachment_archive(*target_spec.test_attachment,
@@ -525,6 +547,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             .package_root  = target_spec.root.clone(),
             .link_identity = String::make(),
         });
+        stage_timing.record(BuildStage::Archive, archive_started.elapsed());
     }
 
     for (auto target : package_plan.target_order) {
@@ -534,7 +557,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             target_spec.artifact_kind == cpp::ArtifactKind::CompileTest) {
             continue;
         }
-        auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
+        auto link_started = rstd::time::Instant::now();
+        auto objects      = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
         auto link_inputs = Vec<ResolvedLinkInput>::make();
         if (target_spec.artifact_kind == cpp::ArtifactKind::TestExecutable) {
@@ -727,27 +751,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             .install_link  = rstd::move(install_link),
             .link_identity = rstd::move(link_identity),
         });
-    }
-
-    auto product_inputs = Vec<PathBuf>::make();
-    for (const auto& unit : units) product_inputs.push(unit.unit.source.clone());
-    for (const auto& scan : scans) {
-        const auto& common = cpp::scan_common(scan);
-        for (const auto& header : common.header_inputs) product_inputs.push(header.clone());
-        for (const auto& embedded : common.embedded_inputs) {
-            product_inputs.push(embedded.path.clone());
-        }
-    }
-    for (const auto& configured : script_report.files) {
-        product_inputs.push(configured.input.clone());
+        stage_timing.record(BuildStage::Link, link_started.elapsed());
     }
 
     auto product = CompletedBuildProduct {
-        .project_root        = request.selection.root.clone(),
-        .package             = package.name.clone(),
-        .profile             = package_plan.profile->name.clone(),
-        .target              = project.platform.effective_target.triple.clone(),
-        .target_architecture = project.platform.effective_target.architecture.name.clone(),
+        .profile = package_plan.profile->name.clone(),
+        .target  = project.platform.effective_target.triple.clone(),
         .target_kind =
             String::make(request.configuration.target.is_Android() ? "android"_str : "default"_str),
         .android_abi         = project.platform.android_abi.is_some()
@@ -758,45 +767,44 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                    : u32 {},
         .base_directory      = PathBuf::from(layout.base_directory()),
         .build_directory     = PathBuf::from(layout.output()),
-        .requested_packages  = as<Clone>(request.selection.packages).clone(),
-        .features =
-            lito::package::FeatureSelection {
-                .enabled          = as<Clone>(request.selection.features.enabled).clone(),
-                .default_features = request.selection.features.default_features,
-            },
-        .selected_targets           = rstd::move(selected_targets),
-        .selected_packages          = rstd::move(selected_packages),
-        .artifacts                  = rstd::move(artifacts),
-        .runtime_resources          = rstd::move(runtime_resources),
-        .target_runtimes            = rstd::move(project.target_runtimes),
-        .external_assets            = rstd::move(project.external_assets),
-        .external_source_provenance = rstd::move(project.external_source_provenance),
-        .compiler_identity          = toolchain.compiler_identity().build_identity.clone(),
-        .compiler_version           = toolchain.compiler_identity().version.clone(),
+        .artifacts           = rstd::move(artifacts),
+        .target_runtimes     = rstd::move(project.target_runtimes),
+        .external_assets     = rstd::move(project.external_assets),
     };
-    auto completed_product =
-        finalize_completed_build_product(rstd::move(product), request.lock, product_inputs);
+    emit(request,
+         BuildEventKind::ProductFinalize,
+         product.profile.as_str(),
+         product.base_directory.as_path());
+    auto completed_product = stage_timing.measure(BuildStage::ProductFinalize, [&] {
+        return finalize_completed_build_product(rstd::move(product));
+    });
     if (completed_product.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(completed_product).unwrap_err()));
     }
 
     return Ok(BuildSummary {
-        .product              = rstd::move(completed_product).unwrap(),
-        .platform             = project.platform.clone(),
-        .language_standard    = request.configuration.language_standard.clone(),
-        .scanned              = scans.len(),
-        .compiled             = compiled,
-        .reused               = reused,
-        .frontend             = frontend_statistics,
-        .toolchain            = toolchain.statistics(),
-        .scan_profile         = rstd::move(scan_profile),
-        .compile_execution    = compile_statistics,
-        .external_preparation = rstd::move(preparation_timing),
-        .build_timing         = rstd::move(build_timing),
-        .compile_tests        = rstd::move(compile_tests),
-        .script               = rstd::move(script_report),
-        .compiler             = toolchain.compiler_identity().clone(),
-        .documentation_units  = rstd::move(documentation_units).unwrap(),
+        .product                    = rstd::move(completed_product).unwrap(),
+        .package                    = package.name.clone(),
+        .selected_targets           = rstd::move(selected_targets),
+        .selected_packages          = rstd::move(selected_packages),
+        .runtime_resources          = rstd::move(runtime_resources),
+        .external_source_provenance = rstd::move(project.external_source_provenance),
+        .platform                   = project.platform.clone(),
+        .language_standard          = request.configuration.language_standard.clone(),
+        .scanned                    = scans.len(),
+        .compiled                   = compiled,
+        .reused                     = reused,
+        .frontend                   = frontend_statistics,
+        .toolchain                  = toolchain.statistics(),
+        .scan_profile               = rstd::move(scan_profile),
+        .compile_execution          = compile_statistics,
+        .stage_timing               = rstd::move(stage_timing),
+        .external_preparation       = rstd::move(preparation_timing),
+        .build_timing               = rstd::move(build_timing),
+        .compile_tests              = rstd::move(compile_tests),
+        .script                     = rstd::move(script_report),
+        .compiler                   = toolchain.compiler_identity().clone(),
+        .documentation_units        = rstd::move(documentation_units).unwrap(),
     });
 }
 
@@ -808,27 +816,45 @@ namespace lito
 auto build_with_environment(const BuildRequest&               request,
                             const ResolvedProcessEnvironment& process_environment)
     -> BuildResult<BuildSummary> {
-    return build_with_environment_impl(request, process_environment, None(), None());
+    auto total_started = rstd::time::Instant::now();
+    auto summary       = build_with_environment_impl(
+        request, process_environment, None(), None(), BuildStageTimingReport {});
+    if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
+    summary->stage_timing.record(BuildStage::Total, total_started.elapsed());
+    return summary;
 }
 
 auto build_resolved_project(BuildRequest request, lito::workspace::ResolvedProjectEntry project)
     -> BuildResult<BuildSummary> {
+    auto total_started     = rstd::time::Instant::now();
     request.selection.root = rstd::move(project.root);
-    auto environment       = ResolvedProcessEnvironment::resolve(request.environment);
+    auto stage_timing      = BuildStageTimingReport {};
+    auto environment       = stage_timing.measure(BuildStage::Environment, [&] {
+        return ResolvedProcessEnvironment::resolve(request.environment);
+    });
     if (environment.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
     }
-    return build_with_environment_impl(
-        request, *environment, Some(rstd::move(project.catalog)), None());
+    auto summary = build_with_environment_impl(
+        request, *environment, Some(rstd::move(project.catalog)), None(), rstd::move(stage_timing));
+    if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
+    summary->stage_timing.record(BuildStage::Total, total_started.elapsed());
+    return summary;
 }
 
 auto build_prepared_project(const BuildRequest&               request,
                             const ResolvedProcessEnvironment& environment,
                             PreparedBuildProject project) -> BuildResult<BuildSummary> {
-    return build_with_environment_impl(request, environment, None(), Some(rstd::move(project)));
+    auto total_started = rstd::time::Instant::now();
+    auto summary       = build_with_environment_impl(
+        request, environment, None(), Some(rstd::move(project)), BuildStageTimingReport {});
+    if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
+    summary->stage_timing.record(BuildStage::Total, total_started.elapsed());
+    return summary;
 }
 
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
+    auto total_started = rstd::time::Instant::now();
     if (request.selection.root.is_empty()) {
         return build_failure<BuildSummary>("build project root is required"_str);
     }
@@ -841,21 +867,34 @@ auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
                                             ? "release"_str
                                             : "debug"_str),
               };
-    auto publication = begin_build_product_publication(
-        request.selection.root.as_path(), request.build_directory.as_path(), profile.as_str());
+    auto stage_timing = BuildStageTimingReport {};
+    auto publication  = stage_timing.measure(BuildStage::ProductBegin, [&] {
+        return begin_build_product_publication(
+            request.selection.root.as_path(), request.build_directory.as_path(), profile.as_str());
+    });
     if (publication.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(publication).unwrap_err()));
     }
-    auto environment = ResolvedProcessEnvironment::resolve(request.environment);
+    auto environment = stage_timing.measure(BuildStage::Environment, [&] {
+        return ResolvedProcessEnvironment::resolve(request.environment);
+    });
     if (environment.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
     }
-    auto summary = build_with_environment_impl(request, *environment, None(), None());
+    auto summary = build_with_environment_impl(
+        request, *environment, None(), None(), rstd::move(stage_timing));
     if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
-    auto completed = complete_build_product_publication(*publication, summary->product);
+    emit(request,
+         BuildEventKind::ProductPublish,
+         summary->product.profile.as_str(),
+         publication->state.as_path());
+    auto completed = summary->stage_timing.measure(BuildStage::ProductPublish, [&] {
+        return complete_build_product_publication(*publication, summary->product);
+    });
     if (completed.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(completed).unwrap_err()));
     }
+    summary->stage_timing.record(BuildStage::Total, total_started.elapsed());
     return Ok(rstd::move(summary).unwrap());
 }
 

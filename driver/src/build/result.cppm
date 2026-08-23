@@ -17,22 +17,28 @@ export namespace lito
 {
 
 struct BuildSummary {
-    CompletedBuildProduct           product;
-    lito::system::BuildPlatform     platform;
-    String                          language_standard;
-    usize                           scanned {};
-    usize                           compiled {};
-    usize                           reused {};
-    frontend::FrontendStatistics    frontend;
-    ToolchainStatistics             toolchain;
-    ScanProfileReport               scan_profile;
-    CompileExecutionStatistics      compile_execution;
-    ExternalPreparationTimingReport external_preparation;
-    BuildTimingReport               build_timing;
-    Vec<CompileTestExecution>       compile_tests;
-    BuildScriptReport               script;
-    CompilerIdentity                compiler;
-    Vec<DocumentationBuildUnit>     documentation_units;
+    CompletedBuildProduct               product;
+    String                              package;
+    Vec<lito::package::PackageTargetId> selected_targets;
+    Vec<cpp::SelectedPackageMetadata>   selected_packages;
+    Vec<BuiltRuntimeResource>           runtime_resources;
+    Vec<ExternalSourceProvenance>       external_source_provenance;
+    lito::system::BuildPlatform         platform;
+    String                              language_standard;
+    usize                               scanned {};
+    usize                               compiled {};
+    usize                               reused {};
+    frontend::FrontendStatistics        frontend;
+    ToolchainStatistics                 toolchain;
+    ScanProfileReport                   scan_profile;
+    CompileExecutionStatistics          compile_execution;
+    BuildStageTimingReport              stage_timing;
+    ExternalPreparationTimingReport     external_preparation;
+    BuildTimingReport                   build_timing;
+    Vec<CompileTestExecution>           compile_tests;
+    BuildScriptReport                   script;
+    CompilerIdentity                    compiler;
+    Vec<DocumentationBuildUnit>         documentation_units;
 };
 
 } // namespace lito

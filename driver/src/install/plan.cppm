@@ -137,6 +137,17 @@ auto sort_entries(Vec<InstallEntry>& entries) -> void {
                                    });
 }
 
+auto validate_product_file(const CompletedBuildProduct& product,
+                           ref<rstd::path::Path>        path,
+                           ref<str> context) -> InstallMaterializeResult<empty> {
+    auto validated = validate_completed_build_product_file(product, path, context);
+    if (validated.is_err()) {
+        return materialize_failure<empty>(rstd::format("cannot use completed build product: {}",
+                                                       rstd::move(validated).unwrap_err()));
+    }
+    return Ok(empty {});
+}
+
 } // namespace lito
 
 export namespace lito
@@ -161,7 +172,9 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                                   }));
         }
         for (const auto& artifact : recipe.artifacts) {
-            auto built      = rstd_try(artifact_for(product, requirements, artifact.target));
+            auto built = rstd_try(artifact_for(product, requirements, artifact.target));
+            rstd_try(validate_product_file(
+                product, built->path.as_path(), "completed build artifact"_str));
             auto production = Option<InstallLinkProduction> {};
             if (built->install_link.is_some()) {
                 production = Some(InstallLinkProduction {
@@ -193,6 +206,8 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                 return materialize_failure<InstallPlan>(
                     rstd::format("build did not return target runtime '{}'", requested.name));
             }
+            rstd_try(validate_product_file(
+                product, resolved->path.as_path(), "completed build target runtime"_str));
             rstd_try(
                 append_entry(entries,
                              InstallEntry {
@@ -218,6 +233,10 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                 }
             }
             for (const auto& asset : resolved_set->entries) {
+                if (resolved_set->disposition == ExternalAssetDisposition::Materialized) {
+                    rstd_try(validate_product_file(
+                        product, asset.source.as_path(), "completed build external asset"_str));
+                }
                 auto destination = requested.destination.join(asset.logical_path.as_path());
                 auto transforms  = Vec<InstallEntryTransform>::make();
                 if (requested.strip.is_some()) {

@@ -109,6 +109,26 @@ auto run_profiling_test() -> int {
         lito::build_operation_label(lito::BuildOperation::Link) != "build.link"_str) {
         return 6;
     }
+    auto stage_timing = lito::BuildStageTimingReport {};
+    stage_timing.record(lito::BuildStage::Total, rstd::time::Duration::from_micros(u64(1'000)));
+    stage_timing.record(lito::BuildStage::Scan, rstd::time::Duration::from_micros(u64(300)));
+    stage_timing.record(lito::BuildStage::Archive, rstd::time::Duration::from_micros(u64(25)));
+    stage_timing.record(lito::BuildStage::Archive, rstd::time::Duration::from_micros(u64(25)));
+    if (stage_timing.timing(lito::BuildStage::Archive).count != usize(2) ||
+        stage_timing.attributed().as_micros() != u64(350) ||
+        stage_timing.unattributed().as_micros() != u64(650) ||
+        lito::build_stage_label(lito::BuildStage::ProductFinalize) !=
+            "build.product-finalize"_str) {
+        return 7;
+    }
+    auto external_timing = lito::ExternalPreparationTimingReport {};
+    external_timing.record(lito::ExternalPreparationOperation::CargoBuild,
+                           rstd::time::Duration::from_micros(u64(40)));
+    if (external_timing.timing(lito::ExternalPreparationOperation::CargoBuild).count != usize(1) ||
+        lito::external_preparation_operation_label(
+            lito::ExternalPreparationOperation::CargoMetadata) != "external.cargo.metadata"_str) {
+        return 8;
+    }
     return 0;
 }
 

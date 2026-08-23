@@ -202,7 +202,7 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
         EXPECT_FALSE(unit.invocation.arguments.is_empty());
         EXPECT_FALSE(unit.invocation.identity.is_empty());
         auto selected = false;
-        for (const auto& target : summary->product.selected_targets) {
+        for (const auto& target : summary->selected_targets) {
             if (target == unit.target) selected = true;
         }
         EXPECT_TRUE(selected);
@@ -243,9 +243,9 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     auto normal = lito::build(rstd::move(normal_request));
     ASSERT_TRUE(normal.is_ok());
     ASSERT_EQ(normal->product.artifacts.len(), usize(1));
-    ASSERT_EQ(normal->product.selected_targets.len(), usize(1));
+    ASSERT_EQ(normal->selected_targets.len(), usize(1));
     EXPECT_TRUE(normal->product.artifacts[usize {}].install_link.is_none());
-    auto selected_target = normal->product.selected_targets[usize {}].clone();
+    auto selected_target = normal->selected_targets[usize {}].clone();
 
     auto origin = lito::artifact::make_origin_relative_runtime_path(PathBuf::from("."_str));
     ASSERT_TRUE(origin.is_ok());

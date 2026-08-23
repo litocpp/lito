@@ -76,10 +76,30 @@ inline constexpr BuildOperation BUILD_OPERATIONS[] = {
     BuildOperation::Strip,
 };
 
+inline constexpr BuildStage BUILD_STAGES[] = {
+    BuildStage::Total,
+    BuildStage::ProductBegin,
+    BuildStage::Environment,
+    BuildStage::ProjectPrepare,
+    BuildStage::TargetPrepare,
+    BuildStage::Script,
+    BuildStage::RuntimeResource,
+    BuildStage::Scan,
+    BuildStage::CompilePlan,
+    BuildStage::CompileExecute,
+    BuildStage::CompileCacheFinish,
+    BuildStage::Archive,
+    BuildStage::Link,
+    BuildStage::ProductFinalize,
+    BuildStage::ProductPublish,
+};
+
 inline constexpr ExternalPreparationOperation EXTERNAL_PREPARATION_OPERATIONS[] = {
     ExternalPreparationOperation::CMakeConfigure,  ExternalPreparationOperation::CMakeBuild,
     ExternalPreparationOperation::CMakeInstall,    ExternalPreparationOperation::CMakeQuery,
     ExternalPreparationOperation::CMakeQueryBuild, ExternalPreparationOperation::CMakeSnapshot,
+    ExternalPreparationOperation::CargoMetadata,   ExternalPreparationOperation::CargoBuild,
+    ExternalPreparationOperation::CargoReuse,
 };
 
 inline constexpr ScanTimingCategory SCAN_CATEGORIES[] = {
@@ -270,7 +290,21 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_line(output, "\npreprocessor"_str);
     append_preprocessor(output, summary.frontend.preprocessor);
 
-    append_line(output, "\nbuild timing"_str);
+    append_line(output, "\nbuild stage timing"_str);
+    append_line(output, "  name | calls | total_us"_str);
+    for (const auto stage : BUILD_STAGES) {
+        const auto& timing = summary.stage_timing.timing(stage);
+        append_line(output,
+                    rstd::format("  {} | {} | {}",
+                                 build_stage_label(stage),
+                                 timing.count,
+                                 timing.total.as_micros()));
+    }
+    append_line(output,
+                rstd::format("  build.unattributed | 0 | {}",
+                             summary.stage_timing.unattributed().as_micros()));
+
+    append_line(output, "\nexternal preparation timing"_str);
     append_line(output, "  name | calls | total_us"_str);
     for (const auto operation : EXTERNAL_PREPARATION_OPERATIONS) {
         const auto& timing = summary.external_preparation.timing(operation);
@@ -280,6 +314,9 @@ auto detailed_report(const BuildSummary& summary) -> String {
                                  timing.count,
                                  timing.total.as_micros()));
     }
+
+    append_line(output, "\nbuild action timing"_str);
+    append_line(output, "  name | calls | total_us"_str);
     for (const auto operation : BUILD_OPERATIONS) {
         const auto& timing = summary.build_timing.timing(operation);
         append_line(output,
@@ -371,7 +408,27 @@ void print_summary(const BuildSummary& summary) {
                       display_duration(execution.task_work).as_str());
 
     rstd::io::println("  build");
-    rstd::io::println("    external preparation");
+    rstd::io::println("    stages");
+    rstd::io::println(
+        "      {:<30} {:>12} {:>8} {:>8}", "stage"_str, "wall"_str, "calls"_str, "share"_str);
+    auto build_total = summary.stage_timing.timing(BuildStage::Total).total;
+    for (const auto stage : BUILD_STAGES) {
+        const auto& timing = summary.stage_timing.timing(stage);
+        auto        total  = display_duration(timing.total);
+        auto        share  = display_share(timing.total, build_total);
+        rstd::io::println("      {:<30} {:>12} {:>8} {:>8}",
+                          build_stage_label(stage),
+                          total.as_str(),
+                          timing.count,
+                          share.as_str());
+    }
+    auto unattributed = summary.stage_timing.unattributed();
+    rstd::io::println("      {:<30} {:>12} {:>8} {:>8}",
+                      "build.unattributed"_str,
+                      display_duration(unattributed).as_str(),
+                      usize {},
+                      display_share(unattributed, build_total).as_str());
+    rstd::io::println("    external preparation (nested)");
     rstd::io::println("      {:<30} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);
     for (const auto operation : EXTERNAL_PREPARATION_OPERATIONS) {
         const auto& timing = summary.external_preparation.timing(operation);
@@ -387,11 +444,12 @@ void print_summary(const BuildSummary& summary) {
                       compile_execution.max_in_flight,
                       compile_execution.max_active,
                       display_duration(compile_execution.task_work).as_str());
-    rstd::io::println("    {:<24} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);
+    rstd::io::println("    actions (nested/parallel)");
+    rstd::io::println("      {:<30} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);
     for (const auto operation : BUILD_OPERATIONS) {
         const auto& timing = summary.build_timing.timing(operation);
         auto        total  = display_duration(timing.total);
-        rstd::io::println("    {:<24} {:>12} {:>8}",
+        rstd::io::println("      {:<30} {:>12} {:>8}",
                           build_operation_label(operation),
                           total.as_str(),
                           timing.count);

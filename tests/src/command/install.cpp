@@ -71,11 +71,9 @@ int main() { return FIXTURE_PROFILE[0] == 'r' ? 0 : 1; }
         FAIL();
         return;
     }
-    ASSERT_EQ(built->product.selected_targets.len(), usize(1));
-    EXPECT_EQ(built->product.selected_targets[usize {}].package.as_str(),
-              "fixture-configure-file"_str);
-    EXPECT_EQ(built->product.selected_targets[usize {}].kind,
-              lito::package::PackageTargetKind::Binary);
+    ASSERT_EQ(built->selected_targets.len(), usize(1));
+    EXPECT_EQ(built->selected_targets[usize {}].package.as_str(), "fixture-configure-file"_str);
+    EXPECT_EQ(built->selected_targets[usize {}].kind, lito::package::PackageTargetKind::Binary);
 }
 
 TEST_F(InstallCommand, InstallOnlyRecipeDoesNotRequireBuildArtifacts) {
@@ -279,8 +277,13 @@ version = "0.1.0"
 link-stdlib = false
 name = "fixture-no-build"
 sources = ["src/main.cpp"]
+[[bin]]
+link-stdlib = false
+name = "fixture-no-build-extra"
+sources = ["src/extra.cpp"]
 )"_str },
         { "src/main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "src/extra.cpp"_str, "int main() { return 0; }\n"_str },
     };
     auto project = materialize("install-no-build"_str, files);
     ASSERT_TRUE(project.is_ok());
@@ -317,7 +320,8 @@ sources = ["src/main.cpp"]
     request.build.configuration.toolchain.cxx = missing.clone();
     request.build.configuration.toolchain.ld  = missing.clone();
     request.build.configuration.toolchain.ar  = rstd::move(missing);
-    auto installed                            = lito::install(rstd::move(request));
+    request.binaries.push(String::make("fixture-no-build"_str));
+    auto installed = lito::install(rstd::move(request));
     if (installed.is_err()) {
         rstd::io::eprintln("{}", error_chain_text(installed.unwrap_err()));
         FAIL();
@@ -333,15 +337,17 @@ sources = ["src/main.cpp"]
     auto product_state = output.join(PathBuf::from(".lito/build-product.json"_str).as_path());
     auto product_json  = rstd::fs::read_to_string(product_state.as_path());
     ASSERT_TRUE(product_json.is_ok());
-    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 1"_str));
-    EXPECT_FALSE(product_json->as_str().contains("\"package-instance\""_str));
-    EXPECT_FALSE(product_json->as_str().contains("\"instance\""_str));
-    EXPECT_FALSE(product_json->as_str().contains("lito-pkg-"_str));
+    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 2"_str));
+    EXPECT_TRUE(product_json->as_str().contains("\"install-files\""_str));
+    EXPECT_TRUE(product_json->as_str().contains("\"modified-seconds\""_str));
+    EXPECT_FALSE(product_json->as_str().contains("\"sha256\""_str));
+    EXPECT_FALSE(product_json->as_str().contains("\"selected-packages\""_str));
+    EXPECT_FALSE(product_json->as_str().contains("\"requested-packages\""_str));
 
     ASSERT_TRUE(
         rstd::fs::write(
             product_state.as_path(),
-            R"({"schema":2,"state":"complete","generation":"old","product":{}})"_str.as_bytes())
+            R"({"schema":1,"state":"complete","generation":"old","product":{}})"_str.as_bytes())
             .is_ok());
     auto unsupported =
         lito::load_completed_build_product(fixture.as_path(), output.as_path(), "release"_str);
@@ -354,7 +360,7 @@ sources = ["src/main.cpp"]
     ASSERT_TRUE(
         rstd::fs::write(
             product_state.as_path(),
-            R"({"schema":1,"schema":1,"state":"building","generation":"duplicate"})"_str.as_bytes())
+            R"({"schema":2,"schema":2,"state":"building","generation":"duplicate"})"_str.as_bytes())
             .is_ok());
     auto duplicate =
         lito::load_completed_build_product(fixture.as_path(), output.as_path(), "release"_str);
@@ -364,11 +370,110 @@ sources = ["src/main.cpp"]
         rstd::fs::write(product_state.as_path(), product_json->as_str().as_bytes()).is_ok());
 
     ASSERT_FALSE(built->product.artifacts.is_empty());
-    auto artifact = built->product.artifacts[usize {}].path.clone();
+    const lito::BuiltArtifact* selected_artifact   = nullptr;
+    const lito::BuiltArtifact* unselected_artifact = nullptr;
+    for (const auto& candidate : built->product.artifacts) {
+        if (candidate.target.name == "fixture-no-build"_str) {
+            selected_artifact = rstd::addressof(candidate);
+        } else if (candidate.target.name == "fixture-no-build-extra"_str) {
+            unselected_artifact = rstd::addressof(candidate);
+        }
+    }
+    ASSERT_NE(selected_artifact, nullptr);
+    ASSERT_NE(unselected_artifact, nullptr);
+    auto artifact          = selected_artifact->path.clone();
+    auto original_contents = rstd::fs::read(artifact.as_path());
+    ASSERT_TRUE(original_contents.is_ok());
+    auto original_metadata = rstd::fs::metadata(artifact.as_path());
+    ASSERT_TRUE(original_metadata.is_ok());
+    auto original_modified = original_metadata->modified();
+    ASSERT_TRUE(original_modified.is_ok());
+
+    const auto reuse_request = [&](ref<rstd::path::Path> destination) {
+        auto resolved = lito::resolve_install_source(
+            lito::InstallSourceRequirement::LocalProject(fixture.clone()));
+        auto reused = lito::InstallRequest {
+            .source      = rstd::move(resolved).unwrap(),
+            .build       = build_request(fixture.as_path(),
+                                         output.as_path(),
+                                         strings("fixture-no-build"_str),
+                                         build_profile("release"_str)),
+            .destination = lito::InstallDestination::Prefix(
+                lito::InstallPrefix { .path = PathBuf::from(destination) }),
+            .build_mode = lito::InstallBuildMode::ReuseCompleted,
+        };
+        auto unavailable = fixture.join(PathBuf::from("missing-tool"_str).as_path());
+        reused.build.configuration.toolchain.cc  = unavailable.clone();
+        reused.build.configuration.toolchain.cxx = unavailable.clone();
+        reused.build.configuration.toolchain.ld  = unavailable.clone();
+        reused.build.configuration.toolchain.ar  = rstd::move(unavailable);
+        reused.binaries.push(String::make("fixture-no-build"_str));
+        return reused;
+    };
+
     ASSERT_TRUE(rstd::fs::write(artifact.as_path(), "tampered"_str.as_bytes()).is_ok());
-    auto changed =
+    auto loaded =
         lito::load_completed_build_product(fixture.as_path(), output.as_path(), "release"_str);
-    ASSERT_TRUE(changed.is_err());
+    ASSERT_TRUE(loaded.is_ok());
+    auto size_changed =
+        lito::install(reuse_request(install_root("install-no-build-size"_str).as_path()));
+    ASSERT_TRUE(size_changed.is_err());
+    EXPECT_TRUE(error_chain_text(size_changed.unwrap_err()).as_str().contains("size changed"_str));
+
+    ASSERT_TRUE(rstd::fs::write(artifact.as_path(), original_contents->as_slice()).is_ok());
+    auto artifact_file =
+        rstd::fs::OpenOptions::make().read(true).write(true).open(artifact.as_path());
+    ASSERT_TRUE(artifact_file.is_ok());
+    ASSERT_TRUE(
+        artifact_file->set_modified(*original_modified + rstd::time::Duration::from_secs(u64(1)))
+            .is_ok());
+    auto time_changed =
+        lito::install(reuse_request(install_root("install-no-build-time"_str).as_path()));
+    ASSERT_TRUE(time_changed.is_err());
+    EXPECT_TRUE(
+        error_chain_text(time_changed.unwrap_err()).as_str().contains("modified time changed"_str));
+
+    auto replacement = original_contents->clone();
+    ASSERT_FALSE(replacement.is_empty());
+    auto first_byte       = replacement.as_slice()[usize {}];
+    replacement[usize {}] = u8(first_byte.to_primitive() ^ 1U);
+    ASSERT_TRUE(rstd::fs::write(artifact.as_path(), replacement.as_slice()).is_ok());
+    ASSERT_TRUE(artifact_file->set_modified(*original_modified).is_ok());
+    ASSERT_TRUE(rstd::fs::write(fixture.join(PathBuf::from("src/main.cpp"_str).as_path()).as_path(),
+                                "int main() { return 0; } // package-only change\n"_str.as_bytes())
+                    .is_ok());
+    auto manifest          = fixture.join(PathBuf::from("lito.toml"_str).as_path());
+    auto manifest_contents = rstd::fs::read_to_string(manifest.as_path());
+    ASSERT_TRUE(manifest_contents.is_ok());
+    manifest_contents->push_str("\n# package-only change\n"_str);
+    ASSERT_TRUE(
+        rstd::fs::write(manifest.as_path(), manifest_contents->as_str().as_bytes()).is_ok());
+    auto lock = fixture.join(PathBuf::from("lito.lock"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(lock.as_path(),
+                                R"toml(version = 1
+[[packages]]
+name = "fixture-no-build"
+version = "0.1.0"
+# package-only change
+)toml"_str.as_bytes())
+                    .is_ok());
+    auto preserved =
+        lito::install(reuse_request(install_root("install-no-build-preserved"_str).as_path()));
+    if (preserved.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(preserved.unwrap_err()));
+        FAIL();
+        return;
+    }
+    ASSERT_TRUE(
+        rstd::fs::write(unselected_artifact->path.as_path(), "unselected changed"_str.as_bytes())
+            .is_ok());
+    auto unselected =
+        lito::install(reuse_request(install_root("install-no-build-unselected"_str).as_path()));
+    if (unselected.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(unselected.unwrap_err()));
+        FAIL();
+        return;
+    }
 
     auto first =
         lito::begin_build_product_publication(fixture.as_path(), output.as_path(), "release"_str);

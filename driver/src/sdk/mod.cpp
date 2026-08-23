@@ -1439,7 +1439,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
                          recipe.target.as_str()));
     }
     const lito::ExternalSourceProvenance* source = nullptr;
-    for (const auto& candidate : build->product.external_source_provenance) {
+    for (const auto& candidate : build->external_source_provenance) {
         if (candidate.package != recipe.package.as_str() ||
             candidate.name != recipe.external_source.as_str()) {
             continue;

@@ -31,7 +31,9 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         event.kind != lito::BuildEventKind::CMakeQueryBuild &&
         event.kind != lito::BuildEventKind::CMakeSnapshot &&
         event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link &&
-        event.kind != lito::BuildEventKind::Strip) {
+        event.kind != lito::BuildEventKind::Strip &&
+        event.kind != lito::BuildEventKind::ProductFinalize &&
+        event.kind != lito::BuildEventKind::ProductPublish) {
         return;
     }
     if (context.standard_error) {
@@ -1311,7 +1313,7 @@ extern "C++" int main() {
         } else if (options.verbose) {
             const auto& product = summary.build.as_Reused().product;
             rstd::io::println("[reuse] build product {} {}",
-                              product.id.as_str(),
+                              product.generation.as_str(),
                               product.build_directory.as_path());
         }
         rstd::io::println("installed {} entries from {} packages ({}{}) to {} {}",
@@ -1526,14 +1528,14 @@ extern "C++" int main() {
         if (summary.publication_receipt.is_some()) {
             rstd::io::println(
                 "generated package publications for {} packages: {} ({} extracted, {} reused)",
-                summary.build.product.selected_packages.len(),
+                summary.build.selected_packages.len(),
                 summary.publication_receipt->as_path(),
                 summary.extracted,
                 summary.reused);
         } else {
             rstd::io::println(
                 "generated documentation for {} packages in {}: {} extracted, {} reused",
-                summary.build.product.selected_packages.len(),
+                summary.build.selected_packages.len(),
                 options.data_only ? summary.data_output.as_path() : summary.output.as_path(),
                 summary.extracted,
                 summary.reused);
@@ -1822,7 +1824,7 @@ extern "C++" int main() {
     auto counts  = artifact_counts(summary);
     rstd::io::println("built {} ({}) in {}: {} scanned, {} compiled, {} reused, "
                       "{} archives, {} shared libraries, {} executables, {} tests",
-                      summary.product.package.as_str(),
+                      summary.package.as_str(),
                       summary.product.profile.as_str(),
                       summary.product.build_directory.as_path(),
                       summary.scanned,

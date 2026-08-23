@@ -49,8 +49,8 @@ source-groups = ["runtime"]
                                            Vec<String>::make(),
                                            build_profile("release"_str)));
     ASSERT_TRUE(built.is_ok());
-    ASSERT_EQ(built->product.external_source_provenance.len(), usize(1));
-    const auto& source = built->product.external_source_provenance[usize {}];
+    ASSERT_EQ(built->external_source_provenance.len(), usize(1));
+    const auto& source = built->external_source_provenance[usize {}];
     EXPECT_EQ(source.package.as_str(), "fixture-external-source-provenance"_str);
     EXPECT_EQ(source.name.as_str(), "upstream"_str);
     auto source_name = source.materialized_root.as_path().file_name();
