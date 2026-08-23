@@ -272,6 +272,66 @@ sources = ["src/library.cppm"]
     }
 }
 
+TEST_F(SystemProcess, TestRunsWithBuildProducedSharedLibrary) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "fixture-shared-test"
+members = ["library", "consumer"]
+
+[workspace.package]
+version = "0.1.0"
+)toml"_str },
+        { "library/lito.toml"_str, R"toml([package]
+name = "fixture-shared-library"
+version = { workspace = true }
+standard = "c99"
+
+[lib]
+name = "fixture-shared-library"
+kind = "shared"
+artifact = "fixture_shared_library"
+sources = ["src/library.c"]
+)toml"_str },
+        { "library/src/library.c"_str,
+          "__attribute__((visibility(\"default\")))\n"
+          "int fixture_shared_answer(void) { return 42; }\n"_str },
+        { "consumer/lito.toml"_str, R"toml([package]
+name = "fixture-shared-consumer"
+version = { workspace = true }
+standard = "c99"
+
+[[test]]
+name = "fixture-shared-consumer"
+sources = ["src/main.c"]
+
+[dependencies.fixture-shared-library]
+path = "../library"
+visibility = "private"
+)toml"_str },
+        { "consumer/src/main.c"_str, R"c(int fixture_shared_answer(void);
+
+int main(void) {
+    return fixture_shared_answer() == 42 ? 0 : 1;
+}
+)c"_str },
+    };
+    auto project = materialize("shared-test-runtime"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("shared-test-runtime"_str).as_path(),
+                                 strings("fixture-shared-consumer"_str),
+                                 build_profile("release"_str));
+    auto tested  = lito::test(lito::TestRequest { .build = rstd::move(request) });
+    if (tested.is_err()) {
+        auto message = error_chain_text(tested.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    ASSERT_EQ(tested->executions.len(), usize(1));
+    EXPECT_TRUE(tested->success());
+    EXPECT_TRUE(tested->executions[usize {}].success());
+}
+
 TEST_F(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
     auto tree = environment_tool_project_tree();
     ASSERT_TRUE(tree.is_ok());

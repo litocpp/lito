@@ -98,10 +98,11 @@ auto test(TestRequest request) -> CommandResult<TestSummary> {
     auto executions = Vec<TestExecution>::with_capacity(selected.len());
     if (! request.no_run) {
         rstd_try(ensure_artifact_runner(summary.platform, "test"_str));
+        auto runtime_environment = rstd_try(artifact_runtime_environment(summary, *environment));
         for (const auto* artifact : selected) {
             emit_run(request, *artifact);
-            executions.push(
-                execute_artifact(*artifact, request.arguments, *environment, "test"_str));
+            executions.push(execute_artifact(
+                *artifact, request.arguments, *environment, runtime_environment, "test"_str));
         }
     }
     return Ok(TestSummary {
