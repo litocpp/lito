@@ -229,16 +229,22 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         auto sources    = request.build.sources.clone();
         sources.network = lito::source::NetworkPolicy::Offline;
         sources.fetch_seeds.clear();
-        auto selection = rstd_try(install_project_failure(
-            resolve_existing_project_selection(request.build.selection,
-                                               lito::package::PackageSelectionPurpose::Install,
-                                               sources,
-                                               request.build.lock,
-                                               effective_target,
-                                               *environment,
-                                               usize(1),
-                                               request.build.observer,
-                                               Some(rstd::move(request.source.project.catalog)))));
+        auto registry  = request.source.registry_graph.is_some()
+                             ? request.source.registry_graph->provider()
+                             : lito::registry::RegistryGraphProvider {};
+        auto selection = rstd_try(install_project_failure(resolve_existing_project_selection(
+            request.build.selection,
+            lito::package::PackageSelectionPurpose::Install,
+            sources,
+            request.build.lock,
+            effective_target,
+            *environment,
+            usize(1),
+            request.build.observer,
+            Some(rstd::move(request.source.project.catalog)),
+            request.build.registries.is_some() ? rstd::addressof(*request.build.registries)
+                                               : nullptr,
+            registry)));
         rstd_try(validate_completed_build_selection(product, selection));
         auto recipes = rstd_try(
             resolve_install_recipes(selection, effective_target, request.binaries, profile));
@@ -269,19 +275,24 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         auto available = rstd::thread::available_parallelism();
         if (available.is_ok()) jobs = available->get();
     }
-    auto resolved         = rstd_try(install_project_failure(
-        resolve_build_project(request.build.selection,
-                              request.build.configuration,
-                              request.build.sources,
-                              request.build.lock,
-                              request.build.cmake_build_overrides,
-                              resolver,
-                              *environment,
-                              request.build.locked,
-                              lito::package::PackageSelectionPurpose::Install,
-                              jobs,
-                              request.build.observer,
-                              Some(rstd::move(request.source.project.catalog)))));
+    auto registry         = request.source.registry_graph.is_some()
+                                ? request.source.registry_graph->provider()
+                                : lito::registry::RegistryGraphProvider {};
+    auto resolved         = rstd_try(install_project_failure(resolve_build_project(
+        request.build.selection,
+        request.build.configuration,
+        request.build.sources,
+        request.build.lock,
+        request.build.cmake_build_overrides,
+        resolver,
+        *environment,
+        request.build.locked,
+        lito::package::PackageSelectionPurpose::Install,
+        jobs,
+        request.build.observer,
+        Some(rstd::move(request.source.project.catalog)),
+        request.build.registries.is_some() ? rstd::addressof(*request.build.registries) : nullptr,
+        registry)));
     auto effective_target = resolved.session.platform.effective_target.clone();
     auto recipes          = rstd_try(resolve_install_recipes(
         resolved.session.project.selection, effective_target, request.binaries, profile));

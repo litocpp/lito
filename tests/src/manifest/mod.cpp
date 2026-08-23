@@ -2,6 +2,7 @@
 
 import rstd;
 import rstd.serde;
+import rstd.toml;
 import rstd.test;
 import lito.core;
 import lito.system;
@@ -104,6 +105,200 @@ visibility = "private"
     ASSERT_TRUE(rejected.is_ok());
     EXPECT_TRUE(source.requirement.matches(*matching));
     EXPECT_FALSE(source.requirement.matches(*rejected));
+}
+
+TEST_F(Manifest, StandalonePackageExpandsPublishMetadataAndRegistryAliases) {
+    auto project = manifest("standalone-publish"_str, R"toml([package]
+name = "fixture-standalone-publish"
+version = "1.2.3"
+license = "MIT"
+authors = ["Lito Authors"]
+
+[package.publish]
+include = ["src/**", "LICENSE"]
+exclude = ["src/generated/**"]
+
+[lib]
+name = "fixture-standalone-publish"
+module = "fixture.standalone_publish"
+archive = "fixture-standalone-publish"
+
+[dependencies.same-registry]
+version = "^2.0"
+registry = "official"
+visibility = "public"
+
+[dev-dependencies.other-registry]
+version = "~3.1"
+registry = "community"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->publish.include.is_some());
+    ASSERT_EQ(loaded->publish.include->len(), usize(2));
+    ASSERT_EQ(loaded->publish.exclude.len(), usize(1));
+
+    auto official  = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap();
+    auto community = lito::registry::RegistryId::parse("https://community.example/"_str).unwrap();
+    auto aliases   = Vec<lito::manifest::StandaloneRegistryAlias>::make();
+    aliases.push(lito::manifest::StandaloneRegistryAlias {
+        .name     = String::make("official"_str),
+        .identity = rstd::move(official),
+    });
+    aliases.push(lito::manifest::StandaloneRegistryAlias {
+        .name     = String::make("community"_str),
+        .identity = rstd::move(community),
+    });
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            .registry_aliases = rstd::move(aliases),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    EXPECT_TRUE(serialized->as_str().contains("[dependencies.same-registry]"_str));
+    EXPECT_FALSE(serialized->as_str().contains("registry = \"https://registry.example/\""_str));
+    EXPECT_TRUE(serialized->as_str().contains("registry = \"https://community.example/\""_str));
+
+    auto parsed = rstd::toml::from_str(serialized->as_str());
+    ASSERT_TRUE(parsed.is_ok());
+}
+
+TEST_F(Manifest, PackageFileSetAppliesPortablePatternsAndFixedExcludes) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-file-set"
+version = "1.0.0"
+
+[package.publish]
+include = ["src/**", "LICENSE"]
+exclude = ["src/generated/**"]
+
+[lib]
+name = "fixture-file-set"
+module = "fixture.file_set"
+archive = "fixture-file-set"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.file_set;\n"_str },
+        { "src/generated/unused.cpp"_str, "int unused;\n"_str },
+        { "LICENSE"_str, "fixture license\n"_str },
+        { ".git/config"_str, "ignored\n"_str },
+        { "notes.txt"_str, "not selected\n"_str },
+    };
+    auto project = materialize("package-file-set"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto resolved = lito::manifest::PackageFileSetResolver::resolve(*loaded);
+    ASSERT_TRUE(resolved.is_ok());
+    auto paths = resolved->paths();
+    ASSERT_EQ(paths.len(), usize(3));
+    EXPECT_EQ(paths[usize {}].as_str(), "LICENSE"_str);
+    EXPECT_EQ(paths[usize(1)].as_str(), "lito.toml"_str);
+    EXPECT_EQ(paths[usize(2)].as_str(), "src/lib.cppm"_str);
+}
+
+TEST_F(Manifest, PackageFileSetRejectsPatternsCrossingNestedPackages) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-nested-file-set"
+version = "1.0.0"
+
+[package.publish]
+include = ["**"]
+
+[lib]
+name = "fixture-nested-file-set"
+module = "fixture.nested_file_set"
+archive = "fixture-nested-file-set"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.nested_file_set;\n"_str },
+        { "vendor/lito.toml"_str, R"toml([package]
+name = "nested"
+version = "1.0.0"
+
+[lib]
+name = "nested"
+module = "nested"
+archive = "nested"
+)toml"_str },
+        { "vendor/src/lib.cppm"_str, "export module nested;\n"_str },
+    };
+    auto project = materialize("nested-package-file-set"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto resolved = lito::manifest::PackageFileSetResolver::resolve(*loaded);
+    ASSERT_TRUE(resolved.is_err());
+    EXPECT_TRUE(resolved.unwrap_err().message.as_str().contains("nested package root"_str));
+}
+
+TEST_F(Manifest, PackageFileSetRequiresDeclaredSourcesToBeSelected) {
+    auto project = manifest("missing-published-source"_str, R"toml([package]
+name = "fixture-missing-published-source"
+version = "1.0.0"
+
+[package.publish]
+include = ["LICENSE"]
+
+[lib]
+name = "fixture-missing-published-source"
+module = "fixture.missing_published_source"
+archive = "fixture-missing-published-source"
+sources = ["src/lib.cppm"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto license = project->root.join(PathBuf::from("LICENSE"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(license.as_path(), "license\n"_str.as_bytes()).is_ok());
+    auto source_directory = project->root.join(PathBuf::from("src"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir(source_directory.as_path()).is_ok());
+    auto source = source_directory.join(PathBuf::from("lib.cppm"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(source.as_path(), "export module fixture;\n"_str.as_bytes()).is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto resolved = lito::manifest::PackageFileSetResolver::resolve(*loaded);
+    ASSERT_TRUE(resolved.is_err());
+    EXPECT_TRUE(resolved.unwrap_err().message.as_str().contains("target source"_str));
+}
+
+TEST_F(Manifest, PackPackageBuildsAndReinspectsStandaloneArchive) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-pack-package"
+version = "1.2.3"
+
+[lib]
+name = "fixture-pack-package"
+module = "fixture.pack_package"
+archive = "fixture-pack-package"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.pack_package;\n"_str },
+    };
+    auto project = materialize("pack-package"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("pack-package"_str)
+                      .join(PathBuf::from("fixture-pack-package-1.2.3.tar.zst"_str).as_path());
+    auto packed = lito::pack_package(lito::PackPackageRequest {
+        .root   = project->root.clone(),
+        .output = Some(output.clone()),
+        .registry =
+            lito::PackageRegistryContext {
+                .owner =
+                    lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            },
+    });
+    ASSERT_TRUE(packed.is_ok());
+    ASSERT_TRUE(packed->artifact.is_some());
+    EXPECT_EQ(packed->files.len(), usize(2));
+    EXPECT_TRUE(rstd::fs::exists(output.as_path()).unwrap());
+    EXPECT_EQ(packed->artifact->candidate.manifest.name.as_str(), "fixture-pack-package"_str);
+    EXPECT_EQ(packed->artifact->candidate.version.text(), "1.2.3"_str);
 }
 
 struct InvalidManifestCase {
@@ -1232,4 +1427,46 @@ visibility = "private"
     EXPECT_EQ(source.as_Git().reference.kind, lito::source::GitReferenceKind::Commit);
     EXPECT_EQ(source.as_Git().reference.value.as_str(),
               "0123456789abcdef0123456789abcdef01234567"_str);
+}
+
+TEST_F(Manifest, RegistryDependencyEditReplacesOnlyTheSourceSelection) {
+    auto project = manifest("registry-dependency-edit"_str, R"toml(# normalized by manifest edits
+[package]
+name = "fixture-registry-dependency-edit"
+version = "0.1.0"
+
+[lib]
+name = "fixture-registry-dependency-edit"
+module = "fixture.registry_dependency_edit"
+archive = "fixture-registry-dependency-edit"
+
+[dependencies.sample]
+git = "https://example.invalid/sample.git"
+tag = "v1"
+visibility = "public"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto package     = lito::registry::RegistryPackageName::parse("sample"_str);
+    auto requirement = lito::registry::VersionRequirement::parse("0.4"_str);
+    ASSERT_TRUE(package.is_ok());
+    ASSERT_TRUE(requirement.is_ok());
+    auto edited = lito::manifest::add_registry_dependency(
+        project->root.as_path(), *package, *requirement, Some(String::make("official"_str)));
+    ASSERT_TRUE(edited.is_ok());
+
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(1));
+    const auto& dependency = loaded->dependencies[usize {}];
+    ASSERT_TRUE(dependency.source.is_Registry());
+    EXPECT_EQ(dependency.name.as_str(), "sample"_str);
+    EXPECT_EQ(dependency.source.as_Registry().registry->as_str(), "official"_str);
+    EXPECT_EQ(dependency.source.as_Registry().requirement.text(), "0.4"_str);
+    ASSERT_TRUE(dependency.visibility.is_some());
+    EXPECT_EQ(*dependency.visibility, lito::dependency::DependencyVisibility::Public);
+
+    auto contents = rstd::fs::read_to_string(edited->path.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    EXPECT_FALSE(contents->as_str().contains("example.invalid"_str));
+    EXPECT_FALSE(contents->as_str().contains("# normalized"_str));
 }

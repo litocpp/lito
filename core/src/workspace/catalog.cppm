@@ -152,6 +152,10 @@ public:
         return packages_.remove(name);
     }
 
+    auto package(ref<str> name) const noexcept -> Option<ref<lito::manifest::PackageManifest>> {
+        return packages_.get(name);
+    }
+
     auto contains_package_root(ref<rstd::path::Path> root) const -> bool {
         auto text = root.to_str();
         return text.is_some() && member_roots_.contains_key(*text);

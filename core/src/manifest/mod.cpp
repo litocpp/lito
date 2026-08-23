@@ -23,11 +23,27 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
-using Toml = rstd::toml::Value;
+using Toml  = rstd::toml::Value;
+using Table = rstd::toml::Table;
 using namespace lito::manifest;
 
 auto lito::manifest::valid_package_name(ref<str> value) -> bool {
     return package_name_is_valid(value);
+}
+
+template<typename T>
+auto manifest_edit_failure(ref<rstd::path::Path> path, String message)
+    -> lito::manifest::ManifestEditResult<T> {
+    return Err(lito::manifest::ManifestEditError {
+        .path    = PathBuf::from(path),
+        .message = rstd::move(message),
+    });
+}
+
+template<typename T>
+auto manifest_edit_failure(ref<rstd::path::Path> path, ref<str> message)
+    -> lito::manifest::ManifestEditResult<T> {
+    return manifest_edit_failure<T>(path, String::make(message));
 }
 
 auto assemble_manifest_document(PathBuf                               root,
@@ -234,6 +250,8 @@ auto assemble_manifest_document(PathBuf                               root,
     if (license.is_err()) return Err(rstd::move(license).unwrap_err());
     auto authors = parse_package_authors(package_value);
     if (authors.is_err()) return Err(rstd::move(authors).unwrap_err());
+    auto publish = parse_package_publish(package_value);
+    if (publish.is_err()) return Err(rstd::move(publish).unwrap_err());
 
     auto usage = parse_usage(member(document, "usage"_str), source_root->as_path());
     auto conditions =
@@ -391,6 +409,7 @@ auto assemble_manifest_document(PathBuf                               root,
             .version                    = rstd::move(version).unwrap(),
             .license                    = rstd::move(license).unwrap(),
             .authors                    = rstd::move(authors).unwrap(),
+            .publish                    = rstd::move(publish).unwrap(),
             .standard                   = rstd::move(standard),
             .root                       = root.clone(),
             .source_root                = rstd::move(source_root).unwrap(),
@@ -426,6 +445,111 @@ auto assemble_manifest_document(PathBuf                               root,
     });
 }
 
+auto lito::manifest::add_registry_dependency(ref<rstd::path::Path> requested_directory,
+                                             const lito::registry::RegistryPackageName& package,
+                                             const lito::registry::VersionRequirement&  requirement,
+                                             Option<String>                             registry)
+    -> ManifestEditResult<ManifestDependencyEdit> {
+    auto located = locate_manifest(requested_directory);
+    if (located.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            requested_directory, rstd::format("{}", rstd::move(located).unwrap_err()));
+    }
+    auto location = rstd::move(located).unwrap();
+    auto root     = rstd::move(location.directory);
+    auto path     = rstd::move(location.manifest);
+    auto contents = rstd::fs::read_to_string(path.as_path());
+    if (contents.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            path.as_path(),
+            rstd::format("cannot read file: {}", rstd::move(contents).unwrap_err()));
+    }
+    auto parsed = rstd::toml::from_str(contents->as_str());
+    if (parsed.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            path.as_path(), rstd::format("cannot parse TOML: {}", rstd::move(parsed).unwrap_err()));
+    }
+    auto document = rstd::move(parsed).unwrap();
+    auto loaded   = assemble_manifest_document(root.clone(), path.clone(), document.clone());
+    if (loaded.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            path.as_path(), rstd::format("{}", rstd::move(loaded).unwrap_err()));
+    }
+    auto kind       = loaded->kind;
+    auto root_table = document.as_table_mut();
+    if (root_table.is_none()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(path.as_path(),
+                                                             "manifest root must be a table"_str);
+    }
+    auto owner = *root_table;
+    if (kind == ManifestKind::Workspace) {
+        auto workspace = owner->get_mut("workspace"_str);
+        if (workspace.is_none() || (**workspace).as_table_mut().is_none()) {
+            return manifest_edit_failure<ManifestDependencyEdit>(
+                path.as_path(), "workspace manifest has no workspace table"_str);
+        }
+        owner = (**workspace).as_table_mut().unwrap();
+    }
+    auto dependencies = owner->get_mut("dependencies"_str);
+    if (dependencies.is_none()) {
+        owner->insert(String::make("dependencies"_str), Toml::Table(Table::make()));
+        dependencies = owner->get_mut("dependencies"_str);
+    }
+    auto dependency_table = (**dependencies).as_table_mut();
+    if (dependency_table.is_none()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(path.as_path(),
+                                                             "dependencies must be a table"_str);
+    }
+    auto dependency = (**dependency_table).get_mut(package.as_str());
+    if (dependency.is_none()) {
+        (**dependency_table).insert(String::make(package.as_str()), Toml::Table(Table::make()));
+        dependency = (**dependency_table).get_mut(package.as_str());
+    }
+    auto fields = (**dependency).as_table_mut();
+    if (fields.is_none()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(path.as_path(),
+                                                             "dependency must be a table"_str);
+    }
+    constexpr ref<str> source_keys[] = {
+        "path"_str,   "git"_str,     "branch"_str,    "tag"_str,     "rev"_str,
+        "commit"_str, "builtin"_str, "workspace"_str, "version"_str, "registry"_str,
+    };
+    for (auto key : source_keys) (void)(**fields).remove(key);
+    (**fields).insert(String::make("version"_str), Toml::String(String::make(requirement.text())));
+    if (registry.is_some()) {
+        if (registry->is_empty()) {
+            return manifest_edit_failure<ManifestDependencyEdit>(
+                path.as_path(), "Registry name must not be empty"_str);
+        }
+        (**fields).insert(String::make("registry"_str),
+                          Toml::String(rstd::move(registry).unwrap()));
+    }
+    auto validated = assemble_manifest_document(rstd::move(root), path.clone(), document.clone());
+    if (validated.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            path.as_path(),
+            rstd::format("edited manifest is invalid: {}", rstd::move(validated).unwrap_err()));
+    }
+    auto serialized = rstd::toml::to_string(document);
+    if (serialized.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            path.as_path(),
+            rstd::format("cannot serialize TOML: {}", rstd::move(serialized).unwrap_err()));
+    }
+    auto output = rstd::move(serialized).unwrap();
+    if (! output.as_str().ends_with("\n"_str)) output.push_ascii(u8('\n'));
+    auto written = rstd::fs::write_atomic(path.as_path(), output.as_str().as_bytes());
+    if (written.is_err()) {
+        return manifest_edit_failure<ManifestDependencyEdit>(
+            path.as_path(),
+            rstd::format("cannot write file: {}", rstd::move(written).unwrap_err()));
+    }
+    return Ok(ManifestDependencyEdit {
+        .path    = rstd::move(path),
+        .package = String::make(package.as_str()),
+    });
+}
+
 auto lito::manifest::load_manifest_document(ref<rstd::path::Path> requested_directory)
     -> ManifestResult<ManifestDocument> {
     auto located = locate_manifest(requested_directory);
@@ -458,8 +582,9 @@ auto lito::manifest::load_manifest_document(ref<rstd::path::Path> requested_dire
     return Ok(rstd::move(assembled).unwrap());
 }
 
-auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_identity,
-                                                            const lito::source::SourceTree& tree)
+auto lito::manifest::load_package_manifest_from_source_tree_at(ref<str> source_identity,
+                                                               ref<rstd::path::Path> requested_root,
+                                                               const lito::source::SourceTree& tree)
     -> ManifestResult<PackageManifest> {
     if (source_identity.is_empty()) {
         auto path = PathBuf::from("builtin/lito.toml"_str);
@@ -477,7 +602,7 @@ auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_iden
             break;
         }
     }
-    auto root = PathBuf::from(rstd::format("builtin/{}", source_identity));
+    auto root = PathBuf::from(requested_root);
     auto path = root.join(PathBuf::from("lito.toml"_str).as_path());
     if (manifest_entry == nullptr) {
         return Err(ManifestError::File(ManifestFileError {
@@ -517,6 +642,13 @@ auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_iden
             PathBuf::from("builtin"_str), ManifestKind::Package, document.kind));
     }
     return Ok(rstd::move(document.package).unwrap());
+}
+
+auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_identity,
+                                                            const lito::source::SourceTree& tree)
+    -> ManifestResult<PackageManifest> {
+    auto root = PathBuf::from(rstd::format("builtin/{}", source_identity));
+    return load_package_manifest_from_source_tree_at(source_identity, root.as_path(), tree);
 }
 
 auto lito::manifest::load_package_manifest(ref<rstd::path::Path> requested_directory)

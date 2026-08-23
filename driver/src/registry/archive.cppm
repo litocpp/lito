@@ -42,10 +42,24 @@ public:
                         const RegistryReleaseProjection& release,
                         RegistryArchiveLimits            limits = {})
         -> RegistryArtifactResult<InspectedRegistryArchive>;
+    static auto inspect_at_root(const VerifiedRegistryBlob&      blob,
+                                const RegistryPackageId&         package,
+                                const RegistryReleaseProjection& release,
+                                ref<rstd::path::Path>            manifest_root,
+                                RegistryArchiveLimits            limits = {})
+        -> RegistryArtifactResult<InspectedRegistryArchive>;
 };
 
 class PackageArchiveBuilder {
 public:
+    static auto build(const lito::manifest::PackageFileSet&            files,
+                      const lito::manifest::StandalonePackageManifest& manifest,
+                      const RegistryPackageId&                         package,
+                      const SemanticVersion&                           version,
+                      PathBuf                                          destination,
+                      RegistryArchiveLimits                            limits = {})
+        -> RegistryArtifactResult<InspectedRegistryArchive>;
+
     static auto build(const lito::source::SourceTree& tree,
                       const RegistryPackageId&        package,
                       const SemanticVersion&          version,
@@ -426,12 +440,34 @@ auto write_archive_entry(archive*                     writer,
     return Ok(empty {});
 }
 
-} // namespace
+auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
+                                 const RegistryPackageId&      package,
+                                 const SemanticVersion&        version,
+                                 Option<ref<rstd::path::Path>> manifest_root,
+                                 RegistryArchiveLimits         limits)
+    -> RegistryArtifactResult<InspectedRegistryArchive> {
+    auto tree      = rstd_try(decode_archive(blob, package, version, limits));
+    auto candidate = manifest_root.is_some()
+                         ? inspect_registry_source_tree_at(tree, package, version, *manifest_root)
+                         : inspect_registry_source_tree(tree, package, version);
+    if (candidate.is_err()) return Err(rstd::move(candidate).unwrap_err());
+    return Ok(InspectedRegistryArchive {
+        .blob =
+            RegistryBlobProjection {
+                .digest = blob.digest.clone(),
+                .size   = RegistryBlobSize(blob.size),
+                .format = RegistryArchiveFormat::parse(RegistryArchiveFormat::TAR_ZSTD_V1).unwrap(),
+            },
+        .tree      = rstd::move(tree),
+        .candidate = rstd::move(candidate).unwrap(),
+    });
+}
 
-auto lito::registry::PackageArchiveInspector::inspect(const VerifiedRegistryBlob&      blob,
-                                                      const RegistryPackageId&         package,
-                                                      const RegistryReleaseProjection& release,
-                                                      RegistryArchiveLimits            limits)
+auto inspect_release_with_root(const VerifiedRegistryBlob&      blob,
+                               const RegistryPackageId&         package,
+                               const RegistryReleaseProjection& release,
+                               Option<ref<rstd::path::Path>>    manifest_root,
+                               RegistryArchiveLimits            limits)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
     if (! (blob.digest == release.blob.digest) || blob.size != release.blob.size.value()) {
         return archive_failure<InspectedRegistryArchive>(
@@ -439,7 +475,8 @@ auto lito::registry::PackageArchiveInspector::inspect(const VerifiedRegistryBlob
             package,
             String::make("verified blob does not match the selected Registry release"_str));
     }
-    auto  inspected = rstd_try(inspect_candidate(blob, package, release.version, limits));
+    auto inspected = rstd_try(
+        inspect_candidate_with_root(blob, package, release.version, manifest_root, limits));
     auto& candidate = inspected.candidate;
     if (! (candidate.source_digest == release.source)) {
         return archive_failure<InspectedRegistryArchive>(
@@ -463,23 +500,50 @@ auto lito::registry::PackageArchiveInspector::inspect(const VerifiedRegistryBlob
     return Ok(rstd::move(inspected));
 }
 
+} // namespace
+
+auto lito::registry::PackageArchiveBuilder::build(
+    const lito::manifest::PackageFileSet&            files,
+    const lito::manifest::StandalonePackageManifest& manifest,
+    const RegistryPackageId&                         package,
+    const SemanticVersion&                           version,
+    PathBuf                                          destination,
+    RegistryArchiveLimits limits) -> RegistryArtifactResult<InspectedRegistryArchive> {
+    auto tree     = files.tree().clone();
+    auto replaced = tree.replace_text("lito.toml"_str, manifest.as_str());
+    if (replaced.is_err()) {
+        return archive_failure<InspectedRegistryArchive>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            rstd::format("cannot install standalone manifest into package file set: {}",
+                         rstd::move(replaced).unwrap_err()));
+    }
+    return build(tree, package, version, rstd::move(destination), limits);
+}
+
+auto lito::registry::PackageArchiveInspector::inspect(const VerifiedRegistryBlob&      blob,
+                                                      const RegistryPackageId&         package,
+                                                      const RegistryReleaseProjection& release,
+                                                      RegistryArchiveLimits            limits)
+    -> RegistryArtifactResult<InspectedRegistryArchive> {
+    return inspect_release_with_root(blob, package, release, None(), limits);
+}
+
+auto lito::registry::PackageArchiveInspector::inspect_at_root(
+    const VerifiedRegistryBlob&      blob,
+    const RegistryPackageId&         package,
+    const RegistryReleaseProjection& release,
+    ref<rstd::path::Path>            manifest_root,
+    RegistryArchiveLimits            limits) -> RegistryArtifactResult<InspectedRegistryArchive> {
+    return inspect_release_with_root(blob, package, release, Some(manifest_root), limits);
+}
+
 auto lito::registry::PackageArchiveInspector::inspect_candidate(const VerifiedRegistryBlob& blob,
                                                                 const RegistryPackageId&    package,
                                                                 const SemanticVersion&      version,
                                                                 RegistryArchiveLimits       limits)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
-    auto tree      = rstd_try(decode_archive(blob, package, version, limits));
-    auto candidate = rstd_try(inspect_registry_source_tree(tree, package, version));
-    return Ok(InspectedRegistryArchive {
-        .blob =
-            RegistryBlobProjection {
-                .digest = blob.digest.clone(),
-                .size   = RegistryBlobSize(blob.size),
-                .format = RegistryArchiveFormat::parse(RegistryArchiveFormat::TAR_ZSTD_V1).unwrap(),
-            },
-        .tree      = rstd::move(tree),
-        .candidate = rstd::move(candidate),
-    });
+    return inspect_candidate_with_root(blob, package, version, None(), limits);
 }
 
 auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree& tree,

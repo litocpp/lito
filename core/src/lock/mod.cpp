@@ -587,13 +587,37 @@ auto append_git_pin(lito::source::SourceResolutionOptions& options, ref<str> url
     return Ok(empty {});
 }
 
+template<typename RegistrySource>
+auto append_registry_pin(lito::source::SourceResolutionOptions& options,
+                         const RegistrySource&                  source) -> LockResult<empty> {
+    for (const auto& existing : options.registry_sources) {
+        if (! (existing.package == source.package)) continue;
+        if (! (existing.version == source.version) || ! (existing.release == source.release)) {
+            return lock_failure<empty>(
+                rstd::format("lock contains conflicting exact Registry releases for package '{}'",
+                             source.package.name.as_str()));
+        }
+        return Ok(empty {});
+    }
+    options.registry_sources.push(lito::source::RegistrySourcePin {
+        .package = source.package.clone(),
+        .version = source.version.clone(),
+        .release = source.release.clone(),
+    });
+    return Ok(empty {});
+}
+
 auto append_project_pins(lito::source::SourceResolutionOptions& options,
                          const LockedProject&                   project) -> LockResult<empty> {
     for (const auto& package : project.packages) {
-        if (package.source.is_none() || ! package.source->is_Git()) continue;
-        rstd_try(append_git_pin(options,
-                                package.source->as_Git().url.as_str(),
-                                package.source->as_Git().commit.as_str()));
+        if (package.source.is_none()) continue;
+        if (package.source->is_Git()) {
+            rstd_try(append_git_pin(options,
+                                    package.source->as_Git().url.as_str(),
+                                    package.source->as_Git().commit.as_str()));
+        } else if (package.source->is_Registry()) {
+            rstd_try(append_registry_pin(options, package.source->as_Registry()));
+        }
     }
     for (const auto& package : project.packages) {
         for (const auto& external : package.externals) {

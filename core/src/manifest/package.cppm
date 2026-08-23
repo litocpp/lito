@@ -56,11 +56,17 @@ struct PackageAuthors {
     Vec<String>          values;
 };
 
+struct PackagePublish {
+    Option<Vec<String>> include;
+    Vec<String>         exclude;
+};
+
 struct PackageManifest {
     String                                             name;
     PackageVersion                                     version;
     PackageLicense                                     license;
     PackageAuthors                                     authors;
+    PackagePublish                                     publish;
     Option<PackageStandardRequirement>                 standard;
     PathBuf                                            root;
     PathBuf                                            source_root;

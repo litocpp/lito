@@ -11,5 +11,8 @@ export import :manifest.build_script;
 export import :manifest.package;
 export import :manifest.workspace;
 export import :manifest.document;
+export import :manifest.edit;
+export import :manifest.standalone;
+export import :manifest.publish;
 export import :manifest.error;
 export import :manifest.locator;

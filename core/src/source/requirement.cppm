@@ -87,4 +87,12 @@ struct ResolvedPackageSource {
     }
 };
 
+auto registry_source_identity(const lito::registry::RegistryPackageId& package,
+                              const lito::registry::SemanticVersion&   version) -> String {
+    return rstd::format("registry+{}{}@{}",
+                        package.registry.as_str(),
+                        package.name.as_str(),
+                        version.text().as_str());
+}
+
 } // namespace lito::source

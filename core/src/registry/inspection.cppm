@@ -35,6 +35,11 @@ auto inspect_registry_source_tree(const lito::source::SourceTree& tree,
                                   const RegistryPackageId&        expected_package,
                                   const SemanticVersion&          expected_version)
     -> RegistryArtifactResult<VerifiedRegistrySourceCandidate>;
+auto inspect_registry_source_tree_at(const lito::source::SourceTree& tree,
+                                     const RegistryPackageId&        expected_package,
+                                     const SemanticVersion&          expected_version,
+                                     ref<rstd::path::Path>           manifest_root)
+    -> RegistryArtifactResult<VerifiedRegistrySourceCandidate>;
 
 auto registry_dependencies_match(slice<RegistryDependencyProjection> left,
                                  slice<RegistryDependencyProjection> right) noexcept -> bool;
@@ -163,9 +168,10 @@ auto projection_equal(const RegistryDependencyProjection& left,
 
 } // namespace
 
-auto lito::registry::inspect_registry_source_tree(const lito::source::SourceTree& tree,
-                                                  const RegistryPackageId&        expected_package,
-                                                  const SemanticVersion&          expected_version)
+auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
+                                       const RegistryPackageId&        expected_package,
+                                       const SemanticVersion&          expected_version,
+                                       Option<ref<rstd::path::Path>>   manifest_root)
     -> RegistryArtifactResult<VerifiedRegistrySourceCandidate> {
     const lito::source::SourceTreeEntry* manifest_entry = nullptr;
     auto                                 file_count     = usize {};
@@ -202,8 +208,11 @@ auto lito::registry::inspect_registry_source_tree(const lito::source::SourceTree
                                         expected_package.registry.as_str(),
                                         expected_package.name.as_str(),
                                         expected_version.text().as_str());
-    auto loaded =
-        lito::manifest::load_package_manifest_from_source_tree(source_identity.as_str(), tree);
+    auto loaded          = manifest_root.is_some()
+                               ? lito::manifest::load_package_manifest_from_source_tree_at(
+                                     source_identity.as_str(), *manifest_root, tree)
+                               : lito::manifest::load_package_manifest_from_source_tree(
+                                     source_identity.as_str(), tree);
     if (loaded.is_err()) {
         return inspection_failure<VerifiedRegistrySourceCandidate>(
             RegistryArtifactErrorKind::Manifest,
@@ -268,6 +277,22 @@ auto lito::registry::inspect_registry_source_tree(const lito::source::SourceTree
         .file_count      = file_count,
         .unpacked_size   = unpacked_size,
     });
+}
+
+auto lito::registry::inspect_registry_source_tree(const lito::source::SourceTree& tree,
+                                                  const RegistryPackageId&        expected_package,
+                                                  const SemanticVersion&          expected_version)
+    -> RegistryArtifactResult<VerifiedRegistrySourceCandidate> {
+    return inspect_registry_source_tree_impl(tree, expected_package, expected_version, None());
+}
+
+auto lito::registry::inspect_registry_source_tree_at(const lito::source::SourceTree& tree,
+                                                     const RegistryPackageId& expected_package,
+                                                     const SemanticVersion&   expected_version,
+                                                     ref<rstd::path::Path>    manifest_root)
+    -> RegistryArtifactResult<VerifiedRegistrySourceCandidate> {
+    return inspect_registry_source_tree_impl(
+        tree, expected_package, expected_version, Some(manifest_root));
 }
 
 auto lito::registry::registry_dependencies_match(slice<RegistryDependencyProjection> left,

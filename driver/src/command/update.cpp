@@ -14,13 +14,15 @@ namespace lito
 {
 
 auto update_dependencies(const UpdateRequest& request) -> CommandResult<lito::lock::LockStatus> {
-    auto updated = update_project_dependencies(request.root.as_path(),
-                                               request.environment,
-                                               request.tools,
-                                               request.lock,
-                                               request.sources,
-                                               request.observer,
-                                               request.tool_reporter);
+    auto updated = update_project_dependencies(
+        request.root.as_path(),
+        request.environment,
+        request.tools,
+        request.lock,
+        request.sources,
+        request.observer,
+        request.tool_reporter,
+        request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
     if (updated.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(updated).unwrap_err()));
     }

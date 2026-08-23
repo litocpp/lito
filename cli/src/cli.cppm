@@ -66,6 +66,8 @@ struct DocOptions {
 };
 
 struct InstallOptions {
+    Option<String>                           source;
+    Option<String>                           registry;
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              binaries;
@@ -128,6 +130,23 @@ struct FormatOptions {
 struct UpdateOptions {
     bool         offline {};
     Vec<PathBuf> fetch_seeds;
+};
+
+struct AddOptions {
+    String         source;
+    Option<String> registry;
+};
+
+struct PackOptions {
+    Option<String>  package;
+    Option<String>  registry;
+    Option<PathBuf> output;
+    bool            list {};
+};
+
+struct PublishOptions {
+    Option<String> package;
+    Option<String> registry;
 };
 
 struct LockExportOptions {
@@ -213,6 +232,9 @@ class CliCommand {
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
+              (Add, (AddOptions options;)),
+              (Pack, (PackOptions options;)),
+              (Publish, (PublishOptions options;)),
               (Lock, (LockCommand command;)),
               (Config, (ConfigCommand command;)),
               (Sdk, (SdkCommand command;)),
@@ -332,6 +354,8 @@ struct BuildSchema {
 
 struct InstallSchema {
     CommandKey            command;
+    ArgKey<String>        source;
+    ArgKey<String>        registry;
     PackageProfileArgs    package;
     ArgKey<String>        binary;
     ArgKey<String>        build_directory;
@@ -411,6 +435,32 @@ struct UpdateSchema {
     ArgKey<String> fetch_seed;
 
     auto decode(const Matches& matches) const -> Result<UpdateOptions, CliDecodeError>;
+};
+
+struct AddSchema {
+    CommandKey     command;
+    ArgKey<String> source;
+    ArgKey<String> registry;
+
+    auto decode(const Matches& matches) const -> Result<AddOptions, CliDecodeError>;
+};
+
+struct PackSchema {
+    CommandKey     command;
+    ArgKey<String> package;
+    ArgKey<String> registry;
+    ArgKey<String> output;
+    ArgKey<bool>   list;
+
+    auto decode(const Matches& matches) const -> Result<PackOptions, CliDecodeError>;
+};
+
+struct PublishSchema {
+    CommandKey     command;
+    ArgKey<String> package;
+    ArgKey<String> registry;
+
+    auto decode(const Matches& matches) const -> Result<PublishOptions, CliDecodeError>;
 };
 
 struct LockExportSchema {
@@ -541,6 +591,9 @@ struct CliSchema {
     ScanSchema     scan;
     FormatSchema   format;
     UpdateSchema   update;
+    AddSchema      add;
+    PackSchema     pack;
+    PublishSchema  publish;
     LockSchema     lock;
     ConfigSchema   config;
     SdkSchema      sdk;
@@ -724,6 +777,13 @@ auto make_install_definition() -> CommandDefinition<InstallSchema> {
     auto command = Command::make("install"_str);
     command.about("Build and install packages"_str);
     auto key             = command.key();
+    auto source          = command.add_arg(Arg<String>::value("source"_str, string_parser())
+                                               .value_name("PACKAGE[@SELECTOR]"_str)
+                                               .help("Install a package from a Registry"_str));
+    auto registry        = command.add_arg(Arg<String>::value("registry"_str, string_parser())
+                                               .long_name("registry"_str)
+                                               .value_name("NAME"_str)
+                                               .help("Select a configured Registry"_str));
     auto package         = add_package_profile_args(command);
     auto binary          = command.add_arg(Arg<String>::value("bin"_str, string_parser())
                                                .long_name("bin"_str)
@@ -748,11 +808,16 @@ auto make_install_definition() -> CommandDefinition<InstallSchema> {
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
     command.conflicts(no_build, source_acquisition.fetch_seed);
+    command.conflicts(source, no_build);
+    command.conflicts(source, source_acquisition.locked);
+    command.conflicts(source, source_acquisition.frozen);
     command.conflicts(no_build, execution.timing_file);
     command.conflicts(no_build, execution.jobs);
     return {
         InstallSchema {
             .command            = key,
+            .source             = source,
+            .registry           = registry,
             .package            = rstd::move(package),
             .binary             = binary,
             .build_directory    = build_directory,
@@ -927,6 +992,84 @@ auto make_update_definition() -> CommandDefinition<UpdateSchema> {
     auto fetch_seed = command.add_arg(fetch_seed_arg());
     return {
         UpdateSchema { .command = key, .offline = offline, .fetch_seed = fetch_seed },
+        rstd::move(command),
+    };
+}
+
+auto make_add_definition() -> CommandDefinition<AddSchema> {
+    auto command = Command::make("add"_str);
+    command.about("Add a Registry dependency to the manifest"_str);
+    auto key      = command.key();
+    auto source   = command.add_arg(Arg<String>::value("source"_str, string_parser())
+                                        .value_name("PACKAGE[@REQUIREMENT]"_str)
+                                        .help("Select a package and version requirement"_str)
+                                        .required());
+    auto registry = command.add_arg(Arg<String>::value("registry"_str, string_parser())
+                                        .long_name("registry"_str)
+                                        .value_name("NAME"_str)
+                                        .help("Select a configured Registry"_str));
+    return {
+        AddSchema {
+            .command  = key,
+            .source   = source,
+            .registry = registry,
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_pack_definition() -> CommandDefinition<PackSchema> {
+    auto command = Command::make("pack"_str);
+    command.about("Create a Registry package archive"_str);
+    auto key      = command.key();
+    auto package  = command.add_arg(Arg<String>::value("package"_str, string_parser())
+                                        .short_name(u8('p'))
+                                        .long_name("package"_str)
+                                        .value_name("NAME"_str)
+                                        .help("Select one package"_str));
+    auto registry = command.add_arg(Arg<String>::value("registry"_str, string_parser())
+                                        .long_name("registry"_str)
+                                        .value_name("NAME"_str)
+                                        .help("Select a configured Registry"_str));
+    auto output   = command.add_arg(Arg<String>::value("output"_str, string_parser())
+                                        .long_name("output"_str)
+                                        .value_name("FILE"_str)
+                                        .help("Write the package archive to a file"_str));
+    auto list     = command.add_arg(
+        Arg<bool>::flag("list"_str)
+            .long_name("list"_str)
+            .help("List the selected package files without writing an archive"_str));
+    return {
+        PackSchema {
+            .command  = key,
+            .package  = package,
+            .registry = registry,
+            .output   = output,
+            .list     = list,
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_publish_definition() -> CommandDefinition<PublishSchema> {
+    auto command = Command::make("publish"_str);
+    command.about("Publish a package to a Registry"_str);
+    auto key      = command.key();
+    auto package  = command.add_arg(Arg<String>::value("package"_str, string_parser())
+                                        .short_name(u8('p'))
+                                        .long_name("package"_str)
+                                        .value_name("NAME"_str)
+                                        .help("Select one package"_str));
+    auto registry = command.add_arg(Arg<String>::value("registry"_str, string_parser())
+                                        .long_name("registry"_str)
+                                        .value_name("NAME"_str)
+                                        .help("Select a configured Registry"_str));
+    return {
+        PublishSchema {
+            .command  = key,
+            .package  = package,
+            .registry = registry,
+        },
         rstd::move(command),
     };
 }
@@ -1173,6 +1316,9 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto scan     = make_scan_definition();
     auto format   = make_format_definition();
     auto update   = make_update_definition();
+    auto add      = make_add_definition();
+    auto pack     = make_pack_definition();
+    auto publish  = make_publish_definition();
     auto lock     = make_lock_definition();
     auto config   = make_config_definition();
     auto sdk      = make_sdk_definition();
@@ -1200,6 +1346,9 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(scan.command));
     root.add_subcommand(rstd::move(format.command));
     root.add_subcommand(rstd::move(update.command));
+    root.add_subcommand(rstd::move(add.command));
+    root.add_subcommand(rstd::move(pack.command));
+    root.add_subcommand(rstd::move(publish.command));
     root.add_subcommand(rstd::move(lock.command));
     root.add_subcommand(rstd::move(config.command));
     root.add_subcommand(rstd::move(sdk.command));
@@ -1217,6 +1366,9 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .scan     = rstd::move(scan.schema),
         .format   = rstd::move(format.schema),
         .update   = rstd::move(update.schema),
+        .add      = rstd::move(add.schema),
+        .pack     = rstd::move(pack.schema),
+        .publish  = rstd::move(publish.schema),
         .lock     = rstd::move(lock.schema),
         .config   = rstd::move(config.schema),
         .sdk      = rstd::move(sdk.schema),
@@ -1399,15 +1551,23 @@ auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, C
 }
 
 auto InstallSchema::decode(const Matches& matches) const -> Result<InstallOptions, CliDecodeError> {
-    auto package     = rstd_try(decode_package_profile(matches, this->package));
-    auto source      = rstd_try(decode_source_acquisition(matches, source_acquisition));
-    auto execution   = rstd_try(decode_build_execution(matches, this->execution));
-    auto root        = rstd_try(optional_path(matches, this->root));
-    auto prefix      = rstd_try(optional_path(matches, this->prefix));
+    auto package        = rstd_try(decode_package_profile(matches, this->package));
+    auto source         = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution      = rstd_try(decode_build_execution(matches, this->execution));
+    auto root           = rstd_try(optional_path(matches, this->root));
+    auto prefix         = rstd_try(optional_path(matches, this->prefix));
+    auto install_source = rstd_try(optional_string(matches, this->source));
+    auto registry       = rstd_try(optional_string(matches, this->registry));
+    if (registry.is_some() && install_source.is_none()) {
+        return Err(CliDecodeError::InvalidUsage(
+            String::make("install --registry requires a Registry package argument"_str)));
+    }
     auto destination = prefix.is_some()
                            ? InstallDestinationRequirement::Prefix(rstd::move(prefix).unwrap())
                            : InstallDestinationRequirement::Managed(rstd::move(root));
     return Ok(InstallOptions {
+        .source          = rstd::move(install_source),
+        .registry        = rstd::move(registry),
         .packages        = rstd::move(package.packages),
         .profile         = rstd::move(package.profile),
         .binaries        = rstd_try(string_values(matches, binary)),
@@ -1528,6 +1688,29 @@ auto UpdateSchema::decode(const Matches& matches) const -> Result<UpdateOptions,
     return Ok(UpdateOptions {
         .offline     = rstd_try(flag_value(matches, offline)),
         .fetch_seeds = rstd_try(path_values(matches, fetch_seed)),
+    });
+}
+
+auto AddSchema::decode(const Matches& matches) const -> Result<AddOptions, CliDecodeError> {
+    return Ok(AddOptions {
+        .source   = rstd_try(required_string(matches, source, "source"_str)),
+        .registry = rstd_try(optional_string(matches, registry)),
+    });
+}
+
+auto PackSchema::decode(const Matches& matches) const -> Result<PackOptions, CliDecodeError> {
+    return Ok(PackOptions {
+        .package  = rstd_try(optional_string(matches, package)),
+        .registry = rstd_try(optional_string(matches, registry)),
+        .output   = rstd_try(optional_path(matches, output)),
+        .list     = rstd_try(flag_value(matches, list)),
+    });
+}
+
+auto PublishSchema::decode(const Matches& matches) const -> Result<PublishOptions, CliDecodeError> {
+    return Ok(PublishOptions {
+        .package  = rstd_try(optional_string(matches, package)),
+        .registry = rstd_try(optional_string(matches, registry)),
     });
 }
 
@@ -1723,6 +1906,18 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         auto options = rstd_try(schema.update.decode(**child));
         return Ok(CliCommand::Update(rstd::move(options)));
     }
+    if (auto child = matches.subcommand_matches(schema.add.command); child.is_some()) {
+        auto options = rstd_try(schema.add.decode(**child));
+        return Ok(CliCommand::Add(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.pack.command); child.is_some()) {
+        auto options = rstd_try(schema.pack.decode(**child));
+        return Ok(CliCommand::Pack(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.publish.command); child.is_some()) {
+        auto options = rstd_try(schema.publish.decode(**child));
+        return Ok(CliCommand::Publish(rstd::move(options)));
+    }
     if (auto child = matches.subcommand_matches(schema.lock.command); child.is_some()) {
         auto command = rstd_try(schema.lock.decode(**child));
         return Ok(CliCommand::Lock(rstd::move(command)));
@@ -1775,6 +1970,10 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     if (command.is_Registry() && (no_config || ! overrides.is_empty())) {
         return Err(CliDecodeError::InvalidUsage(String::make(
             "the registry command cannot be combined with --no-config or --config"_str)));
+    }
+    if ((command.is_Pack() || command.is_Publish()) && ! overrides.is_empty()) {
+        return Err(CliDecodeError::InvalidUsage(
+            String::make("pack and publish do not accept project --config overrides"_str)));
     }
     return Ok(CliInvocation {
         .working_directory = PathBuf::from(rstd::move(directory)),

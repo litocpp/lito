@@ -242,7 +242,8 @@ auto resolve_package_selection_with_environment_impl(
     const ResolvedProcessEnvironment&         environment,
     usize                                     jobs     = usize(1),
     lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+    lito::registry::RegistryGraphProvider     registry = {})
     -> PackageSelectionResult<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment_impl(selection.root.as_path(),
                                                                 rstd::move(options),
@@ -250,7 +251,8 @@ auto resolve_package_selection_with_environment_impl(
                                                                 environment,
                                                                 jobs,
                                                                 observer,
-                                                                rstd::move(catalog));
+                                                                rstd::move(catalog),
+                                                                registry);
     if (resolved.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(resolved).unwrap_err()));
     }
@@ -425,7 +427,8 @@ auto resolve_package_selection_with_environment(
     const ResolvedProcessEnvironment&         environment,
     usize                                     jobs     = usize(1),
     lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+    lito::registry::RegistryGraphProvider     registry = {})
     -> PackageSelectionResult<ResolvedPackageSelection> {
     return resolve_package_selection_with_environment_impl(selection,
                                                            purpose,
@@ -435,7 +438,8 @@ auto resolve_package_selection_with_environment(
                                                            environment,
                                                            jobs,
                                                            observer,
-                                                           rstd::move(catalog));
+                                                           rstd::move(catalog),
+                                                           registry);
 }
 
 auto resolve_existing_package_selection_with_environment(
@@ -446,7 +450,8 @@ auto resolve_existing_package_selection_with_environment(
     const ResolvedProcessEnvironment&         environment,
     usize                                     jobs     = usize(1),
     lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+    lito::registry::RegistryGraphProvider     registry = {})
     -> PackageSelectionResult<ResolvedPackageSelection> {
     return resolve_package_selection_with_environment_impl(selection,
                                                            purpose,
@@ -456,7 +461,8 @@ auto resolve_existing_package_selection_with_environment(
                                                            environment,
                                                            jobs,
                                                            observer,
-                                                           rstd::move(catalog));
+                                                           rstd::move(catalog),
+                                                           registry);
 }
 
 auto resolve_package_selection(const PackageSelection& selection,

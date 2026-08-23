@@ -4,6 +4,7 @@ import rstd;
 import lito.tools;
 import lito.core;
 import :config.project;
+import :config.registry;
 import :package.selection;
 import :build.event;
 import :build.setup_report;
@@ -63,6 +64,7 @@ struct BuildRequest {
     PathBuf                                   build_directory;
     ProcessEnvironmentSpec                    environment;
     lito::tools::ToolSpec                     tools;
+    Option<config::LitoBootstrapConfig>       registries;
     config::BuildConfigurationRequest         configuration;
     lito::lock::LockConfig                    lock;
     Option<lito::manifest::BuildProfileName>  profile;

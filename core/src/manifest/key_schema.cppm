@@ -19,7 +19,11 @@ using namespace lito::manifest;
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
            key == "target"_str || key == "license"_str || key == "authors"_str ||
-           key == "standard"_str;
+           key == "standard"_str || key == "publish"_str;
+}
+
+auto package_publish_key(ref<str> key) -> bool {
+    return key == "include"_str || key == "exclude"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
@@ -320,5 +324,27 @@ auto parse_package_authors(const Toml& package) -> ManifestSchemaResult<PackageA
     }
     return Ok(PackageAuthors {
         .source = PackageAuthorsSource::Workspace,
+    });
+}
+
+auto parse_package_publish(const Toml& package) -> ManifestSchemaResult<PackagePublish> {
+    auto declared = member(package, "publish"_str);
+    if (declared.is_none()) return Ok(PackagePublish {});
+    auto table = rstd_try(table_value(**declared, "package.publish"_str));
+    rstd_try(reject_unknown(*table, "package.publish"_str, package_publish_key));
+    auto include       = Option<Vec<String>> {};
+    auto include_value = member(**declared, "include"_str);
+    if (include_value.is_some()) {
+        auto patterns = rstd_try(string_array(include_value, "package.publish.include"_str));
+        if (patterns.is_empty()) {
+            return manifest_schema_failure<PackagePublish>(
+                "package.publish.include must not be empty"_str);
+        }
+        include = Some(rstd::move(patterns));
+    }
+    return Ok(PackagePublish {
+        .include = rstd::move(include),
+        .exclude = rstd_try(
+            string_array(member(**declared, "exclude"_str), "package.publish.exclude"_str)),
     });
 }

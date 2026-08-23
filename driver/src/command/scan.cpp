@@ -109,23 +109,25 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     auto jobs             = usize(1);
     auto available        = rstd::thread::available_parallelism();
     if (available.is_ok()) jobs = available->get();
-    auto prepared = prepare_build_project(request.selection,
-                                          request.configuration,
-                                          profile,
-                                          requested_output.as_path(),
-                                          request.sources,
-                                          request.lock,
-                                          request.pkg_config,
-                                          request.cmake,
-                                          request.cmake_build_overrides,
-                                          tool_resolver,
-                                          *environment,
-                                          request.locked,
-                                          lito::package::PackageSelectionPurpose::All,
-                                          jobs,
-                                          request.observer,
-                                          None(),
-                                          request.setup_reporter);
+    auto prepared = prepare_build_project(
+        request.selection,
+        request.configuration,
+        profile,
+        requested_output.as_path(),
+        request.sources,
+        request.lock,
+        request.pkg_config,
+        request.cmake,
+        request.cmake_build_overrides,
+        tool_resolver,
+        *environment,
+        request.locked,
+        lito::package::PackageSelectionPurpose::All,
+        jobs,
+        request.observer,
+        None(),
+        request.setup_reporter,
+        request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
     if (prepared.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(prepared).unwrap_err()));
     }

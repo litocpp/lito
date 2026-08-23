@@ -27,6 +27,7 @@ enum class HostToolCapability
     PkgConfigQuery,
     GitCheckout,
     HttpDownload,
+    RegistryPublish,
     ArchiveExtraction,
     SourceFormatting,
     ArtifactStripping,
@@ -38,6 +39,7 @@ constexpr auto host_tool_capability_name(HostToolCapability capability) noexcept
     case HostToolCapability::PkgConfigQuery: return "pkg-config query"_str;
     case HostToolCapability::GitCheckout: return "Git checkout"_str;
     case HostToolCapability::HttpDownload: return "archive download"_str;
+    case HostToolCapability::RegistryPublish: return "Registry publish"_str;
     case HostToolCapability::ArchiveExtraction: return "archive extraction"_str;
     case HostToolCapability::SourceFormatting: return "source formatting"_str;
     case HostToolCapability::ArtifactStripping: return "artifact stripping"_str;

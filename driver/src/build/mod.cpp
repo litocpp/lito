@@ -163,23 +163,25 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto supplied_prepared    = prepared.is_some();
     auto resolved_project     = [&]() -> BuildResult<PreparedBuildProject> {
         if (prepared.is_some()) return Ok(rstd::move(prepared).unwrap());
-        auto project = prepare_build_project(request.selection,
-                                             request.configuration,
-                                             profile,
-                                             request.build_directory.as_path(),
-                                             request.sources,
-                                             request.lock,
-                                             request.pkg_config,
-                                             request.cmake,
-                                             request.cmake_build_overrides,
-                                             tool_resolver,
-                                             process_environment,
-                                             request.locked,
-                                             request.purpose,
-                                             execution->jobs,
-                                             preparation_observer,
-                                             rstd::move(catalog),
-                                             request.setup_reporter);
+        auto project = prepare_build_project(
+            request.selection,
+            request.configuration,
+            profile,
+            request.build_directory.as_path(),
+            request.sources,
+            request.lock,
+            request.pkg_config,
+            request.cmake,
+            request.cmake_build_overrides,
+            tool_resolver,
+            process_environment,
+            request.locked,
+            request.purpose,
+            execution->jobs,
+            preparation_observer,
+            rstd::move(catalog),
+            request.setup_reporter,
+            request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
         if (project.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(project).unwrap_err()));
         }

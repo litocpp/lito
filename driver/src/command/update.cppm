@@ -3,6 +3,7 @@ export module lito.driver:command.update;
 import rstd;
 import lito.tools;
 import lito.core;
+import :config.registry;
 import :command.error;
 import :build.event;
 import lito.system;
@@ -17,6 +18,7 @@ struct UpdateRequest {
     PathBuf                                     root;
     ProcessEnvironmentSpec                      environment;
     lito::tools::ToolSpec                       tools;
+    Option<config::LitoBootstrapConfig>         registries;
     lito::lock::LockConfig                      lock;
     lito::source::PackageSourceConfig           sources;
     Option<BuildEventSink>                      observer;

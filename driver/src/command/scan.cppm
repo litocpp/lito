@@ -4,6 +4,7 @@ import rstd;
 import lito.tools;
 import lito.core;
 import :config.project;
+import :config.registry;
 import :package.selection;
 export import :command.error;
 import :build.event;
@@ -23,6 +24,7 @@ struct ScanRequest {
     PathBuf                                     source;
     ProcessEnvironmentSpec                      environment;
     lito::tools::ToolSpec                       tools;
+    Option<config::LitoBootstrapConfig>         registries;
     config::BuildConfigurationRequest           configuration;
     lito::lock::LockConfig                      lock;
     Option<lito::manifest::BuildProfileName>    profile;

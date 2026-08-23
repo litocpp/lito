@@ -790,18 +790,333 @@ extern "C++" int main() {
                           summary.prefix.as_path());
         return 0;
     }
-    auto       install_source = Option<lito::ResolvedInstallSource> {};
-    const auto reuse_install =
-        invocation.command.is_Install() && invocation.command.as_Install().options.no_build;
-    if (invocation.command.is_Install()) {
-        auto resolved = lito::resolve_install_source(
-            lito::InstallSourceRequirement::LocalProject(invocation.working_directory.clone()));
-        if (resolved.is_err()) {
-            auto error = rstd::move(resolved).unwrap_err();
+    if (invocation.command.is_Add()) {
+        auto options = rstd::move(invocation.command).as_Add().options;
+        auto spec    = lito::registry::RegistryPackageSpec::parse(options.source.as_str());
+        if (spec.is_err()) {
+            rstd::io::eprintln("lito: invalid Registry dependency '{}': {}",
+                               options.source.as_str(),
+                               rstd::move(spec).unwrap_err());
+            return 1;
+        }
+        if (! spec->selector.is_Requirement()) {
+            rstd::io::eprintln(
+                "lito: Registry tags are only accepted by install; add requires a version range");
+            return 1;
+        }
+        if (options.registry.is_some()) {
+            auto bootstrap = lito::config::load_registry_bootstrap_config(
+                lito::config::RegistryBootstrapConfigRequest {
+                    .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                                 : lito::config::ConfigLoadMode::Enabled,
+                });
+            if (bootstrap.is_err()) {
+                report_error(rstd::move(bootstrap).unwrap_err());
+                return 1;
+            }
+            if (bootstrap->registry(options.registry->as_str()).is_none()) {
+                rstd::io::eprintln("lito: Registry '{}' is not configured",
+                                   options.registry->as_str());
+                return 1;
+            }
+        }
+        auto edited =
+            lito::manifest::add_registry_dependency(invocation.working_directory.as_path(),
+                                                    spec->package,
+                                                    spec->selector.as_Requirement().requirement,
+                                                    rstd::move(options.registry));
+        if (edited.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(edited).unwrap_err());
+            return 1;
+        }
+        rstd::io::println("added {} to {}", edited->package, edited->path.as_path());
+        return 0;
+    }
+    if (invocation.command.is_Pack()) {
+        auto options   = rstd::move(invocation.command).as_Pack().options;
+        auto bootstrap = lito::config::load_registry_bootstrap_config(
+            lito::config::RegistryBootstrapConfigRequest {
+                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                             : lito::config::ConfigLoadMode::Enabled,
+            });
+        if (bootstrap.is_err()) {
+            auto error = rstd::move(bootstrap).unwrap_err();
             report_error(error);
             return 1;
         }
-        install_source = Some(rstd::move(resolved).unwrap());
+        auto registries = rstd::move(bootstrap).unwrap();
+        auto selected = options.registry.is_some() ? registries.registry(options.registry->as_str())
+                                                   : registries.default_registry();
+        if (selected.is_none()) {
+            rstd::io::eprintln("lito: {} Registry is not configured",
+                               options.registry.is_some() ? options.registry->as_str()
+                                                          : "default"_str);
+            return 1;
+        }
+        auto aliases = Vec<lito::manifest::StandaloneRegistryAlias>::make();
+        for (const auto& registry : *registries.registries()) {
+            aliases.push(lito::manifest::StandaloneRegistryAlias {
+                .name     = registry.name.clone(),
+                .identity = registry.identity.clone(),
+            });
+        }
+        auto result = lito::pack_package(lito::PackPackageRequest {
+            .root    = invocation.working_directory.clone(),
+            .package = rstd::move(options.package),
+            .output  = rstd::move(options.output),
+            .list    = options.list,
+            .registry =
+                lito::PackageRegistryContext {
+                    .owner   = (**selected).identity.clone(),
+                    .aliases = rstd::move(aliases),
+                },
+        });
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        if (options.list) {
+            for (const auto& path : summary.files) rstd::io::println("{}", path.as_str());
+            return 0;
+        }
+        const auto& artifact = *summary.artifact;
+        rstd::io::println("packed {} {} to {}",
+                          summary.package.name.as_str(),
+                          summary.version.text(),
+                          summary.output.as_path());
+        rstd::io::println("blob={} source={} manifest={} files={}",
+                          artifact.blob.digest.text(),
+                          artifact.candidate.source_digest.text(),
+                          artifact.candidate.manifest_digest.text(),
+                          summary.files.len());
+        return 0;
+    }
+    if (invocation.command.is_Publish()) {
+        auto options   = rstd::move(invocation.command).as_Publish().options;
+        auto bootstrap = lito::config::load_registry_bootstrap_config(
+            lito::config::RegistryBootstrapConfigRequest {
+                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                             : lito::config::ConfigLoadMode::Enabled,
+            });
+        if (bootstrap.is_err()) {
+            report_error(rstd::move(bootstrap).unwrap_err());
+            return 1;
+        }
+        auto registries = rstd::move(bootstrap).unwrap();
+        auto selected = options.registry.is_some() ? registries.registry(options.registry->as_str())
+                                                   : registries.default_registry();
+        if (selected.is_none()) {
+            rstd::io::eprintln("lito: {} Registry is not configured",
+                               options.registry.is_some() ? options.registry->as_str()
+                                                          : "default"_str);
+            return 1;
+        }
+        auto credentials = lito::config::load_registry_credentials();
+        if (credentials.is_err()) {
+            report_error(rstd::move(credentials).unwrap_err());
+            return 1;
+        }
+        auto credential_store = rstd::move(credentials).unwrap();
+        auto token            = credential_store.token((**selected).name.as_str());
+        if (token.is_none()) {
+            rstd::io::eprintln("lito: Registry '{}' has no publish credential",
+                               (**selected).name.as_str());
+            return 1;
+        }
+        auto temporary = rstd::fs::TempDir::make("lito-publish"_str);
+        if (temporary.is_err()) {
+            rstd::io::eprintln("lito: cannot create publish staging directory: {}",
+                               rstd::move(temporary).unwrap_err());
+            return 1;
+        }
+        auto staging = rstd::move(temporary).unwrap();
+        auto output  = rstd::path::PathBuf::from(staging.path())
+                           .join(rstd::path::PathBuf::from("package.tar.zst"_str).as_path());
+        auto aliases = Vec<lito::manifest::StandaloneRegistryAlias>::make();
+        for (const auto& registry : *registries.registries()) {
+            aliases.push(lito::manifest::StandaloneRegistryAlias {
+                .name     = registry.name.clone(),
+                .identity = registry.identity.clone(),
+            });
+        }
+        auto packed = lito::pack_package(lito::PackPackageRequest {
+            .root    = invocation.working_directory.clone(),
+            .package = rstd::move(options.package),
+            .output  = Some(rstd::move(output)),
+            .registry =
+                lito::PackageRegistryContext {
+                    .owner   = (**selected).identity.clone(),
+                    .aliases = rstd::move(aliases),
+                },
+        });
+        if (packed.is_err()) {
+            report_error(rstd::move(packed).unwrap_err());
+            return 1;
+        }
+        auto package        = rstd::move(packed).unwrap();
+        auto command_config = lito::config::load_host_tool_command_config(
+            invocation.working_directory.as_path(),
+            lito::config::ProjectConfigRequest {
+                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                             : lito::config::ConfigLoadMode::Enabled,
+            });
+        if (command_config.is_err()) {
+            report_error(rstd::move(command_config).unwrap_err());
+            return 1;
+        }
+        auto host        = rstd::move(command_config).unwrap();
+        auto environment = lito::system::ResolvedProcessEnvironment::resolve(host.environment);
+        if (environment.is_err()) {
+            report_error(rstd::move(environment).unwrap_err());
+            return 1;
+        }
+        auto event_context = EventContext {};
+        auto resolver = lito::tools::ToolResolver(*environment,
+                                                  rstd::move(host.tools),
+                                                  Some(lito::tools::HostToolResolutionSink {
+                                                      .context = rstd::addressof(event_context),
+                                                      .notify  = report_host_tool_resolution,
+                                                  }));
+        auto curl =
+            resolver.require(lito::tools::Tool::Curl,
+                             lito::tools::command_tool_requirement(
+                                 lito::tools::HostToolCapability::RegistryPublish, "publish"_str));
+        if (curl.is_err()) {
+            report_error(rstd::move(curl).unwrap_err());
+            return 1;
+        }
+        auto transport =
+            lito::registry::CurlRegistryPublishTransport(curl->executable.clone(), *environment);
+        auto client    = lito::registry::RegistryPublishClient(transport.transport());
+        auto published = client.publish(lito::registry::RegistryPublishRequest {
+            .api     = (**selected).api.clone(),
+            .token   = rstd::addressof(**token),
+            .package = package.package.clone(),
+            .version = package.version.clone(),
+            .blob    = package.artifact->blob.clone(),
+            .archive = package.output.clone(),
+        });
+        if (published.is_err()) {
+            auto error = rstd::move(published).unwrap_err();
+            rstd::io::eprintln("lito: {}", error.message.as_str());
+            return 1;
+        }
+        auto session = rstd::move(published).unwrap();
+        rstd::io::println("published {} {} as {}",
+                          session.package.name.as_str(),
+                          session.version.text(),
+                          session.release->text());
+        return 0;
+    }
+    auto       registry_bootstrap = Option<lito::config::LitoBootstrapConfig> {};
+    auto       install_source     = Option<lito::ResolvedInstallSource> {};
+    const auto reuse_install =
+        invocation.command.is_Install() && invocation.command.as_Install().options.no_build;
+    if (invocation.command.is_Install()) {
+        const auto& options = invocation.command.as_Install().options;
+        if (options.source.is_some()) {
+            auto spec = lito::registry::RegistryPackageSpec::parse(options.source->as_str());
+            if (spec.is_err()) {
+                rstd::io::eprintln("lito: invalid Registry package '{}': {}",
+                                   options.source->as_str(),
+                                   rstd::move(spec).unwrap_err());
+                return 1;
+            }
+            auto bootstrap = lito::config::load_registry_bootstrap_config(
+                lito::config::RegistryBootstrapConfigRequest {
+                    .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                                 : lito::config::ConfigLoadMode::Enabled,
+                });
+            if (bootstrap.is_err()) {
+                report_error(rstd::move(bootstrap).unwrap_err());
+                return 1;
+            }
+            registry_bootstrap = Some(rstd::move(bootstrap).unwrap());
+            auto host          = lito::config::load_host_tool_command_config(
+                invocation.working_directory.as_path(),
+                lito::config::ProjectConfigRequest {
+                    .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                                 : lito::config::ConfigLoadMode::Enabled,
+                });
+            if (host.is_err()) {
+                report_error(rstd::move(host).unwrap_err());
+                return 1;
+            }
+            auto command_config = rstd::move(host).unwrap();
+            auto environment =
+                lito::system::ResolvedProcessEnvironment::resolve(command_config.environment);
+            if (environment.is_err()) {
+                report_error(rstd::move(environment).unwrap_err());
+                return 1;
+            }
+            auto http          = lito::registry::RegistryHttpTransport {};
+            auto blobs         = lito::registry::RegistryBlobTransport {};
+            auto http_owner    = Option<lito::registry::CurlRegistryHttpTransport> {};
+            auto blob_owner    = Option<lito::registry::CurlRegistryBlobTransport> {};
+            auto event_context = EventContext {};
+            if (! options.offline) {
+                auto resolver =
+                    lito::tools::ToolResolver(*environment,
+                                              rstd::move(command_config.tools),
+                                              Some(lito::tools::HostToolResolutionSink {
+                                                  .context = rstd::addressof(event_context),
+                                                  .notify  = report_host_tool_resolution,
+                                              }));
+                auto curl = resolver.require(
+                    lito::tools::Tool::Curl,
+                    lito::tools::command_tool_requirement(
+                        lito::tools::HostToolCapability::HttpDownload, "Registry install"_str));
+                if (curl.is_err()) {
+                    report_error(rstd::move(curl).unwrap_err());
+                    return 1;
+                }
+                http_owner = Some(lito::registry::CurlRegistryHttpTransport(
+                    curl->executable.clone(), *environment));
+                blob_owner = Some(lito::registry::CurlRegistryBlobTransport(
+                    curl->executable.clone(), *environment));
+                http       = http_owner->transport();
+                blobs      = blob_owner->transport();
+            }
+            auto data = lito::system::LitoDataRoot::resolve();
+            if (data.is_err()) {
+                report_error(rstd::move(data).unwrap_err());
+                return 1;
+            }
+            auto registry_client = lito::registry::RegistryGraphClient(
+                rstd::path::PathBuf::from(data->root()),
+                *registry_bootstrap,
+                options.offline ? lito::registry::RegistryNetworkPolicy::Offline
+                                : lito::registry::RegistryNetworkPolicy::Online,
+                http,
+                blobs,
+                false);
+            auto graph = registry_client.resolve_package(
+                *spec,
+                options.registry.is_some() ? Some(options.registry->clone()) : Option<String> {},
+                "install package argument"_str);
+            if (graph.is_err()) {
+                rstd::io::eprintln("lito: {}", rstd::move(graph).unwrap_err().message.as_str());
+                return 1;
+            }
+            auto resolved = lito::resolve_registry_install_source(
+                spec->package, rstd::move(graph).unwrap(), data->root());
+            if (resolved.is_err()) {
+                report_error(rstd::move(resolved).unwrap_err());
+                return 1;
+            }
+            install_source = Some(rstd::move(resolved).unwrap());
+        } else {
+            auto resolved = lito::resolve_install_source(
+                lito::InstallSourceRequirement::LocalProject(invocation.working_directory.clone()));
+            if (resolved.is_err()) {
+                auto error = rstd::move(resolved).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            install_source = Some(rstd::move(resolved).unwrap());
+        }
     }
     auto config_root = install_source.is_some() ? install_source->project.root.as_path()
                                                 : invocation.working_directory.as_path();
@@ -851,6 +1166,19 @@ extern "C++" int main() {
             project.toolchain.sdk = active_android->project_defaults().toolchain.sdk;
         }
     }
+    if ((build_command || invocation.command.is_Update() || invocation.command.is_Install()) &&
+        registry_bootstrap.is_none()) {
+        auto loaded = lito::config::load_registry_bootstrap_config(
+            lito::config::RegistryBootstrapConfigRequest {
+                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                             : lito::config::ConfigLoadMode::Enabled,
+            });
+        if (loaded.is_err()) {
+            report_error(rstd::move(loaded).unwrap_err());
+            return 1;
+        }
+        registry_bootstrap = Some(rstd::move(loaded).unwrap());
+    }
 
     if (invocation.command.is_Lock()) {
         auto command = rstd::move(invocation.command).as_Lock().command;
@@ -889,10 +1217,13 @@ extern "C++" int main() {
             report_error(error);
             return 1;
         }
-        auto timing  = make_timing_output(project.root.as_path(),
-                                          rstd::move(options.timing_file),
-                                          options.verbose && ! options.no_timing);
-        auto request = lito::InstallRequest {
+        auto timing             = make_timing_output(project.root.as_path(),
+                                                     rstd::move(options.timing_file),
+                                                     options.verbose && ! options.no_timing);
+        auto managed_build_root = install_source->managed_build_root.is_some()
+                                      ? Some(install_source->managed_build_root->clone())
+                                      : Option<rstd::path::PathBuf> {};
+        auto request            = lito::InstallRequest {
             .source      = rstd::move(install_source).unwrap(),
             .destination = rstd::move(destination).unwrap(),
         };
@@ -903,6 +1234,7 @@ extern "C++" int main() {
         request.build.selection.root = project.root.clone();
         request.build.environment    = rstd::move(project.environment);
         request.build.tools          = rstd::move(project.tools);
+        request.build.registries     = rstd::move(registry_bootstrap);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
@@ -917,8 +1249,26 @@ extern "C++" int main() {
         request.build.selection.features    = rstd::move(options.features);
         request.build.locked                = options.locked || options.frozen || options.no_build;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
+        if (managed_build_root.is_some()) {
+            auto created = rstd::fs::create_dir_all(managed_build_root->as_path());
+            if (created.is_err()) {
+                rstd::io::eprintln("lito: cannot create Registry build cache '{}': {}",
+                                   managed_build_root->as_path(),
+                                   rstd::move(created).unwrap_err());
+                return 1;
+            }
+            request.build.lock.path =
+                managed_build_root->join(rstd::path::PathBuf::from("lito.lock"_str).as_path());
+        }
         if (options.build_directory.is_some()) {
-            request.build.build_directory = rstd::move(*options.build_directory);
+            request.build.build_directory =
+                options.build_directory->as_path().is_absolute() || managed_build_root.is_none()
+                    ? rstd::move(*options.build_directory)
+                    : invocation.working_directory.join(options.build_directory->as_path());
+        } else if (managed_build_root.is_some()) {
+            auto profile = options.profile.is_some() ? options.profile->as_str() : "release"_str;
+            request.build.build_directory =
+                managed_build_root->join(rstd::path::PathBuf::from(profile).as_path());
         }
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
@@ -987,6 +1337,7 @@ extern "C++" int main() {
             .root          = rstd::move(project.root),
             .environment   = rstd::move(project.environment),
             .tools         = rstd::move(project.tools),
+            .registries    = rstd::move(registry_bootstrap),
             .lock          = rstd::move(project.lock),
             .sources       = rstd::move(project.sources),
             .observer      = Some(lito::BuildEventSink {
@@ -1054,6 +1405,7 @@ extern "C++" int main() {
         request.selection.root        = rstd::move(project.root);
         request.environment           = rstd::move(project.environment);
         request.tools                 = rstd::move(project.tools);
+        request.registries            = rstd::move(registry_bootstrap);
         request.configuration         = build_configuration(rstd::move(project.toolchain),
                                                             project.standard_library,
                                                             project.standard_library_runtime,
@@ -1114,6 +1466,7 @@ extern "C++" int main() {
         request.build.selection.root = project.root.clone();
         request.build.environment    = rstd::move(project.environment);
         request.build.tools          = rstd::move(project.tools);
+        request.build.registries     = rstd::move(registry_bootstrap);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
@@ -1202,6 +1555,7 @@ extern "C++" int main() {
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
         request.build.tools          = rstd::move(project.tools);
+        request.build.registries     = rstd::move(registry_bootstrap);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
@@ -1330,6 +1684,7 @@ extern "C++" int main() {
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
         request.build.tools          = rstd::move(project.tools);
+        request.build.registries     = rstd::move(registry_bootstrap);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
@@ -1432,6 +1787,7 @@ extern "C++" int main() {
     request.selection.root        = rstd::move(project.root);
     request.environment           = rstd::move(project.environment);
     request.tools                 = rstd::move(project.tools);
+    request.registries            = rstd::move(registry_bootstrap);
     request.configuration         = build_configuration(rstd::move(project.toolchain),
                                                         project.standard_library,
                                                         project.standard_library_runtime,

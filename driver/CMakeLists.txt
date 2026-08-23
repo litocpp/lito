@@ -54,6 +54,7 @@ target_sources(
          src/command/error.cppm
          src/command/format.cppm
          src/command/install.cppm
+         src/command/package.cppm
          src/command/reporting.cppm
          src/command/scan.cppm
          src/command/test.cppm
@@ -101,9 +102,13 @@ target_sources(
          src/project/error.cppm
          src/registry/archive.cppm
          src/registry/blob.cppm
+         src/registry/graph.cppm
          src/registry/http.cppm
          src/registry/index.cppm
          src/registry/inspection_protocol.cppm
+         src/registry/publish.cppm
+         src/registry/release.cppm
+         src/registry/source.cppm
          src/registry/mod.cppm
          src/build/compile_test.cppm
          src/build/compile_plan.cppm

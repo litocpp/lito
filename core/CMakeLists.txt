@@ -51,11 +51,14 @@ target_sources(
          src/manifest/mod.cppm
          src/manifest/dependency.cppm
          src/manifest/document.cppm
+         src/manifest/edit.cppm
          src/manifest/package.cppm
          src/manifest/primitives.cppm
          src/manifest/profile.cppm
          src/manifest/profile_schema.cppm
+         src/manifest/publish.cppm
          src/manifest/source_convention.cppm
+         src/manifest/standalone.cppm
          src/manifest/target.cppm
          src/manifest/target_schema.cppm
          src/manifest/workspace.cppm
@@ -81,7 +84,8 @@ target_sources(
         src/registry/crypto.cppm
         src/registry/inspection.cppm
         src/registry/metadata.cppm
-        src/registry/solver.cppm
+         src/registry/solver.cppm
+         src/registry/spec.cppm
          src/registry/error.cppm
          src/registry/identity.cppm
          src/registry/mod.cppm

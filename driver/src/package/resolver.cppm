@@ -9,6 +9,7 @@ import lito.tools;
 import lito.system;
 import :source.manager;
 import :package.builtin;
+import :registry.graph;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -77,6 +78,14 @@ struct AcquiredDependencySource {
     String                 builtin_id;
     Option<BuiltinPackage> builtin;
 };
+
+struct PreparedRegistrySource {
+    usize                             source {};
+    lito::registry::RegistryPackageId package;
+    lito::registry::SemanticVersion   version;
+};
+
+using PreparedRegistryMap = rstd::collections::BTreeMap<String, PreparedRegistrySource>;
 
 auto same_source_root(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
     return left.starts_with(right) && right.starts_with(left);
@@ -174,7 +183,11 @@ class PackageGraphResolver {
     StringSet                                      active_ { StringSet::make() };
     Vec<String>                                    active_path_;
     Vec<PackageDependencyKind>                     active_kinds_;
-    usize                                          jobs_ { usize(1) };
+    lito::registry::RegistryGraphProvider          registry_;
+    Vec<lito::registry::RegistryGraphRequirement>  registry_requirements_;
+    PreparedRegistryMap registry_sources_ { PreparedRegistryMap::make() };
+    StringSet           discovered_ { StringSet::make() };
+    usize               jobs_ { usize(1) };
 
     auto ensure_catalog_slot(usize source) -> void {
         while (catalogs_.len() <= source) catalogs_.push(None());
@@ -263,8 +276,36 @@ class PackageGraphResolver {
                 continue;
             }
             if (request.source.is_Registry()) {
-                return package_resolution_failure<Vec<AcquiredDependencySource>>(
-                    "Registry dependency requires RegistrySourceResolver materialization"_str);
+                auto prepared_registry = registry_sources_.get(request.name.as_str());
+                if (prepared_registry.is_none()) {
+                    return package_resolution_failure<Vec<AcquiredDependencySource>>(rstd::format(
+                        "Registry dependency '{}' was not selected by the Registry graph resolver",
+                        request.name.as_str()));
+                }
+                const auto& selected = **prepared_registry;
+                const auto& declared = request.source.as_Registry();
+                if (selected.package.name != declared.package ||
+                    ! declared.requirement.matches(selected.version)) {
+                    return package_resolution_failure<Vec<AcquiredDependencySource>>(rstd::format(
+                        "Registry dependency '{}' does not accept selected version '{}'",
+                        request.name.as_str(),
+                        selected.version.text()));
+                }
+                if (declared.registry.is_some()) {
+                    auto identity = lito::registry::RegistryId::parse(declared.registry->as_str());
+                    if (identity.is_ok() && ! (*identity == selected.package.registry)) {
+                        return package_resolution_failure<Vec<AcquiredDependencySource>>(
+                            rstd::format(
+                                "Registry dependency '{}' selected Registry '{}' instead of '{}'",
+                                request.name.as_str(),
+                                selected.package.registry.as_str(),
+                                declared.registry->as_str()));
+                    }
+                }
+                result[index] = Some(AcquiredDependencySource {
+                    .source = Some(usize(selected.source)),
+                });
+                continue;
             }
             positions.push(usize(index));
             if (request.source.is_Git()) {
@@ -309,6 +350,126 @@ class PackageGraphResolver {
             completed.push(rstd::move(item).unwrap());
         }
         return Ok(rstd::move(completed));
+    }
+
+    auto discover_dependencies(ref<str> key, const lito::manifest::PackageManifest& package)
+        -> PackageResult<empty> {
+        if (discovered_.contains_key(key)) return Ok(empty {});
+        discovered_.insert(String::make(key), empty {});
+        auto       requests = Vec<lito::source::PackageSourceFetchRequest>::make();
+        auto       names    = Vec<String>::make();
+        const auto append   = [&](const auto& dependency) -> void {
+            if (dependency.source.is_Registry()) {
+                const auto& source = dependency.source.as_Registry();
+                registry_requirements_.push(lito::registry::RegistryGraphRequirement {
+                    .registry    = source.registry.is_some() ? Some(source.registry->clone())
+                                                             : Option<String> {},
+                    .package     = source.package.clone(),
+                    .requirement = source.requirement.clone(),
+                    .source      = rstd::format("package '{}' dependency '{}'",
+                                                package.name.as_str(),
+                                                dependency.name.as_str()),
+                });
+                return;
+            }
+            auto declaring_root = package.root.clone();
+            if (dependency.declaration_root.is_some()) {
+                declaring_root = dependency.declaration_root->clone();
+            }
+            names.push(dependency.name.clone());
+            requests.push(lito::source::PackageSourceFetchRequest {
+                .owner          = package.name.clone(),
+                .name           = dependency.name.clone(),
+                .source         = clone_dependency_source(dependency.source),
+                .declaring_root = rstd::move(declaring_root),
+            });
+        };
+        for (const auto& dependency : package.dependencies) append(dependency);
+        for (const auto& dependency : package.dev_dependencies) append(dependency);
+        for (const auto& dependency : package.runtime_dependencies) append(dependency);
+        auto acquired = rstd_try(acquire_frontier(rstd::move(requests)));
+        for (usize index {}; index < acquired.len(); ++index) {
+            if (acquired[index].builtin.is_some()) {
+                const auto& builtin = *acquired[index].builtin;
+                rstd_try(discover_dependencies(builtin.source_identity.as_str(), builtin.manifest));
+                continue;
+            }
+            auto source    = *acquired[index].source;
+            auto child_key = rstd::format("{}\n{}", sources_.source_identity(source), names[index]);
+            auto child     = catalog(source).package(names[index].as_str());
+            if (child.is_none()) {
+                return package_resolution_failure<empty>(
+                    rstd::format("source '{}' has no package named '{}'",
+                                 sources_.source_identity(source),
+                                 names[index].as_str()));
+            }
+            rstd_try(discover_dependencies(child_key.as_str(), **child));
+        }
+        return Ok(empty {});
+    }
+
+    auto discover_source(usize source) -> PackageResult<empty> {
+        auto names = package_names(source);
+        for (const auto& name : names) {
+            auto key     = rstd::format("{}\n{}", sources_.source_identity(source), name.as_str());
+            auto package = catalog(source).package(name.as_str());
+            if (package.is_none()) {
+                return package_resolution_failure<empty>(
+                    rstd::format("source '{}' has no package named '{}'",
+                                 sources_.source_identity(source),
+                                 name.as_str()));
+            }
+            rstd_try(discover_dependencies(key.as_str(), **package));
+        }
+        return Ok(empty {});
+    }
+
+    auto prepare_registry_impl(const AcquiredProjectSources& roots) -> PackageResult<empty> {
+        rstd_try(discover_source(roots.primary));
+        if (roots.tests.is_some()) rstd_try(discover_source(*roots.tests));
+        if (registry_requirements_.is_empty()) return Ok(empty {});
+        if (registry_.resolve == nullptr) {
+            return package_resolution_failure<empty>(
+                "Registry dependencies require configured Registry resolution"_str);
+        }
+        auto resolved = registry_.resolve(registry_.context, registry_requirements_.as_slice());
+        if (resolved.is_err()) {
+            return package_resolution_failure<empty>(rstd::move(resolved).unwrap_err().message);
+        }
+        for (auto& selected : rstd::move(resolved).unwrap()) {
+            auto name = String::make(selected.package.name.as_str());
+            if (registry_sources_.contains_key(name.as_str())) {
+                return package_resolution_failure<empty>(rstd::format(
+                    "Registry graph resolver returned package '{}' more than once", name.as_str()));
+            }
+            if (! same_source_root(selected.catalog.root(),
+                                   selected.source.root_directory.as_path())) {
+                return package_resolution_failure<empty>(rstd::format(
+                    "Registry package '{}' catalog root does not match its materialized source",
+                    name.as_str()));
+            }
+            auto version = selected.release.version.clone();
+            auto package = selected.package.clone();
+            auto source  = sources_.acquire_resolved(rstd::move(selected.source));
+            if (source.is_err()) {
+                return Err(rstd::into<PackageError>(rstd::move(source).unwrap_err()));
+            }
+            store_catalog(*source, rstd::move(selected.catalog));
+            registry_sources_.insert(rstd::move(name),
+                                     PreparedRegistrySource {
+                                         .source  = *source,
+                                         .package = rstd::move(package),
+                                         .version = rstd::move(version),
+                                     });
+        }
+        for (const auto& requirement : registry_requirements_) {
+            if (! registry_sources_.contains_key(requirement.package.as_str())) {
+                return package_resolution_failure<empty>(
+                    rstd::format("Registry graph resolver omitted required package '{}'",
+                                 requirement.package.as_str()));
+            }
+        }
+        return Ok(empty {});
     }
 
     auto take_package(usize source, ref<str> name) -> PackageResult<SelectedSourcePackage> {
@@ -491,15 +652,27 @@ public:
                                   lito::tools::ToolResolver*            resolver,
                                   const ResolvedProcessEnvironment&     environment,
                                   usize                                 jobs,
-                                  lito::source::SourceEventSink         observer)
+                                  lito::source::SourceEventSink         observer,
+                                  lito::registry::RegistryGraphProvider registry)
         : root_directory_(PathBuf::from(root_directory)),
           sources_(root_directory, rstd::move(options), resolver, environment, observer),
+          registry_(registry),
           jobs_(jobs) {}
+
+    auto prepare_registry(const AcquiredProjectSources& roots) -> PackageResult<empty> {
+        return prepare_registry_impl(roots);
+    }
 
     auto acquire_root(ref<rstd::path::Path> root, Option<lito::workspace::WorkspaceCatalog> catalog)
         -> PackageResult<AcquiredProjectSources> {
         auto primary = acquire_catalog_root(root, rstd::move(catalog));
         if (primary.is_err()) return Err(rstd::move(primary).unwrap_err());
+        if (registry_.root_source != nullptr) {
+            auto replaced = sources_.replace_resolved(*primary, registry_.root_source->clone());
+            if (replaced.is_err()) {
+                return Err(rstd::into<PackageError>(rstd::move(replaced).unwrap_err()));
+            }
+        }
         auto tests =
             acquire_associated_catalog(*primary, "tests"_str, ProjectRootRole::AssociatedTest);
         if (tests.is_err()) return Err(rstd::move(tests).unwrap_err());
@@ -761,8 +934,8 @@ auto resolve_package_graph_with_environment_impl(
     const ResolvedProcessEnvironment&         environment,
     usize                                     jobs     = usize(1),
     lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
-    -> PackageResult<ResolvedPackageGraph> {
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+    lito::registry::RegistryGraphProvider registry = {}) -> PackageResult<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return package_resolution_failure<ResolvedPackageGraph>(
             String::make("source fetch jobs must be greater than zero"_str));
@@ -776,10 +949,12 @@ auto resolve_package_graph_with_environment_impl(
     }
     auto root     = rstd::move(canonical).unwrap();
     auto resolver = PackageGraphResolver(
-        root.as_path(), rstd::move(options), tool_resolver, environment, jobs, observer);
+        root.as_path(), rstd::move(options), tool_resolver, environment, jobs, observer, registry);
     auto source = resolver.acquire_root(root.as_path(), rstd::move(catalog));
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto project_sources   = rstd::move(source).unwrap();
+    auto prepared_registry = resolver.prepare_registry(project_sources);
+    if (prepared_registry.is_err()) return Err(rstd::move(prepared_registry).unwrap_err());
     auto root_source       = project_sources.primary;
     auto project_name      = String::make(resolver.source_name(root_source));
     auto manifest_path     = resolver.source_manifest(root_source);
@@ -817,21 +992,23 @@ auto resolve_package_graph_with_environment_impl(
                               rstd::move(profile)));
 }
 
-auto resolve_package_graph_with_environment(ref<rstd::path::Path>                 requested_root,
-                                            lito::source::SourceResolutionOptions options,
-                                            lito::tools::ToolResolver&            tool_resolver,
-                                            const ResolvedProcessEnvironment&     environment,
-                                            usize                                 jobs = usize(1),
-                                            lito::source::SourceEventSink         observer = {},
-                                            Option<lito::workspace::WorkspaceCatalog> catalog =
-                                                None()) -> PackageResult<ResolvedPackageGraph> {
+auto resolve_package_graph_with_environment(
+    ref<rstd::path::Path>                     requested_root,
+    lito::source::SourceResolutionOptions     options,
+    lito::tools::ToolResolver&                tool_resolver,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs     = usize(1),
+    lito::source::SourceEventSink             observer = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+    lito::registry::RegistryGraphProvider registry = {}) -> PackageResult<ResolvedPackageGraph> {
     return resolve_package_graph_with_environment_impl(requested_root,
                                                        rstd::move(options),
                                                        rstd::addressof(tool_resolver),
                                                        environment,
                                                        jobs,
                                                        observer,
-                                                       rstd::move(catalog));
+                                                       rstd::move(catalog),
+                                                       registry);
 }
 
 auto resolve_package_graph(ref<rstd::path::Path>                 requested_root,

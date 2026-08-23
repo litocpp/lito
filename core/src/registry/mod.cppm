@@ -12,3 +12,4 @@ export import :registry.crypto;
 export import :registry.inspection;
 export import :registry.metadata;
 export import :registry.solver;
+export import :registry.spec;

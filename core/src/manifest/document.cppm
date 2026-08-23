@@ -34,5 +34,9 @@ auto load_package_manifest(ref<rstd::path::Path> requested_directory)
 auto load_package_manifest_from_source_tree(ref<str>                        source_identity,
                                             const lito::source::SourceTree& tree)
     -> ManifestResult<PackageManifest>;
+auto load_package_manifest_from_source_tree_at(ref<str>                        source_identity,
+                                               ref<rstd::path::Path>           root,
+                                               const lito::source::SourceTree& tree)
+    -> ManifestResult<PackageManifest>;
 
 } // namespace lito::manifest

@@ -7,6 +7,7 @@ import rstd;
 import lito.tools;
 import lito.core;
 import :config.project;
+import :config.registry;
 import :project.error;
 import lito.cpp;
 import :build.event;
@@ -17,6 +18,9 @@ import :dependency.catalog;
 import :dependency.preparation;
 import :dependency.external_source;
 import :package;
+import :registry.blob;
+import :registry.graph;
+import :registry.http;
 import :sdk;
 import lito.toolchain;
 import lito.system;
@@ -46,6 +50,77 @@ struct StartedProjectResolution {
     lito::source::SourceResolutionOptions   external;
 };
 
+struct ProjectRegistryResolver {
+    const lito::config::LitoBootstrapConfig* config {};
+    lito::registry::RegistryNetworkPolicy network { lito::registry::RegistryNetworkPolicy::Online };
+    bool                                  locked_mode {};
+    Vec<lito::source::RegistrySourcePin>  locked;
+    lito::tools::ToolResolver*            tools {};
+    const ResolvedProcessEnvironment*     environment {};
+
+    static auto resolve(void*                                           raw,
+                        slice<lito::registry::RegistryGraphRequirement> requirements) noexcept
+        -> lito::registry::RegistryGraphResult<Vec<lito::registry::ResolvedRegistryGraphSource>> {
+        auto& self = *static_cast<ProjectRegistryResolver*>(raw);
+        if (self.config == nullptr || self.environment == nullptr) {
+            return Err(lito::registry::RegistryGraphError {
+                .message = String::make("Registry resolution has no bootstrap context"_str),
+            });
+        }
+        auto data = lito::system::LitoDataRoot::resolve();
+        if (data.is_err()) {
+            return Err(lito::registry::RegistryGraphError {
+                .message = rstd::format("cannot resolve Registry cache root: {}",
+                                        rstd::move(data).unwrap_err()),
+            });
+        }
+        auto http       = lito::registry::RegistryHttpTransport {};
+        auto blobs      = lito::registry::RegistryBlobTransport {};
+        auto http_owner = Option<lito::registry::CurlRegistryHttpTransport> {};
+        auto blob_owner = Option<lito::registry::CurlRegistryBlobTransport> {};
+        if (self.network == lito::registry::RegistryNetworkPolicy::Online) {
+            if (self.tools == nullptr) {
+                return Err(lito::registry::RegistryGraphError {
+                    .message = String::make("online Registry resolution has no tool resolver"_str),
+                });
+            }
+            auto curl = self.tools->require(
+                lito::tools::Tool::Curl,
+                lito::tools::command_tool_requirement(lito::tools::HostToolCapability::HttpDownload,
+                                                      "Registry resolve"_str));
+            if (curl.is_err()) {
+                return Err(lito::registry::RegistryGraphError {
+                    .message = rstd::format("cannot resolve curl for Registry downloads: {}",
+                                            rstd::move(curl).unwrap_err()),
+                });
+            }
+            http_owner = Some(lito::registry::CurlRegistryHttpTransport(curl->executable.clone(),
+                                                                        *self.environment));
+            blob_owner = Some(lito::registry::CurlRegistryBlobTransport(curl->executable.clone(),
+                                                                        *self.environment));
+            http       = http_owner->transport();
+            blobs      = blob_owner->transport();
+        }
+        auto pins = Vec<lito::source::RegistrySourcePin>::with_capacity(self.locked.len());
+        for (const auto& pin : self.locked) pins.push(pin.clone());
+        auto client = lito::registry::RegistryGraphClient(PathBuf::from(data->root()),
+                                                          *self.config,
+                                                          self.network,
+                                                          http,
+                                                          blobs,
+                                                          self.locked_mode,
+                                                          rstd::move(pins));
+        return client.resolve(requirements);
+    }
+
+    auto provider() noexcept -> lito::registry::RegistryGraphProvider {
+        return lito::registry::RegistryGraphProvider {
+            .context = this,
+            .resolve = resolve,
+        };
+    }
+};
+
 auto observer_value(const Option<BuildEventSink>& observer) -> BuildEventSink {
     return observer.is_some() ? *observer : BuildEventSink {};
 }
@@ -65,7 +140,9 @@ auto start_project_resolution(
     Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
     lito::source::SourceMaterializationPolicy materialization =
         lito::source::SourceMaterializationPolicy::Materialize,
-    lito::lock::InvalidLockPolicy invalid_lock = lito::lock::InvalidLockPolicy::Reject)
+    lito::lock::InvalidLockPolicy            invalid_lock = lito::lock::InvalidLockPolicy::Reject,
+    const lito::config::LitoBootstrapConfig* registries   = nullptr,
+    lito::registry::RegistryGraphProvider    registry_provider = {})
     -> ProjectResult<StartedProjectResolution> {
     auto lock_session = rstd_try(
         lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git, invalid_lock));
@@ -73,6 +150,24 @@ auto start_project_resolution(
     resolution.sources         = sources.clone();
     resolution.materialization = materialization;
     auto external_resolution   = resolution.clone();
+    auto registry_resolver     = Option<ProjectRegistryResolver> {};
+    if (registry_provider.resolve == nullptr && registries != nullptr) {
+        auto pins =
+            Vec<lito::source::RegistrySourcePin>::with_capacity(resolution.registry_sources.len());
+        for (const auto& pin : resolution.registry_sources) pins.push(pin.clone());
+        registry_resolver = Some(ProjectRegistryResolver {
+            .config  = registries,
+            .network = materialization == lito::source::SourceMaterializationPolicy::ExistingOnly ||
+                               sources.network == lito::source::NetworkPolicy::Offline
+                           ? lito::registry::RegistryNetworkPolicy::Offline
+                           : lito::registry::RegistryNetworkPolicy::Online,
+            .locked_mode = resolution.locked,
+            .locked      = rstd::move(pins),
+            .tools       = tool_resolver,
+            .environment = rstd::addressof(environment),
+        });
+        registry_provider = registry_resolver->provider();
+    }
     auto project =
         tool_resolver != nullptr
             ? lito::package::resolve_package_selection_with_environment(selection,
@@ -83,7 +178,8 @@ auto start_project_resolution(
                                                                         environment,
                                                                         jobs,
                                                                         source_observer(observer),
-                                                                        rstd::move(catalog))
+                                                                        rstd::move(catalog),
+                                                                        registry_provider)
             : lito::package::resolve_existing_package_selection_with_environment(
                   selection,
                   purpose,
@@ -92,7 +188,8 @@ auto start_project_resolution(
                   environment,
                   jobs,
                   source_observer(observer),
-                  rstd::move(catalog));
+                  rstd::move(catalog),
+                  registry_provider);
     if (project.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(project).unwrap_err()));
     }
@@ -117,8 +214,9 @@ auto resolve_project(
     usize                                          jobs     = usize(1),
     BuildEventSink                                 observer = {},
     Option<lito::workspace::WorkspaceCatalog>      catalog  = None(),
-    lito::lock::InvalidLockPolicy invalid_lock              = lito::lock::InvalidLockPolicy::Reject)
-    -> ProjectResult<ProjectResolution> {
+    lito::lock::InvalidLockPolicy            invalid_lock   = lito::lock::InvalidLockPolicy::Reject,
+    const lito::config::LitoBootstrapConfig* registries     = nullptr,
+    lito::registry::RegistryGraphProvider    registry = {}) -> ProjectResult<ProjectResolution> {
     auto started =
         rstd_try(start_project_resolution(selection,
                                           purpose,
@@ -133,7 +231,9 @@ auto resolve_project(
                                           observer,
                                           rstd::move(catalog),
                                           lito::source::SourceMaterializationPolicy::Materialize,
-                                          invalid_lock));
+                                          invalid_lock,
+                                          registries,
+                                          registry));
     auto declared_sources =
         rstd_try(resolve_external_dependency_sources(started.selection.graph,
                                                      rstd::move(started.external),
@@ -161,8 +261,9 @@ auto resolve_project_selection(const lito::package::PackageSelection&   selectio
                                bool                                     locked,
                                lito::tools::ToolResolver&               tool_resolver,
                                const ResolvedProcessEnvironment&        environment,
-                               usize                                    jobs     = usize(1),
-                               const Option<BuildEventSink>&            observer = None())
+                               usize                                    jobs       = usize(1),
+                               const Option<BuildEventSink>&            observer   = None(),
+                               const lito::config::LitoBootstrapConfig* registries = nullptr)
     -> ProjectResult<lito::package::ResolvedPackageSelection> {
     auto started = start_project_resolution(selection,
                                             purpose,
@@ -174,35 +275,44 @@ auto resolve_project_selection(const lito::package::PackageSelection&   selectio
                                             rstd::addressof(tool_resolver),
                                             environment,
                                             jobs,
-                                            observer_value(observer));
+                                            observer_value(observer),
+                                            None(),
+                                            lito::source::SourceMaterializationPolicy::Materialize,
+                                            lito::lock::InvalidLockPolicy::Reject,
+                                            registries);
     if (started.is_err()) return Err(rstd::move(started).unwrap_err());
     return Ok(rstd::move(started).unwrap().selection);
 }
 
-auto resolve_existing_project_selection(const lito::package::PackageSelection&    selection,
-                                        lito::package::PackageSelectionPurpose    purpose,
-                                        const lito::source::PackageSourceConfig&  sources,
-                                        const lito::lock::LockConfig&             lock,
-                                        const TargetInfo&                         target,
-                                        const ResolvedProcessEnvironment&         environment,
-                                        usize                                     jobs,
-                                        const Option<BuildEventSink>&             observer,
-                                        Option<lito::workspace::WorkspaceCatalog> catalog = None())
+auto resolve_existing_project_selection(
+    const lito::package::PackageSelection&    selection,
+    lito::package::PackageSelectionPurpose    purpose,
+    const lito::source::PackageSourceConfig&  sources,
+    const lito::lock::LockConfig&             lock,
+    const TargetInfo&                         target,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs,
+    const Option<BuildEventSink>&             observer,
+    Option<lito::workspace::WorkspaceCatalog> catalog    = None(),
+    const lito::config::LitoBootstrapConfig*  registries = nullptr,
+    lito::registry::RegistryGraphProvider     registry   = {})
     -> ProjectResult<lito::package::ResolvedPackageSelection> {
-    auto started =
-        start_project_resolution(selection,
-                                 purpose,
-                                 sources,
-                                 lock,
-                                 true,
-                                 lito::source::GitResolutionMode::ReuseLocked,
-                                 rstd::addressof(target),
-                                 nullptr,
-                                 environment,
-                                 jobs,
-                                 observer_value(observer),
-                                 rstd::move(catalog),
-                                 lito::source::SourceMaterializationPolicy::ExistingOnly);
+    auto started = start_project_resolution(selection,
+                                            purpose,
+                                            sources,
+                                            lock,
+                                            true,
+                                            lito::source::GitResolutionMode::ReuseLocked,
+                                            rstd::addressof(target),
+                                            nullptr,
+                                            environment,
+                                            jobs,
+                                            observer_value(observer),
+                                            rstd::move(catalog),
+                                            lito::source::SourceMaterializationPolicy::ExistingOnly,
+                                            lito::lock::InvalidLockPolicy::Reject,
+                                            registries,
+                                            registry);
     if (started.is_err()) return Err(rstd::move(started).unwrap_err());
     return Ok(rstd::move(started).unwrap().selection);
 }
@@ -441,7 +551,9 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              ResolvedBuildContext                           context,
                              const Option<BuildEventSink>&                  observer      = None(),
                              Option<lito::workspace::WorkspaceCatalog>      catalog       = None(),
-                             const AndroidCmakeProjection*                  android_cmake = nullptr)
+                             const AndroidCmakeProjection*                  android_cmake = nullptr,
+                             const lito::config::LitoBootstrapConfig*       registries    = nullptr,
+                             lito::registry::RegistryGraphProvider          registry      = {})
     -> ProjectResult<ResolvedProjectSession> {
     auto project = rstd_try(resolve_project(selection,
                                             purpose,
@@ -455,7 +567,10 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                                             cmake_build_overrides,
                                             jobs,
                                             observer_value(observer),
-                                            rstd::move(catalog)));
+                                            rstd::move(catalog),
+                                            lito::lock::InvalidLockPolicy::Reject,
+                                            registries,
+                                            registry));
     return Ok(ResolvedProjectSession {
         .project         = rstd::move(project),
         .build_arguments = rstd::move(context.build_arguments),
@@ -767,8 +882,10 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
                            bool                                           locked,
                            lito::package::PackageSelectionPurpose         purpose,
                            usize                                          jobs,
-                           const Option<BuildEventSink>&                  observer = None(),
-                           Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
+                           const Option<BuildEventSink>&                  observer   = None(),
+                           Option<lito::workspace::WorkspaceCatalog>      catalog    = None(),
+                           const lito::config::LitoBootstrapConfig*       registries = nullptr,
+                           lito::registry::RegistryGraphProvider          registry   = {})
     -> ProjectResult<ResolvedBuildProject> {
     auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
     auto target_runtimes = Vec<BuiltTargetRuntime>::make();
@@ -825,7 +942,9 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         rstd::move(context).unwrap(),
         observer,
         rstd::move(catalog),
-        cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr);
+        cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr,
+        registries,
+        registry);
     if (session.is_err()) return Err(rstd::move(session).unwrap_err());
     return Ok(ResolvedBuildProject {
         .configuration   = rstd::move(resolved_configuration),
@@ -854,7 +973,8 @@ auto prepare_build_project(
     usize                                     jobs    = usize(1),
     const Option<BuildEventSink>&             observer       = None(),
     Option<lito::workspace::WorkspaceCatalog> catalog        = None(),
-    const Option<BuildSetupReportSink>&       setup_reporter = None())
+    const Option<BuildSetupReportSink>&       setup_reporter = None(),
+    const lito::config::LitoBootstrapConfig*  registries     = nullptr)
     -> ProjectResult<PreparedBuildProject> {
     auto resolved = rstd_try(resolve_build_project(selection,
                                                    configuration,
@@ -867,7 +987,8 @@ auto prepare_build_project(
                                                    purpose,
                                                    jobs,
                                                    observer,
-                                                   rstd::move(catalog)));
+                                                   rstd::move(catalog),
+                                                   registries));
     auto prepared = prepare_resolved_build_project(rstd::move(resolved.session),
                                                    resolved.configuration,
                                                    profile,
@@ -888,14 +1009,16 @@ auto prepare_build_project(
     return prepared;
 }
 
-auto update_project_dependencies(ref<rstd::path::Path>                    root,
-                                 const ProcessEnvironmentSpec&            environment_spec,
-                                 const lito::tools::ToolSpec&             tools,
-                                 const lito::lock::LockConfig&            lock,
-                                 const lito::source::PackageSourceConfig& sources,
-                                 const Option<BuildEventSink>&            observer,
-                                 const Option<lito::tools::HostToolResolutionSink>& tool_reporter =
-                                     None()) -> ProjectResult<lito::lock::LockStatus> {
+auto update_project_dependencies(
+    ref<rstd::path::Path>                              root,
+    const ProcessEnvironmentSpec&                      environment_spec,
+    const lito::tools::ToolSpec&                       tools,
+    const lito::lock::LockConfig&                      lock,
+    const lito::source::PackageSourceConfig&           sources,
+    const Option<BuildEventSink>&                      observer,
+    const Option<lito::tools::HostToolResolutionSink>& tool_reporter = None(),
+    const lito::config::LitoBootstrapConfig*           registries    = nullptr)
+    -> ProjectResult<lito::lock::LockStatus> {
     if (root.is_empty()) {
         return Err(ProjectError::Message(String::make("update directory is required"_str)));
     }
@@ -920,7 +1043,8 @@ auto update_project_dependencies(ref<rstd::path::Path>                    root,
                                              jobs,
                                              observer_value(observer),
                                              None(),
-                                             lito::lock::InvalidLockPolicy::Replace));
+                                             lito::lock::InvalidLockPolicy::Replace,
+                                             registries));
     return Ok(resolved.lock);
 }
 

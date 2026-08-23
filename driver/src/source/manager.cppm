@@ -913,6 +913,45 @@ public:
         return acquire_path(root);
     }
 
+    auto acquire_resolved(ResolvedPackageSource source) -> SourceResult<usize> {
+        if (source.identity.is_empty()) {
+            return source_failure<usize>("resolved package source has no identity"_str);
+        }
+        auto metadata = rstd::fs::symlink_metadata(source.root_directory.as_path());
+        if (metadata.is_err()) {
+            return source_io_failure<usize>("inspect resolved package source"_str,
+                                            source.root_directory.as_path(),
+                                            rstd::move(metadata).unwrap_err());
+        }
+        if (! metadata->is_dir() || metadata->is_symlink()) {
+            return source_failure<usize>(
+                rstd::format("resolved package source '{}' is not an ordinary directory",
+                             source.root_directory.as_path()));
+        }
+        return Ok(absorb_entry(ManagedSourceEntry { .source = rstd::move(source) }));
+    }
+
+    auto replace_resolved(usize source_index, ResolvedPackageSource source) -> SourceResult<empty> {
+        if (source_index >= entries_.len() || source.identity.is_empty()) {
+            return source_failure<empty>("resolved package source replacement is invalid"_str);
+        }
+        const auto& existing = entries_[source_index].source;
+        if (! (existing.root_directory.as_path().starts_with(source.root_directory.as_path()) &&
+               source.root_directory.as_path().starts_with(existing.root_directory.as_path()))) {
+            return source_failure<empty>(
+                "resolved package source replacement changes the source root"_str);
+        }
+        auto collision = source_identities_.get(source.identity.as_str());
+        if (collision.is_some() && **collision != source_index) {
+            return source_failure<empty>(
+                "resolved package source replacement collides with another source"_str);
+        }
+        (void)source_identities_.remove(existing.identity.as_str());
+        source_identities_.insert(source.identity.clone(), source_index);
+        entries_[source_index].source = rstd::move(source);
+        return Ok(empty {});
+    }
+
     auto acquire(const PackageSourceRequirement& requirement, ref<rstd::path::Path> declaring_root)
         -> SourceResult<usize> {
         if (requirement.is_Registry()) {

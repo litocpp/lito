@@ -91,6 +91,9 @@ public:
     VersionRequirement& operator=(VersionRequirement&&) noexcept = default;
 
     static auto parse(ref<str> value) -> RegistryValueResult<VersionRequirement>;
+    static auto any() -> VersionRequirement {
+        return VersionRequirement(String::make(">=0.0.0"_str), {}, false, {}, {}, {});
+    }
 
     auto comparators() const noexcept -> slice<VersionComparator> {
         return comparators_.as_slice();

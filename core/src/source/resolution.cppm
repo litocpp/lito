@@ -4,6 +4,9 @@ import rstd;
 import :source.git;
 import :source.config;
 import :source.error;
+import :registry.digest;
+import :registry.identity;
+import :registry.version;
 
 using namespace rstd::prelude;
 
@@ -16,11 +19,26 @@ enum class SourceMaterializationPolicy
     ExistingOnly,
 };
 
+struct RegistrySourcePin {
+    lito::registry::RegistryPackageId package;
+    lito::registry::SemanticVersion   version;
+    lito::registry::ReleaseDigest     release;
+
+    auto clone() const -> RegistrySourcePin {
+        return RegistrySourcePin {
+            .package = package.clone(),
+            .version = version.clone(),
+            .release = release.clone(),
+        };
+    }
+};
+
 struct SourceResolutionOptions {
     bool                        locked { false };
     GitResolutionMode           git { GitResolutionMode::ReuseLocked };
     SourceMaterializationPolicy materialization { SourceMaterializationPolicy::Materialize };
     Vec<GitSourcePin>           git_sources;
+    Vec<RegistrySourcePin>      registry_sources;
     PackageSourceConfig         sources;
 
     auto clone() const -> SourceResolutionOptions {
@@ -31,12 +49,15 @@ struct SourceResolutionOptions {
                 .commit = source.commit.clone(),
             });
         }
+        auto registry_pins = Vec<RegistrySourcePin>::with_capacity(registry_sources.len());
+        for (const auto& source : registry_sources) registry_pins.push(source.clone());
         return SourceResolutionOptions {
-            .locked          = locked,
-            .git             = git,
-            .materialization = materialization,
-            .git_sources     = rstd::move(pins),
-            .sources         = sources.clone(),
+            .locked           = locked,
+            .git              = git,
+            .materialization  = materialization,
+            .git_sources      = rstd::move(pins),
+            .registry_sources = rstd::move(registry_pins),
+            .sources          = sources.clone(),
         };
     }
 };

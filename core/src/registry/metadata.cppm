@@ -85,6 +85,38 @@ struct RegistryReleaseProjection {
     auto clone() const -> RegistryReleaseProjection;
 };
 
+class VerifiedRegistryRelease : public DefaultInClass<VerifiedRegistryRelease, Clone> {
+    RegistryPackageId         package_;
+    RegistryReleaseProjection release_;
+    SigningKeyId              verified_key_;
+    String                    canonical_signed_;
+
+    VerifiedRegistryRelease(RegistryPackageId         package,
+                            RegistryReleaseProjection release,
+                            SigningKeyId              verified_key,
+                            String                    canonical_signed)
+        : package_(rstd::move(package)),
+          release_(rstd::move(release)),
+          verified_key_(rstd::move(verified_key)),
+          canonical_signed_(rstd::move(canonical_signed)) {}
+
+    friend auto parse_verified_registry_release(slice<u8>,
+                                                const RegistryPackageId&,
+                                                const ReleaseDigest&,
+                                                const Ed25519PublicKey&)
+        -> RegistryValueResult<VerifiedRegistryRelease>;
+
+public:
+    auto package() const noexcept -> const RegistryPackageId& { return package_; }
+    auto release() const noexcept -> const RegistryReleaseProjection& { return release_; }
+    auto verified_key() const noexcept -> const SigningKeyId& { return verified_key_; }
+    auto canonical_signed() const noexcept -> ref<str> { return canonical_signed_.as_str(); }
+    auto clone() const -> VerifiedRegistryRelease {
+        return VerifiedRegistryRelease(
+            package_.clone(), release_.clone(), verified_key_.clone(), canonical_signed_.clone());
+    }
+};
+
 struct RegistryTagProjection {
     String          name;
     SemanticVersion version;
@@ -139,6 +171,13 @@ auto parse_verified_package_index(slice<u8>                input,
                                   const RegistryPackageId& expected,
                                   const Ed25519PublicKey&  trusted_key)
     -> RegistryValueResult<VerifiedPackageIndex>;
+auto parse_verified_registry_release(slice<u8>                input,
+                                     const RegistryPackageId& expected_package,
+                                     const ReleaseDigest&     expected_release,
+                                     const Ed25519PublicKey&  trusted_key)
+    -> RegistryValueResult<VerifiedRegistryRelease>;
+auto registry_immutable_release_matches(const RegistryReleaseProjection& left,
+                                        const RegistryReleaseProjection& right) noexcept -> bool;
 
 } // namespace lito::registry
 
@@ -751,4 +790,99 @@ auto lito::registry::parse_verified_package_index(slice<u8>                input
                                    rstd::move(tags),
                                    rstd::move(verified_key),
                                    rstd::move(canonical)));
+}
+
+auto lito::registry::parse_verified_registry_release(slice<u8>                input,
+                                                     const RegistryPackageId& expected_package,
+                                                     const ReleaseDigest&     expected_release,
+                                                     const Ed25519PublicKey&  trusted_key)
+    -> RegistryValueResult<VerifiedRegistryRelease> {
+    auto parsed =
+        rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
+    if (parsed.is_err()) {
+        return registry_value_failure<VerifiedRegistryRelease>(
+            rstd::format("Registry release is invalid JSON: {}", rstd::move(parsed).unwrap_err()));
+    }
+    auto envelope = rstd::move(parsed).unwrap();
+    rstd_try(reject_unknown(envelope, "Registry envelope"_str, { "signed"_str, "signatures"_str }));
+    auto signed_value = rstd_try(required_member(envelope, "signed"_str, "Registry envelope"_str));
+    auto verified_key = rstd_try(parse_signatures(envelope, *signed_value, trusted_key));
+    rstd_try(reject_unknown(*signed_value,
+                            "Registry release"_str,
+                            { "schema"_str,
+                              "registry"_str,
+                              "package"_str,
+                              "version"_str,
+                              "source"_str,
+                              "manifest"_str,
+                              "blob"_str,
+                              "dependencies"_str,
+                              "published_at"_str }));
+    auto schema = rstd_try(required_string(*signed_value, "schema"_str, "Registry release"_str));
+    if (schema != "lito.registry.release.v1"_str) {
+        return metadata_failure<VerifiedRegistryRelease>("Registry release"_str,
+                                                         "uses an unsupported schema"_str);
+    }
+    auto registry = RegistryId::parse(
+        rstd_try(required_string(*signed_value, "registry"_str, "Registry release"_str)));
+    auto package = RegistryPackageName::parse(
+        rstd_try(required_string(*signed_value, "package"_str, "Registry release"_str)));
+    if (registry.is_err() || package.is_err() || ! (*registry == expected_package.registry) ||
+        ! (*package == expected_package.name)) {
+        return metadata_failure<VerifiedRegistryRelease>(
+            "Registry release"_str, "does not match the requested registry and package"_str);
+    }
+    auto canonical = rstd_try(canonical_signed_json(*signed_value));
+    auto computed  = ReleaseDigest(lito::crypto::sha256_digest(canonical.as_str().as_bytes()));
+    if (! (computed == expected_release)) {
+        return metadata_failure<VerifiedRegistryRelease>(
+            "Registry release"_str, "does not match the requested release digest"_str);
+    }
+
+    auto               release_value = JsonMap::make();
+    constexpr ref<str> fields[]      = { "version"_str, "source"_str,       "manifest"_str,
+                                         "blob"_str,    "dependencies"_str, "published_at"_str };
+    for (auto field : fields) {
+        auto member = rstd_try(required_member(*signed_value, field, "Registry release"_str));
+        release_value.insert(String::make(field), member->clone());
+    }
+    release_value.insert(String::make("release"_str),
+                         Json::String(String::make(expected_release.text().as_str())));
+    release_value.insert(String::make("yanked"_str), Json::Bool(false));
+    release_value.insert(String::make("deprecated"_str), Json {});
+    auto release = rstd_try(parse_release(
+        Json::Object(rstd::move(release_value)), expected_package, "Registry release"_str));
+    return Ok(VerifiedRegistryRelease(expected_package.clone(),
+                                      rstd::move(release),
+                                      rstd::move(verified_key),
+                                      rstd::move(canonical)));
+}
+
+auto lito::registry::registry_immutable_release_matches(
+    const RegistryReleaseProjection& left,
+    const RegistryReleaseProjection& right) noexcept -> bool {
+    if (! (left.version == right.version) || ! (left.release == right.release) ||
+        ! (left.source == right.source) || ! (left.manifest == right.manifest) ||
+        ! (left.blob.digest == right.blob.digest) ||
+        left.blob.size.value() != right.blob.size.value() ||
+        left.blob.format.as_str() != right.blob.format.as_str() ||
+        left.published_at.as_str() != right.published_at.as_str() ||
+        left.dependencies.len() != right.dependencies.len()) {
+        return false;
+    }
+    for (usize index {}; index < left.dependencies.len(); ++index) {
+        const auto& first  = left.dependencies[index];
+        const auto& second = right.dependencies[index];
+        if (first.alias != second.alias || ! (first.package == second.package) ||
+            first.requirement.text() != second.requirement.text() || first.kind != second.kind ||
+            first.visibility != second.visibility ||
+            first.default_features != second.default_features ||
+            first.features.len() != second.features.len()) {
+            return false;
+        }
+        for (usize feature {}; feature < first.features.len(); ++feature) {
+            if (first.features[feature] != second.features[feature]) return false;
+        }
+    }
+    return true;
 }

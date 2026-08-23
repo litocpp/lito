@@ -10,3 +10,4 @@ export import :command.format;
 export import :command.update;
 export import :command.install;
 export import :command.reporting;
+export import :command.package;
