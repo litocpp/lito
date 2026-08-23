@@ -649,6 +649,30 @@ extern "C++" int main() {
         rstd::io::println("unset {} in {}", mutation->key, mutation->path.as_path());
         return 0;
     }
+    if (invocation.command.is_Clean()) {
+        auto options = rstd::move(invocation.command).as_Clean().options;
+        auto target  = lito::CleanTarget::All();
+        if (options.profile.is_some()) {
+            target = lito::CleanTarget::Profile(rstd::move(options.profile).unwrap());
+        } else if (options.build_directory.is_some()) {
+            target = lito::CleanTarget::Directory(rstd::move(options.build_directory).unwrap());
+        }
+        auto result = lito::clean(lito::CleanRequest {
+            .root   = invocation.working_directory.clone(),
+            .target = rstd::move(target),
+        });
+        if (result.is_err()) {
+            report_error(rstd::move(result).unwrap_err());
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        if (summary.removed) {
+            rstd::io::println("removed {}", summary.path.as_path());
+        } else {
+            rstd::io::println("nothing to clean at {}", summary.path.as_path());
+        }
+        return 0;
+    }
     if (invocation.command.is_Sdk()) {
         auto       sdk_command = rstd::move(invocation.command).as_Sdk().command;
         const auto android     = sdk_command.is_AndroidNdk();

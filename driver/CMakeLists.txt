@@ -7,6 +7,7 @@ target_sources(
   PRIVATE src/build/discovery.cpp
           src/build/event.cpp
           src/build/mod.cpp
+          src/command/clean.cpp
           src/command/doc.cpp
           src/command/format.cpp
           src/command/install.cpp
@@ -52,6 +53,7 @@ target_sources(
          src/command/doc/result.cppm
          src/command/doc_error.cppm
          src/command/error.cppm
+         src/command/clean.cppm
          src/command/format.cppm
          src/command/install.cppm
          src/command/package.cppm

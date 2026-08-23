@@ -32,6 +32,11 @@ struct BuildOptions {
     lito::package::FeatureSelection          features;
 };
 
+struct CleanOptions {
+    Option<lito::manifest::BuildProfileName> profile;
+    Option<PathBuf>                          build_directory;
+};
+
 struct ScanOptions {
     PathBuf                                  source;
     Vec<String>                              packages;
@@ -225,6 +230,7 @@ class RegistryCommand {
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
+              (Clean, (CleanOptions options;)),
               (Install, (InstallOptions options;)),
               (Test, (TestOptions options;)),
               (Bench, (BenchOptions options;)),
@@ -350,6 +356,14 @@ struct BuildSchema {
     BuildExecutionArgs    execution;
 
     auto decode(const Matches& matches) const -> Result<BuildOptions, CliDecodeError>;
+};
+
+struct CleanSchema {
+    CommandKey                               command;
+    ArgKey<lito::manifest::BuildProfileName> profile;
+    ArgKey<String>                           build_directory;
+
+    auto decode(const Matches& matches) const -> Result<CleanOptions, CliDecodeError>;
 };
 
 struct InstallSchema {
@@ -584,6 +598,7 @@ struct RegistrySchema {
 struct CliSchema {
     RootArgs       root;
     BuildSchema    build;
+    CleanSchema    clean;
     InstallSchema  install;
     TestSchema     test;
     BenchSchema    bench;
@@ -768,6 +783,23 @@ auto make_build_definition() -> CommandDefinition<BuildSchema> {
             .build_directory    = build_directory,
             .source_acquisition = rstd::move(source_acquisition),
             .execution          = rstd::move(execution),
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_clean_definition() -> CommandDefinition<CleanSchema> {
+    auto command = Command::make("clean"_str);
+    command.about("Remove build outputs"_str);
+    auto key             = command.key();
+    auto profile         = command.add_arg(profile_arg());
+    auto build_directory = command.add_arg(build_directory_arg());
+    command.conflicts(profile, build_directory);
+    return {
+        CleanSchema {
+            .command         = key,
+            .profile         = profile,
+            .build_directory = build_directory,
         },
         rstd::move(command),
     };
@@ -1309,6 +1341,7 @@ auto make_registry_definition() -> CommandDefinition<RegistrySchema> {
 
 auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto build    = make_build_definition();
+    auto clean    = make_clean_definition();
     auto install  = make_install_definition();
     auto test     = make_test_definition();
     auto bench    = make_bench_definition();
@@ -1339,6 +1372,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .config        = root.add_arg(config_override_arg()),
     };
     root.add_subcommand(rstd::move(build.command));
+    root.add_subcommand(rstd::move(clean.command));
     root.add_subcommand(rstd::move(install.command));
     root.add_subcommand(rstd::move(test.command));
     root.add_subcommand(rstd::move(bench.command));
@@ -1359,6 +1393,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     return Ok(CliSchema {
         .root     = rstd::move(root_args),
         .build    = rstd::move(build.schema),
+        .clean    = rstd::move(clean.schema),
         .install  = rstd::move(install.schema),
         .test     = rstd::move(test.schema),
         .bench    = rstd::move(bench.schema),
@@ -1547,6 +1582,13 @@ auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, C
         .no_timing       = execution.no_timing,
         .jobs            = rstd::move(execution.jobs),
         .features        = rstd::move(package.features),
+    });
+}
+
+auto CleanSchema::decode(const Matches& matches) const -> Result<CleanOptions, CliDecodeError> {
+    return Ok(CleanOptions {
+        .profile         = rstd_try(optional_profile(matches, profile)),
+        .build_directory = rstd_try(optional_path(matches, build_directory)),
     });
 }
 
@@ -1877,6 +1919,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
     if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
         auto options = rstd_try(schema.build.decode(**child));
         return Ok(CliCommand::Build(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.clean.command); child.is_some()) {
+        auto options = rstd_try(schema.clean.decode(**child));
+        return Ok(CliCommand::Clean(rstd::move(options)));
     }
     if (auto child = matches.subcommand_matches(schema.install.command); child.is_some()) {
         auto options = rstd_try(schema.install.decode(**child));

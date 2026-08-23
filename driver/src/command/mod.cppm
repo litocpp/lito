@@ -1,6 +1,7 @@
 export module lito.driver:command;
 
 export import :command.error;
+export import :command.clean;
 export import :command.artifact;
 export import :command.test;
 export import :command.bench;

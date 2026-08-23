@@ -70,15 +70,21 @@ class BuildDirectory {
     explicit BuildDirectory(PathBuf base): base_(rstd::move(base)) {}
 
 public:
+    static auto resolve_root(ref<rstd::path::Path> owner_root, ref<rstd::path::Path> requested)
+        -> BuildDirectory {
+        if (requested.is_empty()) return BuildDirectory(join(owner_root, "build"_str));
+        if (requested.is_absolute()) return BuildDirectory(PathBuf::from(requested));
+        return BuildDirectory(PathBuf::from(owner_root).join(requested));
+    }
+
     static auto resolve(ref<rstd::path::Path> owner_root,
                         ref<rstd::path::Path> requested,
                         ref<str>              profile) -> BuildDirectory {
         if (requested.is_empty()) {
-            auto build = join(owner_root, "build"_str);
-            return BuildDirectory(join(build.as_path(), profile));
+            auto root = resolve_root(owner_root, requested);
+            return BuildDirectory(join(root.path(), profile));
         }
-        if (requested.is_absolute()) return BuildDirectory(PathBuf::from(requested));
-        return BuildDirectory(PathBuf::from(owner_root).join(requested));
+        return resolve_root(owner_root, requested);
     }
 
     auto path() const noexcept -> ref<rstd::path::Path> { return base_.as_path(); }
