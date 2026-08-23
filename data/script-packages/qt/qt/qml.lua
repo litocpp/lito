@@ -28,6 +28,22 @@ local function safe_path(value, context)
   return value
 end
 
+local function resource_prefix(value)
+  if type(value) ~= "string" or value == "" or value:sub(1, 1) ~= "/" or
+      value:find("\\", 1, true) or value:find("//", 1, true) or value:find("%c") then
+    error("qt.qml_module.resource_prefix must be a canonical absolute resource path")
+  end
+  for component in value:gmatch("[^/]+") do
+    if component == "." or component == ".." then
+      error("qt.qml_module.resource_prefix must not contain '.' or '..' components")
+    end
+  end
+  if value ~= "/" and value:sub(-1) == "/" then
+    return value:sub(1, -2)
+  end
+  return value
+end
+
 local function xml_escape(value)
   value = value:gsub("&", "&amp;")
   value = value:gsub("<", "&lt;")
@@ -171,12 +187,13 @@ local function generate_registration(request, prefix, major, minor)
   }
 end
 
-local function generate_qmldir(request, prefix, version, qml_files, registration)
+local function generate_qmldir(request, prefix, resource_path, version, qml_files,
+                               registration)
   local content = "module " .. request.uri .. "\n"
   if registration ~= nil then
     content = content .. "typeinfo module.qmltypes\n"
   end
-  content = content .. "prefer :/qt/qml/" .. request.uri:gsub("%.", "/") .. "/\n"
+  content = content .. "prefer :" .. resource_path .. "\n"
   for _, path in ipairs(qml_files) do
     local qualifier = contains(request.singletons or {}, path) and "singleton " or ""
     content = content .. qualifier .. qml_type(path) .. " " .. version .. " " .. path .. "\n"
@@ -420,9 +437,12 @@ function qml.generate_module(request)
 
   local prefix = request.output or ("lito-qml/" .. uri:gsub("%.", "_"))
   safe_path(prefix, "qt.qml_module.output")
-  local resource_prefix = "/qt/qml/" .. uri:gsub("%.", "/") .. "/"
+  local resource_base = resource_prefix(request.resource_prefix or "/qt/qml")
+  local resource_prefix = resource_base .. (resource_base == "/" and "" or "/") ..
+      uri:gsub("%.", "/") .. "/"
   local registration = generate_registration(request, prefix, major, minor)
-  local qmldir = generate_qmldir(request, prefix, version, qml_files, registration)
+  local qmldir = generate_qmldir(request, prefix, resource_prefix, version, qml_files,
+                                 registration)
   local import_metadata = scan_imports(request, prefix, qml_files)
 
   local raw_files = {}
