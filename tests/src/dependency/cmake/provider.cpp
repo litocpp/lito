@@ -445,6 +445,59 @@ TEST_F(CMakeProvider, CMakeProviderRequestsRequiredFindComponents) {
     EXPECT_TRUE(has_component);
 }
 
+TEST_F(CMakeProvider, CMakeProviderUsesInstallPrefixForFindQueries) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto tree = cmake_find_package_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("cmake-find-install-prefix"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto provider = fixture_cmake();
+    provider.search_paths.push(project->root.clone());
+    auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
+    targets.push(lito::dependency::CMakeTargetRequirement {
+        .name       = String::make("LitoFindFixture::prefix"_str),
+        .visibility = lito::dependency::DependencyVisibility::Private,
+    });
+    auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
+    declarations.push(lito::PreparedCMakeDependencyRequirement {
+        .alias   = String::make("fixture"_str),
+        .package = String::make("LitoFindFixture"_str),
+        .source  = lito::PreparedCMakeDependencySource::Find(),
+        .targets = rstd::move(targets),
+    });
+    auto prefix   = project->root.join(PathBuf::from("application-prefix"_str).as_path());
+    auto resolved = resolve_cmake_fixtures_with_provider(
+        declarations,
+        default_profile(*parser),
+        native_platform(),
+        build_root("cmake-find-install-prefix-work"_str).as_path(),
+        rstd::move(provider),
+        usize(1),
+        nullptr,
+        Some(prefix.clone()));
+    if (resolved.is_err()) {
+        auto error = rstd::move(resolved).unwrap_err();
+        rstd::io::eprintln("{}", error_chain_text(error));
+        EXPECT_TRUE(false);
+        return;
+    }
+    ASSERT_EQ(resolved->len(), usize(1));
+    ASSERT_EQ((*resolved)[usize {}].targets.len(), usize(1));
+    auto compile_arguments =
+        parser->parse((*resolved)[usize {}].targets[usize {}].compile_options,
+                      (*resolved)[usize {}].targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
+    auto has_prefix = false;
+    for (const auto& occurrence : compile_arguments->occurrences) {
+        if (occurrence.argument.is_Macro()) {
+            has_prefix = has_prefix || occurrence.argument.as_Macro().directive.value.as_str() ==
+                                           "LITO_CMAKE_FIND_PREFIX=1"_str;
+        }
+    }
+    EXPECT_TRUE(has_prefix);
+}
+
 TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

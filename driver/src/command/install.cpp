@@ -300,8 +300,11 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     for (const auto& target : requirements.targets) {
         request.build.exact_targets.push(target.clone());
     }
-    auto profile_name        = request.build.profile->clone();
-    auto prepared            = rstd_try(install_project_failure(
+    auto profile_name              = request.build.profile->clone();
+    auto cmake_find_install_prefix = request.destination.is_Prefix()
+                                         ? Some(request.destination.as_Prefix().prefix.path.clone())
+                                         : Option<PathBuf> {};
+    auto prepared                  = rstd_try(install_project_failure(
         prepare_resolved_build_project(rstd::move(resolved.session),
                                        resolved.configuration,
                                        profile_name,
@@ -315,10 +318,11 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                        *environment,
                                        jobs,
                                        request.build.observer,
-                                       request.build.setup_reporter)));
-    prepared.target_runtimes = rstd::move(resolved.target_runtimes);
-    prepared.target_stripper = rstd::move(resolved.target_stripper);
-    prepared.android_sdk     = rstd::move(resolved.android_sdk);
+                                       request.build.setup_reporter,
+                                       cmake_find_install_prefix)));
+    prepared.target_runtimes       = rstd::move(resolved.target_runtimes);
+    prepared.target_stripper       = rstd::move(resolved.target_stripper);
+    prepared.android_sdk           = rstd::move(resolved.android_sdk);
     rstd_try(resolve_install_artifact_link_variants(requirements, prepared.external_assets));
     for (const auto& variant : requirements.artifact_link_variants) {
         request.build.artifact_link_variants.push(variant.clone());

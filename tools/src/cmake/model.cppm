@@ -217,6 +217,9 @@ auto clone_cmake_requirement(const Request& requirement) -> Request {
     if (requirement.config_directory.is_some()) {
         result.config_directory = Some(requirement.config_directory->clone());
     }
+    if (requirement.find_install_prefix.is_some()) {
+        result.find_install_prefix = Some(requirement.find_install_prefix->clone());
+    }
     return result;
 }
 
@@ -331,6 +334,12 @@ auto work_area(const Request&                requirement,
     for (const auto& tool : requirement.host_tools) {
         append_identity(query_recipe, tool.name.as_str());
         append_identity(query_recipe, tool.target.as_str());
+    }
+    if (requirement.find_install_prefix.is_some()) {
+        auto prefix =
+            path_text(requirement.find_install_prefix->as_path(), "CMake find install prefix"_str);
+        if (prefix.is_err()) return Err(rstd::move(prefix).unwrap_err());
+        append_identity(query_recipe, prefix->as_str());
     }
     append_identity(query_recipe, effective_target);
     auto query_root = root.join(PathBuf::from("queries"_str).as_path())

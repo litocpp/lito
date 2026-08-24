@@ -216,6 +216,15 @@ if(NOT TARGET LitoFindFixture::raw)
     INTERFACE_COMPILE_DEFINITIONS LITO_CMAKE_FIND_USAGE=1
     INTERFACE_INCLUDE_DIRECTORIES "${_LITO_FIND_FIXTURE_PREFIX}/include")
 endif()
+find_path(LITO_FIND_FIXTURE_PREFIX_MARKER
+  NAMES lito_find_fixture_prefix.marker
+  PATH_SUFFIXES include
+  NO_CACHE)
+if(LITO_FIND_FIXTURE_PREFIX_MARKER AND NOT TARGET LitoFindFixture::prefix)
+  add_library(LitoFindFixture::prefix INTERFACE IMPORTED)
+  set_target_properties(LitoFindFixture::prefix PROPERTIES
+    INTERFACE_COMPILE_DEFINITIONS LITO_CMAKE_FIND_PREFIX=1)
+endif()
 if("Feature" IN_LIST LitoFindFixture_FIND_COMPONENTS AND
    NOT TARGET LitoFindFixture::component)
   add_library(LitoFindFixture::component INTERFACE IMPORTED)
@@ -229,6 +238,7 @@ if(COMMAND lito_export_asset_set)
 endif()
 )"_str },
         { "include/lito_find_fixture.hpp"_str, "#pragma once\n"_str },
+        { "application-prefix/include/lito_find_fixture_prefix.marker"_str, "prefix\n"_str },
         { "share/lito-find-fixture/runtime.bin"_str, "runtime\n"_str },
         { "adapter.cmake"_str,
           R"(if(NOT LITO_CMAKE_DEPENDENCY_MODE STREQUAL "find")
@@ -264,8 +274,9 @@ auto resolve_cmake_fixtures_with_provider(
     const lito::system::BuildPlatform&                   platform,
     ref<rstd::path::Path>                                work_root,
     lito::dependency::CMakeProviderConfig                provider,
-    usize                                                jobs   = usize(1),
-    Vec<lito::ExternalAssetSet>*                         assets = nullptr)
+    usize                                                jobs                = usize(1),
+    Vec<lito::ExternalAssetSet>*                         assets              = nullptr,
+    const Option<PathBuf>&                               find_install_prefix = None())
     -> lito::dependency::DependencyResult<Vec<lito::cpp::ExternalDependencyUsage>> {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
@@ -309,7 +320,9 @@ auto resolve_cmake_fixtures_with_provider(
                                              platform.compiler_default,
                                              platform.effective_target.triple.as_str(),
                                              work_root,
-                                             jobs);
+                                             jobs,
+                                             None(),
+                                             find_install_prefix);
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto snapshot = lito::execute_cmake_package(*plan, *environment);
         if (snapshot.is_err()) return Err(rstd::move(snapshot).unwrap_err());

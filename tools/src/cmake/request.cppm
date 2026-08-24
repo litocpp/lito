@@ -45,6 +45,7 @@ struct Request {
     Vec<CacheEntry>          cache;
     Vec<TargetRequirement>   targets;
     Vec<HostToolRequirement> host_tools;
+    Option<PathBuf>          find_install_prefix;
 };
 
 struct Provider {

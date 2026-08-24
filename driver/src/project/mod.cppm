@@ -594,7 +594,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                               const ResolvedProcessEnvironment&                environment,
                               usize                                            jobs,
                               const Option<BuildEventSink>&                    observer = None(),
-                              const Option<BuildSetupReportSink>& setup_reporter        = None())
+                              const Option<BuildSetupReportSink>& setup_reporter        = None(),
+                              const Option<PathBuf>& cmake_find_install_prefix          = None())
     -> ProjectResult<ResolvedProjectMetadata> {
     auto external_sources       = rstd::move(session.project.external_sources);
     auto cmake_build_overrides  = rstd::move(session.project.cmake_build_overrides);
@@ -760,7 +761,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   jobs,
                                                                   observer,
                                                                   sources,
-                                                                  session.android_cmake));
+                                                                  session.android_cmake,
+                                                                  cmake_find_install_prefix));
     auto assets         = rstd::move(external_usage.assets);
     auto provenance     = rstd::move(external_usage.provenance);
     auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
@@ -798,7 +800,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const ResolvedProcessEnvironment&                environment,
                                     usize                                            jobs,
                                     const Option<BuildEventSink>&       observer       = None(),
-                                    const Option<BuildSetupReportSink>& setup_reporter = None())
+                                    const Option<BuildSetupReportSink>& setup_reporter = None(),
+                                    const Option<PathBuf>& cmake_find_install_prefix   = None())
     -> ProjectResult<PreparedBuildProject> {
     auto metadata = resolve_project_metadata(rstd::move(session),
                                              configuration,
@@ -813,7 +816,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                              environment,
                                              jobs,
                                              observer,
-                                             setup_reporter);
+                                             setup_reporter,
+                                             cmake_find_install_prefix);
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {

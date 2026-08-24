@@ -535,6 +535,12 @@ auto configure_probe(const Request&                    requirement,
     arguments.push(String::make("-G"_str));
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
+    if (requirement.source.is_Find() && requirement.find_install_prefix.is_some()) {
+        rstd_try(push_path_argument(arguments,
+                                    "-DCMAKE_INSTALL_PREFIX="_str,
+                                    requirement.find_install_prefix->as_path(),
+                                    "CMake find install prefix"_str));
+    }
     rstd_try(push_cmake_toolchain(arguments, toolchain));
     push_cmake_profile_configuration(arguments, profile, provider.generator.as_str());
     arguments.push(

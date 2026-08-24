@@ -142,6 +142,26 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_NE(find_adapter->tool.area.query_root.as_path(),
               find_generic->tool.area.query_root.as_path());
 
+    auto install_prefix   = project->root.join(PathBuf::from("application-prefix"_str).as_path());
+    auto find_with_prefix = lito::plan_cmake_package(*requirement,
+                                                     fixture_cmake(),
+                                                     configuration(),
+                                                     default_profile(*parser),
+                                                     linker_identity(),
+                                                     platform.compiler_default,
+                                                     platform.effective_target.triple.as_str(),
+                                                     work_root.as_path(),
+                                                     usize(1),
+                                                     None(),
+                                                     Some(install_prefix.clone()));
+    ASSERT_TRUE(find_with_prefix.is_ok());
+    ASSERT_TRUE(find_with_prefix->tool.requirement.find_install_prefix.is_some());
+    EXPECT_EQ(find_with_prefix->tool.requirement.find_install_prefix->as_path(),
+              install_prefix.as_path());
+    EXPECT_EQ(find_with_prefix->tool.area.root.as_path(), find_generic->tool.area.root.as_path());
+    EXPECT_NE(find_with_prefix->tool.area.query_root.as_path(),
+              find_generic->tool.area.query_root.as_path());
+
     auto android = lito::AndroidCmakeProjection {
         .toolchain_file =
             project->root.join(PathBuf::from("android.toolchain.cmake"_str).as_path()),

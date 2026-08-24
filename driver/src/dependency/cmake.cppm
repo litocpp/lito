@@ -65,8 +65,9 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
                         const TargetInfo&                            default_target,
                         ref<str>                                     effective_target,
                         ref<rstd::path::Path>                        profile_cmake_root,
-                        usize                                        jobs    = usize(1),
-                        const Option<AndroidCmakeProjection>&        android = None())
+                        usize                                        jobs                = usize(1),
+                        const Option<AndroidCmakeProjection>&        android             = None(),
+                        const Option<PathBuf>&                       find_install_prefix = None())
     -> lito::dependency::DependencyResult<CMakePackagePlan>;
 
 auto execute_cmake_package(const CMakePackagePlan&                      plan,
@@ -104,8 +105,8 @@ auto cmake_source(const ResolvedCMakeDependencySource& source) -> lito::tools::c
     return lito::tools::cmake::Source::Find();
 }
 
-auto cmake_request(const ResolvedCMakeDependencyRequirement& requirement)
-    -> lito::tools::cmake::Request {
+auto cmake_request(const ResolvedCMakeDependencyRequirement& requirement,
+                   const Option<PathBuf>& find_install_prefix) -> lito::tools::cmake::Request {
     auto cache = Vec<lito::tools::cmake::CacheEntry>::with_capacity(requirement.cache.len());
     for (const auto& entry : requirement.cache) {
         cache.push(lito::tools::cmake::CacheEntry {
@@ -138,6 +139,9 @@ auto cmake_request(const ResolvedCMakeDependencyRequirement& requirement)
     if (requirement.adapter.is_some()) result.adapter = Some(requirement.adapter->clone());
     if (requirement.config_directory.is_some()) {
         result.config_directory = Some(requirement.config_directory->clone());
+    }
+    if (requirement.source.is_Find() && find_install_prefix.is_some()) {
+        result.find_install_prefix = Some(find_install_prefix->clone());
     }
     return result;
 }
@@ -294,7 +298,8 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
                         ref<str>                                     effective_target,
                         ref<rstd::path::Path>                        profile_cmake_root,
                         usize                                        jobs,
-                        const Option<AndroidCmakeProjection>&        android)
+                        const Option<AndroidCmakeProjection>&        android,
+                        const Option<PathBuf>&                       find_install_prefix)
     -> lito::dependency::DependencyResult<CMakePackagePlan> {
     if (effective_target != default_target.triple.as_str() && android.is_none()) {
         return lito::dependency::dependency_failure<CMakePackagePlan>(rstd::format(
@@ -304,7 +309,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
             effective_target));
     }
     auto planned =
-        lito::tools::cmake::plan_cmake_package(cmake_request(requirement),
+        lito::tools::cmake::plan_cmake_package(cmake_request(requirement, find_install_prefix),
                                                cmake_provider(provider),
                                                cmake_toolchain(configuration, linker, android),
                                                cmake_profile_configuration(profile),

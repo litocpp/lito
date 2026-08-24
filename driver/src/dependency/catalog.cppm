@@ -71,7 +71,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                     usize                                    jobs,
                                     const Option<BuildEventSink>&            observer,
                                     const lito::source::PackageSourceConfig& source_config = {},
-                                    const Option<AndroidCmakeProjection>&    android_cmake = None())
+                                    const Option<AndroidCmakeProjection>&    android_cmake = None(),
+                                    const Option<PathBuf>& cmake_find_install_prefix       = None())
     -> lito::dependency::DependencyResult<PreparedExternalCatalog> {
     if (jobs == usize {}) {
         return lito::dependency::dependency_failure<PreparedExternalCatalog>(
@@ -347,7 +348,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        platform.effective_target.triple.as_str(),
                                        cmake_work_root.as_path(),
                                        jobs,
-                                       android_cmake);
+                                       android_cmake,
+                                       cmake_find_install_prefix);
         if (plan.is_err()) return Err(contextualize(rstd::move(plan).unwrap_err()));
         auto key_text = plan->tool.area.query_root.as_path().to_str();
         if (key_text.is_none()) {
