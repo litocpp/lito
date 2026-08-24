@@ -82,6 +82,11 @@ struct LexedSource {
     SharedSourceSnapshot snapshot;
     Vec<Token>           tokens;
     Vec<CommentTrivia>   comments;
+
+    auto retained_bytes() const noexcept -> usize {
+        return snapshot->contents.capacity() + tokens.capacity() * usize(sizeof(Token)) +
+               comments.capacity() * usize(sizeof(CommentTrivia));
+    }
 };
 
 using SharedLexedSource = rstd::sync::Arc<LexedSource>;

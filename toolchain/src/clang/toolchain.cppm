@@ -622,20 +622,6 @@ public:
         });
     }
 
-    auto scan(const cpp::PreparedUnit& prepared) const -> ToolchainResult<cpp::ScanResult> {
-        if (prepared.frontend_analysis.is_none()) {
-            return failure<cpp::ScanResult>(rstd::format("source '{}' has no frontend analysis",
-                                                         prepared.unit.source.as_path()));
-        }
-        auto projected = cpp::scan_from_frontend(prepared.frontend_analysis->result,
-                                                 prepared.unit.id,
-                                                 cpp::source_language(prepared.unit));
-        if (projected.is_err()) {
-            return failure<cpp::ScanResult>(rstd::move(projected).unwrap_err());
-        }
-        return Ok(rstd::move(projected).unwrap());
-    }
-
     auto preprocessor_environment_identity(const cpp::CompileContext& compile_context,
                                            ref<rstd::path::Path>      working_directory) const
         -> ToolchainResult<String> {

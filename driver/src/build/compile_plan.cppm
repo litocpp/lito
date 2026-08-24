@@ -216,7 +216,7 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
             .is_interface     = is_interface,
             .logical_module   = rstd::move(logical_module),
             .root_module      = package.targets[*target].module_affiliation.clone(),
-            .source_identity  = units[unit].frontend_analysis->receipt.clone(),
+            .source_identity  = units[unit].source_content_identity.clone(),
             .invocation       = plan.nodes[unit].invocation->clone(),
             .bmi_dependencies = rstd::move(dependencies),
         });
@@ -318,7 +318,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
                 .logical_name            = scan_cpp->provided->logical_name.clone(),
                 .provider_identity       = provider_identity.clone(),
                 .source_identity         = String::make(*source_identity),
-                .source_content_identity = units[unit].frontend_analysis->receipt.clone(),
+                .source_content_identity = units[unit].source_content_identity.clone(),
                 .cpp_context_identity    = cpp::cpp_compile_identity(cpp_context.options),
                 .public_requirements_identity =
                     cpp::cpp_public_requirements_identity(cpp_context.public_requirements),
@@ -456,7 +456,7 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
                       units[unit].unit.owner.as_StandardLibrary().module.logical_name.as_str());
         auto decision = cache.evaluate(target_identity.as_str(),
                                        units[unit],
-                                       units[unit].frontend_analysis->receipt.as_str(),
+                                       units[unit].source_content_identity.as_str(),
                                        *plan.nodes[unit].invocation,
                                        plan.nodes[unit].dependencies);
         result.statistics.coordinator_work =

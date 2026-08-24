@@ -5,7 +5,7 @@ export module lito.cpp:source.discovery;
 
 import rstd;
 import lito.core;
-import lito.frontend;
+import :build.scan;
 
 using namespace rstd::prelude;
 
@@ -19,16 +19,16 @@ enum class SourceOrigin
 };
 
 struct ResolvedSource {
-    PathBuf                            relative_path;
-    PathBuf                            canonical_path;
-    PathBuf                            source_root;
-    String                             origin_identity;
-    bool                               external { false };
-    SourceOrigin                       origin { SourceOrigin::Explicit };
-    bool                               module_companion { false };
-    bool                               module_context_required { false };
-    Option<String>                     expected_module;
-    Option<frontend::FrontendAnalysis> frontend_analysis;
+    PathBuf                    relative_path;
+    PathBuf                    canonical_path;
+    PathBuf                    source_root;
+    String                     origin_identity;
+    bool                       external { false };
+    SourceOrigin               origin { SourceOrigin::Explicit };
+    bool                       module_companion { false };
+    bool                       module_context_required { false };
+    Option<String>             expected_module;
+    Option<SourceScanArtifact> scan_artifact;
 };
 
 struct ResolvedSourceSet {

@@ -317,9 +317,8 @@ auto convention_import_owner(const cpp::PackageMetadata&          package,
                                                  package.targets[candidate.target].compile_metadata,
                                                  candidate.source.source_root.as_path());
         if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
-        auto value     = rstd::move(analysis).unwrap();
-        auto projected = cpp::scan_from_frontend(
-            value.result, cpp::UnitId {}, package.targets[candidate.target].language);
+        auto projected = analysis_service.project(rstd::move(analysis).unwrap(),
+                                                  package.targets[candidate.target].language);
         if (projected.is_err()) {
             return Err(BuildError::Discovery(
                 cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
@@ -339,8 +338,8 @@ auto convention_import_owner(const cpp::PackageMetadata&          package,
                 lito::package::package_target_id_text(package.targets[candidate.target].id)
                     .as_str()))));
         }
-        candidate.source.frontend_analysis = Some(rstd::move(value));
-        selected                           = Some(index);
+        candidate.source.scan_artifact = Some(rstd::move(projected).unwrap());
+        selected                       = Some(index);
     }
     if (selected.is_none()) return Ok(None());
     auto index = *selected;
@@ -643,7 +642,7 @@ auto discover_sources(const cpp::PackageMetadata&          package,
         auto pending  = usize {};
         for (const auto& candidate : queue) {
             const auto& target = package.targets[candidate.target];
-            if (candidate.source.frontend_analysis.is_some()) {
+            if (candidate.source.scan_artifact.is_some()) {
                 prepared.push(None());
                 continue;
             }
@@ -673,7 +672,7 @@ auto discover_sources(const cpp::PackageMetadata&          package,
             }
         }
         auto outcomes =
-            Vec<Option<BuildResult<FrontendAnalysisTaskOutcome>>>::with_capacity(queue.len());
+            Vec<Option<BuildResult<cpp::SourceScanArtifact>>>::with_capacity(queue.len());
         for (auto index = usize {}; index < queue.len(); ++index) outcomes.push(None());
         auto submitted = usize {};
         auto completed = usize {};
@@ -699,48 +698,53 @@ auto discover_sources(const cpp::PackageMetadata&          package,
                 scan_executor.cancel();
                 return Err(rstd::move(received).unwrap_err());
             }
-            auto completion           = rstd::move(received).unwrap();
-            outcomes[completion.node] = Some(rstd::move(completion.outcome));
+            auto completion = rstd::move(received).unwrap();
+            auto compacted  = [&]() -> BuildResult<cpp::SourceScanArtifact> {
+                if (completion.outcome.is_err()) {
+                    return Err(rstd::move(completion.outcome).unwrap_err());
+                }
+                auto analysis = analysis_service.commit(rstd::move(completion.outcome).unwrap());
+                if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
+                auto projected = analysis_service.project(
+                    rstd::move(analysis).unwrap(),
+                    package.targets[queue[completion.node].target].language);
+                if (projected.is_err()) {
+                    return Err(BuildError::Discovery(
+                        cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
+                }
+                return Ok(rstd::move(projected).unwrap());
+            }();
+            outcomes[completion.node] = Some(rstd::move(compacted));
             --active;
             ++completed;
         }
 
         auto next = Vec<DiscoveryCandidate>::make();
         for (auto index = usize {}; index < queue.len(); ++index) {
-            auto        candidate         = rstd::move(queue[index]);
-            const auto& target            = package.targets[candidate.target];
-            auto        frontend_analysis = frontend::FrontendAnalysis {};
-            if (candidate.source.frontend_analysis.is_some()) {
-                frontend_analysis = rstd::move(candidate.source.frontend_analysis).unwrap();
+            auto        candidate = rstd::move(queue[index]);
+            const auto& target    = package.targets[candidate.target];
+            auto        artifact  = cpp::SourceScanArtifact {};
+            if (candidate.source.scan_artifact.is_some()) {
+                artifact = rstd::move(candidate.source.scan_artifact).unwrap();
             } else {
-                auto task_outcome = rstd::move(outcomes[index]).unwrap();
-                if (task_outcome.is_err()) {
-                    return Err(rstd::move(task_outcome).unwrap_err());
+                auto compacted = rstd::move(outcomes[index]).unwrap();
+                if (compacted.is_err()) {
+                    return Err(rstd::move(compacted).unwrap_err());
                 }
-                auto facts = analysis_service.commit(rstd::move(task_outcome).unwrap());
-                if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
-                frontend_analysis = rstd::move(facts).unwrap();
+                artifact = rstd::move(compacted).unwrap();
             }
             auto target_identity = lito::package::package_target_id_text(target.id);
             if (observer.is_some() && observer->notify != nullptr) {
-                auto kind =
-                    frontend_analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
-                        ? BuildEventKind::ScanReuse
-                        : BuildEventKind::Scan;
+                auto kind = artifact.origin == frontend::FrontendAnalysisOrigin::PersistentCache
+                                ? BuildEventKind::ScanReuse
+                                : BuildEventKind::Scan;
                 observer->notify(observer->context,
                                  BuildEvent { kind,
                                               target_identity.as_str(),
                                               candidate.source.canonical_path.as_path() });
             }
-            auto projected =
-                cpp::scan_from_frontend(frontend_analysis.result, cpp::UnitId {}, target.language);
-            if (projected.is_err()) {
-                auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
-                    rstd::move(projected).unwrap_err());
-                return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
-            }
-            const auto* cpp_facts = projected->language.is_Cpp()
-                                        ? rstd::addressof(projected->language.as_Cpp().facts)
+            const auto* cpp_facts = artifact.language.is_Cpp()
+                                        ? rstd::addressof(artifact.language.as_Cpp().facts)
                                         : nullptr;
             if (candidate.source.module_context_required &&
                 (cpp_facts == nullptr || cpp_facts->provided.is_none())) {
@@ -816,7 +820,7 @@ auto discover_sources(const cpp::PackageMetadata&          package,
                     }
                 }
             }
-            candidate.source.frontend_analysis = Some(rstd::move(frontend_analysis));
+            candidate.source.scan_artifact = Some(rstd::move(artifact));
             discovered[candidate.target].push(rstd::move(candidate.source));
         }
         queue = rstd::move(next);

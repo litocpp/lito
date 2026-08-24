@@ -46,6 +46,7 @@ sources = [
   "src/dependency/usage.cpp",
   "src/frontend/lexical/token.cpp",
   "src/frontend/lexical/scanner.cpp",
+  "src/frontend/service.cpp",
   "src/frontend/preprocessor/core.cpp",
   "src/install/layout.cpp",
   "src/install/script.cpp",

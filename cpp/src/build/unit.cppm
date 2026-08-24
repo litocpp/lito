@@ -4,7 +4,6 @@ module;
 export module lito.cpp:build.unit;
 
 import rstd;
-import lito.frontend;
 import :bmi.artifact;
 import :package.spec;
 import :package.target;
@@ -57,9 +56,9 @@ auto standard_library_module(const UnitSpec& unit) noexcept
 }
 
 struct PreparedUnit {
-    UnitSpec                           unit;
-    PathBuf                            working_directory;
-    Option<frontend::FrontendAnalysis> frontend_analysis;
+    UnitSpec unit;
+    PathBuf  working_directory;
+    String   source_content_identity;
 };
 
 constexpr auto source_language(const UnitSpec& unit) noexcept -> lito::manifest::PackageLanguage {

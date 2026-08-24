@@ -167,9 +167,28 @@ auto detailed_report(const BuildSummary& summary) -> String {
                 rstd::format("  {:<38} {}",
                              "source wait"_str,
                              display_duration(summary.frontend.source_wait).as_str()));
+    append_metric(output, "source ready entries"_str, summary.frontend.source_ready_entries);
+    append_metric(output, "source ready peak"_str, summary.frontend.source_ready_peak);
+    append_metric(output, "source live payloads"_str, summary.frontend.source_live_payloads);
+    append_metric(
+        output, "source live payload peak"_str, summary.frontend.source_live_payload_peak);
+    append_metric(output, "source retained bytes"_str, summary.frontend.source_retained_bytes);
+    append_metric(
+        output, "source retained bytes peak"_str, summary.frontend.source_retained_bytes_peak);
+    append_metric(
+        output, "source in-flight entries"_str, summary.frontend.source_in_flight_entries);
+    append_metric(output, "source in-flight peak"_str, summary.frontend.source_in_flight_peak);
+    append_metric(output, "source weak hits"_str, summary.frontend.source_weak_hits);
+    append_metric(output, "source flight waits"_str, summary.frontend.source_flight_waits);
+    append_metric(output, "source expired entries"_str, summary.frontend.source_expired_entries);
     append_metric(output, "lexed sources"_str, summary.frontend.lex_builds);
     append_metric(output, "analyzed sources"_str, summary.frontend.analyze_builds);
     append_metric(output, "analysis hits"_str, summary.frontend.analyze_hits);
+    append_metric(output, "full analyses current"_str, summary.frontend.full_analyses);
+    append_metric(output, "full analysis peak"_str, summary.frontend.full_analysis_peak);
+    append_metric(output, "compacted analyses"_str, summary.frontend.compacted_analyses);
+    append_metric(
+        output, "compacted analysis bytes"_str, summary.frontend.compacted_analysis_bytes);
     append_metric(output, "persistent scan hits"_str, summary.frontend.persistent_scan_hits);
     append_metric(output, "persistent scan misses"_str, summary.frontend.persistent_scan_misses);
     append_metric(

@@ -5,7 +5,7 @@ export module lito.cpp:package.target;
 
 import rstd;
 import lito.core;
-import lito.frontend;
+import :build.scan;
 import :compiler.option;
 
 using namespace rstd::prelude;
@@ -32,13 +32,13 @@ struct DependencySpec {
 };
 
 struct TargetSource {
-    PathBuf                            relative_path;
-    PathBuf                            path;
-    PathBuf                            source_root;
-    String                             origin_identity;
-    bool                               external { false };
-    Option<String>                     expected_module;
-    Option<frontend::FrontendAnalysis> frontend_analysis;
+    PathBuf                    relative_path;
+    PathBuf                    path;
+    PathBuf                    source_root;
+    String                     origin_identity;
+    bool                       external { false };
+    Option<String>             expected_module;
+    Option<SourceScanArtifact> scan_artifact;
 };
 
 struct TestAttachmentTarget {

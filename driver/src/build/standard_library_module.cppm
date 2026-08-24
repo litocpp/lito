@@ -216,16 +216,18 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
                                                                  *owned_context,
                                                                  *working);
         if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
-        unit->frontend_analysis = Some(rstd::move(analysis).unwrap());
-        auto scan               = toolchain.scan(*unit);
-        if (scan.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(scan).unwrap_err()));
+        auto projected = analysis_service.project(rstd::move(analysis).unwrap(),
+                                                  lito::manifest::PackageLanguage::Cpp);
+        if (projected.is_err()) {
+            return standard_module_failure(rstd::move(projected).unwrap_err());
         }
-        auto provided     = Option<String> {};
-        auto is_interface = false;
-        if (scan->language.is_Cpp() && scan->language.as_Cpp().facts.provided.is_some()) {
-            provided     = Some(scan->language.as_Cpp().facts.provided->logical_name.clone());
-            is_interface = scan->language.as_Cpp().facts.provided->is_interface;
+        auto bound                    = cpp::bind_scan(rstd::move(projected).unwrap(), id);
+        unit->source_content_identity = rstd::move(bound.source_content_identity);
+        auto provided                 = Option<String> {};
+        auto is_interface             = false;
+        if (bound.scan.language.is_Cpp() && bound.scan.language.as_Cpp().facts.provided.is_some()) {
+            provided     = Some(bound.scan.language.as_Cpp().facts.provided->logical_name.clone());
+            is_interface = bound.scan.language.as_Cpp().facts.provided->is_interface;
         }
         if (provided.is_none() || provided->as_str() != request.logical_name.as_str() ||
             ! is_interface) {
@@ -237,7 +239,7 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
                                                             is_interface));
         }
         prepared.units.push(rstd::move(unit).unwrap());
-        scans.push(rstd::move(scan).unwrap());
+        scans.push(rstd::move(bound.scan));
         const auto& facts = scans[scans.len() - usize(1)].language.as_Cpp().facts;
         for (const auto& required : facts.required_modules) {
             if (catalog.get(required.logical_name.as_str()).is_none()) {

@@ -381,30 +381,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto  prepared_build       = rstd::move(prepared_units).unwrap();
     auto& target_units         = prepared_build.target_units;
     auto& units                = prepared_build.units;
+    auto& scans                = prepared_build.scans;
     auto  preparation_finished = profiler.complete(prepare_span);
     if (preparation_finished.is_err()) {
         return build_failure<BuildSummary>(rstd::move(preparation_finished).unwrap_err_unchecked());
-    }
-
-    auto scans         = Vec<cpp::ScanResult>::with_capacity(units.len());
-    auto classify_span = profiler.span(ScanProbe::ClassifyUnits);
-    for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit) {
-        if (units[unit].frontend_analysis.is_none()) {
-            return build_failure<BuildSummary>(
-                rstd::format("source '{}' reached classification without frontend analysis",
-                             units[unit].unit.source.as_path()));
-        }
-        analysis_service.record_in_build_reuse();
-        auto scanned = toolchain.scan(units[unit]);
-        if (scanned.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(scanned).unwrap_err()));
-        }
-        auto result = rstd::move(scanned).unwrap();
-        scans.push(rstd::move(result));
-    }
-    auto classified_units = profiler.complete(classify_span);
-    if (classified_units.is_err()) {
-        return build_failure<BuildSummary>(rstd::move(classified_units).unwrap_err_unchecked());
     }
 
     auto standard_modules = prepare_standard_library_modules(

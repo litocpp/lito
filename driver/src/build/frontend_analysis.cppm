@@ -196,6 +196,21 @@ public:
         return rstd::move(outcome.analysis);
     }
 
+    auto project(frontend::FrontendAnalysis analysis, lito::manifest::PackageLanguage language)
+        -> Result<cpp::SourceScanArtifact, String> {
+        ++statistics_.full_analyses;
+        if (statistics_.full_analyses > statistics_.full_analysis_peak) {
+            statistics_.full_analysis_peak = statistics_.full_analyses;
+        }
+        auto projected = cpp::project_frontend_analysis(rstd::move(analysis), language);
+        --statistics_.full_analyses;
+        if (projected.is_ok()) {
+            ++statistics_.compacted_analyses;
+            statistics_.compacted_analysis_bytes += projected->retained_bytes();
+        }
+        return projected;
+    }
+
     auto analyze(const lito::package::PackageTargetId& target,
                  ref<rstd::path::Path>                 relative_source,
                  ref<str>                              source_origin_identity,
@@ -260,9 +275,22 @@ public:
 
     auto profiler() noexcept -> ScanProfiler& { return profiler_; }
 
-    auto record_in_build_reuse() noexcept -> void { ++statistics_.analyze_hits; }
-
-    auto statistics() const noexcept -> const frontend::FrontendStatistics& { return statistics_; }
+    auto statistics() const -> frontend::FrontendStatistics {
+        auto result                       = statistics_;
+        auto store                        = source_store_.statistics();
+        result.source_ready_entries       = store.ready_entries;
+        result.source_ready_peak          = store.ready_peak;
+        result.source_live_payloads       = store.live_payloads;
+        result.source_live_payload_peak   = store.live_payload_peak;
+        result.source_retained_bytes      = store.retained_bytes;
+        result.source_retained_bytes_peak = store.retained_bytes_peak;
+        result.source_in_flight_entries   = store.in_flight_entries;
+        result.source_in_flight_peak      = store.in_flight_peak;
+        result.source_weak_hits           = store.weak_hits;
+        result.source_flight_waits        = store.flight_waits;
+        result.source_expired_entries     = store.expired_entries;
+        return result;
+    }
 
     auto release_source_cache() -> void { source_store_.release(); }
 

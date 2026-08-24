@@ -169,8 +169,12 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     if (facts.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(facts).unwrap_err()));
     }
-    auto projected = cpp::scan_from_frontend(
-        facts->result, cpp::UnitId {}, metadata.targets[source_target].language);
+    auto projected = cpp::project_frontend_analysis(
+        frontend::FrontendAnalysis {
+            .result           = rstd::move(facts).unwrap().result,
+            .context_identity = discovery.contexts[source_target].scan_id.clone(),
+        },
+        metadata.targets[source_target].language);
     if (projected.is_err()) {
         return scan_failure<ScanReport>(rstd::move(projected).unwrap_err());
     }
@@ -179,7 +183,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
         .target         = lito::package::package_target_id_text(target.id),
         .profile        = metadata.profiles[discovery.profile].name.clone(),
         .primary_output = rstd::move(primary_output).unwrap(),
-        .result         = rstd::move(projected).unwrap(),
+        .result         = cpp::bind_scan(rstd::move(projected).unwrap(), cpp::UnitId {}).scan,
     });
 }
 

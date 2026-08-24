@@ -18,9 +18,10 @@ struct PreparedBuildUnits {
     Vec<Vec<cpp::UnitId>>         target_units;
     Vec<Box<cpp::CompileContext>> owned_contexts;
     Vec<cpp::PreparedUnit>        units;
+    Vec<cpp::ScanResult>          scans;
 };
 
-auto prepare_build_units(const cpp::PackageSpec& package,
+auto prepare_build_units(cpp::PackageSpec&       package,
                          const cpp::PackagePlan& package_plan,
                          const BuildLayout&      layout,
                          const ClangToolchain&   toolchain) -> BuildResult<PreparedBuildUnits> {
@@ -28,13 +29,14 @@ auto prepare_build_units(const cpp::PackageSpec& package,
         .target_units   = Vec<Vec<cpp::UnitId>>::with_capacity(package.targets.len()),
         .owned_contexts = Vec<Box<cpp::CompileContext>>::make(),
         .units          = Vec<cpp::PreparedUnit>::make(),
+        .scans          = Vec<cpp::ScanResult>::make(),
     };
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
         result.target_units.emplace_back();
     }
     for (auto target : package_plan.target_order) {
-        const auto& target_spec = package.targets[target];
-        for (const auto& source : target_spec.sources) {
+        auto& target_spec = package.targets[target];
+        for (auto& source : target_spec.sources) {
             const auto* compile_test = static_cast<const cpp::ResolvedCompileTestCase*>(nullptr);
             const auto* context      = rstd::addressof(package_plan.contexts[target]);
             if (target_spec.artifact_kind == cpp::ArtifactKind::CompileTest) {
@@ -97,11 +99,21 @@ auto prepare_build_units(const cpp::PackageSpec& package,
                 return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
             }
             auto unit = rstd::move(prepared).unwrap();
-            if (source.frontend_analysis.is_some() &&
-                source.frontend_analysis->context_identity.as_str() == context->scan_id.as_str()) {
-                unit.frontend_analysis = Some(as<Clone>(*source.frontend_analysis).clone());
+            if (source.scan_artifact.is_none()) {
+                return Err(BuildError::Message(
+                    rstd::format("source '{}' reached build unit preparation without scan facts",
+                                 source.path.as_path())));
             }
+            auto artifact = rstd::move(source.scan_artifact).unwrap();
+            if (artifact.context_identity.as_str() != context->scan_id.as_str()) {
+                return Err(BuildError::Message(
+                    rstd::format("source '{}' scan context does not match its compile context",
+                                 source.path.as_path())));
+            }
+            auto bound                   = cpp::bind_scan(rstd::move(artifact), id);
+            unit.source_content_identity = rstd::move(bound.source_content_identity);
             result.units.push(rstd::move(unit));
+            result.scans.push(rstd::move(bound.scan));
             result.target_units[target].emplace_back(id);
         }
     }

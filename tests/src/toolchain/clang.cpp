@@ -43,7 +43,9 @@ TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
 TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
     auto facts = frontend::FrontendResult {};
     facts.header_inputs.push(PathBuf::from("/tmp/c-header.h"_str));
-    auto c_scan = cpp::scan_from_frontend(facts, usize(7), lito::manifest::PackageLanguage::C);
+    auto c_scan = cpp::project_frontend_analysis(
+        frontend::FrontendAnalysis { .result = as<Clone>(facts).clone() },
+        lito::manifest::PackageLanguage::C);
     ASSERT_TRUE(c_scan.is_ok());
     ASSERT_TRUE(c_scan->language.is_C());
     EXPECT_EQ(c_scan->language.as_C().facts.common.header_inputs.len(), usize(1));
@@ -52,7 +54,9 @@ TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
         .logical_name = String::make("invalid.c.module"_str),
         .is_interface = true,
     });
-    auto invalid   = cpp::scan_from_frontend(facts, usize(7), lito::manifest::PackageLanguage::C);
+    auto invalid =
+        cpp::project_frontend_analysis(frontend::FrontendAnalysis { .result = rstd::move(facts) },
+                                       lito::manifest::PackageLanguage::C);
     ASSERT_TRUE(invalid.is_err());
     EXPECT_TRUE(invalid.unwrap_err().as_str().contains("C++ module facts"_str));
 }

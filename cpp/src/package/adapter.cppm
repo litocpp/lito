@@ -1477,13 +1477,13 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> sourc
         auto sources = Vec<TargetSource>::with_capacity(source_set.sources.len());
         for (auto& source : source_set.sources) {
             sources.push(TargetSource {
-                .relative_path     = rstd::move(source.relative_path),
-                .path              = rstd::move(source.canonical_path),
-                .source_root       = rstd::move(source.source_root),
-                .origin_identity   = rstd::move(source.origin_identity),
-                .external          = source.external,
-                .expected_module   = rstd::move(source.expected_module),
-                .frontend_analysis = rstd::move(source.frontend_analysis),
+                .relative_path   = rstd::move(source.relative_path),
+                .path            = rstd::move(source.canonical_path),
+                .source_root     = rstd::move(source.source_root),
+                .origin_identity = rstd::move(source.origin_identity),
+                .external        = source.external,
+                .expected_module = rstd::move(source.expected_module),
+                .scan_artifact   = rstd::move(source.scan_artifact),
             });
         }
         auto artifact_name = output_name(target.artifact_kind, target.artifact_name.as_str());
