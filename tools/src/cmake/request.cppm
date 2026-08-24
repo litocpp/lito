@@ -84,12 +84,10 @@ struct ToolchainConfiguration {
 
 struct ProfileConfiguration {
     String cxx_standard;
-    String build_type;
     String c_flags;
     String cxx_flags;
     String linker_flags;
     String msvc_runtime;
-    bool   neutral_configuration {};
 };
 
 enum class EventKind

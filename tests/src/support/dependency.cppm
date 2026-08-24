@@ -91,6 +91,25 @@ include(GNUInstallDirs)
 if(DEFINED LITO_FIXTURE_CONFIGURE_COUNT)
   file(APPEND "${LITO_FIXTURE_CONFIGURE_COUNT}" "configure\n")
 endif()
+if(LITO_FIXTURE_EXPECT_PLAIN)
+  if(CMAKE_CONFIGURATION_TYPES)
+    if(NOT CMAKE_CONFIGURATION_TYPES STREQUAL "None")
+      message(FATAL_ERROR "lito must expose only the None CMake configuration")
+    endif()
+  elseif(NOT CMAKE_BUILD_TYPE STREQUAL "None")
+    message(FATAL_ERROR "lito must configure CMake with build type None")
+  endif()
+  foreach(_lito_flags
+          CMAKE_C_FLAGS_NONE
+          CMAKE_CXX_FLAGS_NONE
+          CMAKE_EXE_LINKER_FLAGS_NONE
+          CMAKE_SHARED_LINKER_FLAGS_NONE
+          CMAKE_MODULE_LINKER_FLAGS_NONE)
+    if(NOT "${${_lito_flags}}" STREQUAL "")
+      message(FATAL_ERROR "${_lito_flags} must be empty")
+    endif()
+  endforeach()
+endif()
 add_library(lito_fixture STATIC src/fixture.cpp)
 add_library(lito_fixture_c OBJECT src/fixture.c)
 if(LITO_FIXTURE_EXPECT_PLAIN)

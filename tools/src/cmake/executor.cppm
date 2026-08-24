@@ -141,15 +141,14 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
         case CMakePackageOperation::BuildSource:
             if (! install_current) {
                 rstd_try(with_operation_context(
-                    execute_observed(
-                        observer,
-                        EventKind::Build,
-                        requirement.alias.as_str(),
-                        area.build.as_path(),
-                        [&] {
-                            return build_source(
-                                requirement, provider, profile, area, plan.jobs, environment);
-                        }),
+                    execute_observed(observer,
+                                     EventKind::Build,
+                                     requirement.alias.as_str(),
+                                     area.build.as_path(),
+                                     [&] {
+                                         return build_source(
+                                             requirement, provider, area, plan.jobs, environment);
+                                     }),
                     plan,
                     operation));
             }
@@ -157,15 +156,14 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
         case CMakePackageOperation::InstallSource:
             if (! install_current) {
                 rstd_try(with_operation_context(
-                    execute_observed(
-                        observer,
-                        EventKind::Install,
-                        requirement.alias.as_str(),
-                        area.install.as_path(),
-                        [&] {
-                            return install_source(
-                                requirement, provider, profile, area, cacheable, environment);
-                        }),
+                    execute_observed(observer,
+                                     EventKind::Install,
+                                     requirement.alias.as_str(),
+                                     area.install.as_path(),
+                                     [&] {
+                                         return install_source(
+                                             requirement, provider, area, cacheable, environment);
+                                     }),
                     plan,
                     operation));
                 install_current = true;
@@ -192,20 +190,17 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
                 operation));
             break;
         case CMakePackageOperation::BuildQuery:
-            rstd_try(with_operation_context(execute_observed(observer,
-                                                             EventKind::QueryBuild,
-                                                             requirement.alias.as_str(),
-                                                             area.query_build.as_path(),
-                                                             [&] {
-                                                                 return build_probe(requirement,
-                                                                                    provider,
-                                                                                    profile,
-                                                                                    area,
-                                                                                    plan.jobs,
-                                                                                    environment);
-                                                             }),
-                                            plan,
-                                            operation));
+            rstd_try(with_operation_context(
+                execute_observed(observer,
+                                 EventKind::QueryBuild,
+                                 requirement.alias.as_str(),
+                                 area.query_build.as_path(),
+                                 [&] {
+                                     return build_probe(
+                                         requirement, provider, area, plan.jobs, environment);
+                                 }),
+                plan,
+                operation));
             break;
         case CMakePackageOperation::ReadUsage:
             snapshots = Some(rstd_try(with_operation_context(

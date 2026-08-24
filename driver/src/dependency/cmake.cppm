@@ -255,20 +255,12 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
         case lito::compiler::MicrosoftRuntimeLibrary::StaticDebug: break;
         }
     }
-    auto build_type = "None"_str;
-    switch (profile.family) {
-    case lito::manifest::BuildProfileFamily::Debug: build_type = "Debug"_str; break;
-    case lito::manifest::BuildProfileFamily::Release: build_type = "Release"_str; break;
-    case lito::manifest::BuildProfileFamily::Plain: break;
-    }
     return lito::tools::cmake::ProfileConfiguration {
-        .cxx_standard          = profile.cpp.language.standard.clone(),
-        .build_type            = String::make(build_type),
-        .c_flags               = rstd::move(c_flags),
-        .cxx_flags             = rstd::move(cxx_flags),
-        .linker_flags          = rstd::move(linker_flags),
-        .msvc_runtime          = rstd::move(msvc_runtime),
-        .neutral_configuration = profile.family == lito::manifest::BuildProfileFamily::Plain,
+        .cxx_standard = profile.cpp.language.standard.clone(),
+        .c_flags      = rstd::move(c_flags),
+        .cxx_flags    = rstd::move(cxx_flags),
+        .linker_flags = rstd::move(linker_flags),
+        .msvc_runtime = rstd::move(msvc_runtime),
     };
 }
 

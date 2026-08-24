@@ -130,15 +130,13 @@ auto cmake_generator_uses_multiple_configurations(ref<str> generator) noexcept -
            generator.starts_with("Visual Studio "_str);
 }
 
-auto push_cmake_profile_configuration(Vec<String>&                arguments,
-                                      const ProfileConfiguration& profile,
-                                      ref<str>                    generator) -> void {
+auto push_lito_owned_cmake_configuration(Vec<String>& arguments, ref<str> generator) -> void {
     const auto multi_config = cmake_generator_uses_multiple_configurations(generator);
-    if (! multi_config) {
-        arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", profile.build_type.as_str()));
+    if (multi_config) {
+        arguments.push(String::make("-DCMAKE_CONFIGURATION_TYPES=None"_str));
+    } else {
+        arguments.push(String::make("-DCMAKE_BUILD_TYPE=None"_str));
     }
-    if (! profile.neutral_configuration) return;
-    if (multi_config) arguments.push(String::make("-DCMAKE_CONFIGURATION_TYPES=None"_str));
     arguments.push(String::make("-DCMAKE_C_FLAGS_NONE="_str));
     arguments.push(String::make("-DCMAKE_CXX_FLAGS_NONE="_str));
     arguments.push(String::make("-DCMAKE_EXE_LINKER_FLAGS_NONE="_str));
@@ -195,7 +193,7 @@ auto configure_source(const Request&                    requirement,
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_INSTALL_PREFIX="_str, area.install.as_path(), "CMake install"_str));
     rstd_try(push_cmake_toolchain(arguments, toolchain));
-    push_cmake_profile_configuration(arguments, profile, provider.generator.as_str());
+    push_lito_owned_cmake_configuration(arguments, provider.generator.as_str());
     arguments.push(
         rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
@@ -220,7 +218,6 @@ auto configure_source(const Request&                    requirement,
 
 auto build_source(const Request&                    requirement,
                   const Provider&                   provider,
-                  const ProfileConfiguration&       profile,
                   const CMakeWorkArea&              area,
                   usize                             jobs,
                   const ResolvedProcessEnvironment& environment) -> lito::tools::ToolResult<empty> {
@@ -233,7 +230,7 @@ auto build_source(const Request&                    requirement,
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
     arguments.push(String::make("--config"_str));
-    arguments.push(profile.build_type.clone());
+    arguments.push(String::make("None"_str));
     arguments.push(String::make("--parallel"_str));
     arguments.push(rstd::format("{}", jobs));
     return run_cmake(
@@ -246,7 +243,6 @@ auto build_source(const Request&                    requirement,
 
 auto install_source(const Request&                    requirement,
                     const Provider&                   provider,
-                    const ProfileConfiguration&       profile,
                     const CMakeWorkArea&              area,
                     bool                              publish_receipt,
                     const ResolvedProcessEnvironment& environment)
@@ -260,7 +256,7 @@ auto install_source(const Request&                    requirement,
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
     arguments.push(String::make("--config"_str));
-    arguments.push(profile.build_type.clone());
+    arguments.push(String::make("None"_str));
     rstd_try(run_cmake(
         rstd::move(arguments),
         rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str(),
@@ -542,7 +538,7 @@ auto configure_probe(const Request&                    requirement,
                                     "CMake find install prefix"_str));
     }
     rstd_try(push_cmake_toolchain(arguments, toolchain));
-    push_cmake_profile_configuration(arguments, profile, provider.generator.as_str());
+    push_lito_owned_cmake_configuration(arguments, provider.generator.as_str());
     arguments.push(
         rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
@@ -580,7 +576,6 @@ auto configure_probe(const Request&                    requirement,
 
 auto build_probe(const Request&                    requirement,
                  const Provider&                   provider,
-                 const ProfileConfiguration&       profile,
                  const CMakeWorkArea&              area,
                  usize                             jobs,
                  const ResolvedProcessEnvironment& environment) -> lito::tools::ToolResult<empty> {
@@ -595,7 +590,7 @@ auto build_probe(const Request&                    requirement,
     arguments.push(String::make("--target"_str));
     arguments.push(String::make("lito_cmake_combined"_str));
     arguments.push(String::make("--config"_str));
-    arguments.push(profile.build_type.clone());
+    arguments.push(String::make("None"_str));
     arguments.push(String::make("--parallel"_str));
     arguments.push(rstd::format("{}", jobs));
     return run_cmake(

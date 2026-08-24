@@ -275,8 +275,11 @@ TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {
         lito::cpp::make_profile_spec(configuration(), project, build_profile("debug"_str), *parser);
     auto release = lito::cpp::make_profile_spec(
         configuration(), project, build_profile("release"_str), *parser);
+    auto relwithdebinfo = lito::cpp::make_profile_spec(
+        configuration(), project, build_profile("relwithdebinfo"_str), *parser);
     ASSERT_TRUE(debug.is_ok());
     ASSERT_TRUE(release.is_ok());
+    ASSERT_TRUE(relwithdebinfo.is_ok());
     EXPECT_TRUE(debug->c_ndebug.is_none());
     EXPECT_TRUE(debug->cpp_ndebug.is_none());
     ASSERT_TRUE(release->c_ndebug.is_some());
@@ -293,6 +296,16 @@ TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {
     EXPECT_EQ(debug->c.diagnostics.warnings[usize {}].warning,
               lito::compiler::CompilerWarning::All);
     EXPECT_NE(debug->cpp.common.codegen.optimization, release->cpp.common.codegen.optimization);
+    EXPECT_EQ(relwithdebinfo->family, lito::manifest::BuildProfileFamily::Release);
+    ASSERT_TRUE(relwithdebinfo->cpp.common.codegen.optimization.is_some());
+    ASSERT_TRUE(relwithdebinfo->cpp.common.codegen.debug_info.is_some());
+    ASSERT_TRUE(relwithdebinfo->cpp.common.codegen.lto.is_some());
+    EXPECT_EQ(*relwithdebinfo->cpp.common.codegen.optimization,
+              lito::manifest::Optimization::Level2);
+    EXPECT_EQ(*relwithdebinfo->cpp.common.codegen.debug_info, lito::manifest::DebugInfo::Full);
+    EXPECT_EQ(*relwithdebinfo->cpp.common.codegen.lto, lito::manifest::Lto::Off);
+    ASSERT_TRUE(relwithdebinfo->cpp_ndebug.is_some());
+    EXPECT_TRUE(*relwithdebinfo->cpp_ndebug);
     EXPECT_TRUE(debug->cpp.common.codegen.position_independent_code);
     EXPECT_TRUE(release->cpp.common.codegen.position_independent_code);
 }
@@ -731,7 +744,7 @@ TEST_F(BuildProfile, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentiti
               lito::cpp::cpp_scan_identity(aliases->cpp).as_str());
 }
 
-TEST_F(BuildProfile, PlainProfileProjectsToNeutralCMakeConfiguration) {
+TEST_F(BuildProfile, CMakeProfileProjectionContainsOnlyLitoOwnedFlags) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto build_configuration = configuration();
@@ -749,8 +762,6 @@ TEST_F(BuildProfile, PlainProfileProjectsToNeutralCMakeConfiguration) {
                                                 *parser);
     ASSERT_TRUE(profile.is_ok());
     auto cmake_profile = lito::cmake_profile_configuration(*profile);
-    EXPECT_EQ(cmake_profile.build_type.as_str(), "None"_str);
-    EXPECT_TRUE(cmake_profile.neutral_configuration);
     EXPECT_TRUE(cmake_profile.c_flags.as_str().contains("-O3"_str));
     EXPECT_TRUE(cmake_profile.c_flags.as_str().contains("-g0"_str));
     EXPECT_FALSE(cmake_profile.c_flags.as_str().contains("NDEBUG"_str));
@@ -758,6 +769,20 @@ TEST_F(BuildProfile, PlainProfileProjectsToNeutralCMakeConfiguration) {
     EXPECT_TRUE(cmake_profile.cxx_flags.as_str().contains("-g2"_str));
     EXPECT_FALSE(cmake_profile.cxx_flags.as_str().contains("-O3"_str));
     EXPECT_FALSE(cmake_profile.cxx_flags.as_str().contains("NDEBUG"_str));
+
+    auto relwithdebinfo = lito::cpp::make_profile_spec(configuration(),
+                                                       lito::manifest::ProjectProfile {},
+                                                       build_profile("relwithdebinfo"_str),
+                                                       *parser);
+    ASSERT_TRUE(relwithdebinfo.is_ok());
+    auto relwithdebinfo_cmake = lito::cmake_profile_configuration(*relwithdebinfo);
+    EXPECT_TRUE(relwithdebinfo_cmake.c_flags.as_str().contains("-O2"_str));
+    EXPECT_TRUE(relwithdebinfo_cmake.c_flags.as_str().contains("-g2"_str));
+    EXPECT_TRUE(relwithdebinfo_cmake.c_flags.as_str().contains("-DNDEBUG"_str));
+    EXPECT_TRUE(relwithdebinfo_cmake.cxx_flags.as_str().contains("-O2"_str));
+    EXPECT_TRUE(relwithdebinfo_cmake.cxx_flags.as_str().contains("-g2"_str));
+    EXPECT_TRUE(relwithdebinfo_cmake.cxx_flags.as_str().contains("-DNDEBUG"_str));
+    EXPECT_FALSE(relwithdebinfo_cmake.cxx_flags.as_str().contains("-O3"_str));
 }
 
 TEST_F(BuildProfile, ProjectsMicrosoftRuntimeToCMakeConfiguration) {

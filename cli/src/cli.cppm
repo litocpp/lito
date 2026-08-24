@@ -632,10 +632,12 @@ auto package_arg() -> Arg<String> {
 }
 
 auto profile_arg() -> Arg<lito::manifest::BuildProfileName> {
+    auto help = rstd::format("Select the build profile (built-ins: {})",
+                             lito::manifest::builtin_build_profile_names());
     return Arg<lito::manifest::BuildProfileName>::value("profile"_str, BuildProfileParser {})
         .long_name("profile"_str)
         .value_name("PROFILE"_str)
-        .help("Select the build profile (built-ins: debug, release, plain)"_str);
+        .help(help.as_str());
 }
 
 auto features_arg() -> Arg<String> {

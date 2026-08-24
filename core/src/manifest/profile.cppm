@@ -211,6 +211,10 @@ auto valid_build_profile_name(ref<str> value) noexcept -> bool {
     return true;
 }
 
+auto builtin_build_profile_names() noexcept -> ref<str> {
+    return "debug, release, relwithdebinfo, plain"_str;
+}
+
 } // namespace lito::manifest
 
 using namespace lito::manifest;
@@ -228,6 +232,11 @@ auto definition(const ProjectProfile& project, ref<str> name)
         }
     }
     return None();
+}
+
+auto is_builtin_profile(ref<str> name) noexcept -> bool {
+    return name == "debug"_str || name == "release"_str || name == "relwithdebinfo"_str ||
+           name == "plain"_str;
 }
 
 auto inherited_cycle(const Vec<String>& path, ref<str> name) -> Option<String> {
@@ -291,7 +300,7 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
     path.push(String::make(name));
 
     auto declared = definition(project, name);
-    if (name == "debug"_str || name == "release"_str || name == "plain"_str) {
+    if (is_builtin_profile(name)) {
         const auto base    = resolve_base_profile(project);
         auto       profile = ResolvedBuildProfile {
             .name       = BuildProfileName { .value = String::make(name) },
@@ -307,11 +316,13 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
                 lito::artifact::StripMode::None);
             profile.lto    = ProfileSetting<Lto>::with_value(Lto::Off);
             profile.ndebug = ProfileSetting<bool>::with_value(false);
-        } else if (name == "release"_str) {
+        } else if (name == "release"_str || name == "relwithdebinfo"_str) {
             profile.family       = BuildProfileFamily::Release;
-            profile.optimization = ProfileSetting<Optimization>::with_value(Optimization::Level3);
-            profile.debug_info   = ProfileSetting<DebugInfo>::with_value(DebugInfo::None);
-            profile.strip        = ProfileSetting<lito::artifact::StripMode>::with_value(
+            profile.optimization = ProfileSetting<Optimization>::with_value(
+                name == "release"_str ? Optimization::Level3 : Optimization::Level2);
+            profile.debug_info = ProfileSetting<DebugInfo>::with_value(
+                name == "release"_str ? DebugInfo::None : DebugInfo::Full);
+            profile.strip = ProfileSetting<lito::artifact::StripMode>::with_value(
                 lito::artifact::StripMode::None);
             profile.lto    = ProfileSetting<Lto>::with_value(Lto::Off);
             profile.ndebug = ProfileSetting<bool>::with_value(true);
@@ -324,14 +335,10 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
     }
 
     if (declared.is_none()) {
-        auto message =
-            rstd::format("unknown profile '{}'; available profiles: debug, release, plain", name);
+        auto message = rstd::format(
+            "unknown profile '{}'; available profiles: {}", name, builtin_build_profile_names());
         for (const auto& candidate : project.build_profiles) {
-            if (candidate.name.as_str() == "debug"_str ||
-                candidate.name.as_str() == "release"_str ||
-                candidate.name.as_str() == "plain"_str) {
-                continue;
-            }
+            if (is_builtin_profile(candidate.name.as_str())) continue;
             message.push_str(", "_str);
             message.push_str(candidate.name.as_str());
         }
@@ -394,9 +401,7 @@ auto validate_build_profiles(const ProjectProfile& project) -> BuildProfileResul
                     "build profile '{}' is declared more than once", profile.name.as_str()));
             }
         }
-        const auto builtin = profile.name.as_str() == "debug"_str ||
-                             profile.name.as_str() == "release"_str ||
-                             profile.name.as_str() == "plain"_str;
+        const auto builtin = is_builtin_profile(profile.name.as_str());
         if (builtin && profile.inherits.is_some()) {
             return build_profile_failure<empty>(rstd::format(
                 "built-in profile '{}' cannot declare inherits", profile.name.as_str()));

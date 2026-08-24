@@ -1574,12 +1574,12 @@
     },
     "buildProfile": {
       "type": "object",
-      "description": "A build profile definition. The built-in debug, release, and plain profiles may be customized without inherits; custom profiles must inherit another profile.",
+      "description": "A build profile definition. The built-in debug, release, relwithdebinfo, and plain profiles may be customized without inherits; custom profiles must inherit another profile.",
       "properties": {
         "inherits": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]+$",
-          "description": "The parent profile name. Required for custom profiles and forbidden for the built-in debug, release, and plain profiles."
+          "description": "The parent profile name. Required for custom profiles and forbidden for the built-in debug, release, relwithdebinfo, and plain profiles."
         },
         "exceptions": {
           "type": "boolean"

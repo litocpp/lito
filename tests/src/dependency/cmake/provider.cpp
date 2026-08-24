@@ -209,7 +209,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 #endif
 }
 
-TEST_F(CMakeProvider, PlainProfileBuildsWithSingleAndMultiConfigGenerators) {
+TEST_F(CMakeProvider, LitoOwnedConfigurationBuildsWithSingleAndMultiConfigGenerators) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto tree = cmake_package_project_tree();

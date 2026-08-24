@@ -245,13 +245,11 @@ auto clone_toolchain(const ToolchainConfiguration& toolchain) -> ToolchainConfig
 
 auto clone_profile(const ProfileConfiguration& profile) -> ProfileConfiguration {
     return ProfileConfiguration {
-        .cxx_standard          = profile.cxx_standard.clone(),
-        .build_type            = profile.build_type.clone(),
-        .c_flags               = profile.c_flags.clone(),
-        .cxx_flags             = profile.cxx_flags.clone(),
-        .linker_flags          = profile.linker_flags.clone(),
-        .msvc_runtime          = profile.msvc_runtime.clone(),
-        .neutral_configuration = profile.neutral_configuration,
+        .cxx_standard = profile.cxx_standard.clone(),
+        .c_flags      = profile.c_flags.clone(),
+        .cxx_flags    = profile.cxx_flags.clone(),
+        .linker_flags = profile.linker_flags.clone(),
+        .msvc_runtime = profile.msvc_runtime.clone(),
     };
 }
 
@@ -292,14 +290,12 @@ auto work_area(const Request&                requirement,
         append_identity(recipe, "native-toolchain"_str);
     }
     append_identity(recipe, effective_target);
-    append_identity(recipe, profile.build_type.as_str());
+    append_identity(recipe, "lito-owned-none-configuration-v1"_str);
     append_identity(recipe, profile.cxx_standard.as_str());
     append_identity(recipe, profile.c_flags.as_str());
     append_identity(recipe, profile.cxx_flags.as_str());
     append_identity(recipe, profile.linker_flags.as_str());
     append_identity(recipe, profile.msvc_runtime.as_str());
-    append_identity(recipe,
-                    profile.neutral_configuration ? "neutral-config"_str : "named-config"_str);
     for (const auto& entry : requirement.cache) {
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());

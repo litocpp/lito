@@ -71,10 +71,9 @@ public:
 
     friend auto operator==(const Sha256Digest& left, const Sha256Digest& right) noexcept -> bool {
         return crypto_verify_32(
-                   reinterpret_cast<const unsigned char*>(
-                       left.bytes_.as_slice().as_raw_ptr()),
-                   reinterpret_cast<const unsigned char*>(
-                       right.bytes_.as_slice().as_raw_ptr())) == 0;
+                   reinterpret_cast<const unsigned char*>(left.bytes_.as_slice().as_raw_ptr()),
+                   reinterpret_cast<const unsigned char*>(right.bytes_.as_slice().as_raw_ptr())) ==
+               0;
     }
 };
 
