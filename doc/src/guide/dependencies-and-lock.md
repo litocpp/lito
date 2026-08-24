@@ -67,8 +67,15 @@ Keep a Git identity in `lito.toml` and redirect it locally through config:
 path = "../geometry"
 ```
 
-This belongs in `.lito/config.toml` when it is a developer checkout override. The lock retains the
-package/source model instead of requiring every manifest consumer to share the local path.
+This belongs in `.lito/config.toml` when it is a developer checkout override. `lito.toml` retains
+the Git requirement, but the matched package resolves as a Path source. Lito does not contact the
+matched Git URL or require the patch directory to be a Git repository. Like an ordinary Path
+dependency, the lock records neither the original Git source nor the machine-local path.
+
+The patch config is therefore required whenever that local source should remain active. A normal
+command can update the lock when a patch is enabled or removed; `--locked` rejects such a source
+change. Local edits and uncommitted files participate directly in builds, just as they do for an
+ordinary Path dependency.
 
 See the [dependency reference](../reference/lito-toml/dependencies.md) and
 [configuration keys](../reference/config/keys.md).

@@ -123,20 +123,8 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
             options, package.source.git.as_str(), package.source.commit.as_str()));
     }
 
-    auto source_manager = lito::source::SourceManager(
-        graph.root_directory.as_path(), options.clone(), resolver, environment, observer);
-    auto git_sources = Vec<lito::source::ResolvedPackageSource>::make();
-    auto git_indices = rstd::collections::BTreeMap<String, usize>::make();
-    for (const auto& package : graph.packages) {
-        if (package.source.kind != lito::source::PackageSourceKind::Git ||
-            package.source.git.is_empty())
-            continue;
-        auto key = lito::source::git_requirement_identity(package.source.git.as_str(),
-                                                          package.source.reference);
-        if (git_indices.contains_key(key.as_str())) continue;
-        git_indices.insert(rstd::move(key), git_sources.len());
-        git_sources.push(clone_resolved_package_source(package.source));
-    }
+    auto resolved_sources = Vec<lito::source::ResolvedPackageSource>::make();
+    auto resolved_indices = rstd::collections::BTreeMap<String, usize>::make();
     for (auto& package : graph.packages) {
         package.externals.clear();
         for (const auto& tool : package.manifest.build_tools) {
@@ -205,7 +193,12 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                     package_owned.insert(rstd::move(key), rstd::move(resolved.acquired));
                     continue;
                 }
-                auto resolved = source_manager.resolve_external_source(
+                auto source_manager = lito::source::SourceManager(graph.root_directory.as_path(),
+                                                                  options.clone(),
+                                                                  resolver,
+                                                                  environment,
+                                                                  observer);
+                auto resolved       = source_manager.resolve_external_source(
                     lito::source::PackageSourceRequirement::Path(
                         declaration.source.as_Path().path.clone()),
                     declaring_root.as_path());
@@ -221,39 +214,37 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
 
             const auto& git = declaration.source.as_Git();
             auto key      = lito::source::git_requirement_identity(git.url.as_str(), git.reference);
-            auto existing = git_indices.get(key.as_str());
+            auto existing = resolved_indices.get(key.as_str());
             auto resolved = lito::source::ResolvedPackageSource {};
             if (existing.is_some()) {
-                resolved = clone_resolved_package_source(git_sources[**existing]);
+                resolved = clone_resolved_package_source(resolved_sources[**existing]);
             } else {
-                auto selection =
-                    lito::source::select_git_source(options, git.url.as_str(), git.reference);
-                if (selection.is_err()) {
+                auto source_manager = lito::source::SourceManager(graph.root_directory.as_path(),
+                                                                  options.clone(),
+                                                                  resolver,
+                                                                  environment,
+                                                                  observer);
+                auto acquired       = source_manager.resolve_external_source(
+                    lito::source::PackageSourceRequirement::Git(git.url.clone(),
+                                                                git.reference.clone()),
+                    declaring_root.as_path());
+                if (acquired.is_err()) {
                     return Err(rstd::into<lito::dependency::DependencyError>(
-                        rstd::move(selection).unwrap_err()));
+                        rstd::move(acquired).unwrap_err()));
                 }
-                if (selection->exact_commit.is_some()) {
-                    resolved = lito::source::ResolvedPackageSource {
-                        .identity = lito::source::git_source_identity(
-                            git.url.as_str(), selection->exact_commit->as_str()),
-                        .kind      = lito::source::PackageSourceKind::Git,
-                        .git       = git.url.clone(),
-                        .reference = git.reference.clone(),
-                        .commit    = selection->exact_commit->clone(),
-                    };
-                } else {
-                    auto acquired = source_manager.resolve_external_source(
-                        lito::source::PackageSourceRequirement::Git(git.url.clone(),
-                                                                    git.reference.clone()),
-                        declaring_root.as_path());
-                    if (acquired.is_err()) {
-                        return Err(rstd::into<lito::dependency::DependencyError>(
-                            rstd::move(acquired).unwrap_err()));
-                    }
-                    resolved = rstd::move(acquired).unwrap();
-                }
-                git_indices.insert(rstd::move(key), git_sources.len());
-                git_sources.push(clone_resolved_package_source(resolved));
+                resolved = rstd::move(acquired).unwrap();
+                resolved_indices.insert(rstd::move(key), resolved_sources.len());
+                resolved_sources.push(clone_resolved_package_source(resolved));
+            }
+            if (resolved.kind == lito::source::PackageSourceKind::Path) {
+                make_record(
+                    lito::dependency::ResolvedExternalSource::Path(rstd::move(resolved.path)), {});
+                continue;
+            }
+            if (resolved.kind != lito::source::PackageSourceKind::Git) {
+                return lito::dependency::dependency_failure<DeclaredExternalDependencySources>(
+                    rstd::format("Git external source '{}' resolved to unsupported source kind",
+                                 declaration.name.as_str()));
             }
             rstd_try(append_locked_git_source(options, git.url.as_str(), resolved.commit.as_str()));
             make_record(lito::dependency::ResolvedExternalSource::Git(

@@ -156,3 +156,91 @@ sources = ["source.cppm"]
     ASSERT_TRUE(root_exists.is_ok());
     EXPECT_TRUE(*root_exists);
 }
+
+TEST_F(Update, LocalGitPatchConfigResolvesAnUnreachableSourceAsPath) {
+    auto directory = source_root("update-local-git-patch"_str);
+    auto project   = directory.join(PathBuf::from("project"_str).as_path());
+    auto patch     = directory.join(PathBuf::from("patch-fixture"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::create_dir_all(project.join(PathBuf::from(".lito"_str).as_path()).as_path())
+            .is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(patch.as_path()).is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(patch.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+                               "[package]\n"
+                               "name = \"patch-fixture\"\n"
+                               "version = \"0.1.0\"\n"
+                               "\n"
+                               "[lib]\n"
+                               "name = \"patch-fixture\"\n"
+                               "module = \"patch.fixture\"\n"
+                               "archive = \"patch.fixture\"\n"
+                               "sources = [\"source.cppm\"]\n"_str.as_bytes())
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(patch.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
+                               "export module patch.fixture;\n"_str.as_bytes())
+            .is_ok());
+    ASSERT_TRUE(rstd::fs::write_atomic(
+                    project.join(PathBuf::from(".lito/config.toml"_str).as_path()).as_path(),
+                    "[patch.\"https://example.invalid/patch-fixture.git\"]\n"
+                    "path = \"../patch-fixture\"\n"_str.as_bytes())
+                    .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(project.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+                               "[package]\n"
+                               "name = \"patch-consumer\"\n"
+                               "version = \"0.1.0\"\n"
+                               "\n"
+                               "[lib]\n"
+                               "name = \"patch-consumer\"\n"
+                               "module = \"patch.consumer\"\n"
+                               "archive = \"patch.consumer\"\n"
+                               "sources = [\"source.cppm\"]\n"
+                               "\n"
+                               "[dependencies.patch-fixture]\n"
+                               "git = \"https://example.invalid/patch-fixture.git\"\n"
+                               "visibility = \"private\"\n"_str.as_bytes())
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(project.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
+                               "export module patch.consumer;\n"_str.as_bytes())
+            .is_ok());
+
+    auto config = lito::config::load_project_config(project.as_path());
+    ASSERT_TRUE(config.is_ok());
+    ASSERT_EQ(config->sources.patches.len(), usize(1));
+    EXPECT_EQ(config->sources.patches[usize {}].path.as_path(), patch.as_path());
+    auto tools = lito::tools::ToolSpec {};
+    tools.git  = PathBuf::from("lito-missing-git"_str);
+    auto fetch = FetchEventCapture {
+        .expected_url = "https://example.invalid/patch-fixture.git"_str,
+    };
+    auto updated = lito::update_dependencies(lito::UpdateRequest {
+        .root     = config->root.clone(),
+        .tools    = rstd::move(tools),
+        .lock     = lito::lock::LockConfig { .path = config->lock.path.clone() },
+        .sources  = rstd::move(config->sources),
+        .observer = Some(lito::BuildEventSink {
+            .context = rstd::addressof(fetch),
+            .notify  = capture_fetch,
+        }),
+    });
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
+    EXPECT_EQ(fetch.count, usize {});
+
+    auto locked = lito::lock::load_locked_project(project.as_path());
+    ASSERT_TRUE(locked.is_ok());
+    const lito::lock::LockedPackage* dependency = nullptr;
+    for (const auto& package : locked->packages) {
+        if (package.name.as_str() == "patch-fixture"_str) dependency = rstd::addressof(package);
+    }
+    ASSERT_NE(dependency, nullptr);
+    EXPECT_TRUE(dependency->source.is_none());
+    auto lock_text =
+        rstd::fs::read_to_string(project.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
+    ASSERT_TRUE(lock_text.is_ok());
+    EXPECT_FALSE(lock_text->as_str().contains("https://example.invalid/patch-fixture.git"_str));
+    EXPECT_FALSE(lock_text->as_str().contains("../patch-fixture"_str));
+}

@@ -189,9 +189,15 @@ when loading config.
 ## `[patch."GIT-URL"]`
 
 Every patch entry requires `path`, an existing local directory. The Git URL must be non-empty, must
-not start with `-`, and must not contain `#`.
+not start with `-`, and must not contain `#`. The URL matches the declared Git source exactly. Once
+matched, the directory is resolved as an independent Path source before Git pin, cache, tool, or
+network resolution. It needs a valid package manifest but does not need a Git repository or `HEAD`.
 
 ```toml
 [patch."https://github.com/litocpp/rstd.git"]
 path = "../rstd"
 ```
+
+The lock omits both the matched Git source and the local path, following the ordinary Path-source
+rule. Keep this machine-local config active while using that lock; enabling or removing the patch
+changes the resolved source and therefore requires a normal lock update rather than `--locked`.

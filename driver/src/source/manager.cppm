@@ -1,4 +1,5 @@
 module;
+#include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
 export module lito.driver:source.manager;
@@ -76,6 +77,18 @@ struct ManagedSourceEntry {
     ResolvedPackageSource source;
 };
 
+class EffectivePackageSource {
+    RSTD_ENUM(EffectivePackageSource,
+              (Path, (PathBuf root;)),
+              (Git, (String url; GitReference reference;)))
+};
+
+struct EffectiveSourceFetchRequest {
+    String                 owner;
+    String                 name;
+    EffectivePackageSource source;
+};
+
 export namespace lito::source
 {
 
@@ -105,37 +118,30 @@ class SourceManager {
     struct ResolvedGitSeed {
         enum class Kind
         {
-            Patch,
             FetchSeed,
             Cache,
         };
 
-        Kind    kind { Kind::Patch };
+        Kind    kind { Kind::FetchSeed };
         String  commit;
         PathBuf path;
     };
 
     struct SourceWork {
-        usize                     request {};
-        PackageSourceFetchRequest source;
-        Option<ResolvedGitSeed>   seed;
+        usize                       request {};
+        EffectiveSourceFetchRequest source;
+        Option<ResolvedGitSeed>     seed;
     };
 
-    auto source_request_key(const PackageSourceRequirement& source,
-                            ref<rstd::path::Path> declaring_root) -> SourceResult<String> {
+    auto source_request_key(const EffectivePackageSource& source) -> String {
         if (source.is_Path()) {
-            return Ok(
-                rstd::format("path\n{}\n{}", declaring_root, source.as_Path().path.as_path()));
-        }
-        if (source.is_Registry()) {
-            return source_failure<String>(
-                "Registry dependency requires RegistrySourceResolver materialization"_str);
+            return rstd::format("path\n{}", source.as_Path().root.as_path());
         }
         const auto& git = source.as_Git();
-        return Ok(git_requirement_identity(git.url.as_str(), git.reference));
+        return git_requirement_identity(git.url.as_str(), git.reference);
     }
 
-    auto source_work_groups(const Vec<PackageSourceFetchRequest>& requests) -> Vec<Vec<usize>> {
+    auto source_work_groups(const Vec<EffectiveSourceFetchRequest>& requests) -> Vec<Vec<usize>> {
         auto groups     = Vec<Vec<usize>>::make();
         auto git_groups = rstd::collections::BTreeMap<String, usize>::make();
         for (usize index {}; index < requests.len(); ++index) {
@@ -266,6 +272,55 @@ class SourceManager {
         return Ok(matched);
     }
 
+    auto canonical_path_source(ref<rstd::path::Path> requested) -> SourceResult<PathBuf> {
+        auto canonical = rstd::fs::canonicalize(requested);
+        if (canonical.is_err()) {
+            return source_io_failure<PathBuf>(
+                "resolve path source"_str, requested, rstd::move(canonical).unwrap_err());
+        }
+        return Ok(rstd::move(canonical).unwrap());
+    }
+
+    auto select_effective_source(const PackageSourceRequirement& requirement,
+                                 ref<rstd::path::Path>           declaring_root)
+        -> SourceResult<EffectivePackageSource> {
+        if (requirement.is_Registry()) {
+            return source_failure<EffectivePackageSource>(
+                "Registry dependency requires RegistrySourceResolver materialization"_str);
+        }
+        if (requirement.is_Builtin()) {
+            return source_failure<EffectivePackageSource>(
+                "Builtin dependency requires builtin source resolution"_str);
+        }
+        if (requirement.is_Path()) {
+            auto requested =
+                PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
+            return Ok(
+                EffectivePackageSource::Path(rstd_try(canonical_path_source(requested.as_path()))));
+        }
+        const auto& git   = requirement.as_Git();
+        auto        patch = rstd_try(patched_path(git.url.as_str()));
+        if (patch.is_some()) {
+            return Ok(EffectivePackageSource::Path(rstd_try(canonical_path_source(*patch))));
+        }
+        return Ok(EffectivePackageSource::Git(git.url.clone(),
+                                              GitReference {
+                                                  .kind  = git.reference.kind,
+                                                  .value = git.reference.value.clone(),
+                                              }));
+    }
+
+    auto select_effective_request(PackageSourceFetchRequest request)
+        -> SourceResult<EffectiveSourceFetchRequest> {
+        auto source =
+            rstd_try(select_effective_source(request.source, request.declaring_root.as_path()));
+        return Ok(EffectiveSourceFetchRequest {
+            .owner  = rstd::move(request.owner),
+            .name   = rstd::move(request.name),
+            .source = rstd::move(source),
+        });
+    }
+
     auto git_checkout_receipt(ref<str> url, ref<str> commit) const -> String {
         return rstd::format("lito-git-checkout-v1\n{}\n{}\n", url, commit);
     }
@@ -351,14 +406,6 @@ class SourceManager {
                                   ref<str>         source = ""_str)
         -> SourceResult<Option<ResolvedGitSeed>> {
         if (commit.is_none()) return Ok(None());
-        auto patch = rstd_try(patched_path(url));
-        if (patch.is_some()) {
-            return Ok(Some(ResolvedGitSeed {
-                .kind   = ResolvedGitSeed::Kind::Patch,
-                .commit = String::make(*commit),
-                .path   = PathBuf::from(*patch),
-            }));
-        }
         auto seed = rstd_try(seed_checkout(url, *commit, owner, source));
         if (seed.is_some()) {
             return Ok(Some(ResolvedGitSeed {
@@ -376,7 +423,7 @@ class SourceManager {
         }));
     }
 
-    auto prepared_git_seed(const PackageSourceFetchRequest& request)
+    auto prepared_git_seed(const EffectiveSourceFetchRequest& request)
         -> SourceResult<Option<ResolvedGitSeed>> {
         if (! request.source.is_Git()) return Ok(None());
         const auto& git = request.source.as_Git();
@@ -387,7 +434,7 @@ class SourceManager {
             git.url.as_str(), commit, request.owner.as_str(), request.name.as_str());
     }
 
-    auto prepare_frontier_inputs(const Vec<PackageSourceFetchRequest>& requests)
+    auto prepare_frontier_inputs(const Vec<EffectiveSourceFetchRequest>& requests)
         -> SourceResult<Vec<Option<ResolvedGitSeed>>> {
         auto seeds       = Vec<Option<ResolvedGitSeed>>::with_capacity(requests.len());
         auto needs_cache = false;
@@ -406,20 +453,14 @@ class SourceManager {
                 if (git_request.is_none()) git_request = Some(usize(index));
                 continue;
             }
-            if (seeds[index]->kind != ResolvedGitSeed::Kind::Cache &&
-                seeds[index]->kind != ResolvedGitSeed::Kind::Patch) {
-                continue;
-            }
+            if (seeds[index]->kind != ResolvedGitSeed::Kind::Cache) continue;
             const auto requirement = lito::tools::external_source_tool_requirement(
                 lito::tools::HostToolCapability::GitCheckout,
                 request.owner.is_empty() ? "Git"_str : request.owner.as_str(),
                 request.name.is_empty() ? request.source.as_Git().url.as_str()
                                         : request.name.as_str());
             if (resolver_ != nullptr) {
-                resolver_->report_not_required(requirement,
-                                               seeds[index]->kind == ResolvedGitSeed::Kind::Cache
-                                                   ? "Git checkout cache is reusable"_str
-                                                   : "local source patch is selected"_str);
+                resolver_->report_not_required(requirement, "Git checkout cache is reusable"_str);
             }
         }
         if (git_request.is_some() && git_.is_none()) {
@@ -635,14 +676,8 @@ class SourceManager {
         return Ok(rstd::move(checkout));
     }
 
-    auto acquire_path(ref<rstd::path::Path> requested) -> SourceResult<usize> {
-        auto canonical = rstd::fs::canonicalize(requested);
-        if (canonical.is_err()) {
-            return source_io_failure<usize>(
-                "resolve path source"_str, requested, rstd::move(canonical).unwrap_err());
-        }
-        auto source_root = rstd::move(canonical).unwrap();
-        auto root_text   = source_root.as_path().to_str();
+    auto acquire_path_root(PathBuf source_root) -> SourceResult<usize> {
+        auto root_text = source_root.as_path().to_str();
         if (root_text.is_none()) {
             return source_failure<usize>(rstd::format(
                 "normalized source root '{}' is not valid UTF-8", source_root.as_path()));
@@ -669,20 +704,14 @@ class SourceManager {
         return Ok(index);
     }
 
+    auto acquire_path(ref<rstd::path::Path> requested) -> SourceResult<usize> {
+        return acquire_path_root(rstd_try(canonical_path_source(requested)));
+    }
+
     auto register_git_source(ref<str>            url,
                              const GitReference& reference,
                              String              precise_commit,
                              PathBuf             checkout_root) -> SourceResult<usize> {
-        auto patch = rstd_try(patched_path(url));
-        if (patch.is_some()) {
-            auto physical = rstd::fs::canonicalize(*patch);
-            if (physical.is_err()) {
-                return source_io_failure<usize>(
-                    "resolve patched Git source"_str, *patch, rstd::move(physical).unwrap_err());
-            }
-            checkout_root = rstd::move(physical).unwrap();
-        }
-
         auto id       = git_source_identity(url, precise_commit.as_str());
         auto existing = source_identities_.get(id.as_str());
         if (existing.is_some()) return Ok(**existing);
@@ -794,9 +823,17 @@ class SourceManager {
         return Ok(registered);
     }
 
-    auto acquire_seeded_git(const PackageSourceRequirement& requirement, ResolvedGitSeed seed)
+    auto acquire_effective(EffectivePackageSource source) -> SourceResult<usize> {
+        if (source.is_Path()) {
+            return acquire_path_root(rstd::move(source).as_Path().root);
+        }
+        auto git = rstd::move(source).as_Git();
+        return acquire_git(git.url.as_str(), git.reference);
+    }
+
+    auto acquire_seeded_git(const EffectivePackageSource& source, ResolvedGitSeed seed)
         -> SourceResult<usize> {
-        const auto& git         = requirement.as_Git();
+        const auto& git         = source.as_Git();
         auto        registered  = rstd_try(register_git_source(
             git.url.as_str(), git.reference, rstd::move(seed.commit), rstd::move(seed.path)));
         auto        request_key = git_requirement_identity(git.url.as_str(), git.reference);
@@ -804,13 +841,22 @@ class SourceManager {
         return Ok(registered);
     }
 
-    auto acquire_external_seeded(const PackageSourceRequirement& requirement, ResolvedGitSeed seed)
+    auto acquire_external_seeded(const EffectivePackageSource& source, ResolvedGitSeed seed)
         -> SourceResult<AcquiredSource> {
-        auto source = rstd_try(acquire_seeded_git(requirement, rstd::move(seed)));
+        auto index = rstd_try(acquire_seeded_git(source, rstd::move(seed)));
         return Ok(AcquiredSource {
-            .root      = entries_[source].source.root_directory.clone(),
-            .identity  = entries_[source].source.identity.clone(),
+            .root      = entries_[index].source.root_directory.clone(),
+            .identity  = entries_[index].source.identity.clone(),
             .cacheable = true,
+        });
+    }
+
+    auto acquire_external_effective(EffectivePackageSource source) -> SourceResult<AcquiredSource> {
+        auto index = rstd_try(acquire_effective(rstd::move(source)));
+        return Ok(AcquiredSource {
+            .root      = entries_[index].source.root_directory.clone(),
+            .identity  = entries_[index].source.identity.clone(),
+            .cacheable = entries_[index].source.kind == PackageSourceKind::Git,
         });
     }
 
@@ -827,8 +873,7 @@ class SourceManager {
                                   ? Some(selection.exact_commit->as_str())
                                   : Option<ref<str>> {};
         if (exact_commit.is_some()) {
-            auto input = rstd_try(prepared_exact_git_input(url, exact_commit));
-            if (input.is_some()) precise_commit = String::make(*exact_commit);
+            precise_commit = String::make(*exact_commit);
         }
         if (precise_commit.is_empty()) {
             if (options_.materialization == SourceMaterializationPolicy::ExistingOnly) {
@@ -908,17 +953,13 @@ public:
     auto resolve_external_source(const PackageSourceRequirement& requirement,
                                  ref<rstd::path::Path>           declaring_root)
         -> SourceResult<ResolvedPackageSource> {
-        if (requirement.is_Registry()) {
-            return source_failure<ResolvedPackageSource>(
-                "Registry dependency requires RegistrySourceResolver materialization"_str);
+        auto source = rstd_try(select_effective_source(requirement, declaring_root));
+        if (source.is_Git()) {
+            const auto& git = source.as_Git();
+            return resolve_git(git.url.as_str(), git.reference);
         }
-        if (requirement.is_Git()) {
-            return resolve_git(requirement.as_Git().url.as_str(), requirement.as_Git().reference);
-        }
-        auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
-        auto acquired  = acquire_path(requested.as_path());
-        if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-        return Ok(clone_source(entries_[*acquired].source));
+        auto acquired = rstd_try(acquire_path_root(rstd::move(source).as_Path().root));
+        return Ok(clone_source(entries_[acquired].source));
     }
 
     auto acquire_root(ref<rstd::path::Path> root) -> SourceResult<usize> {
@@ -966,16 +1007,7 @@ public:
 
     auto acquire(const PackageSourceRequirement& requirement, ref<rstd::path::Path> declaring_root)
         -> SourceResult<usize> {
-        if (requirement.is_Registry()) {
-            return source_failure<usize>(
-                "Registry dependency requires RegistrySourceResolver materialization"_str);
-        }
-        if (requirement.is_Git()) {
-            const auto& git = requirement.as_Git();
-            return acquire_git(git.url.as_str(), git.reference);
-        }
-        auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
-        return acquire_path(requested.as_path());
+        return acquire_effective(rstd_try(select_effective_source(requirement, declaring_root)));
     }
 
     auto acquire_frontier(Vec<PackageSourceFetchRequest> requests, usize jobs)
@@ -986,7 +1018,12 @@ public:
         auto result = Vec<usize>::with_capacity(requests.len());
         if (requests.is_empty()) return Ok(rstd::move(result));
 
-        auto unique       = Vec<PackageSourceFetchRequest>::make();
+        auto effective = Vec<EffectiveSourceFetchRequest>::with_capacity(requests.len());
+        for (auto& request : requests) {
+            effective.push(rstd_try(select_effective_request(rstd::move(request))));
+        }
+
+        auto unique       = Vec<EffectiveSourceFetchRequest>::make();
         auto unique_keys  = Vec<String>::make();
         auto request_keys = rstd::collections::BTreeMap<String, usize>::make();
         struct RequestBinding {
@@ -994,9 +1031,8 @@ public:
             usize index {};
         };
         auto bindings = Vec<RequestBinding>::with_capacity(requests.len());
-        for (auto& request : requests) {
-            auto key =
-                rstd_try(source_request_key(request.source, request.declaring_root.as_path()));
+        for (auto& request : effective) {
+            auto key      = source_request_key(request.source);
             auto resolved = source_requests_.get(key.as_str());
             if (resolved.is_some()) {
                 bindings.push(RequestBinding { .existing = true, .index = **resolved });
@@ -1008,9 +1044,8 @@ public:
                 continue;
             }
             auto index = unique.len();
+            unique_keys.push(key.clone());
             request_keys.insert(rstd::move(key), index);
-            unique_keys.push(
-                rstd_try(source_request_key(request.source, request.declaring_root.as_path())));
             bindings.push(RequestBinding { .index = index });
             unique.push(rstd::move(request));
         }
@@ -1073,8 +1108,7 @@ public:
                             item.seed.is_some()
                                 ? manager.acquire_seeded_git(item.source.source,
                                                              rstd::move(item.seed).unwrap())
-                                : manager.acquire(item.source.source,
-                                                  item.source.declaring_root.as_path());
+                                : manager.acquire_effective(rstd::move(item.source.source));
                         if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
                         results.push(FetchedPackageSource {
                             .request = item.request,
@@ -1128,12 +1162,16 @@ public:
         auto result = Vec<ExternalSourceFetchOutcome>::with_capacity(requests.len());
         if (requests.is_empty()) return Ok(rstd::move(result));
 
-        auto unique       = Vec<PackageSourceFetchRequest>::make();
+        auto effective = Vec<EffectiveSourceFetchRequest>::with_capacity(requests.len());
+        for (auto& request : requests) {
+            effective.push(rstd_try(select_effective_request(rstd::move(request))));
+        }
+
+        auto unique       = Vec<EffectiveSourceFetchRequest>::make();
         auto request_keys = rstd::collections::BTreeMap<String, usize>::make();
         auto bindings     = Vec<usize>::with_capacity(requests.len());
-        for (auto& request : requests) {
-            auto key =
-                rstd_try(source_request_key(request.source, request.declaring_root.as_path()));
+        for (auto& request : effective) {
+            auto key      = source_request_key(request.source);
             auto existing = request_keys.get(key.as_str());
             if (existing.is_some()) {
                 bindings.push(usize(**existing));
@@ -1199,8 +1237,8 @@ public:
                             item.seed.is_some()
                                 ? manager.acquire_external_seeded(item.source.source,
                                                                   rstd::move(item.seed).unwrap())
-                                : manager.acquire_external(item.source.source,
-                                                           item.source.declaring_root.as_path());
+                                : manager.acquire_external_effective(
+                                      rstd::move(item.source.source));
                         if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
                         results.push(FetchedExternalSource {
                             .request = item.request,
@@ -1247,26 +1285,8 @@ public:
 
     auto acquire_external(const PackageSourceRequirement& requirement,
                           ref<rstd::path::Path> declaring_root) -> SourceResult<AcquiredSource> {
-        auto acquired = [&]() -> SourceResult<usize> {
-            if (requirement.is_Registry()) {
-                return source_failure<usize>(
-                    "Registry dependency requires RegistrySourceResolver materialization"_str);
-            }
-            if (requirement.is_Git()) {
-                const auto& git = requirement.as_Git();
-                return acquire_git(git.url.as_str(), git.reference);
-            }
-            auto requested =
-                PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
-            return acquire_path(requested.as_path());
-        }();
-        if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-        const auto index = rstd::move(acquired).unwrap();
-        return Ok(AcquiredSource {
-            .root      = entries_[index].source.root_directory.clone(),
-            .identity  = entries_[index].source.identity.clone(),
-            .cacheable = entries_[index].source.kind == PackageSourceKind::Git,
-        });
+        return acquire_external_effective(
+            rstd_try(select_effective_source(requirement, declaring_root)));
     }
 
     auto source_identity(usize source) const noexcept -> ref<str> {

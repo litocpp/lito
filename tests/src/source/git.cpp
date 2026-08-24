@@ -216,6 +216,135 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     EXPECT_TRUE(found_package);
 }
 
+TEST_F(GitSource, PatchedGitFrontierUsesOnePathSourceWithoutGitResolution) {
+    auto directory = source_root("git-patch-path-frontier"_str);
+    auto project   = directory.join(PathBuf::from("project"_str).as_path());
+    auto patch     = directory.join(PathBuf::from("patch"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(project.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(patch.as_path()).is_ok());
+
+    auto data_home = directory.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
+
+    auto options            = lito::source::SourceResolutionOptions {};
+    options.sources.network = lito::source::NetworkPolicy::Offline;
+    options.sources.patches.push(lito::source::GitSourcePatch {
+        .git  = String::make("https://example.invalid/patched.git"_str),
+        .path = patch.clone(),
+    });
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto tools    = lito::tools::ToolSpec {};
+    tools.git     = PathBuf::from("lito-missing-git"_str);
+    auto resolver = lito::tools::ToolResolver(*environment, rstd::move(tools));
+    auto events   = FetchEventCapture {
+        .expected_url = "https://example.invalid/patched.git"_str,
+    };
+    auto manager = lito::source::SourceManager(project.as_path(),
+                                               rstd::move(options),
+                                               resolver,
+                                               *environment,
+                                               lito::source::SourceEventSink {
+                                                   .context = rstd::addressof(events),
+                                                   .notify  = capture_source_fetch,
+                                               });
+
+    struct ReferenceCase {
+        lito::source::GitReferenceKind kind;
+        ref<str>                       value;
+    };
+    const ReferenceCase references[] = {
+        { lito::source::GitReferenceKind::DefaultBranch, ""_str },
+        { lito::source::GitReferenceKind::Branch, "main"_str },
+        { lito::source::GitReferenceKind::Tag, "v1"_str },
+        { lito::source::GitReferenceKind::Rev, "feature"_str },
+        { lito::source::GitReferenceKind::Commit, "0123456789abcdef0123456789abcdef01234567"_str },
+    };
+    auto requests = Vec<lito::source::PackageSourceFetchRequest>::make();
+    for (const auto& reference : references) {
+        requests.push(lito::source::PackageSourceFetchRequest {
+            .owner  = String::make("consumer"_str),
+            .name   = String::make("patched"_str),
+            .source = lito::source::PackageSourceRequirement::Git(
+                String::make("https://example.invalid/patched.git"_str),
+                lito::source::GitReference {
+                    .kind  = reference.kind,
+                    .value = String::make(reference.value),
+                }),
+            .declaring_root = project.clone(),
+        });
+    }
+    requests.push(lito::source::PackageSourceFetchRequest {
+        .owner  = String::make("consumer"_str),
+        .name   = String::make("patched-path"_str),
+        .source = lito::source::PackageSourceRequirement::Path(PathBuf::from("../patch"_str)),
+        .declaring_root = project.clone(),
+    });
+
+    auto acquired = manager.acquire_frontier(rstd::move(requests), usize(3));
+    ASSERT_TRUE(acquired.is_ok());
+    ASSERT_EQ(acquired->len(), usize(6));
+    for (const auto source : *acquired) EXPECT_EQ(source, (*acquired)[usize {}]);
+    auto resolved = manager.resolved_source((*acquired)[usize {}]);
+    EXPECT_EQ(resolved.kind, lito::source::PackageSourceKind::Path);
+    EXPECT_EQ(resolved.identity.as_str(), "path+../patch"_str);
+    EXPECT_EQ(resolved.path.as_path(), PathBuf::from("../patch"_str).as_path());
+    EXPECT_EQ(resolved.root_directory.as_path(), patch.as_path());
+    EXPECT_TRUE(resolved.git.is_empty());
+    EXPECT_TRUE(resolved.commit.is_empty());
+    EXPECT_EQ(events.count, usize {});
+    EXPECT_EQ(events.completed, usize {});
+    auto data_exists = rstd::fs::exists(data_home.as_path());
+    ASSERT_TRUE(data_exists.is_ok());
+    EXPECT_FALSE(*data_exists);
+    EXPECT_EQ(manager.finish().len(), usize(1));
+}
+
+TEST_F(GitSource, PatchedGitExternalUsesNonCacheablePathSource) {
+    auto directory = source_root("git-patch-path-external"_str);
+    auto patch     = directory.join(PathBuf::from("external"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(patch.as_path()).is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(patch.join(PathBuf::from("CMakeLists.txt"_str).as_path()).as_path(),
+                               "cmake_minimum_required(VERSION 3.29)\n"_str.as_bytes())
+            .is_ok());
+    auto graph = external_git_graph(
+        "https://example.invalid/external.git"_str,
+        directory.as_path(),
+        lito::source::GitReference {
+            .kind  = lito::source::GitReferenceKind::Commit,
+            .value = String::make("0123456789abcdef0123456789abcdef01234567"_str),
+        });
+    auto options            = lito::source::SourceResolutionOptions {};
+    options.sources.network = lito::source::NetworkPolicy::Offline;
+    options.sources.patches.push(lito::source::GitSourcePatch {
+        .git  = String::make("https://example.invalid/external.git"_str),
+        .path = patch.clone(),
+    });
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto tools    = lito::tools::ToolSpec {};
+    tools.git     = PathBuf::from("lito-missing-git"_str);
+    auto resolver = lito::tools::ToolResolver(*environment, rstd::move(tools));
+
+    auto prepared = lito::prepare_external_dependency_sources(
+        graph, rstd::move(options), resolver, *environment);
+    ASSERT_TRUE(prepared.is_ok());
+    ASSERT_EQ(graph.packages[usize {}].externals.len(), usize(1));
+    EXPECT_TRUE(graph.packages[usize {}].externals[usize {}].source.is_Path());
+    ASSERT_EQ(graph.sources.len(), usize(1));
+    EXPECT_EQ(graph.sources[usize {}].kind, lito::source::PackageSourceKind::Path);
+    EXPECT_EQ(graph.sources[usize {}].identity.as_str(), "path+external"_str);
+    ASSERT_EQ(prepared->cmake_dependencies.len(), usize(1));
+    const auto& source = prepared->cmake_dependencies[usize {}].requirement.source;
+    ASSERT_TRUE(source.is_Directory());
+    EXPECT_EQ(source.as_Directory().root.as_path(), patch.as_path());
+    EXPECT_EQ(source.as_Directory().identity.as_str(), "path+external"_str);
+    EXPECT_FALSE(source.as_Directory().cacheable);
+}
+
 TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
     auto directory = source_root("git-patch-configured-lock"_str);
     auto upstream  = directory.join(PathBuf::from("upstream"_str).as_path());
@@ -323,6 +452,7 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
         if (package.name.as_str() == "patch-fixture"_str) owner = rstd::addressof(package);
     }
     ASSERT_NE(owner, nullptr);
+    EXPECT_TRUE(owner->source.is_none());
     ASSERT_EQ(owner->externals.len(), usize(1));
     EXPECT_EQ(owner->externals[usize {}].name.as_str(), "changed"_str);
     ASSERT_TRUE(owner->externals[usize {}].source.is_Archive());
@@ -335,11 +465,102 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
         "source = \"archive+https://example.invalid/changed.tar.gz\"\n"
         "checksum = "
         "\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""_str));
+    EXPECT_FALSE(lock_text->as_str().contains(*url));
+    EXPECT_FALSE(lock_text->as_str().contains(commit->as_str()));
     EXPECT_FALSE(lock_text->as_str().contains("url = "_str));
     auto default_lock = project.join(PathBuf::from("lito.lock"_str).as_path());
     auto exists       = rstd::fs::exists(default_lock.as_path());
     ASSERT_TRUE(exists.is_ok());
     EXPECT_FALSE(*exists);
+
+    const auto patch_config = [&]() {
+        auto config = lito::source::PackageSourceConfig {};
+        config.patches.push(lito::source::GitSourcePatch {
+            .git  = String::make(*url),
+            .path = patch.clone(),
+        });
+        return config;
+    };
+    auto old_lock = directory.join(PathBuf::from("old.lock"_str).as_path());
+    auto old_text = rstd::format("version = 1\n"
+                                 "\n"
+                                 "[[packages]]\n"
+                                 "name = \"patch-consumer\"\n"
+                                 "version = \"0.1.0\"\n"
+                                 "dependencies = [\"patch-fixture\"]\n"
+                                 "\n"
+                                 "[[packages]]\n"
+                                 "name = \"patch-fixture\"\n"
+                                 "version = \"0.1.0\"\n"
+                                 "source = \"git+{}#{}\"\n",
+                                 *url,
+                                 commit->as_str());
+    ASSERT_TRUE(rstd::fs::write_atomic(old_lock.as_path(), old_text.as_str().as_bytes()).is_ok());
+
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto tools    = lito::tools::ToolSpec {};
+    tools.git     = PathBuf::from("lito-missing-git"_str);
+    auto resolver = lito::tools::ToolResolver(*environment, rstd::move(tools));
+
+    auto old_session = lito::lock::load_lock_session(
+        project.as_path(), lito::lock::LockConfig { .path = old_lock.clone() }, true);
+    ASSERT_TRUE(old_session.is_ok());
+    auto old_options          = old_session->take_resolution_options();
+    old_options.sources       = patch_config();
+    auto old_external_options = old_options.clone();
+    auto old_graph            = lito::package::resolve_package_graph_with_environment(
+        project.as_path(), rstd::move(old_options), resolver, *environment, usize(1));
+    ASSERT_TRUE(old_graph.is_ok());
+    auto old_externals = lito::prepare_external_dependency_sources(
+        *old_graph, rstd::move(old_external_options), resolver, *environment);
+    ASSERT_TRUE(old_externals.is_ok());
+    auto old_sync = lito::lock::sync_lock(*old_graph, rstd::move(old_session).unwrap());
+    EXPECT_TRUE(old_sync.is_err());
+
+    auto current_session = lito::lock::load_lock_session(
+        project.as_path(), lito::lock::LockConfig { .path = configured_lock.clone() }, true);
+    ASSERT_TRUE(current_session.is_ok());
+    auto current_options          = current_session->take_resolution_options();
+    current_options.sources       = patch_config();
+    auto current_external_options = current_options.clone();
+    auto current_graph            = lito::package::resolve_package_graph_with_environment(
+        project.as_path(), rstd::move(current_options), resolver, *environment, usize(1));
+    ASSERT_TRUE(current_graph.is_ok());
+    auto current_externals = lito::prepare_external_dependency_sources(
+        *current_graph, rstd::move(current_external_options), resolver, *environment);
+    ASSERT_TRUE(current_externals.is_ok());
+    auto current_sync = lito::lock::sync_lock(*current_graph, rstd::move(current_session).unwrap());
+    ASSERT_TRUE(current_sync.is_ok());
+    EXPECT_EQ(*current_sync, lito::lock::LockStatus::Unchanged);
+
+    auto removed_session = lito::lock::load_lock_session(
+        project.as_path(), lito::lock::LockConfig { .path = configured_lock.clone() }, true);
+    ASSERT_TRUE(removed_session.is_ok());
+    auto removed_graph = lito::package::resolve_package_graph_with_environment(
+        project.as_path(),
+        removed_session->take_resolution_options(),
+        resolver,
+        *environment,
+        usize(1));
+    ASSERT_TRUE(removed_graph.is_err());
+    EXPECT_TRUE(error_chain_text(removed_graph.unwrap_err())
+                    .as_str()
+                    .contains("--locked has no source matching Git dependency"_str));
+
+    auto migration_tools = lito::tools::ToolSpec {};
+    migration_tools.git  = PathBuf::from("lito-missing-git"_str);
+    auto migrated        = lito::update_dependencies(lito::UpdateRequest {
+        .root    = project.clone(),
+        .tools   = rstd::move(migration_tools),
+        .lock    = lito::lock::LockConfig { .path = old_lock.clone() },
+        .sources = patch_config(),
+    });
+    ASSERT_TRUE(migrated.is_ok());
+    EXPECT_EQ(*migrated, lito::lock::LockStatus::Updated);
+    auto migrated_text = rstd::fs::read_to_string(old_lock.as_path());
+    ASSERT_TRUE(migrated_text.is_ok());
+    EXPECT_FALSE(migrated_text->as_str().contains(*url));
 }
 
 TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
