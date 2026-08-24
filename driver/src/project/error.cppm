@@ -185,7 +185,7 @@ struct Impl<error::Error, lito::ProjectError> : ImplBase<lito::ProjectError> {
             return Some(dyn<error::Error>::from_ref(error.as_Toolchain().source));
         }
         if (error.is_AndroidNdk()) {
-            return Some(dyn<error::Error>::from_ref(error.as_AndroidNdk().source));
+            return Some(lito::android_ndk_error_ref(error.as_AndroidNdk().source));
         }
         if (error.is_Lock()) {
             return Some(dyn<error::Error>::from_ref(error.as_Lock().source));

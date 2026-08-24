@@ -24,6 +24,12 @@ class AndroidNdkError {
               (Message, (String message;)))
 };
 
+// Windows Clang ABI workaround: materialize the dyn Error vtable in its owning module.
+auto android_ndk_error_ref(const AndroidNdkError& error [[clang::lifetimebound]]) noexcept
+    -> rstd::error::ErrorRef {
+    return rstd::ptr_::dyn<rstd::error::Error>::from_ref(error);
+}
+
 template<typename T>
 using AndroidNdkResult = Result<T, AndroidNdkError>;
 

@@ -299,7 +299,7 @@ struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
             return Some(dyn<error::Error>::from_ref(error.as_AndroidCatalog().source));
         }
         if (error.is_AndroidNdk()) {
-            return Some(dyn<error::Error>::from_ref(error.as_AndroidNdk().source));
+            return Some(lito::android_ndk_error_ref(error.as_AndroidNdk().source));
         }
         if (error.is_Acquisition()) {
             return Some(dyn<error::Error>::from_ref(error.as_Acquisition().source));
