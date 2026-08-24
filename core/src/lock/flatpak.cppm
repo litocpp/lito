@@ -9,6 +9,7 @@ import :lock;
 import :lock.config;
 import :lock.document;
 import :source.fetch;
+import :source.seed;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -250,7 +251,8 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
     auto inline_source = Map::make();
     inline_source.insert(String::make("contents"_str), flatpak_string(catalog_text.as_str()));
     inline_source.insert(String::make("dest"_str), flatpak_string(".lito/fetch-seed"_str));
-    inline_source.insert(String::make("dest-filename"_str), flatpak_string("catalog.json"_str));
+    inline_source.insert(String::make("dest-filename"_str),
+                         flatpak_string(lito::source::FETCH_SEED_DOCUMENT_NAME));
     inline_source.insert(String::make("type"_str), flatpak_string("inline"_str));
     sources.push(Json::Object(rstd::move(inline_source)));
     return Ok(Json::Array(rstd::move(sources)));

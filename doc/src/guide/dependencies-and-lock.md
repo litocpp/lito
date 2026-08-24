@@ -55,7 +55,8 @@ needs neither a downloader nor an extractor. Locked Git checkouts carry a Lito-o
 reusable checkout does not require Git merely to reinterpret Git's internal repository format.
 
 `lito lock export --format flatpak-sources --output FILE` exports locked network inputs as Flatpak
-source entries and an inline fetch-seed catalog.
+source entries and an inline `.lito/fetch-seed/entries.json` document. Lito also reads the legacy
+`.lito/fetch-seed/catalog.json` name for existing exported sources.
 
 ## Local Git patches
 

@@ -19,6 +19,8 @@ using StringSet = rstd::collections::BTreeMap<String, empty>;
 export namespace lito::source
 {
 
+inline constexpr ref<str> FETCH_SEED_DOCUMENT_NAME = "entries.json"_str;
+
 enum class FetchSeedKind
 {
     Git,
@@ -51,6 +53,42 @@ struct FetchSeedCatalog {
 } // namespace lito::source
 
 using namespace lito::source;
+
+inline constexpr ref<str> LEGACY_FETCH_SEED_DOCUMENT_NAME = "catalog.json"_str;
+
+struct FetchSeedDocument {
+    PathBuf path;
+    String  contents;
+};
+
+auto read_fetch_seed_document(ref<rstd::path::Path> root) -> SourceResult<FetchSeedDocument> {
+    auto path = PathBuf::from(root).join(PathBuf::from(FETCH_SEED_DOCUMENT_NAME).as_path());
+    auto read = rstd::fs::read_to_string(path.as_path());
+    if (read.is_ok()) {
+        return Ok(FetchSeedDocument {
+            .path     = rstd::move(path),
+            .contents = rstd::move(read).unwrap(),
+        });
+    }
+    auto error = rstd::move(read).unwrap_err();
+    if (error.kind() != rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+        return source_io_failure<FetchSeedDocument>(
+            "read fetch seed catalog"_str, path.as_path(), rstd::move(error));
+    }
+
+    auto legacy_path =
+        PathBuf::from(root).join(PathBuf::from(LEGACY_FETCH_SEED_DOCUMENT_NAME).as_path());
+    auto legacy_read = rstd::fs::read_to_string(legacy_path.as_path());
+    if (legacy_read.is_err()) {
+        return source_io_failure<FetchSeedDocument>("read fetch seed catalog"_str,
+                                                    legacy_path.as_path(),
+                                                    rstd::move(legacy_read).unwrap_err());
+    }
+    return Ok(FetchSeedDocument {
+        .path     = rstd::move(legacy_path),
+        .contents = rstd::move(legacy_read).unwrap(),
+    });
+}
 
 auto seed_root_key(ref<str> key) -> bool {
     return key == "sources"_str || key == "version"_str;
@@ -109,30 +147,24 @@ export namespace lito::source
 {
 
 auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSeedCatalog> {
-    auto catalog_path = PathBuf::from(root).join(PathBuf::from("catalog.json"_str).as_path());
-    auto contents     = rstd::fs::read_to_string(catalog_path.as_path());
-    if (contents.is_err()) {
-        return source_io_failure<FetchSeedCatalog>("read fetch seed catalog"_str,
-                                                   catalog_path.as_path(),
-                                                   rstd::move(contents).unwrap_err());
-    }
-    auto parsed = rstd::json::from_str(contents->as_str());
+    auto document = rstd_try(read_fetch_seed_document(root));
+    auto parsed   = rstd::json::from_str(document.contents.as_str());
     if (parsed.is_err()) {
         return source_failure<FetchSeedCatalog>(
             rstd::format("fetch seed catalog '{}' is invalid JSON: {}",
-                         catalog_path.as_path(),
+                         document.path.as_path(),
                          parsed.unwrap_err()));
     }
-    auto document = rstd::move(parsed).unwrap();
-    rstd_try(reject_seed_unknown(document, "fetch seed catalog"_str, seed_root_key));
+    auto value = rstd::move(parsed).unwrap();
+    rstd_try(reject_seed_unknown(value, "fetch seed catalog"_str, seed_root_key));
     auto version_value =
-        rstd_try(required_seed_member(document, "version"_str, "fetch seed catalog"_str));
+        rstd_try(required_seed_member(value, "version"_str, "fetch seed catalog"_str));
     auto version = version_value->as_u64();
     if (version.is_none() || *version != u64(1)) {
         return source_failure<FetchSeedCatalog>("fetch seed catalog version must be integer 1"_str);
     }
     auto sources_value =
-        rstd_try(required_seed_member(document, "sources"_str, "fetch seed catalog"_str));
+        rstd_try(required_seed_member(value, "sources"_str, "fetch seed catalog"_str));
     auto values = sources_value->as_array();
     if (values.is_none()) {
         return source_failure<FetchSeedCatalog>("fetch seed catalog sources must be an array"_str);

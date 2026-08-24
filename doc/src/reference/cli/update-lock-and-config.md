@@ -23,7 +23,8 @@ lito lock export --format FORMAT --output FILE
 ```
 
 Both options are required. The current format is `flatpak-sources`. It writes Flatpak source entries
-for locked Git/archive inputs and an inline `.lito/fetch-seed` catalog.
+for locked Git/archive inputs and an inline `.lito/fetch-seed/entries.json` document. Existing
+exports using `.lito/fetch-seed/catalog.json` remain accepted.
 
 ```sh
 lito lock export \

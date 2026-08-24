@@ -71,6 +71,7 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     EXPECT_TRUE(first->as_str().contains("\"type\": \"file\""_str));
     EXPECT_TRUE(first->as_str().contains("\"only-arches\""_str));
     EXPECT_TRUE(first->as_str().contains("\"type\": \"inline\""_str));
+    EXPECT_TRUE(first->as_str().contains("\"dest-filename\": \"entries.json\""_str));
 }
 
 TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {

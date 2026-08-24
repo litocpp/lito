@@ -166,8 +166,9 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
         *url,
         commit->as_str());
     ASSERT_TRUE(
-        rstd::fs::write_atomic(seed.join(PathBuf::from("catalog.json"_str).as_path()).as_path(),
-                               seed_catalog.as_str().as_bytes())
+        rstd::fs::write_atomic(
+            seed.join(PathBuf::from(lito::source::FETCH_SEED_DOCUMENT_NAME).as_path()).as_path(),
+            seed_catalog.as_str().as_bytes())
             .is_ok());
     ASSERT_TRUE(rstd::fs::remove_dir_all(data_home.as_path()).is_ok());
     auto session = lito::lock::load_lock_session(project.as_path(), true);
