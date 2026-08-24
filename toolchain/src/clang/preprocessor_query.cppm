@@ -43,29 +43,26 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
                          command_text(macro_command).as_str(),
                          macro_output->standard_error.as_str()));
     }
-    auto macros = parse_macro_dump(macro_output->standard_output.as_str());
-    if (macros.is_err()) return Err(rstd::move(macros).unwrap_err());
-    auto clang_macros = clang_owned_macro_seeds(*macros);
-    auto parsed       = parse_macro_seeds(clang_macros, "<built-in>"_str);
+    auto macro_output_bytes = macro_output->standard_output.len();
+    auto parsed =
+        parse_macro_dump(rstd::move(macro_output->standard_output), "<built-in>"_str, key);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto capabilities = query_clang_capabilities(
         base_command, semantic_context, language, working_directory, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     auto values            = rstd::move(parsed).unwrap();
     auto capability_values = rstd::move(capabilities).unwrap();
-    auto identity          = builtin_snapshot_identity(clang_macros, key);
     return Ok(
         rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(ClangBuiltinEnvironmentSnapshot {
             .key                     = String::make(key),
-            .identity                = rstd::move(identity),
-            .source                  = rstd::move(values.source),
+            .identity                = rstd::move(values.identity),
             .definitions             = rstd::move(values.definitions),
             .capabilities            = rstd::move(capability_values.values),
-            .clang_macro_count       = clang_macros.len(),
+            .clang_macro_count       = values.macro_count,
             .native_macro_count      = usize(4),
             .clang_capability_count  = capability_values.clang_count,
             .native_capability_count = capability_values.native_count,
-            .macro_output_bytes      = macro_output->standard_output.len(),
+            .macro_output_bytes      = macro_output_bytes,
             .capability_input_bytes  = capability_values.input_bytes,
             .capability_output_bytes = capability_values.output_bytes,
         }));
@@ -154,8 +151,7 @@ auto query_preprocessor_environment(const Vec<String>&                     base_
                                     const ResolvedProcessEnvironment&      environment)
     -> ToolchainResult<PreprocessorEnvironment> {
     auto working_directory = key.working_directory.as_path();
-    auto native_macros =
-        parse_macro_seeds(native_predefined_macro_seeds(semantic_context), "<lito-built-in>"_str);
+    auto native_macros     = native_predefined_macros(semantic_context);
     if (native_macros.is_err()) return Err(rstd::move(native_macros).unwrap_err());
     auto command_line_macros = parse_command_line_macros(macros);
     if (command_line_macros.is_err()) return Err(rstd::move(command_line_macros).unwrap_err());
@@ -192,9 +188,7 @@ auto query_preprocessor_environment(const Vec<String>&                     base_
     return Ok(PreprocessorEnvironment {
         .key                 = rstd::move(key),
         .builtin_environment = rstd::move(builtin_environment),
-        .native_source       = rstd::move(native_values.source),
-        .native_definitions  = rstd::move(native_values.definitions),
-        .command_line_source = rstd::move(command_line_values.source),
+        .native_definitions  = rstd::move(native_values),
         .command_line_macros = rstd::move(command_line_values.operations),
         .semantic_context    = rstd::move(semantic_context),
         .include_search      = rstd::move(includes).unwrap(),

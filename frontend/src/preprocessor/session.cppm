@@ -112,18 +112,43 @@ class PreprocessorSession {
         usize              dynamic_builtins_ {};
     };
 
+    enum class TokenCloneKind
+    {
+        SourceMaterialization,
+        MacroLiteral,
+        MacroRawArgument,
+        MacroExpansionInput,
+        MacroExpandedArgumentReuse,
+        Other,
+    };
+
     struct RawStatistics {
         size_t files {};
         size_t source_tokens {};
         size_t source_comments {};
         size_t active_comments {};
         size_t token_clones {};
+        size_t source_token_materializations {};
+        size_t macro_literal_clones {};
+        size_t macro_raw_argument_clones {};
+        size_t macro_expansion_input_clones {};
+        size_t macro_expanded_argument_reuse_clones {};
+        size_t other_token_clones {};
         size_t synthetic_tokens {};
         size_t directives {};
         size_t conditionals {};
         size_t macro_lookups {};
         size_t macro_lookup_hits {};
         size_t macro_expansions {};
+        size_t macro_definitions {};
+        size_t macro_operations {};
+        size_t macro_expanded_parameter_uses {};
+        size_t macro_raw_parameter_uses {};
+        size_t macro_stringifications {};
+        size_t macro_token_pastes {};
+        size_t macro_va_opt_uses {};
+        size_t pragma_fragment_lexes {};
+        size_t macro_identifier_validations {};
         size_t include_attempts {};
         size_t include_hits {};
         size_t consumer_batches {};
@@ -182,6 +207,7 @@ public:
                         return Err(
                             Error::make("predefined macro define operation has no definition"_str));
                     }
+                    record_macro_definition(**operation.definition);
                     (void)macros_.define_shared(rstd::move(operation.definition).unwrap());
                 } else {
                     (void)macros_.undefine(operation.name.as_str());
@@ -229,21 +255,37 @@ private:
 
     auto finish_statistics() const noexcept -> PreprocessorStatistics {
         return PreprocessorStatistics {
-            .files             = usize(raw_statistics_.files),
-            .source_tokens     = usize(raw_statistics_.source_tokens),
-            .source_comments   = usize(raw_statistics_.source_comments),
-            .active_comments   = usize(raw_statistics_.active_comments),
-            .token_clones      = usize(raw_statistics_.token_clones),
-            .synthetic_tokens  = usize(raw_statistics_.synthetic_tokens),
-            .directives        = usize(raw_statistics_.directives),
-            .conditionals      = usize(raw_statistics_.conditionals),
-            .macro_lookups     = usize(raw_statistics_.macro_lookups),
-            .macro_lookup_hits = usize(raw_statistics_.macro_lookup_hits),
-            .macro_expansions  = usize(raw_statistics_.macro_expansions),
-            .include_attempts  = usize(raw_statistics_.include_attempts),
-            .include_hits      = usize(raw_statistics_.include_hits),
-            .consumer_batches  = usize(raw_statistics_.consumer_batches),
-            .consumer_tokens   = usize(raw_statistics_.consumer_tokens),
+            .files                         = usize(raw_statistics_.files),
+            .source_tokens                 = usize(raw_statistics_.source_tokens),
+            .source_comments               = usize(raw_statistics_.source_comments),
+            .active_comments               = usize(raw_statistics_.active_comments),
+            .token_clones                  = usize(raw_statistics_.token_clones),
+            .source_token_materializations = usize(raw_statistics_.source_token_materializations),
+            .macro_literal_clones          = usize(raw_statistics_.macro_literal_clones),
+            .macro_raw_argument_clones     = usize(raw_statistics_.macro_raw_argument_clones),
+            .macro_expansion_input_clones  = usize(raw_statistics_.macro_expansion_input_clones),
+            .macro_expanded_argument_reuse_clones =
+                usize(raw_statistics_.macro_expanded_argument_reuse_clones),
+            .other_token_clones            = usize(raw_statistics_.other_token_clones),
+            .synthetic_tokens              = usize(raw_statistics_.synthetic_tokens),
+            .directives                    = usize(raw_statistics_.directives),
+            .conditionals                  = usize(raw_statistics_.conditionals),
+            .macro_lookups                 = usize(raw_statistics_.macro_lookups),
+            .macro_lookup_hits             = usize(raw_statistics_.macro_lookup_hits),
+            .macro_expansions              = usize(raw_statistics_.macro_expansions),
+            .macro_definitions             = usize(raw_statistics_.macro_definitions),
+            .macro_operations              = usize(raw_statistics_.macro_operations),
+            .macro_expanded_parameter_uses = usize(raw_statistics_.macro_expanded_parameter_uses),
+            .macro_raw_parameter_uses      = usize(raw_statistics_.macro_raw_parameter_uses),
+            .macro_stringifications        = usize(raw_statistics_.macro_stringifications),
+            .macro_token_pastes            = usize(raw_statistics_.macro_token_pastes),
+            .macro_va_opt_uses             = usize(raw_statistics_.macro_va_opt_uses),
+            .pragma_fragment_lexes         = usize(raw_statistics_.pragma_fragment_lexes),
+            .macro_identifier_validations  = usize(raw_statistics_.macro_identifier_validations),
+            .include_attempts              = usize(raw_statistics_.include_attempts),
+            .include_hits                  = usize(raw_statistics_.include_hits),
+            .consumer_batches              = usize(raw_statistics_.consumer_batches),
+            .consumer_tokens               = usize(raw_statistics_.consumer_tokens),
         };
     }
 
@@ -287,15 +329,34 @@ private:
         return conditions.is_empty() || conditions[conditions.len() - usize(1)].active;
     }
 
-    auto clone_token(const Token& token) -> Token {
+    auto clone_token(const Token& token, TokenCloneKind kind = TokenCloneKind::Other) -> Token {
         ++raw_statistics_.token_clones;
+        switch (kind) {
+        case TokenCloneKind::SourceMaterialization:
+            ++raw_statistics_.source_token_materializations;
+            break;
+        case TokenCloneKind::MacroLiteral: ++raw_statistics_.macro_literal_clones; break;
+        case TokenCloneKind::MacroRawArgument: ++raw_statistics_.macro_raw_argument_clones; break;
+        case TokenCloneKind::MacroExpansionInput:
+            ++raw_statistics_.macro_expansion_input_clones;
+            break;
+        case TokenCloneKind::MacroExpandedArgumentReuse:
+            ++raw_statistics_.macro_expanded_argument_reuse_clones;
+            break;
+        case TokenCloneKind::Other: ++raw_statistics_.other_token_clones; break;
+        }
         return token.clone();
     }
 
-    auto clone_tokens_counted(const Vec<Token>& tokens) -> Vec<Token> {
+    auto clone_tokens_counted(const Vec<Token>& tokens, TokenCloneKind kind) -> Vec<Token> {
         auto result = Vec<Token>::with_capacity(tokens.len());
-        for (const auto& token : tokens) result.push(clone_token(token));
+        for (const auto& token : tokens) result.push(clone_token(token, kind));
         return result;
+    }
+
+    auto record_macro_definition(const MacroDefinition& macro) -> void {
+        ++raw_statistics_.macro_definitions;
+        raw_statistics_.macro_operations += macro.operations().len().to_primitive();
     }
 
     auto without_newline(Vec<Token>& tokens, usize begin, usize end) -> Result<Vec<Token>> {
@@ -358,6 +419,7 @@ private:
                 return Err(
                     failure("defined external macro has an invalid definition"_str, location));
             }
+            record_macro_definition(**value.definition);
             (void)macros_.define_shared(value.definition->clone());
         } else if (value.definition.is_some() || value.compiler_definition.is_some()) {
             return Err(failure("undefined external macro carries a definition"_str, location));
@@ -388,12 +450,6 @@ private:
         auto found = lookup_macro(name, location);
         if (found.is_err()) return Err(rstd::move(found).unwrap_err());
         return Ok(found->is_some());
-    }
-
-    auto clone_range(const Vec<Token>& input, usize begin, usize end) -> Vec<Token> {
-        auto result = Vec<Token>::with_capacity(end - begin);
-        for (auto index = begin; index < end; ++index) result.push(clone_token(input[index]));
-        return result;
     }
 
     auto move_range(Vec<Token>& input, usize begin, usize end) -> Vec<Token> {
@@ -453,16 +509,8 @@ private:
         }
         auto name = string_contents(tokens[usize(2)], "macro stack pragma"_str);
         if (name.is_err()) return name;
-        auto source =
-            SourceFile::make(SourceId {},
-                             SourceBuffer {
-                                 .path     = rstd::path::PathBuf::from("<pragma-macro-name>"_str),
-                                 .contents = name->clone(),
-                             });
-        auto lexed = lex(source);
-        if (lexed.is_err() || lexed->len() != usize(1) ||
-            (*lexed)[usize {}].kind != TokenKind::Identifier ||
-            (*lexed)[usize {}].text.as_str() != name->as_str()) {
+        ++raw_statistics_.macro_identifier_validations;
+        if (! is_identifier_spelling(name->as_str())) {
             return Err(failure("macro stack pragma requires an identifier name"_str, location));
         }
         return name;
@@ -531,18 +579,12 @@ private:
         auto decoded = String::from_utf8(rstd::move(contents));
         if (decoded.is_err())
             return Err(failure("_Pragma contents are not valid UTF-8"_str, token.spelling));
-        auto source = SourceFile::make(
-            token.spelling.source,
-            SourceBuffer {
-                .path     = rstd::path::PathBuf::from(sources_.path(token.spelling.source)),
-                .contents = rstd::move(decoded).unwrap(),
-            });
-        auto lexed = lex(source);
+        ++raw_statistics_.pragma_fragment_lexes;
+        auto lexed = lex_preprocessing_fragment(rstd::move(decoded).unwrap(), token.spelling);
         if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
         auto result = Vec<Token>::make();
         for (auto& item : *lexed) {
             if (item.kind == TokenKind::Newline) continue;
-            item.spelling  = token.spelling;
             item.expansion = token.expansion;
             result.push(rstd::move(item));
         }
@@ -550,25 +592,19 @@ private:
     }
 
     auto pasted(Token left, const Token& right) -> Result<Token> {
+        ++raw_statistics_.macro_token_pastes;
         ++raw_statistics_.synthetic_tokens;
         left.text.push_str(right.text.as_str());
         if (left.text.is_empty()) {
             return Err(failure("token paste produced an empty token"_str, left.expansion));
         }
-        auto source = SourceFile::make(
-            left.spelling.source,
-            SourceBuffer {
-                .path     = rstd::path::PathBuf::from(sources_.path(left.spelling.source)),
-                .contents = left.text.clone(),
-            });
-        auto lexed = lex(source);
-        if (lexed.is_err() || lexed->len() != usize(1) ||
-            (*lexed)[usize {}].text.as_str() != left.text.as_str()) {
+        auto classified = classify_preprocessing_token(left.text.clone(), left.expansion);
+        if (classified.is_err()) {
             return Err(failure(rstd::format("token paste '{}' did not form one preprocessing token",
                                             left.text.as_str()),
                                left.expansion));
         }
-        left.kind = (*lexed)[usize {}].kind;
+        left.kind = *classified;
         return Ok(rstd::move(left));
     }
 
@@ -639,10 +675,123 @@ private:
                 result.push(rstd::move(comma));
             }
             for (auto& token : arguments[index]) {
-                result.push(consume_arguments ? rstd::move(token) : clone_token(token));
+                result.push(consume_arguments
+                                ? rstd::move(token)
+                                : clone_token(token, TokenCloneKind::MacroRawArgument));
             }
         }
         return result;
+    }
+
+    auto substitute_operations(const MacroDefinition& macro,
+                               usize                  begin,
+                               usize                  end,
+                               Vec<Vec<Token>>&       arguments,
+                               Vec<Token>&            variadic,
+                               const Token&           origin,
+                               DisabledMacros&        disabled,
+                               bool                   consume_arguments) -> Result<Vec<Token>> {
+        auto fixed              = macro.parameters.is_some() ? macro.parameters->len() : usize {};
+        auto expanded_arguments = Vec<Option<Vec<Token>>>::with_capacity(fixed + usize(1));
+        for (auto index = usize {}; index <= fixed; ++index)
+            expanded_arguments.emplace_back(None());
+        auto expanded_argument =
+            [&](usize parameter, Vec<Token>& argument, bool last_use) -> Result<Vec<Token>> {
+            if (expanded_arguments[parameter].is_none()) {
+                auto input =
+                    consume_arguments && macro.can_consume_argument(parameter)
+                        ? rstd::move(argument)
+                        : clone_tokens_counted(argument, TokenCloneKind::MacroExpansionInput);
+                auto expanded = expand(rstd::move(input), disabled);
+                if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
+                expanded_arguments[parameter] = Some(rstd::move(expanded).unwrap());
+            }
+            if (last_use) return Ok(rstd::move(expanded_arguments[parameter]).unwrap_unchecked());
+            return Ok(clone_tokens_counted(*expanded_arguments[parameter],
+                                           TokenCloneKind::MacroExpandedArgumentReuse));
+        };
+        auto        result     = Vec<Token>::make();
+        const auto& operations = macro.operations();
+        for (auto index = begin; index < end;) {
+            const auto& operation = operations[index];
+            const auto& token     = macro.replacement[operation.token_index];
+            auto        piece     = Vec<Token>::make();
+            if (operation.kind == MacroReplacementOperationKind::VaOpt) {
+                ++raw_statistics_.macro_va_opt_uses;
+                if (! operation.valid) {
+                    return Err(failure("unterminated __VA_OPT__"_str, token.expansion));
+                }
+                if (! variadic.is_empty()) {
+                    auto substituted = substitute_operations(macro,
+                                                             index + usize(1),
+                                                             operation.end,
+                                                             arguments,
+                                                             variadic,
+                                                             origin,
+                                                             disabled,
+                                                             false);
+                    if (substituted.is_err()) return Err(rstd::move(substituted).unwrap_err());
+                    piece = rstd::move(substituted).unwrap();
+                }
+            } else if (operation.kind == MacroReplacementOperationKind::StringifyParameter) {
+                ++raw_statistics_.macro_stringifications;
+                auto* argument = &variadic;
+                if (operation.parameter < fixed) argument = &arguments[operation.parameter];
+                piece.push(stringify(*argument, origin));
+            } else if (operation.kind == MacroReplacementOperationKind::RawParameter) {
+                ++raw_statistics_.macro_raw_parameter_uses;
+                auto* argument = &variadic;
+                if (operation.parameter < fixed) argument = &arguments[operation.parameter];
+                piece = clone_tokens_counted(*argument, TokenCloneKind::MacroRawArgument);
+            } else if (operation.kind == MacroReplacementOperationKind::ExpandedParameter) {
+                ++raw_statistics_.macro_expanded_parameter_uses;
+                auto* argument = &variadic;
+                if (operation.parameter < fixed) argument = &arguments[operation.parameter];
+                auto expanded =
+                    expanded_argument(operation.parameter, *argument, operation.last_expanded_use);
+                if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
+                piece = rstd::move(expanded).unwrap();
+            } else {
+                piece.push(clone_token(token, TokenCloneKind::MacroLiteral));
+            }
+
+            auto raw_variadic = operation.kind == MacroReplacementOperationKind::RawParameter &&
+                                operation.parameter == fixed;
+            if (operation.paste_before) {
+                auto comma_variadic = raw_variadic && ! result.is_empty() &&
+                                      result[result.len() - usize(1)].text.as_str() == ","_str;
+                if (comma_variadic) {
+                    if (piece.is_empty()) (void)result.pop();
+                    for (auto& item : piece) result.push(rstd::move(item));
+                } else if (piece.is_empty()) {
+                    if (! result.is_empty() && result[result.len() - usize(1)].text.is_empty()) {
+                        (void)result.pop();
+                    }
+                } else if (! result.is_empty()) {
+                    auto left     = result.pop().unwrap();
+                    auto combined = pasted(rstd::move(left), piece[usize {}]);
+                    if (combined.is_err()) return Err(rstd::move(combined).unwrap_err());
+                    result.push(rstd::move(combined).unwrap());
+                    for (auto part = usize(1); part < piece.len(); ++part) {
+                        result.push(rstd::move(piece[part]));
+                    }
+                } else {
+                    for (auto& item : piece) result.push(rstd::move(item));
+                }
+            } else if (piece.is_empty() && operation.paste_after) {
+                auto placemarker = clone_token(origin);
+                ++raw_statistics_.synthetic_tokens;
+                placemarker.kind = TokenKind::Punctuation;
+                placemarker.text = String::make();
+                result.push(rstd::move(placemarker));
+            } else {
+                for (auto& item : piece) result.push(rstd::move(item));
+            }
+            index = operation.kind == MacroReplacementOperationKind::VaOpt ? operation.end
+                                                                           : index + usize(1);
+        }
+        for (auto& token : result) token.expansion = origin.expansion;
+        return Ok(rstd::move(result));
     }
 
     auto substitute(const MacroDefinition& macro,
@@ -666,108 +815,14 @@ private:
         }
         auto variadic = variadic_argument(
             macro, arguments, origin, consume_arguments && macro.can_consume_argument(fixed));
-        auto expanded_arguments = Vec<Option<Vec<Token>>>::with_capacity(fixed + usize(1));
-        for (auto index = usize {}; index <= fixed; ++index)
-            expanded_arguments.emplace_back(None());
-        auto expanded_argument =
-            [&](usize parameter, Vec<Token>& argument, bool last_use) -> Result<Vec<Token>> {
-            if (expanded_arguments[parameter].is_none()) {
-                auto input    = consume_arguments && macro.can_consume_argument(parameter)
-                                    ? rstd::move(argument)
-                                    : clone_tokens_counted(argument);
-                auto expanded = expand(rstd::move(input), disabled);
-                if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
-                expanded_arguments[parameter] = Some(rstd::move(expanded).unwrap());
-            }
-            if (last_use) return Ok(rstd::move(expanded_arguments[parameter]).unwrap_unchecked());
-            return Ok(clone_tokens_counted(*expanded_arguments[parameter]));
-        };
-        auto result = Vec<Token>::make();
-        for (auto index = usize {}; index < macro.replacement.len(); ++index) {
-            const auto& token = macro.replacement[index];
-            if (token.text.as_str() == "__VA_OPT__"_str && macro.variadic &&
-                index + usize(1) < macro.replacement.len() &&
-                macro.replacement[index + usize(1)].text.as_str() == "("_str) {
-                auto end = macro.va_opt_end(index);
-                if (end.is_none())
-                    return Err(failure("unterminated __VA_OPT__"_str, token.expansion));
-                if (! variadic.is_empty()) {
-                    auto nested_macro = macro.with_replacement(
-                        clone_range(macro.replacement, index + usize(2), *end - usize(1)));
-                    auto substituted = substitute(nested_macro, arguments, origin, disabled, false);
-                    if (substituted.is_err()) return substituted;
-                    for (auto& item : *substituted) result.push(rstd::move(item));
-                }
-                index = *end - usize(1);
-                continue;
-            }
-            if (token.text.as_str() == "#"_str && index + usize(1) < macro.replacement.len()) {
-                auto parameter =
-                    macro.parameter_index(macro.replacement[index + usize(1)].text.as_str());
-                if (parameter.is_some()) {
-                    auto* argument = &variadic;
-                    if (*parameter < fixed) argument = &arguments[*parameter];
-                    result.push(stringify(*argument, origin));
-                    ++index;
-                    continue;
-                }
-            }
-
-            auto paste_left =
-                index > usize {} && macro.replacement[index - usize(1)].text.as_str() == "##"_str;
-            auto parameter = macro.parameter_index(token.text.as_str());
-            auto piece     = Vec<Token>::make();
-            if (parameter.is_some()) {
-                auto* argument = &variadic;
-                if (*parameter < fixed) argument = &arguments[*parameter];
-                auto paste_right = index + usize(1) < macro.replacement.len() &&
-                                   macro.replacement[index + usize(1)].text.as_str() == "##"_str;
-                if (paste_left || paste_right) {
-                    piece = clone_tokens_counted(*argument);
-                } else {
-                    auto expanded = expanded_argument(
-                        *parameter, *argument, macro.is_last_expanded_use(*parameter, index));
-                    if (expanded.is_err()) return expanded;
-                    piece = rstd::move(expanded).unwrap();
-                }
-            } else {
-                piece.push(clone_token(token));
-            }
-
-            if (paste_left) {
-                if (piece.is_empty()) {
-                    if (! result.is_empty() && result[result.len() - usize(1)].text.is_empty()) {
-                        (void)result.pop();
-                    } else if (! result.is_empty() &&
-                               result[result.len() - usize(1)].text.as_str() == ","_str &&
-                               parameter.is_some() && *parameter == fixed) {
-                        (void)result.pop();
-                    }
-                } else if (! result.is_empty()) {
-                    auto left     = result.pop().unwrap();
-                    auto combined = pasted(rstd::move(left), piece[usize {}]);
-                    if (combined.is_err()) return Err(rstd::move(combined).unwrap_err());
-                    result.push(rstd::move(combined).unwrap());
-                    for (auto part = usize(1); part < piece.len(); ++part) {
-                        result.push(clone_token(piece[part]));
-                    }
-                } else {
-                    for (auto& item : piece) result.push(rstd::move(item));
-                }
-            } else if (piece.is_empty() && parameter.is_some() &&
-                       index + usize(1) < macro.replacement.len() &&
-                       macro.replacement[index + usize(1)].text.as_str() == "##"_str) {
-                auto placemarker = clone_token(origin);
-                ++raw_statistics_.synthetic_tokens;
-                placemarker.kind = TokenKind::Punctuation;
-                placemarker.text = String::make();
-                result.push(rstd::move(placemarker));
-            } else if (token.text.as_str() != "##"_str) {
-                for (auto& item : piece) result.push(rstd::move(item));
-            }
-        }
-        for (auto& token : result) token.expansion = origin.expansion;
-        return Ok(rstd::move(result));
+        return substitute_operations(macro,
+                                     usize {},
+                                     macro.operations().len(),
+                                     arguments,
+                                     variadic,
+                                     origin,
+                                     disabled,
+                                     consume_arguments);
     }
 
     auto joined_argument(const Vec<Token>& tokens) -> String {
@@ -1077,8 +1132,10 @@ private:
                 replacement = rstd::move(substituted).unwrap();
                 next        = parsed->next;
             } else {
-                replacement = clone_tokens_counted(definition.replacement);
-                for (auto& item : replacement) item.expansion = token.expansion;
+                auto arguments   = Vec<Vec<Token>>::make();
+                auto substituted = substitute(definition, arguments, token, disabled);
+                if (substituted.is_err()) return substituted;
+                replacement = rstd::move(substituted).unwrap();
             }
             auto event =
                 emit_name(EventKind::MacroExpanded, definition.name.as_str(), token.expansion);
@@ -1100,7 +1157,8 @@ private:
         auto external =
             prepare_external_macro(line[usize {}].text.as_str(), line[usize {}].expansion);
         if (external.is_err()) return Err(rstd::move(external).unwrap_err());
-        auto macro    = rstd::move(parsed).unwrap();
+        auto macro = rstd::move(parsed).unwrap();
+        record_macro_definition(macro);
         auto previous = macros_.define(rstd::move(macro));
         (void)previous;
         if (send_event) {
@@ -1679,7 +1737,7 @@ private:
         if (main_file) main_source_ = source;
         auto tokens = Vec<Token>::with_capacity((*loaded)->tokens.len());
         for (const auto& cached : (*loaded)->tokens) {
-            auto token             = clone_token(cached);
+            auto token             = clone_token(cached, TokenCloneKind::SourceMaterialization);
             token.spelling.source  = source;
             token.expansion.source = source;
             tokens.push(rstd::move(token));

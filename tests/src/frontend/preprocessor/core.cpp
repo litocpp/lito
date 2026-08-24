@@ -254,6 +254,21 @@ auto run_preprocessor_test() -> int {
                 "#define LITO_TOKEN(value) value\n"
                 "#define LITO_EMPTY_PASTE(value, empty) LITO_TOKEN(empty ## value)\n"
                 "LITO_EMPTY_PASTE(LITO_JOINED,);\n"
+                "#define LITO_STRINGIFY(value) #value\n"
+                "LITO_STRINGIFY(alpha   beta);\n"
+                "#define LITO_OPTIONAL(prefix, ...) prefix __VA_OPT__(+ __VA_ARGS__)\n"
+                "LITO_OPTIONAL(LITO_EMPTY_OPTIONAL);\n"
+                "LITO_OPTIONAL(LITO_FULL_OPTIONAL, 31);\n"
+                "#define LITO_NESTED(...) "
+                "__VA_OPT__(LITO_NESTED_OUTER __VA_OPT__(LITO_NESTED_INNER __VA_ARGS__))\n"
+                "LITO_NESTED();\n"
+                "LITO_NESTED(41);\n"
+                "#define LITO_VA_SUFFIX(root, ...) root ## __VA_OPT__(__VA_ARGS__)\n"
+                "LITO_VA_SUFFIX(LITO_, JOINED);\n"
+                "LITO_VA_SUFFIX(LITO_EMPTY_SUFFIX);\n"
+                "#define LITO_GNU(prefix, ...) prefix, ## __VA_ARGS__\n"
+                "LITO_GNU(LITO_GNU_EMPTY);\n"
+                "LITO_GNU(LITO_GNU_FULL, 43);\n"
                 "LITO_LATE\n"
                 "#define LITO_LATE 42\n"
                 "LITO_LATE\n"
@@ -292,7 +307,31 @@ auto run_preprocessor_test() -> int {
     for (const auto& token : result->tokens) {
         if (token.text.as_str() == "9"_str) ++joined;
     }
-    if (joined != usize(3)) return 11;
+    if (joined != usize(4)) return 11;
+    if (! contains_token(result->tokens, "\"alpha beta\""_str)) return 19;
+    if (! contains_sequence(result->tokens, "LITO_FULL_OPTIONAL"_str, "+"_str, "31"_str)) {
+        return 20;
+    }
+    if (! contains_token(result->tokens, "LITO_EMPTY_OPTIONAL"_str)) return 21;
+    if (! contains_sequence(
+            result->tokens, "LITO_NESTED_OUTER"_str, "LITO_NESTED_INNER"_str, "41"_str)) {
+        return 22;
+    }
+    if (! contains_token(result->tokens, "LITO_EMPTY_SUFFIX"_str)) return 23;
+    if (contains_sequence(result->tokens, "LITO_GNU_EMPTY"_str, ","_str)) return 24;
+    if (! contains_sequence(result->tokens, "LITO_GNU_FULL"_str, ","_str, "43"_str)) return 25;
+    const auto& statistics = result->statistics;
+    if (statistics.token_clones !=
+        statistics.source_token_materializations + statistics.macro_literal_clones +
+            statistics.macro_raw_argument_clones + statistics.macro_expansion_input_clones +
+            statistics.macro_expanded_argument_reuse_clones + statistics.other_token_clones) {
+        return 26;
+    }
+    if (statistics.macro_definitions == usize {} || statistics.macro_operations == usize {} ||
+        statistics.macro_stringifications < usize(3) || statistics.macro_token_pastes < usize(4) ||
+        statistics.macro_va_opt_uses < usize(5)) {
+        return 27;
+    }
     if (! contains_token(result->tokens, "LITO_LATE"_str) ||
         ! contains_token(result->tokens, "42"_str)) {
         return 12;
@@ -337,6 +376,37 @@ auto run_preprocessor_test() -> int {
 
 TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
+}
+
+TEST(PreprocessorMacro, OwnsParsedSourceAndCompilesCommandLineReplacement) {
+    auto retained = []() -> Option<SharedMacroDefinition> {
+        auto parsed = parse_macro_source(SourceBuffer {
+            .path     = rstd::path::PathBuf::from("/predefined.txt"_str),
+            .contents = String::make("#define LITO_RETAINED(value) value + 17\n"_str),
+        });
+        if (parsed.is_err() || parsed->definitions.len() != usize(1)) return None();
+        return Some(parsed->definitions[usize {}].clone());
+    }();
+    ASSERT_TRUE(retained.is_some());
+    ASSERT_EQ((**retained).replacement.len(), usize(3));
+    EXPECT_EQ((**retained).replacement[usize(2)].text.as_str(), "17"_str);
+    EXPECT_EQ((**retained).operations().len(), usize(3));
+
+    auto function = parse_command_line_macro_definition(
+        "LITO_COMMAND(value, ...)=value __VA_OPT__(+ __VA_ARGS__)"_str);
+    ASSERT_TRUE(function.is_ok());
+    ASSERT_TRUE(function->parameters.is_some());
+    EXPECT_EQ(function->parameters->len(), usize(1));
+    EXPECT_TRUE(function->variadic);
+    EXPECT_EQ(function->operations().len(), usize(4));
+
+    auto empty = parse_command_line_macro_definition("LITO_EMPTY="_str);
+    ASSERT_TRUE(empty.is_ok());
+    EXPECT_TRUE(empty->replacement.is_empty());
+    auto defaulted = parse_command_line_macro_definition("LITO_DEFAULT"_str);
+    ASSERT_TRUE(defaulted.is_ok());
+    ASSERT_EQ(defaulted->replacement.len(), usize(1));
+    EXPECT_EQ(defaulted->replacement[usize {}].text.as_str(), "1"_str);
 }
 
 TEST(Preprocessor, LookupCandidateTreatsRegularAncestorAsAbsent) {

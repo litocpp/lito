@@ -71,10 +71,6 @@ enum class BuiltinTextKind
     Time,
 };
 
-struct MacroSeed {
-    String definition;
-};
-
 enum class PredefinedMacroOperationKind
 {
     Define,
@@ -296,12 +292,27 @@ struct PreprocessorStatistics {
     usize source_comments {};
     usize active_comments {};
     usize token_clones {};
+    usize source_token_materializations {};
+    usize macro_literal_clones {};
+    usize macro_raw_argument_clones {};
+    usize macro_expansion_input_clones {};
+    usize macro_expanded_argument_reuse_clones {};
+    usize other_token_clones {};
     usize synthetic_tokens {};
     usize directives {};
     usize conditionals {};
     usize macro_lookups {};
     usize macro_lookup_hits {};
     usize macro_expansions {};
+    usize macro_definitions {};
+    usize macro_operations {};
+    usize macro_expanded_parameter_uses {};
+    usize macro_raw_parameter_uses {};
+    usize macro_stringifications {};
+    usize macro_token_pastes {};
+    usize macro_va_opt_uses {};
+    usize pragma_fragment_lexes {};
+    usize macro_identifier_validations {};
     usize include_attempts {};
     usize include_hits {};
     usize consumer_batches {};
@@ -313,12 +324,27 @@ struct PreprocessorStatistics {
         source_comments += other.source_comments;
         active_comments += other.active_comments;
         token_clones += other.token_clones;
+        source_token_materializations += other.source_token_materializations;
+        macro_literal_clones += other.macro_literal_clones;
+        macro_raw_argument_clones += other.macro_raw_argument_clones;
+        macro_expansion_input_clones += other.macro_expansion_input_clones;
+        macro_expanded_argument_reuse_clones += other.macro_expanded_argument_reuse_clones;
+        other_token_clones += other.other_token_clones;
         synthetic_tokens += other.synthetic_tokens;
         directives += other.directives;
         conditionals += other.conditionals;
         macro_lookups += other.macro_lookups;
         macro_lookup_hits += other.macro_lookup_hits;
         macro_expansions += other.macro_expansions;
+        macro_definitions += other.macro_definitions;
+        macro_operations += other.macro_operations;
+        macro_expanded_parameter_uses += other.macro_expanded_parameter_uses;
+        macro_raw_parameter_uses += other.macro_raw_parameter_uses;
+        macro_stringifications += other.macro_stringifications;
+        macro_token_pastes += other.macro_token_pastes;
+        macro_va_opt_uses += other.macro_va_opt_uses;
+        pragma_fragment_lexes += other.pragma_fragment_lexes;
+        macro_identifier_validations += other.macro_identifier_validations;
         include_attempts += other.include_attempts;
         include_hits += other.include_hits;
         consumer_batches += other.consumer_batches;

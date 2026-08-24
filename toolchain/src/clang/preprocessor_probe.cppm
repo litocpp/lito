@@ -54,79 +54,6 @@ auto each_line(ref<str> text, Callback&& callback) -> ToolchainResult<empty> {
     return Ok(empty {});
 }
 
-auto parse_macro_dump(ref<str> output) -> ToolchainResult<Vec<preprocessor::MacroSeed>> {
-    auto macros = Vec<preprocessor::MacroSeed>::make();
-    auto parsed = each_line(output, [&macros](ref<str> raw) -> ToolchainResult<empty> {
-        auto line = raw.trim_ascii();
-        if (line.is_empty()) return Ok(empty {});
-        constexpr auto prefix = "#define "_str;
-        if (! line.starts_with(prefix)) {
-            return environment_failure<empty>(
-                rstd::format("unexpected clang++ -dM output line: {}", line));
-        }
-        auto definition = line.get(prefix.len(), line.len());
-        if (definition.is_none() || definition->is_empty()) {
-            return environment_failure<empty>("clang++ -dM emitted an empty definition"_str);
-        }
-        macros.push(preprocessor::MacroSeed { .definition = String::make(*definition) });
-        return Ok(empty {});
-    });
-    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    return Ok(rstd::move(macros));
-}
-
-struct ParsedMacroSet {
-    lexical::SharedSourceSnapshot            source;
-    Vec<preprocessor::SharedMacroDefinition> definitions;
-};
-
-auto parse_macro_seeds(const Vec<preprocessor::MacroSeed>& seeds, ref<str> source_name)
-    -> ToolchainResult<ParsedMacroSet> {
-    auto text = String::make();
-    for (const auto& seed : seeds) {
-        text.push_str("#define "_str);
-        text.push_str(seed.definition.as_str());
-        text.push_ascii('\n');
-    }
-    auto snapshot = lexical::make_source_snapshot(lexical::SourceBuffer {
-        .path     = PathBuf::from(source_name),
-        .contents = rstd::move(text),
-    });
-    auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
-    auto tokens   = lexical::lex(source, true);
-    if (tokens.is_err()) {
-        return Err(rstd::into<ToolchainError>(rstd::move(tokens).unwrap_err()));
-    }
-    auto definitions = Vec<preprocessor::SharedMacroDefinition>::make();
-    for (auto cursor = usize {}; cursor < tokens->len();) {
-        auto end = cursor;
-        while (end < tokens->len() && (*tokens)[end].kind != lexical::TokenKind::Newline) {
-            ++end;
-        }
-        if (cursor == end) {
-            cursor = end < tokens->len() ? end + usize(1) : end;
-            continue;
-        }
-        if (cursor + usize(2) > end || (*tokens)[cursor].text.as_str() != "#"_str ||
-            (*tokens)[cursor + usize(1)].text.as_str() != "define"_str) {
-            return environment_failure<ParsedMacroSet>("invalid cached predefined macro line"_str);
-        }
-        auto line = Vec<lexical::Token>::make();
-        for (auto index = cursor + usize(2); index < end; ++index)
-            line.push((*tokens)[index].clone());
-        auto definition = preprocessor::parse_macro_definition(line);
-        if (definition.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(definition).unwrap_err()));
-        }
-        definitions.push(preprocessor::share_macro_definition(rstd::move(definition).unwrap()));
-        cursor = end < tokens->len() ? end + usize(1) : end;
-    }
-    return Ok(ParsedMacroSet {
-        .source      = rstd::move(snapshot),
-        .definitions = rstd::move(definitions),
-    });
-}
-
 auto macro_name(ref<str> definition) -> Option<ref<str>> {
     auto bytes = definition.as_bytes();
     auto end   = usize {};
@@ -138,30 +65,13 @@ auto macro_name(ref<str> definition) -> Option<ref<str>> {
     return definition.get(usize {}, end);
 }
 
-auto command_line_macro_seed(ref<str> definition) -> preprocessor::MacroSeed {
-    auto bytes = definition.as_bytes();
-    auto equal = usize {};
-    while (equal < bytes.len() && bytes[equal] != u8('=')) ++equal;
-    auto value = String::make();
-    auto name  = definition.get(usize {}, equal);
-    if (name.is_some()) value.push_str(*name);
-    value.push_ascii(' ');
-    if (equal < bytes.len()) {
-        auto replacement = definition.get(equal + usize(1), bytes.len());
-        if (replacement.is_some()) value.push_str(*replacement);
-    } else {
-        value.push_ascii('1');
-    }
-    return preprocessor::MacroSeed { .definition = rstd::move(value) };
-}
-
 auto command_line_macro_states(const Vec<PreprocessorMacroDirective>& macros)
-    -> rstd::collections::BTreeMap<String, Option<preprocessor::MacroSeed>> {
-    auto values = rstd::collections::BTreeMap<String, Option<preprocessor::MacroSeed>>::make();
+    -> rstd::collections::BTreeMap<String, Option<String>> {
+    auto values       = rstd::collections::BTreeMap<String, Option<String>>::make();
     auto apply_define = [&values](ref<str> definition) {
         auto name = macro_name(definition);
         if (name.is_some()) {
-            values.insert(String::make(*name), Some(command_line_macro_seed(definition)));
+            values.insert(String::make(*name), Some(String::make(definition)));
         }
     };
     auto apply_undefine = [&values](ref<str> name) {
@@ -177,48 +87,29 @@ auto command_line_macro_states(const Vec<PreprocessorMacroDirective>& macros)
     return values;
 }
 
-struct CommandLineMacroEntry {
-    String name;
-    bool   defined { false };
-};
-
 struct ParsedCommandLineMacros {
-    lexical::SharedSourceSnapshot               source;
     Vec<preprocessor::PredefinedMacroOperation> operations;
 };
 
 auto parse_command_line_macros(const Vec<PreprocessorMacroDirective>& macros)
     -> ToolchainResult<ParsedCommandLineMacros> {
-    auto states  = command_line_macro_states(macros);
-    auto seeds   = Vec<preprocessor::MacroSeed>::make();
-    auto entries = Vec<CommandLineMacroEntry>::with_capacity(states.len());
+    auto states     = command_line_macro_states(macros);
+    auto operations = Vec<preprocessor::PredefinedMacroOperation>::with_capacity(states.len());
     for (auto value : rstd::move(states).into_iter()) {
-        auto name    = rstd::move(value.template get<0>());
-        auto state   = rstd::move(value.template get<1>());
-        auto defined = state.is_some();
-        if (defined) seeds.push(rstd::move(state).unwrap());
-        entries.push(CommandLineMacroEntry {
-            .name    = rstd::move(name),
-            .defined = defined,
-        });
-    }
-    auto parsed = parse_macro_seeds(seeds, "<command-line>"_str);
-    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    auto parsed_values = rstd::move(parsed).unwrap();
-    auto operations    = Vec<preprocessor::PredefinedMacroOperation>::with_capacity(entries.len());
-    auto definition_index = usize {};
-    for (auto& entry : entries) {
-        if (entry.defined) {
+        auto name  = rstd::move(value.template get<0>());
+        auto state = rstd::move(value.template get<1>());
+        if (state.is_some()) {
+            auto definition = preprocessor::parse_command_line_macro_definition(state->as_str());
+            if (definition.is_err()) {
+                return Err(rstd::into<ToolchainError>(rstd::move(definition).unwrap_err()));
+            }
             operations.push(preprocessor::PredefinedMacroOperation::define(
-                parsed_values.definitions[definition_index].clone()));
-            ++definition_index;
+                preprocessor::share_macro_definition(rstd::move(definition).unwrap())));
         } else {
-            operations.push(
-                preprocessor::PredefinedMacroOperation::undefine(rstd::move(entry.name)));
+            operations.push(preprocessor::PredefinedMacroOperation::undefine(rstd::move(name)));
         }
     }
     return Ok(ParsedCommandLineMacros {
-        .source     = rstd::move(parsed_values.source),
         .operations = rstd::move(operations),
     });
 }
@@ -296,42 +187,40 @@ auto native_predefined_macro(ref<str> name) -> bool {
            name == "__GXX_RTTI"_str || name == "__cpp_rtti"_str;
 }
 
-auto clang_owned_macro_seeds(const Vec<preprocessor::MacroSeed>& macros)
-    -> Vec<preprocessor::MacroSeed> {
-    auto result = Vec<preprocessor::MacroSeed>::with_capacity(macros.len());
-    for (const auto& macro : macros) {
-        auto name = macro_name(macro.definition.as_str());
-        if (name.is_none() || ! native_predefined_macro(*name))
-            result.push(preprocessor::MacroSeed {
-                .definition = macro.definition.clone(),
-            });
-    }
-    return result;
-}
-
-auto native_predefined_macro_seeds(const BuiltinSemanticContext& context)
-    -> Vec<preprocessor::MacroSeed> {
-    auto result = Vec<preprocessor::MacroSeed>::make();
+auto native_predefined_macros(const BuiltinSemanticContext& context)
+    -> ToolchainResult<Vec<preprocessor::SharedMacroDefinition>> {
+    auto result = Vec<preprocessor::SharedMacroDefinition>::make();
+    auto append = [&result](ref<str> value) -> ToolchainResult<empty> {
+        auto definition = preprocessor::parse_command_line_macro_definition(value);
+        if (definition.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(definition).unwrap_err()));
+        }
+        result.push(preprocessor::share_macro_definition(rstd::move(definition).unwrap()));
+        return Ok(empty {});
+    };
     if (context.exceptions) {
-        result.push(preprocessor::MacroSeed {
-            .definition = String::make("__EXCEPTIONS 1"_str),
-        });
-        result.push(preprocessor::MacroSeed {
-            .definition = String::make("__cpp_exceptions 199711L"_str),
-        });
+        auto exceptions = append("__EXCEPTIONS=1"_str);
+        if (exceptions.is_err()) return Err(rstd::move(exceptions).unwrap_err());
+        auto cpp_exceptions = append("__cpp_exceptions=199711L"_str);
+        if (cpp_exceptions.is_err()) return Err(rstd::move(cpp_exceptions).unwrap_err());
     }
     if (context.rtti) {
-        result.push(preprocessor::MacroSeed {
-            .definition = String::make("__GXX_RTTI 1"_str),
-        });
-        result.push(preprocessor::MacroSeed {
-            .definition = String::make("__cpp_rtti 199711L"_str),
-        });
+        auto rtti = append("__GXX_RTTI=1"_str);
+        if (rtti.is_err()) return Err(rstd::move(rtti).unwrap_err());
+        auto cpp_rtti = append("__cpp_rtti=199711L"_str);
+        if (cpp_rtti.is_err()) return Err(rstd::move(cpp_rtti).unwrap_err());
     }
-    return result;
+    return Ok(rstd::move(result));
 }
 
-auto builtin_snapshot_identity(const Vec<preprocessor::MacroSeed>& macros, ref<str> key) -> String {
+struct ParsedMacroDump {
+    Vec<preprocessor::SharedMacroDefinition> definitions;
+    String                                   identity;
+    usize                                    macro_count {};
+};
+
+auto parse_macro_dump(String output, ref<str> source_name, ref<str> key)
+    -> ToolchainResult<ParsedMacroDump> {
     constexpr uint64_t offset = 14695981039346656037ull;
     constexpr uint64_t prime  = 1099511628211ull;
     auto               hash   = offset;
@@ -345,15 +234,58 @@ auto builtin_snapshot_identity(const Vec<preprocessor::MacroSeed>& macros, ref<s
     };
     add("lito-clang-builtin-environment-v2"_str);
     add(key);
-    for (const auto& macro : macros) add(macro.definition.as_str());
+    auto macro_count = usize {};
+    auto summarized  = each_line(output.as_str(), [&](ref<str> raw) -> ToolchainResult<empty> {
+        auto line = raw.trim_ascii();
+        if (line.is_empty()) return Ok(empty {});
+        constexpr auto prefix = "#define "_str;
+        if (! line.starts_with(prefix)) {
+            return environment_failure<empty>(
+                rstd::format("unexpected clang++ -dM output line: {}", line));
+        }
+        auto definition = line.get(prefix.len(), line.len());
+        if (definition.is_none() || definition->is_empty()) {
+            return environment_failure<empty>("clang++ -dM emitted an empty definition"_str);
+        }
+        auto name = macro_name(*definition);
+        if (name.is_none() || ! native_predefined_macro(*name)) {
+            add(*definition);
+            ++macro_count;
+        }
+        return Ok(empty {});
+    });
+    if (summarized.is_err()) return Err(rstd::move(summarized).unwrap_err());
+
     static constexpr char digits[] = "0123456789abcdef";
-    char                  result[16];
+    char                  identity_text[16];
     for (size_t index = 0; index < 16; ++index) {
-        result[15 - index] = digits[hash & 0xfu];
+        identity_text[15 - index] = digits[hash & 0xfu];
         hash >>= 4u;
     }
-    return String::make(
-        ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16)));
+
+    auto parsed = preprocessor::parse_macro_source(lexical::SourceBuffer {
+        .path     = PathBuf::from(source_name),
+        .contents = rstd::move(output),
+    });
+    if (parsed.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(parsed).unwrap_err()));
+    }
+    auto definitions = Vec<preprocessor::SharedMacroDefinition>::with_capacity(macro_count);
+    for (auto& definition : parsed->definitions) {
+        if (! native_predefined_macro(definition->name.as_str())) {
+            definitions.push(rstd::move(definition));
+        }
+    }
+    if (definitions.len() != macro_count) {
+        return environment_failure<ParsedMacroDump>(
+            "clang++ -dM macro framing and parsed definitions disagree"_str);
+    }
+    return Ok(ParsedMacroDump {
+        .definitions = rstd::move(definitions),
+        .identity    = String::make(ref<str>::from_raw_parts_unchecked(
+            reinterpret_cast<const byte*>(identity_text), usize(16))),
+        .macro_count = macro_count,
+    });
 }
 
 auto environment_identity(ref<str>                       builtin_identity,

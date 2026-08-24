@@ -141,12 +141,33 @@ void append_preprocessor(String&                                               o
     append_metric(output, "files"_str, statistics.files);
     append_metric(output, "source tokens"_str, statistics.source_tokens);
     append_metric(output, "token clones"_str, statistics.token_clones);
+    append_metric(
+        output, "source token materializations"_str, statistics.source_token_materializations);
+    append_metric(output, "macro literal clones"_str, statistics.macro_literal_clones);
+    append_metric(output, "macro raw argument clones"_str, statistics.macro_raw_argument_clones);
+    append_metric(
+        output, "macro expansion input clones"_str, statistics.macro_expansion_input_clones);
+    append_metric(output,
+                  "macro expanded argument reuse clones"_str,
+                  statistics.macro_expanded_argument_reuse_clones);
+    append_metric(output, "other token clones"_str, statistics.other_token_clones);
     append_metric(output, "synthetic tokens"_str, statistics.synthetic_tokens);
     append_metric(output, "directives"_str, statistics.directives);
     append_metric(output, "conditionals"_str, statistics.conditionals);
     append_metric(output, "macro lookups"_str, statistics.macro_lookups);
     append_metric(output, "macro lookup hits"_str, statistics.macro_lookup_hits);
     append_metric(output, "macro expansions"_str, statistics.macro_expansions);
+    append_metric(output, "macro definitions"_str, statistics.macro_definitions);
+    append_metric(output, "macro operations"_str, statistics.macro_operations);
+    append_metric(
+        output, "macro expanded parameter uses"_str, statistics.macro_expanded_parameter_uses);
+    append_metric(output, "macro raw parameter uses"_str, statistics.macro_raw_parameter_uses);
+    append_metric(output, "macro stringifications"_str, statistics.macro_stringifications);
+    append_metric(output, "macro token pastes"_str, statistics.macro_token_pastes);
+    append_metric(output, "macro va-opt uses"_str, statistics.macro_va_opt_uses);
+    append_metric(output, "pragma fragment lexes"_str, statistics.pragma_fragment_lexes);
+    append_metric(
+        output, "macro identifier validations"_str, statistics.macro_identifier_validations);
     append_metric(output, "include attempts"_str, statistics.include_attempts);
     append_metric(output, "include hits"_str, statistics.include_hits);
     append_metric(output, "consumer batches"_str, statistics.consumer_batches);

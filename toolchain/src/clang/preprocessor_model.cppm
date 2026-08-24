@@ -49,7 +49,6 @@ inline constexpr auto CLANG_STANDARD_LIBRARY_CAPABILITY_ID =
 struct ClangBuiltinEnvironmentSnapshot {
     String                                   key;
     String                                   identity;
-    lexical::SharedSourceSnapshot            source;
     Vec<preprocessor::SharedMacroDefinition> definitions;
     rstd::collections::HashMap<String, i64>  capabilities;
     usize                                    clang_macro_count {};
@@ -83,9 +82,7 @@ struct PreprocessorEnvironmentKey {
 struct PreprocessorEnvironment {
     PreprocessorEnvironmentKey                  key;
     SharedClangBuiltinEnvironmentSnapshot       builtin_environment;
-    lexical::SharedSourceSnapshot               native_source;
     Vec<preprocessor::SharedMacroDefinition>    native_definitions;
-    lexical::SharedSourceSnapshot               command_line_source;
     Vec<preprocessor::PredefinedMacroOperation> command_line_macros;
     BuiltinSemanticContext                      semantic_context;
     Vec<IncludeSearchEntry>                     include_search;

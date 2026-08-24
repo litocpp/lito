@@ -235,3 +235,55 @@ TEST(CppWordScanner, OwnsCppWordClassification) {
     ASSERT_TRUE(keyword.is_ok());
     EXPECT_TRUE(keyword->is_none());
 }
+
+TEST(LexicalFragment, ClassifiesCompletePreprocessingTokens) {
+    auto origin = SourceLocation {
+        .source = usize(9), .offset = usize(17), .line = usize(3), .column = usize(5)
+    };
+    auto identifier = classify_preprocessing_token(String::make("name\\u0030"_str), origin);
+    ASSERT_TRUE(identifier.is_ok());
+    EXPECT_TRUE(*identifier == TokenKind::Identifier);
+    auto unicode = classify_preprocessing_token(String::make("变量"_str), origin);
+    ASSERT_TRUE(unicode.is_ok());
+    EXPECT_TRUE(*unicode == TokenKind::Identifier);
+    auto number = classify_preprocessing_token(String::make("1.0e+4f"_str), origin);
+    ASSERT_TRUE(number.is_ok());
+    EXPECT_TRUE(*number == TokenKind::PpNumber);
+    auto literal = classify_preprocessing_token(String::make("u8\"text\""_str), origin);
+    ASSERT_TRUE(literal.is_ok());
+    EXPECT_TRUE(*literal == TokenKind::StringLiteral);
+    auto punctuation = classify_preprocessing_token(String::make(">>="_str), origin);
+    ASSERT_TRUE(punctuation.is_ok());
+    EXPECT_TRUE(*punctuation == TokenKind::Punctuation);
+
+    auto multiple = classify_preprocessing_token(String::make("first second"_str), origin);
+    ASSERT_TRUE(multiple.is_err());
+    ASSERT_TRUE(multiple.unwrap_err().location.is_some());
+    EXPECT_EQ(multiple.unwrap_err().location->source, origin.source);
+    auto invalid = classify_preprocessing_token(String::make("\"unterminated"_str), origin);
+    ASSERT_TRUE(invalid.is_err());
+    ASSERT_TRUE(invalid.unwrap_err().location.is_some());
+    EXPECT_EQ(invalid.unwrap_err().location->line, origin.line);
+}
+
+TEST(LexicalFragment, ValidatesIdentifiersAndPreservesOrigin) {
+    EXPECT_TRUE(is_identifier_spelling("name_17"_str));
+    EXPECT_TRUE(is_identifier_spelling("$extension"_str));
+    EXPECT_TRUE(is_identifier_spelling("\\u0061lpha"_str));
+    EXPECT_TRUE(is_identifier_spelling("变量"_str));
+    EXPECT_FALSE(is_identifier_spelling("name+suffix"_str));
+    EXPECT_FALSE(is_identifier_spelling("17name"_str));
+
+    auto origin = SourceLocation {
+        .source = usize(4), .offset = usize(28), .line = usize(7), .column = usize(2)
+    };
+    auto fragment = lex_preprocessing_fragment(String::make("push_macro(\"NAME\")"_str), origin);
+    ASSERT_TRUE(fragment.is_ok());
+    ASSERT_EQ(fragment->len(), usize(4));
+    for (const auto& token : *fragment) {
+        EXPECT_EQ(token.spelling.source, origin.source);
+        EXPECT_EQ(token.spelling.offset, origin.offset);
+        EXPECT_EQ(token.expansion.line, origin.line);
+        EXPECT_EQ(token.expansion.column, origin.column);
+    }
+}
