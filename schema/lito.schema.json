@@ -1283,6 +1283,12 @@
         "static": {
           "type": "boolean"
         },
+        "usage": {
+          "enum": [
+            "link",
+            "compile"
+          ]
+        },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
         },
@@ -1301,6 +1307,22 @@
           "required": [
             "visibility"
           ]
+        },
+        {
+          "not": {
+            "properties": {
+              "usage": {
+                "const": "compile"
+              },
+              "visibility": {
+                "const": "link"
+              }
+            },
+            "required": [
+              "usage",
+              "visibility"
+            ]
+          }
         }
       ]
     },
@@ -1319,9 +1341,29 @@
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
         },
+        "usage": {
+          "enum": [
+            "link",
+            "compile"
+          ]
+        },
         "condition": {
           "$ref": "#/definitions/nonEmptyString"
         }
+      },
+      "not": {
+        "properties": {
+          "usage": {
+            "const": "compile"
+          },
+          "visibility": {
+            "const": "link"
+          }
+        },
+        "required": [
+          "usage",
+          "visibility"
+        ]
       },
       "additionalProperties": false
     },
@@ -1345,6 +1387,9 @@
             "anyOf": [
               {
                 "required": ["visibility"]
+              },
+              {
+                "required": ["usage"]
               },
               {
                 "required": ["condition"]

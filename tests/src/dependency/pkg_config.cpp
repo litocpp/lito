@@ -140,6 +140,7 @@ archive = "pkg_config_valid"
 [external-dependencies.pkg-config.curl]
 module = "libcurl"
 version = ">= 7.86.0"
+usage = "compile"
 visibility = "private"
 condition = "!feature.qt"
 
@@ -165,8 +166,21 @@ visibility = "public"
               lito::dependency::PkgConfigVersionOperator::GreaterEqual);
     EXPECT_EQ(requirement.version->value.as_str(), "7.86.0"_str);
     EXPECT_EQ(requirement.mode, lito::dependency::PkgConfigQueryMode::Shared);
+    EXPECT_EQ(curl.usage, lito::dependency::PkgConfigDependencyUsage::Compile);
     ASSERT_TRUE(curl.condition.is_some());
     EXPECT_EQ(curl.condition->source.as_str(), "!feature.qt"_str);
+    EXPECT_EQ(loaded->pkg_config_external_dependencies[usize(1)].usage,
+              lito::dependency::PkgConfigDependencyUsage::Link);
+
+    auto standalone = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(standalone.is_ok());
+    EXPECT_TRUE(standalone->as_str().contains("usage = \"compile\""_str));
+    EXPECT_TRUE(standalone->as_str().contains("usage = \"link\""_str));
 
     auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
@@ -263,6 +277,30 @@ module = "libcurl"
 version = ">> 7.86.0"
 visibility = "private"
 )"_str },
+        { "usage"_str, R"([package]
+name = "pkg-config-usage"
+version = "0.1.0"
+[lib]
+name = "pkg-config-usage"
+module = "pkg_config_usage"
+archive = "pkg_config_usage"
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
+usage = "runtime"
+visibility = "private"
+)"_str },
+        { "compile-link-visibility"_str, R"([package]
+name = "pkg-config-compile-link-visibility"
+version = "0.1.0"
+[lib]
+name = "pkg-config-compile-link-visibility"
+module = "pkg_config_compile_link_visibility"
+archive = "pkg_config_compile_link_visibility"
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
+usage = "compile"
+visibility = "link"
+)"_str },
     };
     for (const auto& manifest : manifests) {
         const ProjectFile files[] = {
@@ -356,6 +394,19 @@ TEST_F(PkgConfig, PkgConfigProviderProducesCompileAndOrderedLinkRequirements) {
     for (const auto& token : (*shared)[usize {}].link_arguments.tokens) {
         EXPECT_NE(token.as_str(), "-llito_private"_str);
     }
+
+    declarations[usize {}].usage = lito::dependency::PkgConfigDependencyUsage::Compile;
+    auto compile_only            = lito::resolve_external_dependencies(declarations,
+                                                                       config,
+                                                                       fixture_cmake(),
+                                                                       configuration(),
+                                                                       default_profile(*parser),
+                                                                       native_platform());
+    ASSERT_TRUE(compile_only.is_ok());
+    EXPECT_FALSE((*compile_only)[usize {}].targets[usize {}].compile_options.is_empty());
+    EXPECT_TRUE((*compile_only)[usize {}].link_arguments.tokens.is_empty());
+    EXPECT_TRUE((*compile_only)[usize {}].link_requirements.system_libraries.is_empty());
+    EXPECT_FALSE((*compile_only)[usize {}].link_requirements.posix_threads);
 }
 
 TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyContext) {

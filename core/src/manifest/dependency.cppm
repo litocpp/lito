@@ -41,7 +41,10 @@ struct WorkspaceRuntimeDependencyReference {
 };
 
 struct WorkspacePkgConfigExternalDependencyReference {
-    String                                 alias;
+    String                                     alias;
+    lito::dependency::PkgConfigDependencyUsage usage {
+        lito::dependency::PkgConfigDependencyUsage::Link
+    };
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };

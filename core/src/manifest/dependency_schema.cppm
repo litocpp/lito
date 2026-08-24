@@ -85,6 +85,19 @@ auto parse_pkg_config_version(ref<str> value, ref<str> context)
     });
 }
 
+auto parse_pkg_config_usage(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<lito::dependency::PkgConfigDependencyUsage> {
+    auto value = rstd_try(optional_string(specification, "usage"_str, context));
+    if (value.is_none() || value->as_str() == "link"_str) {
+        return Ok(lito::dependency::PkgConfigDependencyUsage::Link);
+    }
+    if (value->as_str() == "compile"_str) {
+        return Ok(lito::dependency::PkgConfigDependencyUsage::Compile);
+    }
+    return manifest_schema_failure<lito::dependency::PkgConfigDependencyUsage>(
+        rstd::format("{}.usage must be 'link' or 'compile'", context));
+}
+
 auto cmake_name_character_is_valid(u8 value) -> bool {
     const auto character = value.to_primitive();
     const auto alpha =
@@ -733,17 +746,23 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
             rstd_try(reject_unknown(
                 **fields, context.as_str(), workspace_pkg_config_external_reference_key));
         }
-        auto visibility = required_string(**specification, "visibility"_str, context.as_str());
-        if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
+        auto visibility =
+            rstd_try(required_string(**specification, "visibility"_str, context.as_str()));
         auto parsed_visibility =
-            parse_visibility(visibility->as_str(), "external pkg-config visibility"_str);
-        if (parsed_visibility.is_err()) return Err(rstd::move(parsed_visibility).unwrap_err());
+            rstd_try(parse_visibility(visibility.as_str(), "external pkg-config visibility"_str));
+        auto usage = rstd_try(parse_pkg_config_usage(**specification, context.as_str()));
+        if (usage == lito::dependency::PkgConfigDependencyUsage::Compile &&
+            parsed_visibility == lito::dependency::DependencyVisibility::LinkOnly) {
+            return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(rstd::format(
+                "{}.visibility must be public or private when usage is 'compile'", context));
+        }
         auto condition =
             rstd_try(parse_external_dependency_condition(**specification, context.as_str()));
         if (*inherited) {
             result.workspace_dependencies.push(WorkspacePkgConfigExternalDependencyReference {
                 .alias      = alias.clone(),
-                .visibility = rstd::move(parsed_visibility).unwrap(),
+                .usage      = usage,
+                .visibility = parsed_visibility,
                 .condition  = rstd::move(condition),
             });
             continue;
@@ -753,7 +772,8 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
         result.explicit_dependencies.push(lito::dependency::PkgConfigExternalDependency {
             .alias       = alias.clone(),
             .requirement = rstd::move(requirement).unwrap(),
-            .visibility  = rstd::move(parsed_visibility).unwrap(),
+            .usage       = usage,
+            .visibility  = parsed_visibility,
             .condition   = rstd::move(condition),
         });
     }

@@ -169,6 +169,7 @@ visibility = "private"
 
 [external-dependencies.pkg-config.curl]
 workspace = true
+usage = "compile"
 visibility = "public"
 condition = "true"
 
@@ -202,6 +203,8 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_TRUE(member->cmake_external_dependencies.is_empty());
     ASSERT_EQ(member->workspace_dependencies.len(), usize(1));
     ASSERT_EQ(member->workspace_pkg_config_external_dependencies.len(), usize(1));
+    EXPECT_EQ(member->workspace_pkg_config_external_dependencies[usize {}].usage,
+              lito::dependency::PkgConfigDependencyUsage::Compile);
     ASSERT_EQ(member->workspace_cmake_external_dependencies.len(), usize(1));
     EXPECT_TRUE(member->workspace_external_sources.is_empty());
 
@@ -239,6 +242,7 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_EQ(curl.alias.as_str(), "curl"_str);
     EXPECT_EQ(curl.requirement.module.as_str(), "libcurl"_str);
     EXPECT_EQ(curl.requirement.mode, lito::dependency::PkgConfigQueryMode::Static);
+    EXPECT_EQ(curl.usage, lito::dependency::PkgConfigDependencyUsage::Compile);
     EXPECT_EQ(curl.visibility, lito::dependency::DependencyVisibility::Public);
     ASSERT_TRUE(curl.condition.is_some());
     EXPECT_EQ(curl.condition->source.as_str(), "true"_str);

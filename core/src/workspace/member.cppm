@@ -253,6 +253,7 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             lito::dependency::PkgConfigExternalDependency {
                 .alias       = reference.alias.clone(),
                 .requirement = clone_pkg_config_requirement(definition->requirement),
+                .usage       = reference.usage,
                 .visibility  = reference.visibility,
                 .condition   = reference.condition.is_some()
                                    ? Some(reference.condition->clone())

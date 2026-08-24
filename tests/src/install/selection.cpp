@@ -353,6 +353,11 @@ visibility = "public"
 [external-dependencies.pkg-config.private-api]
 module = "fixture-private"
 visibility = "private"
+
+[external-dependencies.pkg-config.compile-api]
+module = "fixture-compile"
+usage = "compile"
+visibility = "private"
 )toml"_str },
         { "install.lua"_str, "lito.install({})\n"_str },
         { "library.c"_str, "int fixture_export(void) { return 0; }\n"_str },
@@ -403,4 +408,12 @@ visibility = "private"
     EXPECT_EQ(resolved.public_dependencies[usize {}].as_str(), "fixture-public >= 1.2"_str);
     ASSERT_EQ(resolved.private_dependencies.len(), usize(1));
     EXPECT_EQ(resolved.private_dependencies[usize {}].as_str(), "fixture-private"_str);
+
+    recipes[usize {}].pkg_config[usize {}].dependencies = strings("compile-api"_str);
+    auto compile_only =
+        lito::resolve_install_build_requirements(*selection, recipes, pkg_config_target());
+    ASSERT_TRUE(compile_only.is_err());
+    EXPECT_TRUE(error_chain_text(rstd::move(compile_only).unwrap_err())
+                    .as_str()
+                    .contains("cannot be represented in a Requires field"_str));
 }

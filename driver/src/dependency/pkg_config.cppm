@@ -115,6 +115,13 @@ auto resolve_pkg_config_dependencies(
     auto provider = pkg_config_provider(config, rstd::move(resolved).unwrap().executable, platform);
     auto snapshots = rstd::collections::BTreeMap<String, lito::tools::pkg_config::Snapshot>::make();
     for (const auto& declaration : declarations) {
+        if (declaration.usage == lito::dependency::PkgConfigDependencyUsage::Compile &&
+            declaration.visibility == lito::dependency::DependencyVisibility::LinkOnly) {
+            return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
+                rstd::format("pkg-config dependency '{}' cannot use link visibility with compile "
+                             "usage",
+                             declaration.alias.as_str()));
+        }
         auto request = pkg_config_request(declaration);
         auto key     = lito::tools::pkg_config::module_spec(request);
         key.push_str(request.mode == lito::tools::pkg_config::QueryMode::Static ? "\nstatic"_str
@@ -145,23 +152,29 @@ auto resolve_pkg_config_dependencies(
             .compile_source  = source.clone(),
             .identity        = snapshot.identity.clone(),
         });
-        auto link_arguments = lito::link::ArgumentSequence {
-            .tokens   = as<Clone>(snapshot.link_fragments).clone(),
-            .source   = rstd::move(source),
-            .identity = snapshot.identity.clone(),
-        };
-        auto normalized = normalize_clang_link_arguments(rstd::move(link_arguments));
-        if (normalized.is_err()) {
-            return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
-                rstd::format("{}", rstd::move(normalized).unwrap_err()));
+        auto link_arguments    = lito::link::ArgumentSequence {};
+        auto link_requirements = lito::link::Requirements {};
+        if (declaration.usage == lito::dependency::PkgConfigDependencyUsage::Link) {
+            link_arguments = lito::link::ArgumentSequence {
+                .tokens   = as<Clone>(snapshot.link_fragments).clone(),
+                .source   = rstd::move(source),
+                .identity = snapshot.identity.clone(),
+            };
+            auto normalized = normalize_clang_link_arguments(rstd::move(link_arguments));
+            if (normalized.is_err()) {
+                return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
+                    rstd::format("{}", rstd::move(normalized).unwrap_err()));
+            }
+            link_arguments    = rstd::move(normalized->arguments);
+            link_requirements = rstd::move(normalized->requirements);
         }
         result.push(cpp::ExternalDependencyUsage {
             .alias             = declaration.alias.clone(),
             .provider          = String::make("pkg-config"_str),
             .version           = snapshot.version.clone(),
             .targets           = rstd::move(targets),
-            .link_arguments    = rstd::move(normalized->arguments),
-            .link_requirements = rstd::move(normalized->requirements),
+            .link_arguments    = rstd::move(link_arguments),
+            .link_requirements = rstd::move(link_requirements),
             .identity          = snapshot.identity.clone(),
         });
     }

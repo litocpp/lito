@@ -171,7 +171,8 @@ auto workspace_cmake_external_reference_key(ref<str> key) -> bool {
 
 auto pkg_config_external_key(ref<str> key) -> bool {
     return key == "module"_str || key == "version"_str || key == "static"_str ||
-           key == "visibility"_str || key == "condition"_str || key == "workspace"_str;
+           key == "usage"_str || key == "visibility"_str || key == "condition"_str ||
+           key == "workspace"_str;
 }
 
 auto workspace_pkg_config_external_key(ref<str> key) -> bool {
@@ -179,7 +180,8 @@ auto workspace_pkg_config_external_key(ref<str> key) -> bool {
 }
 
 auto workspace_pkg_config_external_reference_key(ref<str> key) -> bool {
-    return key == "workspace"_str || key == "visibility"_str || key == "condition"_str;
+    return key == "workspace"_str || key == "usage"_str || key == "visibility"_str ||
+           key == "condition"_str;
 }
 
 auto workspace_key(ref<str> key) -> bool {

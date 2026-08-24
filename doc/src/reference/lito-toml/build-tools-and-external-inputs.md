@@ -38,10 +38,16 @@ Workspace external sources use the same concrete recipes but cannot themselves u
 - `module`: a non-empty pkg-config module name that does not start with `-`;
 - optional `version`, beginning with `=`, `<`, `>`, `<=`, or `>=`;
 - optional boolean `static`;
+- optional `usage = "link" | "compile"`, defaulting to `link`;
 - required `visibility = "public" | "private" | "link"`.
 
+`usage = "link"` consumes both compile and link fragments from pkg-config. `usage = "compile"`
+consumes only compile fragments and requires `visibility = "public" | "private"`; it is intended
+for libraries whose ABI is loaded dynamically while their headers are still needed at build time.
+
 `[workspace.external-dependencies.pkg-config.NAME]` declares `module`, `version`, and `static` but
-omits visibility. A member reference sets `workspace = true` and required `visibility`.
+omits usage and visibility. A member reference sets `workspace = true`, optional `usage`, and
+required `visibility`.
 
 ## CMake external dependencies
 

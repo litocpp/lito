@@ -25,6 +25,12 @@ enum class PkgConfigQueryMode
     Static,
 };
 
+enum class PkgConfigDependencyUsage
+{
+    Link,
+    Compile,
+};
+
 struct PkgConfigVersionRequirement {
     PkgConfigVersionOperator comparison { PkgConfigVersionOperator::Equal };
     String                   value;
@@ -39,6 +45,7 @@ struct PkgConfigDependencyRequirement {
 struct PkgConfigExternalDependency {
     String                              alias;
     PkgConfigDependencyRequirement      requirement;
+    PkgConfigDependencyUsage            usage { PkgConfigDependencyUsage::Link };
     DependencyVisibility                visibility { DependencyVisibility::Private };
     Option<ExternalDependencyCondition> condition;
 };

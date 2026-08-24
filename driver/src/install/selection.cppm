@@ -71,6 +71,11 @@ auto install_pkg_config_version_operator(lito::dependency::PkgConfigVersionOpera
 
 auto pkg_config_requirement(const lito::dependency::PkgConfigExternalDependency& dependency)
     -> InstallResult<String> {
+    if (dependency.usage == lito::dependency::PkgConfigDependencyUsage::Compile) {
+        return selection_failure<String>(rstd::format(
+            "compile-only pkg-config dependency '{}' cannot be represented in a Requires field",
+            dependency.alias.as_str()));
+    }
     auto result = dependency.requirement.module.clone();
     if (dependency.requirement.version.is_some()) {
         result.push_ascii(' ');

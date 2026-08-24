@@ -303,6 +303,14 @@ auto pkg_config_version(const lito::dependency::PkgConfigVersionRequirement& ver
     return rstd::format("{}{}", prefix, version.value.as_str());
 }
 
+auto pkg_config_usage(lito::dependency::PkgConfigDependencyUsage usage) noexcept -> ref<str> {
+    switch (usage) {
+    case lito::dependency::PkgConfigDependencyUsage::Link: return "link"_str;
+    case lito::dependency::PkgConfigDependencyUsage::Compile: return "compile"_str;
+    }
+    return "link"_str;
+}
+
 auto pkg_config_dependencies(const PackageManifest& manifest) -> Option<Toml> {
     if (manifest.pkg_config_external_dependencies.is_empty()) return Option<Toml> {};
     auto table = Table::make();
@@ -318,6 +326,7 @@ auto pkg_config_dependencies(const PackageManifest& manifest) -> Option<Toml> {
         if (dependency.requirement.mode == lito::dependency::PkgConfigQueryMode::Static) {
             value.insert(String::make("static"_str), Toml::Boolean(true));
         }
+        value.insert(String::make("usage"_str), string_value(pkg_config_usage(dependency.usage)));
         value.insert(String::make("visibility"_str),
                      string_value(visibility_text(dependency.visibility)));
         if (dependency.condition.is_some()) {
