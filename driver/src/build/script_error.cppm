@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import luato;
 import lito.core;
+import lito.toolchain.common;
 import :build.layout_error;
 import :build.host_tool_error;
 import :build.tool_action_error;
@@ -23,6 +24,7 @@ class BuildScriptError {
               (HostTool, (HostBuildToolError source;)),
               (BuildToolAction, (BuildToolActionError source;)),
               (Package, (lito::package::PackageError source;)),
+              (Toolchain, (ToolchainError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
               (Lua, (String operation; Option<PathBuf> path; luato::Error source;)),
@@ -93,6 +95,13 @@ struct Impl<convert::From<lito::package::PackageError>, lito::BuildScriptError> 
 };
 
 template<>
+struct Impl<convert::From<lito::ToolchainError>, lito::BuildScriptError> {
+    static auto from(lito::ToolchainError error) -> lito::BuildScriptError {
+        return lito::BuildScriptError::Toolchain(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -111,6 +120,9 @@ struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         }
         if (error.is_Package()) {
             return formatter.write_str("build script package resolution failed"_str);
+        }
+        if (error.is_Toolchain()) {
+            return formatter.write_str("build script toolchain operation failed"_str);
         }
         if (error.is_Io()) {
             const auto& value = error.as_Io();
@@ -162,6 +174,9 @@ struct Impl<error::Error, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         }
         if (error.is_Package()) {
             return Some(dyn<error::Error>::from_ref(error.as_Package().source));
+        }
+        if (error.is_Toolchain()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Toolchain().source));
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));

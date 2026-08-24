@@ -868,6 +868,7 @@ auto main() -> int {
         generated.join(PathBuf::from("moc_fixture_controlPlugin.cpp"_str).as_path()).as_path());
     ASSERT_TRUE(plugin_moc.is_ok());
     EXPECT_TRUE(plugin_moc->as_str().contains("-Muri=fixture.control"_str));
+    EXPECT_TRUE(plugin_moc->as_str().contains("-I"_str));
     auto plugin = rstd::fs::read_to_string(
         generated.join(PathBuf::from("fixture_controlPlugin.hpp"_str).as_path()).as_path());
     ASSERT_TRUE(plugin.is_ok());

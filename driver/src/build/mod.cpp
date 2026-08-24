@@ -340,6 +340,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                     request.observer,
                                     project.platform.host,
                                     project.platform.effective_target,
+                                    toolchain,
                                     tool_resolver,
                                     process_environment,
                                     request.sources,

@@ -12,6 +12,7 @@ import lito.core;
 import :build.event;
 import :build.artifact;
 import lito.cpp;
+import lito.toolchain;
 import :build.layout;
 import :build.host_tool;
 import :package.module_catalog;
@@ -1002,6 +1003,7 @@ public:
                       String                            script_owner,
                       Vec<String>                       packages,
                       BuildOutputRegistry&              outputs,
+                      const ClangToolchain&             toolchain,
                       const ResolvedHostBuildTools&     tools,
                       const TargetInfo&                 target_info,
                       const ResolvedProcessEnvironment& environment,
@@ -1015,6 +1017,7 @@ public:
           script_owner_(rstd::move(script_owner)),
           packages_(rstd::move(packages)),
           output_registry_(rstd::addressof(outputs)),
+          toolchain_(rstd::addressof(toolchain)),
           tools_(rstd::addressof(tools)),
           target_info_(rstd::addressof(target_info)),
           environment_(rstd::addressof(environment)),
@@ -1241,9 +1244,13 @@ public:
             return action_request_failure<luato::Table>(
                 "target handle has no resolved compile environment"_str);
         }
-        auto       projection = cpp::preprocessor_projection(target_plan_->contexts[*target]);
-        auto       result     = luato::Table::make();
-        const auto set        = [&](String key, auto value) -> BuildScriptResult<empty> {
+        auto projection = toolchain_->build_tool_preprocessor_projection(
+            target_plan_->contexts[*target], metadata_->targets[*target].root.as_path());
+        if (projection.is_err()) {
+            return Err(rstd::into<BuildScriptError>(rstd::move(projection).unwrap_err()));
+        }
+        auto       result = luato::Table::make();
+        const auto set    = [&](String key, auto value) -> BuildScriptResult<empty> {
             auto inserted = result.set(rstd::move(key), rstd::move(value));
             if (inserted.is_err()) {
                 return action_request_failure<empty>(rstd::format("{}", inserted.unwrap_err()));
@@ -1251,18 +1258,18 @@ public:
             return Ok(empty {});
         };
         rstd_try(set(String::make("include_directories"_str),
-                     lua_string_array(projection.user_include_directories)));
+                     lua_string_array(projection->user_include_directories)));
         rstd_try(set(String::make("system_include_directories"_str),
-                     lua_string_array(projection.system_include_directories)));
-        rstd_try(set(String::make("definitions"_str), lua_string_array(projection.definitions)));
+                     lua_string_array(projection->system_include_directories)));
+        rstd_try(set(String::make("definitions"_str), lua_string_array(projection->definitions)));
         rstd_try(
-            set(String::make("undefinitions"_str), lua_string_array(projection.undefinitions)));
+            set(String::make("undefinitions"_str), lua_string_array(projection->undefinitions)));
         rstd_try(
             set(String::make("compiler_flavor"_str),
                 String::make(target_info_->environment == TargetEnvironment::Msvc ? "msvc"_str
                                                                                   : "unix"_str)));
         rstd_try(set(String::make("target"_str), target_info_->triple.clone()));
-        rstd_try(set(String::make("identity"_str), rstd::move(projection.identity)));
+        rstd_try(set(String::make("identity"_str), rstd::move(projection->identity)));
         return Ok(rstd::move(result));
     }
 
@@ -2778,6 +2785,7 @@ private:
     String                            script_owner_;
     Vec<String>                       packages_;
     BuildOutputRegistry*              output_registry_ {};
+    const ClangToolchain*             toolchain_ {};
     const ResolvedHostBuildTools*     tools_ {};
     const TargetInfo*                 target_info_ {};
     const ResolvedProcessEnvironment* environment_ {};
@@ -3187,6 +3195,7 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                      const Option<BuildEventSink>&            observer,
                                      const HostInfo&                          host,
                                      const TargetInfo&                        target_info,
+                                     const ClangToolchain&                    toolchain,
                                      lito::tools::ToolResolver&               resolver,
                                      const ResolvedProcessEnvironment&        environment,
                                      const lito::source::PackageSourceConfig& sources,
@@ -3225,6 +3234,7 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                              invocation.owner.clone(),
                                              rstd::move(action_packages),
                                              output_registry,
+                                             toolchain,
                                              tools,
                                              target_info,
                                              environment,
@@ -3481,6 +3491,7 @@ auto execute_build_script(cpp::PackageMetadata&                    metadata,
                           const Option<BuildEventSink>&            observer,
                           const HostInfo&                          host,
                           const TargetInfo&                        target_info,
+                          const ClangToolchain&                    toolchain,
                           lito::tools::ToolResolver&               resolver,
                           const ResolvedProcessEnvironment&        environment,
                           const lito::source::PackageSourceConfig& sources,
@@ -3570,6 +3581,7 @@ auto execute_build_script(cpp::PackageMetadata&                    metadata,
                                                       observer,
                                                       host,
                                                       target_info,
+                                                      toolchain,
                                                       resolver,
                                                       environment,
                                                       sources,
