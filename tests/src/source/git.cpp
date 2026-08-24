@@ -730,14 +730,18 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     EXPECT_TRUE(
         rstd::fs::exists(cached_repository.join(PathBuf::from("HEAD"_str).as_path()).as_path())
             .unwrap());
-    auto checkout_root = data_home.join(PathBuf::from("lito/git/checkouts"_str).as_path())
-                             .join(PathBuf::from(repository_key.as_str()).as_path());
-    EXPECT_TRUE(
-        rstd::fs::exists(checkout_root.join(PathBuf::from(previous->as_str()).as_path()).as_path())
-            .unwrap());
-    EXPECT_TRUE(
-        rstd::fs::exists(checkout_root.join(PathBuf::from(current->as_str()).as_path()).as_path())
-            .unwrap());
+    auto checkout_root     = data_home.join(PathBuf::from("lito/git/checkouts"_str).as_path())
+                                 .join(PathBuf::from(repository_key.as_str()).as_path());
+    auto previous_checkout = checkout_root.join(PathBuf::from(previous->as_str()).as_path());
+    auto current_checkout  = checkout_root.join(PathBuf::from(current->as_str()).as_path());
+    EXPECT_TRUE(rstd::fs::exists(previous_checkout.as_path()).unwrap());
+    EXPECT_TRUE(rstd::fs::exists(current_checkout.as_path()).unwrap());
+    auto previous_origin = git_remote_origin(previous_checkout.as_path());
+    auto current_origin  = git_remote_origin(current_checkout.as_path());
+    ASSERT_TRUE(previous_origin.is_some());
+    ASSERT_TRUE(current_origin.is_some());
+    EXPECT_EQ(previous_origin->as_str(), *url);
+    EXPECT_EQ(current_origin->as_str(), *url);
 
     auto pinned_graph = external_git_graph(*url,
                                            repository.as_path(),

@@ -179,6 +179,19 @@ public:
         return git_status(rstd::move(arguments), "Git source checkout creation"_str, *environment_);
     }
 
+    auto set_worktree_remote_origin(ref<rstd::path::Path> worktree, ref<str> url) const
+        -> ToolResult<empty> {
+        auto arguments = rstd_try(git_command(executable_.as_path()));
+        arguments.push(String::make("-C"_str));
+        rstd_try(command::push_path(arguments, worktree));
+        arguments.push(String::make("remote"_str));
+        arguments.push(String::make("set-url"_str));
+        arguments.push(String::make("origin"_str));
+        arguments.push(String::make(url));
+        return git_status(
+            rstd::move(arguments), "Git worktree remote configuration"_str, *environment_);
+    }
+
     auto checkout_detached(ref<rstd::path::Path> checkout, ref<str> commit) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));

@@ -670,6 +670,8 @@ class SourceManager {
         auto git = rstd_try(git_client());
         rstd_try(source_tool_result("create Git source checkout"_str,
                                     git.clone_shared(repository, checkout.as_path())));
+        rstd_try(source_tool_result("configure Git source checkout remote"_str,
+                                    git.set_worktree_remote_origin(checkout.as_path(), url)));
         rstd_try(source_tool_result("checkout Git source commit"_str,
                                     git.checkout_detached(checkout.as_path(), commit)));
         rstd_try(write_git_checkout_receipt(layout, repository_key, url, commit));

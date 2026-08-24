@@ -37,6 +37,20 @@ auto git_url(ref<rstd::path::Path> repository) -> Option<String> {
     return Some(rstd::move(result));
 }
 
+auto git_remote_origin(ref<rstd::path::Path> repository) -> Option<String> {
+    auto command = rstd::process::Command::make("git"_str);
+    command.arg("-C"_str)
+        .arg(repository.as_os_str())
+        .arg("config"_str)
+        .arg("--get"_str)
+        .arg("remote.origin.url"_str);
+    auto output = command.output();
+    if (output.is_err() || ! output->status.success()) return None();
+    auto text = String::from_utf8(rstd::move(output->stdout_buf));
+    if (text.is_err()) return None();
+    return Some(String::make(text->as_str().trim_ascii()));
+}
+
 template<typename... Arguments>
 auto git_succeeds(ref<rstd::path::Path> repository, Arguments... arguments) -> bool {
     auto command = rstd::process::Command::make("git"_str);
