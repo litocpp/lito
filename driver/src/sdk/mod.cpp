@@ -22,9 +22,6 @@ using JsonArray = rstd::json::Array;
 static constexpr unsigned char LIBXML2_RECIPE_MANIFEST[] = {
 #embed "../../../data/sdk/libxml2/2.13.8-minimal-elf-v1/lito.toml"
 };
-static constexpr unsigned char LIBXML2_RECIPE_LOCK[] = {
-#embed "../../../data/sdk/libxml2/2.13.8-minimal-elf-v1/lito.lock"
-};
 static constexpr unsigned char LIBXML2_RECIPE_SCRIPT[] = {
 #embed "../../../data/sdk/libxml2/2.13.8-minimal-elf-v1/build.lua"
 };
@@ -60,7 +57,6 @@ auto libxml2_recipe() -> lito::SdkResult<EmbeddedSdkRecipe> {
         ref<str> contents;
     } files[] = {
         { "lito.toml"_str, embedded_text(LIBXML2_RECIPE_MANIFEST) },
-        { "lito.lock"_str, embedded_text(LIBXML2_RECIPE_LOCK) },
         { "build.lua"_str, embedded_text(LIBXML2_RECIPE_SCRIPT) },
         { "config/config.h.in"_str, embedded_text(LIBXML2_RECIPE_CONFIG) },
         { "config/xmlversion.h.in"_str, embedded_text(LIBXML2_RECIPE_XMLVERSION) },

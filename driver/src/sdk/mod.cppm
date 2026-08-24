@@ -313,7 +313,7 @@ struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
             return Some(dyn<error::Error>::from_ref(error.as_SourceTree().source));
         }
         if (error.is_Platform()) {
-            return Some(dyn<error::Error>::from_ref(error.as_Platform().source));
+            return Some(lito::system::platform_error_ref(error.as_Platform().source));
         }
         if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));

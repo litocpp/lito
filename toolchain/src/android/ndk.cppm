@@ -282,7 +282,7 @@ struct Impl<error::Error, lito::AndroidNdkError> : ImplBase<lito::AndroidNdkErro
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Platform()) {
-            return Some(dyn<error::Error>::from_ref(error.as_Platform().source));
+            return Some(lito::system::platform_error_ref(error.as_Platform().source));
         }
         return None();
     }

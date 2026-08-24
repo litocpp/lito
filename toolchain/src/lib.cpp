@@ -180,7 +180,7 @@ auto Impl<error::Error, lito::ToolchainError>::source() const noexcept -> Option
         return Some(dyn<error::Error>::from_ref(error.as_StandardLibraryModule().source));
     }
     if (error.is_Platform()) {
-        return Some(dyn<error::Error>::from_ref(error.as_Platform().source));
+        return Some(lito::system::platform_error_ref(error.as_Platform().source));
     }
     if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
     return None();

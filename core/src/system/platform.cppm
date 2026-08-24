@@ -36,6 +36,9 @@ public:
     auto message() const noexcept -> ref<str> { return message_.as_str(); }
 };
 
+auto platform_error_ref(const PlatformError& error [[clang::lifetimebound]]) noexcept
+    -> rstd::error::ErrorRef;
+
 template<typename T>
 using PlatformResult = Result<T, PlatformError>;
 
@@ -193,6 +196,12 @@ struct Impl<error::Error, lito::system::PlatformError>
 
 namespace lito::system
 {
+
+// Windows Clang ABI workaround: materialize the dyn Error vtable in its owning module.
+auto platform_error_ref(const PlatformError& error [[clang::lifetimebound]]) noexcept
+    -> rstd::error::ErrorRef {
+    return rstd::ptr_::dyn<rstd::error::Error>::from_ref(error);
+}
 
 template<typename T>
 auto platform_failure(String message) -> PlatformResult<T> {

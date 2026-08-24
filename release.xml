@@ -1,3 +1,17 @@
+<release version="0.6.0" date="2026-08-24">
+  <description>
+    <ul>
+      <li>Package registry and TOML lock files.</li>
+      <li>Cargo dependencies and offline builds.</li>
+      <li>Shared libraries and pkg-config metadata.</li>
+      <li>Qt QML, Protobuf, and translation generation.</li>
+      <li>Owned tar/zstd archives.</li>
+      <li>RelWithDebInfo profile.</li>
+      <li>Clean command.</li>
+      <li>Bounded scan memory lifecycle.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.5.0" date="2026-08-21">
   <description>
     <ul>

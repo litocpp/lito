@@ -191,7 +191,7 @@ struct Impl<error::Error, lito::ProjectError> : ImplBase<lito::ProjectError> {
             return Some(dyn<error::Error>::from_ref(error.as_Lock().source));
         }
         if (error.is_Platform()) {
-            return Some(dyn<error::Error>::from_ref(error.as_Platform().source));
+            return Some(lito::system::platform_error_ref(error.as_Platform().source));
         }
         if (error.is_Profile()) {
             return Some(dyn<error::Error>::from_ref(error.as_Profile().source));
