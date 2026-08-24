@@ -19,7 +19,7 @@ public:
 
     auto contains(ref<str> path) const -> bool { return files_.contains_key(path); }
 
-    auto load(ref<rstd::path::Path> path, SourceLoadRole role) -> PpResult<SharedLexedSource> {
+    auto load(ref<rstd::path::Path> path, SourceLoadRole role) -> PpResult<SharedScanFileStorage> {
         if (role == SourceLoadRole::Primary) {
             ++primary_loads;
         } else {
@@ -37,14 +37,9 @@ public:
         auto snapshot = make_source_snapshot(SourceBuffer { .path = rstd::path::PathBuf::from(path),
                                                             .contents = (**contents).clone() });
         auto source   = SourceFile { .snapshot = snapshot.clone() };
-        auto lexed    = lex_with_comments(source, true);
+        auto lexed    = lex_scan_file(source);
         if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
-        auto file = rstd::move(lexed).unwrap();
-        return Ok(rstd::sync::Arc<LexedSource>::make(LexedSource {
-            .snapshot = rstd::move(snapshot),
-            .tokens   = rstd::move(file.tokens),
-            .comments = rstd::move(file.comments),
-        }));
+        return Ok(rstd::sync::Arc<ScanFileStorage>::make(rstd::move(lexed).unwrap()));
     }
 
     usize primary_loads {};
@@ -284,7 +279,13 @@ auto run_preprocessor_test() -> int {
                 "__$lito_extension(17)\n"
                 "#define LITO_REDEFINED 19\n"
                 "#define LITO_REDEFINED 23\n"
-                "LITO_REDEFINED\n"_str);
+                "LITO_REDEFINED\n"
+                "#line 200 \"virtual.cpp\"\n"
+                "LITO_LINE __LINE__\n"
+                "LITO_FILE __FILE__\n"
+                "#line 300\n"
+                "LITO_INHERITED_LINE __LINE__\n"
+                "LITO_INHERITED_FILE __FILE__\n"_str);
     auto includes    = MemoryIncludes(sources);
     auto builtins    = TestBuiltins {};
     auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
@@ -347,6 +348,12 @@ auto run_preprocessor_test() -> int {
     }
     if (! contains_token(result->tokens, "17"_str)) return 17;
     if (! contains_token(result->tokens, "23"_str)) return 18;
+    if (! contains_sequence(result->tokens, "LITO_LINE"_str, "200"_str)) return 29;
+    if (! contains_sequence(result->tokens, "LITO_FILE"_str, "\"virtual.cpp\""_str)) return 30;
+    if (! contains_sequence(result->tokens, "LITO_INHERITED_LINE"_str, "300"_str)) return 31;
+    if (! contains_sequence(result->tokens, "LITO_INHERITED_FILE"_str, "\"virtual.cpp\""_str)) {
+        return 32;
+    }
     if (result->active_comments.len() != usize(1) ||
         result->active_comments[usize {}].kind != CommentKind::OuterDocumentation ||
         ! result->active_comments[usize {}].text.as_str().contains("active documentation"_str)) {

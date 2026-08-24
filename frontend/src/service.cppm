@@ -78,6 +78,16 @@ struct FrontendStatistics {
     usize                                source_live_payload_peak {};
     usize                                source_retained_bytes {};
     usize                                source_retained_bytes_peak {};
+    usize                                source_storage_bytes {};
+    usize                                source_storage_bytes_peak {};
+    usize                                source_token_bytes {};
+    usize                                source_token_bytes_peak {};
+    usize                                source_arena_used_bytes {};
+    usize                                source_arena_used_bytes_peak {};
+    usize                                source_arena_reserved_bytes {};
+    usize                                source_arena_reserved_bytes_peak {};
+    usize                                source_metadata_reserved_bytes {};
+    usize                                source_metadata_reserved_bytes_peak {};
     usize                                source_in_flight_entries {};
     usize                                source_in_flight_peak {};
     usize                                source_cache_hits {};
@@ -133,6 +143,26 @@ struct FrontendStatistics {
         if (other.source_retained_bytes_peak > source_retained_bytes_peak) {
             source_retained_bytes_peak = other.source_retained_bytes_peak;
         }
+        source_storage_bytes += other.source_storage_bytes;
+        if (other.source_storage_bytes_peak > source_storage_bytes_peak) {
+            source_storage_bytes_peak = other.source_storage_bytes_peak;
+        }
+        source_token_bytes += other.source_token_bytes;
+        if (other.source_token_bytes_peak > source_token_bytes_peak) {
+            source_token_bytes_peak = other.source_token_bytes_peak;
+        }
+        source_arena_used_bytes += other.source_arena_used_bytes;
+        if (other.source_arena_used_bytes_peak > source_arena_used_bytes_peak) {
+            source_arena_used_bytes_peak = other.source_arena_used_bytes_peak;
+        }
+        source_arena_reserved_bytes += other.source_arena_reserved_bytes;
+        if (other.source_arena_reserved_bytes_peak > source_arena_reserved_bytes_peak) {
+            source_arena_reserved_bytes_peak = other.source_arena_reserved_bytes_peak;
+        }
+        source_metadata_reserved_bytes += other.source_metadata_reserved_bytes;
+        if (other.source_metadata_reserved_bytes_peak > source_metadata_reserved_bytes_peak) {
+            source_metadata_reserved_bytes_peak = other.source_metadata_reserved_bytes_peak;
+        }
         source_in_flight_entries += other.source_in_flight_entries;
         if (other.source_in_flight_peak > source_in_flight_peak) {
             source_in_flight_peak = other.source_in_flight_peak;
@@ -182,6 +212,16 @@ struct FrontendSourceStoreStatistics {
     usize live_payload_peak {};
     usize retained_bytes {};
     usize retained_bytes_peak {};
+    usize storage_bytes {};
+    usize storage_bytes_peak {};
+    usize token_bytes {};
+    usize token_bytes_peak {};
+    usize arena_used_bytes {};
+    usize arena_used_bytes_peak {};
+    usize arena_reserved_bytes {};
+    usize arena_reserved_bytes_peak {};
+    usize metadata_reserved_bytes {};
+    usize metadata_reserved_bytes_peak {};
     usize in_flight_entries {};
     usize in_flight_peak {};
     usize cache_hits {};
@@ -205,7 +245,7 @@ struct FrontendHeaderClassifier {
 
 class FrontendSourceStore {
     using SharedLoadError = rstd::sync::Arc<lexical::Error>;
-    using LoadResult      = Result<lexical::SharedLexedSource, SharedLoadError>;
+    using LoadResult      = Result<lexical::SharedScanFileStorage, SharedLoadError>;
     using LoadCell        = rstd::sync::OnceLock<LoadResult>;
     using SharedLoadCell  = rstd::sync::Arc<LoadCell>;
     struct CacheRecord {
@@ -224,6 +264,16 @@ class FrontendSourceStore {
         usize   live_payload_peak {};
         usize   retained_bytes {};
         usize   retained_bytes_peak {};
+        usize   storage_bytes {};
+        usize   storage_bytes_peak {};
+        usize   token_bytes {};
+        usize   token_bytes_peak {};
+        usize   arena_used_bytes {};
+        usize   arena_used_bytes_peak {};
+        usize   arena_reserved_bytes {};
+        usize   arena_reserved_bytes_peak {};
+        usize   metadata_reserved_bytes {};
+        usize   metadata_reserved_bytes_peak {};
         usize   in_flight_entries {};
         usize   in_flight_peak {};
         usize   cache_hits {};
@@ -249,12 +299,17 @@ public:
     auto clone() const -> FrontendSourceStore { return FrontendSourceStore { state_.clone() }; }
 
     auto release_domain(ref<str> domain) const -> void {
-        auto       fields         = state_->lock().unwrap_unchecked();
-        auto       removed_ready  = usize {};
-        auto       removed_flight = usize {};
-        auto       removed_live   = usize {};
-        auto       removed_bytes  = usize {};
-        const auto retain         = [&](CacheRecord& record, bool payload_owner) {
+        auto       fields                          = state_->lock().unwrap_unchecked();
+        auto       removed_ready                   = usize {};
+        auto       removed_flight                  = usize {};
+        auto       removed_live                    = usize {};
+        auto       removed_bytes                   = usize {};
+        auto       removed_storage_bytes           = usize {};
+        auto       removed_token_bytes             = usize {};
+        auto       removed_arena_used_bytes        = usize {};
+        auto       removed_arena_reserved_bytes    = usize {};
+        auto       removed_metadata_reserved_bytes = usize {};
+        const auto retain                          = [&](CacheRecord& record, bool payload_owner) {
             if (record.domain != domain) return true;
             auto stored = record.cell->get();
             if (stored.is_none()) {
@@ -265,7 +320,13 @@ public:
             auto result = (**stored).as_ref();
             if (payload_owner && result.is_ok()) {
                 ++removed_live;
-                removed_bytes += result.unwrap_unchecked()->retained_bytes();
+                auto statistics = result.unwrap_unchecked()->statistics();
+                removed_bytes += statistics.retained_bytes;
+                removed_storage_bytes += statistics.source_reserved_bytes;
+                removed_token_bytes += statistics.token_bytes;
+                removed_arena_used_bytes += statistics.arena_used_bytes;
+                removed_arena_reserved_bytes += statistics.arena_reserved_bytes;
+                removed_metadata_reserved_bytes += statistics.metadata_reserved_bytes;
             }
             return false;
         };
@@ -279,35 +340,55 @@ public:
         fields->in_flight_entries -= removed_flight;
         fields->live_payloads -= removed_live;
         fields->retained_bytes -= removed_bytes;
+        fields->storage_bytes -= removed_storage_bytes;
+        fields->token_bytes -= removed_token_bytes;
+        fields->arena_used_bytes -= removed_arena_used_bytes;
+        fields->arena_reserved_bytes -= removed_arena_reserved_bytes;
+        fields->metadata_reserved_bytes -= removed_metadata_reserved_bytes;
         if (removed_ready != usize {} || removed_flight != usize {}) {
             ++fields->domain_releases;
         }
     }
 
     auto release() const -> void {
-        auto fields               = state_->lock().unwrap_unchecked();
-        fields->source_entries    = CellMap::make();
-        fields->identity_entries  = CellMap::make();
-        fields->ready_entries     = usize {};
-        fields->live_payloads     = usize {};
-        fields->retained_bytes    = usize {};
-        fields->in_flight_entries = usize {};
+        auto fields                     = state_->lock().unwrap_unchecked();
+        fields->source_entries          = CellMap::make();
+        fields->identity_entries        = CellMap::make();
+        fields->ready_entries           = usize {};
+        fields->live_payloads           = usize {};
+        fields->retained_bytes          = usize {};
+        fields->storage_bytes           = usize {};
+        fields->token_bytes             = usize {};
+        fields->arena_used_bytes        = usize {};
+        fields->arena_reserved_bytes    = usize {};
+        fields->metadata_reserved_bytes = usize {};
+        fields->in_flight_entries       = usize {};
     }
 
     auto statistics() const -> FrontendSourceStoreStatistics {
         auto fields = state_->lock().unwrap_unchecked();
         return FrontendSourceStoreStatistics {
-            .ready_entries       = fields->ready_entries,
-            .ready_peak          = fields->ready_peak,
-            .live_payloads       = fields->live_payloads,
-            .live_payload_peak   = fields->live_payload_peak,
-            .retained_bytes      = fields->retained_bytes,
-            .retained_bytes_peak = fields->retained_bytes_peak,
-            .in_flight_entries   = fields->in_flight_entries,
-            .in_flight_peak      = fields->in_flight_peak,
-            .cache_hits          = fields->cache_hits,
-            .flight_waits        = fields->flight_waits,
-            .domain_releases     = fields->domain_releases,
+            .ready_entries                = fields->ready_entries,
+            .ready_peak                   = fields->ready_peak,
+            .live_payloads                = fields->live_payloads,
+            .live_payload_peak            = fields->live_payload_peak,
+            .retained_bytes               = fields->retained_bytes,
+            .retained_bytes_peak          = fields->retained_bytes_peak,
+            .storage_bytes                = fields->storage_bytes,
+            .storage_bytes_peak           = fields->storage_bytes_peak,
+            .token_bytes                  = fields->token_bytes,
+            .token_bytes_peak             = fields->token_bytes_peak,
+            .arena_used_bytes             = fields->arena_used_bytes,
+            .arena_used_bytes_peak        = fields->arena_used_bytes_peak,
+            .arena_reserved_bytes         = fields->arena_reserved_bytes,
+            .arena_reserved_bytes_peak    = fields->arena_reserved_bytes_peak,
+            .metadata_reserved_bytes      = fields->metadata_reserved_bytes,
+            .metadata_reserved_bytes_peak = fields->metadata_reserved_bytes_peak,
+            .in_flight_entries            = fields->in_flight_entries,
+            .in_flight_peak               = fields->in_flight_peak,
+            .cache_hits                   = fields->cache_hits,
+            .flight_waits                 = fields->flight_waits,
+            .domain_releases              = fields->domain_releases,
         };
     }
 
@@ -373,12 +454,33 @@ private:
             }
             if (! payload_owner) return;
             ++fields.live_payloads;
-            fields.retained_bytes += value.unwrap_unchecked()->retained_bytes();
+            auto statistics = value.unwrap_unchecked()->statistics();
+            fields.retained_bytes += statistics.retained_bytes;
+            fields.storage_bytes += statistics.source_reserved_bytes;
+            fields.token_bytes += statistics.token_bytes;
+            fields.arena_used_bytes += statistics.arena_used_bytes;
+            fields.arena_reserved_bytes += statistics.arena_reserved_bytes;
+            fields.metadata_reserved_bytes += statistics.metadata_reserved_bytes;
             if (fields.live_payloads > fields.live_payload_peak) {
                 fields.live_payload_peak = fields.live_payloads;
             }
             if (fields.retained_bytes > fields.retained_bytes_peak) {
                 fields.retained_bytes_peak = fields.retained_bytes;
+            }
+            if (fields.storage_bytes > fields.storage_bytes_peak) {
+                fields.storage_bytes_peak = fields.storage_bytes;
+            }
+            if (fields.token_bytes > fields.token_bytes_peak) {
+                fields.token_bytes_peak = fields.token_bytes;
+            }
+            if (fields.arena_used_bytes > fields.arena_used_bytes_peak) {
+                fields.arena_used_bytes_peak = fields.arena_used_bytes;
+            }
+            if (fields.arena_reserved_bytes > fields.arena_reserved_bytes_peak) {
+                fields.arena_reserved_bytes_peak = fields.arena_reserved_bytes;
+            }
+            if (fields.metadata_reserved_bytes > fields.metadata_reserved_bytes_peak) {
+                fields.metadata_reserved_bytes_peak = fields.metadata_reserved_bytes;
             }
         }
     }
@@ -415,7 +517,7 @@ public:
     }
 
     auto load(ref<rstd::path::Path> path, preprocessor::SourceLoadRole role)
-        -> lexical::Result<lexical::SharedLexedSource> {
+        -> lexical::Result<lexical::SharedScanFileStorage> {
         ++statistics_.source_requests;
         if (path.to_str().is_none()) {
             return Err(
@@ -556,7 +658,7 @@ private:
     }
 
     static auto lexical_result(const FrontendSourceStore::LoadResult& value)
-        -> lexical::Result<lexical::SharedLexedSource> {
+        -> lexical::Result<lexical::SharedScanFileStorage> {
         auto borrowed = value.as_ref();
         if (borrowed.is_err()) return Err(clone_error(borrowed.unwrap_err_unchecked()));
         return Ok(borrowed.unwrap_unchecked().clone());
@@ -580,16 +682,11 @@ private:
         auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
         auto lexed    = [&] {
             auto activity = observe(FrontendActivity::Lex);
-            return lexical::lex_with_comments(source, true);
+            return lexical::lex_scan_file(source);
         }();
         if (lexed.is_err()) return share_error(rstd::move(lexed).unwrap_err());
         ++statistics_.lex_builds;
-        auto file = rstd::move(lexed).unwrap();
-        return Ok(rstd::sync::Arc<lexical::LexedSource>::make(lexical::LexedSource {
-            .snapshot = rstd::move(snapshot),
-            .tokens   = rstd::move(file.tokens),
-            .comments = rstd::move(file.comments),
-        }));
+        return Ok(rstd::sync::Arc<lexical::ScanFileStorage>::make(rstd::move(lexed).unwrap()));
     }
 
     auto observe(FrontendActivity activity) noexcept -> FrontendActivityGuard {

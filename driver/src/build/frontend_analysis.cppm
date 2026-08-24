@@ -301,19 +301,29 @@ public:
     auto profiler() noexcept -> ScanProfiler& { return profiler_; }
 
     auto statistics() const -> frontend::FrontendStatistics {
-        auto result                       = statistics_;
-        auto store                        = source_store_.statistics();
-        result.source_ready_entries       = store.ready_entries;
-        result.source_ready_peak          = store.ready_peak;
-        result.source_live_payloads       = store.live_payloads;
-        result.source_live_payload_peak   = store.live_payload_peak;
-        result.source_retained_bytes      = store.retained_bytes;
-        result.source_retained_bytes_peak = store.retained_bytes_peak;
-        result.source_in_flight_entries   = store.in_flight_entries;
-        result.source_in_flight_peak      = store.in_flight_peak;
-        result.source_cache_hits          = store.cache_hits;
-        result.source_flight_waits        = store.flight_waits;
-        result.source_domain_releases     = store.domain_releases;
+        auto result                                = statistics_;
+        auto store                                 = source_store_.statistics();
+        result.source_ready_entries                = store.ready_entries;
+        result.source_ready_peak                   = store.ready_peak;
+        result.source_live_payloads                = store.live_payloads;
+        result.source_live_payload_peak            = store.live_payload_peak;
+        result.source_retained_bytes               = store.retained_bytes;
+        result.source_retained_bytes_peak          = store.retained_bytes_peak;
+        result.source_storage_bytes                = store.storage_bytes;
+        result.source_storage_bytes_peak           = store.storage_bytes_peak;
+        result.source_token_bytes                  = store.token_bytes;
+        result.source_token_bytes_peak             = store.token_bytes_peak;
+        result.source_arena_used_bytes             = store.arena_used_bytes;
+        result.source_arena_used_bytes_peak        = store.arena_used_bytes_peak;
+        result.source_arena_reserved_bytes         = store.arena_reserved_bytes;
+        result.source_arena_reserved_bytes_peak    = store.arena_reserved_bytes_peak;
+        result.source_metadata_reserved_bytes      = store.metadata_reserved_bytes;
+        result.source_metadata_reserved_bytes_peak = store.metadata_reserved_bytes_peak;
+        result.source_in_flight_entries            = store.in_flight_entries;
+        result.source_in_flight_peak               = store.in_flight_peak;
+        result.source_cache_hits                   = store.cache_hits;
+        result.source_flight_waits                 = store.flight_waits;
+        result.source_domain_releases              = store.domain_releases;
         return result;
     }
 

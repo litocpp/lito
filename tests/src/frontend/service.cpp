@@ -77,12 +77,36 @@ TEST(FrontendSourceStore, RetainsLexedSourcesForTheScanSession) {
         EXPECT_GE(store.statistics().cache_hits, usize(1));
         EXPECT_EQ(store.statistics().live_payloads, usize(1));
         EXPECT_GT(store.statistics().retained_bytes, usize {});
+        auto first_token = (**first).token(usize(9), usize {});
+        EXPECT_EQ(first_token.text(), "int"_str);
+        EXPECT_EQ(first_token.location().source, usize(9));
+        EXPECT_EQ(first_token.location().line, usize(1));
+        EXPECT_EQ(first_token.location().column, usize(1));
     }
 
     auto reloaded = service.load(source.as_path(), SourceLoadRole::Include);
     ASSERT_TRUE(reloaded.is_ok());
     EXPECT_EQ(service.statistics().lex_builds, usize(1));
     EXPECT_GE(store.statistics().cache_hits, usize(2));
+}
+
+TEST(FrontendSourceStore, DropsStorageAfterStoreAndConsumerRelease) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner  = rstd::move(temporary).unwrap();
+    auto source = source_fixture(owner.path());
+    auto store  = FrontendSourceStore::make();
+    auto weak   = [&] {
+        auto service = FrontendService::with_store(store);
+        auto loaded  = service.load(source.as_path(), SourceLoadRole::Include);
+        EXPECT_TRUE(loaded.is_ok());
+        auto result = (*loaded).downgrade();
+        store.release();
+        EXPECT_TRUE(static_cast<bool>(result.upgrade()));
+        return result;
+    }();
+
+    EXPECT_TRUE(weak.expired());
 }
 
 TEST(FrontendSourceStore, ReleasesOnlyTheRequestedHeaderDomain) {
@@ -101,13 +125,25 @@ TEST(FrontendSourceStore, ReleasesOnlyTheRequestedHeaderDomain) {
 
     auto loaded = service.load(source.as_path(), SourceLoadRole::Include);
     ASSERT_TRUE(loaded.is_ok());
-    ASSERT_EQ(store.statistics().live_payloads, usize(1));
+    auto retained = store.statistics();
+    ASSERT_EQ(retained.live_payloads, usize(1));
+    EXPECT_GT(retained.storage_bytes, usize {});
+    EXPECT_GT(retained.token_bytes, usize {});
+    EXPECT_GT(retained.arena_used_bytes, usize {});
+    EXPECT_GE(retained.arena_reserved_bytes, retained.arena_used_bytes);
+    EXPECT_GT(retained.metadata_reserved_bytes, usize {});
 
     store.release_domain(domain.value.as_str());
 
-    EXPECT_EQ(store.statistics().live_payloads, usize {});
-    EXPECT_EQ(store.statistics().retained_bytes, usize {});
-    EXPECT_EQ(store.statistics().domain_releases, usize(1));
+    auto released = store.statistics();
+    EXPECT_EQ(released.live_payloads, usize {});
+    EXPECT_EQ(released.retained_bytes, usize {});
+    EXPECT_EQ(released.storage_bytes, usize {});
+    EXPECT_EQ(released.token_bytes, usize {});
+    EXPECT_EQ(released.arena_used_bytes, usize {});
+    EXPECT_EQ(released.arena_reserved_bytes, usize {});
+    EXPECT_EQ(released.metadata_reserved_bytes, usize {});
+    EXPECT_EQ(released.domain_releases, usize(1));
     EXPECT_FALSE((**loaded).tokens.is_empty());
 }
 

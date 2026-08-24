@@ -445,11 +445,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (finished_profile.is_err()) {
         return build_failure<BuildSummary>(rstd::move(finished_profile).unwrap_err_unchecked());
     }
-    auto scan_profile                          = rstd::move(finished_profile).unwrap_unchecked();
-    auto frontend_statistics                   = analysis_service.statistics();
-    auto scan_cache_statistics                 = scan_cache.statistics();
-    frontend_statistics.persistent_scan_hits   = scan_cache_statistics.hits;
-    frontend_statistics.persistent_scan_misses = scan_cache_statistics.misses;
+    auto scan_profile = rstd::move(finished_profile).unwrap_unchecked();
+    analysis_service.release_source_cache();
+    auto frontend_statistics                            = analysis_service.statistics();
+    auto scan_cache_statistics                          = scan_cache.statistics();
+    frontend_statistics.persistent_scan_hits            = scan_cache_statistics.hits;
+    frontend_statistics.persistent_scan_misses          = scan_cache_statistics.misses;
     frontend_statistics.persistent_scan_uncacheable     = scan_cache_statistics.uncacheable;
     frontend_statistics.persistent_scan_absent          = scan_cache_statistics.absent;
     frontend_statistics.persistent_scan_refresh         = scan_cache_statistics.refresh;
@@ -470,7 +471,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_fingerprint_builds = scan_cache_statistics.fingerprint_builds;
     frontend_statistics.persistent_fingerprint_waits  = scan_cache_statistics.fingerprint_waits;
     frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
-    analysis_service.release_source_cache();
     stage_timing.record(BuildStage::Scan, scan_started.elapsed());
 
     auto compile_plan_started = rstd::time::Instant::now();

@@ -18,7 +18,7 @@ struct SourceLocation {
     usize    column { usize(1) };
 };
 
-enum class TokenKind
+enum class TokenKind : uint8_t
 {
     Identifier,
     PpNumber,
@@ -50,9 +50,13 @@ public:
         : owned_(rstd::move(text)), hash_(comparable_name_hash(owned_.as_str())) {}
 
     static auto borrowed(ref<str> text) -> TokenText {
+        return borrowed(text, comparable_name_hash(text));
+    }
+
+    static auto borrowed(ref<str> text, uint64_t hash) -> TokenText {
         auto result         = TokenText {};
         result.borrowed_    = text;
-        result.hash_        = comparable_name_hash(text);
+        result.hash_        = hash;
         result.is_borrowed_ = true;
         return result;
     }

@@ -18,8 +18,9 @@ using lexical::SourceFile;
 using lexical::SourceId;
 using lexical::SourceLocation;
 using lexical::SourceManager;
-using lexical::LexedSource;
-using lexical::SharedLexedSource;
+using lexical::ScanFileStorage;
+using lexical::SharedScanFileStorage;
+using lexical::SourceTokenView;
 using lexical::CommentTrivia;
 using lexical::CommentKind;
 using lexical::CommentStyle;
@@ -27,6 +28,7 @@ using lexical::make_source_snapshot;
 using lexical::Token;
 using lexical::TokenKind;
 using lexical::lex;
+using lexical::lex_scan_file;
 template<typename T>
 using Result = lexical::Result<T>;
 
@@ -145,7 +147,8 @@ struct SourceProvider {
     struct Api {
         using Trait = SourceProvider;
 
-        auto load(ref<rstd::path::Path> path, SourceLoadRole role) -> Result<SharedLexedSource> {
+        auto load(ref<rstd::path::Path> path, SourceLoadRole role)
+            -> Result<SharedScanFileStorage> {
             return rstd::trait_call<0>(this, path, role);
         }
     };

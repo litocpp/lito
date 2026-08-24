@@ -59,6 +59,14 @@ class PreprocessorSession {
         Option<usize> search_index;
     };
 
+    struct PresumedLineMapping {
+        SourceId                    source {};
+        usize                       begin_offset {};
+        usize                       physical_line {};
+        usize                       presumed_line {};
+        Option<rstd::path::PathBuf> path;
+    };
+
     struct DisabledMacro {
         SharedMacroDefinition definition;
         bool                  dynamic_builtin { false };
@@ -348,6 +356,30 @@ private:
         return token.clone();
     }
 
+    auto materialize_source_token(const ScanFileStorage& storage, SourceId source, usize index)
+        -> Token {
+        ++raw_statistics_.token_clones;
+        ++raw_statistics_.source_token_materializations;
+        auto token  = storage.token(source, index).materialize();
+        auto cursor = line_mappings_.len();
+        while (cursor > usize {}) {
+            --cursor;
+            const auto& mapping = line_mappings_[cursor];
+            if (mapping.source != source || token.expansion.offset < mapping.begin_offset ||
+                token.expansion.line < mapping.physical_line) {
+                continue;
+            }
+            auto line = mapping.presumed_line + (token.expansion.line - mapping.physical_line);
+            token.spelling.line  = line;
+            token.expansion.line = line;
+            if (mapping.path.is_some()) {
+                token.presumed_path = Some(rstd::path::PathBuf::from(mapping.path->as_path()));
+            }
+            break;
+        }
+        return token;
+    }
+
     auto clone_tokens_counted(const Vec<Token>& tokens, TokenCloneKind kind) -> Vec<Token> {
         auto result = Vec<Token>::with_capacity(tokens.len());
         for (const auto& token : tokens) result.push(clone_token(token, kind));
@@ -357,14 +389,6 @@ private:
     auto record_macro_definition(const MacroDefinition& macro) -> void {
         ++raw_statistics_.macro_definitions;
         raw_statistics_.macro_operations += macro.operations().len().to_primitive();
-    }
-
-    auto without_newline(Vec<Token>& tokens, usize begin, usize end) -> Result<Vec<Token>> {
-        auto result = Vec<Token>::with_capacity(end - begin);
-        for (auto index = begin; index < end; ++index) {
-            if (tokens[index].kind != TokenKind::Newline) result.push(rstd::move(tokens[index]));
-        }
-        return Ok(rstd::move(result));
     }
 
     auto number_token(i64 value, const Token& origin) -> Token {
@@ -1476,31 +1500,48 @@ private:
         return Err(failure("#include requires a quoted or angled header"_str, location));
     }
 
-    auto detected_include_guard(const Vec<Token>& tokens) -> Option<String> {
+    auto detected_include_guard(const ScanFileStorage& storage, SourceId source) -> Option<String> {
         auto cursor = usize {};
-        while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
-        if (cursor + usize(2) >= tokens.len() || ! tokens[cursor].start_of_line ||
-            tokens[cursor].text.as_str() != "#"_str ||
-            tokens[cursor + usize(1)].text.as_str() != "ifndef"_str ||
-            tokens[cursor + usize(2)].kind != TokenKind::Identifier) {
+        while (cursor < storage.tokens.len() &&
+               storage.token(source, cursor).kind() == TokenKind::Newline) {
+            ++cursor;
+        }
+        if (cursor + usize(2) >= storage.tokens.len()) return None();
+        auto marker  = storage.token(source, cursor);
+        auto keyword = storage.token(source, cursor + usize(1));
+        auto name    = storage.token(source, cursor + usize(2));
+        if (! marker.start_of_line() || marker.text() != "#"_str ||
+            keyword.text() != "ifndef"_str || name.kind() != TokenKind::Identifier) {
             return None();
         }
-        auto guard = tokens[cursor + usize(2)].text.clone();
-        while (cursor < tokens.len() && tokens[cursor].kind != TokenKind::Newline) ++cursor;
-        while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
-        if (cursor + usize(2) >= tokens.len() || ! tokens[cursor].start_of_line ||
-            tokens[cursor].text.as_str() != "#"_str ||
-            tokens[cursor + usize(1)].text.as_str() != "define"_str ||
-            tokens[cursor + usize(2)].text.as_str() != guard.as_str()) {
+        auto guard = String::make(name.text());
+        while (cursor < storage.tokens.len() &&
+               storage.token(source, cursor).kind() != TokenKind::Newline) {
+            ++cursor;
+        }
+        while (cursor < storage.tokens.len() &&
+               storage.token(source, cursor).kind() == TokenKind::Newline) {
+            ++cursor;
+        }
+        if (cursor + usize(2) >= storage.tokens.len()) return None();
+        marker  = storage.token(source, cursor);
+        keyword = storage.token(source, cursor + usize(1));
+        name    = storage.token(source, cursor + usize(2));
+        if (! marker.start_of_line() || marker.text() != "#"_str ||
+            keyword.text() != "define"_str || name.text() != guard.as_str()) {
             return None();
         }
-        auto last = tokens.len();
-        while (last > usize {} && tokens[last - usize(1)].kind == TokenKind::Newline) --last;
+        auto last = storage.tokens.len();
+        while (last > usize {} &&
+               storage.token(source, last - usize(1)).kind() == TokenKind::Newline) {
+            --last;
+        }
         if (last < usize(2)) return None();
         auto line = last - usize(1);
-        while (line > usize {} && ! tokens[line].start_of_line) --line;
-        if (line >= last || tokens[line].text.as_str() != "#"_str || line + usize(1) >= last ||
-            tokens[line + usize(1)].text.as_str() != "endif"_str) {
+        while (line > usize {} && ! storage.token(source, line).start_of_line()) --line;
+        if (line >= last || storage.token(source, line).text() != "#"_str ||
+            line + usize(1) >= last ||
+            storage.token(source, line + usize(1)).text() != "endif"_str) {
             return None();
         }
         return Some(rstd::move(guard));
@@ -1693,16 +1734,15 @@ private:
         return Ok(empty {});
     }
 
-    auto collect_comments_through(const Vec<CommentTrivia>& comments,
-                                  usize&                    cursor,
-                                  usize                     offset,
-                                  SourceId                  source,
-                                  bool                      enabled) -> void {
-        while (cursor < comments.len() && comments[cursor].begin.offset <= offset) {
+    auto collect_comments_through(const ScanFileStorage& storage,
+                                  usize&                 cursor,
+                                  usize                  offset,
+                                  SourceId               source,
+                                  bool                   enabled) -> void {
+        while (cursor < storage.comments.len()) {
+            auto comment = storage.comment(source, cursor);
+            if (comment.begin.offset > offset) break;
             if (enabled) {
-                auto comment         = comments[cursor].clone();
-                comment.begin.source = source;
-                comment.end.source   = source;
                 active_comments_.push(rstd::move(comment));
                 ++raw_statistics_.active_comments;
             }
@@ -1737,15 +1777,8 @@ private:
         raw_statistics_.source_comments += (*loaded)->comments.len().to_primitive();
         auto source = sources_.add((*loaded)->snapshot.clone());
         if (main_file) main_source_ = source;
-        auto tokens = Vec<Token>::with_capacity((*loaded)->tokens.len());
-        for (const auto& cached : (*loaded)->tokens) {
-            auto token             = clone_token(cached, TokenCloneKind::SourceMaterialization);
-            token.spelling.source  = source;
-            token.expansion.source = source;
-            tokens.push(rstd::move(token));
-        }
         if (path_value.is_some()) {
-            auto guard = detected_include_guard(tokens);
+            auto guard = detected_include_guard(**loaded, source);
             if (guard.is_some()) {
                 include_guards_.insert(String::make(*path_value), rstd::move(guard).unwrap());
             }
@@ -1761,25 +1794,28 @@ private:
         auto normal         = Vec<Token>::make();
         auto conditions     = Vec<ConditionalFrame>::make();
         auto comment_cursor = usize {};
-        for (auto cursor = usize {}; cursor < tokens.len();) {
+        for (auto cursor = usize {}; cursor < (*loaded)->tokens.len();) {
             auto end = cursor;
-            while (end < tokens.len() && tokens[end].kind != TokenKind::Newline) ++end;
-            auto directive = cursor < end && tokens[cursor].start_of_line &&
-                             tokens[cursor].text.as_str() == "#"_str;
-            auto line_end  = end < tokens.len() ? tokens[end].spelling.offset
-                                                : (*loaded)->snapshot->contents.len();
-            collect_comments_through((*loaded)->comments,
-                                     comment_cursor,
-                                     line_end,
-                                     source,
-                                     ! directive && active(conditions));
+            while (end < (*loaded)->tokens.len() &&
+                   (*loaded)->token(source, end).kind() != TokenKind::Newline) {
+                ++end;
+            }
+            auto first =
+                cursor < end ? Some((*loaded)->token(source, cursor)) : Option<SourceTokenView> {};
+            auto directive = first.is_some() && first->start_of_line() && first->text() == "#"_str;
+            auto line_end  = end < (*loaded)->tokens.len() ? (*loaded)->token(source, end).offset()
+                                                           : (*loaded)->snapshot->contents.len();
+            collect_comments_through(
+                **loaded, comment_cursor, line_end, source, ! directive && active(conditions));
             if (! directive) {
                 if (active(conditions)) {
                     for (auto index = cursor; index < end; ++index)
-                        normal.push(rstd::move(tokens[index]));
-                    if (end < tokens.len()) normal.push(rstd::move(tokens[end]));
+                        normal.push(materialize_source_token(**loaded, source, index));
+                    if (end < (*loaded)->tokens.len()) {
+                        normal.push(materialize_source_token(**loaded, source, end));
+                    }
                 }
-                cursor = end < tokens.len() ? end + usize(1) : end;
+                cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
                 continue;
             }
 
@@ -1787,28 +1823,30 @@ private:
 
             auto flushed = flush_normal(normal);
             if (flushed.is_err()) return Err(rstd::move(flushed).unwrap_err());
-            auto line = without_newline(tokens, cursor + usize(1), end);
-            if (line.is_err()) return Err(rstd::move(line).unwrap_err());
-            if (line->is_empty()) {
-                cursor = end < tokens.len() ? end + usize(1) : end;
+            auto line = Vec<Token>::with_capacity(end - cursor - usize(1));
+            for (auto index = cursor + usize(1); index < end; ++index) {
+                line.push(materialize_source_token(**loaded, source, index));
+            }
+            if (line.is_empty()) {
+                cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
                 continue;
             }
-            if ((*line)[usize {}].kind != TokenKind::Identifier) {
+            if (line[usize {}].kind != TokenKind::Identifier) {
                 return Err(
-                    failure("invalid preprocessing directive"_str, (*line)[usize {}].expansion));
+                    failure("invalid preprocessing directive"_str, line[usize {}].expansion));
             }
-            auto keyword     = (*line)[usize {}].text.as_str();
-            auto location    = (*line)[usize {}].expansion;
-            auto rest        = move_range(*line, usize(1), line->len());
+            auto keyword     = line[usize {}].text.as_str();
+            auto location    = line[usize {}].expansion;
+            auto rest        = move_range(line, usize(1), line.len());
             auto conditional = handle_conditional(keyword, rest, location, conditions);
             if (conditional.is_err()) return Err(rstd::move(conditional).unwrap_err());
             if (*conditional) {
                 ++raw_statistics_.conditionals;
-                cursor = end < tokens.len() ? end + usize(1) : end;
+                cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
                 continue;
             }
             if (! active(conditions)) {
-                cursor = end < tokens.len() ? end + usize(1) : end;
+                cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
                 continue;
             }
 
@@ -1873,29 +1911,39 @@ private:
                         return Err(failure("invalid #line file name"_str, location));
                     }
                     presumed = Some(rstd::path::PathBuf::from(*inner));
-                }
-                auto physical  = end < tokens.len() ? tokens[end].expansion.line + usize(1)
-                                                    : location.line + usize(1);
-                auto requested = as_cast<usize>(*value);
-                for (auto adjust = end < tokens.len() ? end + usize(1) : end; adjust < tokens.len();
-                     ++adjust) {
-                    if (tokens[adjust].expansion.line >= physical) {
-                        auto line = requested + (tokens[adjust].expansion.line - physical);
-                        tokens[adjust].spelling.line  = line;
-                        tokens[adjust].expansion.line = line;
-                        if (presumed.is_some()) {
-                            tokens[adjust].presumed_path =
-                                Some(rstd::path::PathBuf::from(presumed->as_path()));
+                } else {
+                    auto mapping_cursor = line_mappings_.len();
+                    while (mapping_cursor > usize {}) {
+                        --mapping_cursor;
+                        const auto& mapping = line_mappings_[mapping_cursor];
+                        if (mapping.source == source && mapping.path.is_some()) {
+                            presumed = Some(rstd::path::PathBuf::from(mapping.path->as_path()));
+                            break;
                         }
                     }
                 }
+                auto physical  = end < (*loaded)->tokens.len()
+                                     ? (*loaded)->token(source, end).location().line + usize(1)
+                                     : (*loaded)->token(source, cursor).location().line + usize(1);
+                auto requested = as_cast<usize>(*value);
+                auto next      = end < (*loaded)->tokens.len() ? end + usize(1) : end;
+                auto begin_offset = next < (*loaded)->tokens.len()
+                                        ? (*loaded)->token(source, next).offset()
+                                        : (*loaded)->snapshot->contents.len();
+                line_mappings_.push(PresumedLineMapping {
+                    .source        = source,
+                    .begin_offset  = begin_offset,
+                    .physical_line = physical,
+                    .presumed_line = requested,
+                    .path          = rstd::move(presumed),
+                });
             } else {
                 return Err(failure(
                     rstd::format("unsupported preprocessing directive '#{}'", keyword), location));
             }
-            cursor = end < tokens.len() ? end + usize(1) : end;
+            cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
         }
-        collect_comments_through((*loaded)->comments,
+        collect_comments_through(**loaded,
                                  comment_cursor,
                                  (*loaded)->snapshot->contents.len(),
                                  source,
@@ -1933,6 +1981,7 @@ private:
     Vec<frontend::ExternalMacroMaterialization> external_macros_;
     Vec<frontend::EmbeddedInput>                embedded_inputs_;
     Vec<IncludeFrame>                           include_stack_;
+    Vec<PresumedLineMapping>                    line_mappings_;
     Vec<CommentTrivia>                          active_comments_;
     rstd::collections::BTreeMap<String, empty>  once_files_;
     rstd::collections::BTreeMap<String, String> include_guards_;

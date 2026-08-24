@@ -287,3 +287,27 @@ TEST(LexicalFragment, ValidatesIdentifiersAndPreservesOrigin) {
         EXPECT_EQ(token.expansion.column, origin.column);
     }
 }
+
+TEST(LexicalSourceStorage, PreservesTokensAcrossBlocks) {
+    auto contents = String::make();
+    for (auto line = usize {}; line < usize(300); ++line) contents.push_str("name\n"_str);
+    auto source  = fixture_source(contents.as_str());
+    auto storage = lex_scan_file(source);
+    ASSERT_TRUE(storage.is_ok());
+    ASSERT_EQ(storage->tokens.len(), usize(600));
+
+    auto token = storage->token(usize(11), usize(256));
+    EXPECT_EQ(token.text(), "name"_str);
+    EXPECT_EQ(token.location().source, usize(11));
+    EXPECT_EQ(token.location().line, usize(129));
+    EXPECT_EQ(token.location().column, usize(1));
+    EXPECT_TRUE(token.start_of_line());
+
+    auto statistics = storage->statistics();
+    EXPECT_EQ(statistics.source_bytes, contents.len());
+    EXPECT_EQ(statistics.token_count, usize(600));
+    EXPECT_EQ(statistics.token_bytes, usize(600 * sizeof(CompactSourceToken)));
+    EXPECT_GE(statistics.arena_used_bytes, statistics.token_bytes);
+    EXPECT_GE(statistics.arena_reserved_bytes, statistics.arena_used_bytes);
+    EXPECT_GE(statistics.retained_bytes, statistics.source_reserved_bytes);
+}

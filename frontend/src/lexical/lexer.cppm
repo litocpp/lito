@@ -268,14 +268,90 @@ auto scan_preprocessing_token(slice<u8> bytes, usize start, SourceLocation locat
 export namespace lito::frontend::lexical
 {
 
-auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
-    -> Result<LexedFile> {
-    auto tokens     = Vec<Token>::make();
-    auto comments   = Vec<CommentTrivia>::make();
-    auto bytes      = source.contents().as_bytes();
-    auto token_text = [borrow_spelling](ref<str> text) -> TokenText {
-        return borrow_spelling ? TokenText::borrowed(text) : TokenText { String::make(text) };
-    };
+class LexedFileSink {
+public:
+    explicit LexedFileSink(bool borrow_spelling): borrow_spelling_(borrow_spelling) {}
+
+    void push_token(const SourceFile& source,
+                    TokenKind         kind,
+                    usize             offset,
+                    usize             length,
+                    SourceLocation    location,
+                    bool              start_of_line,
+                    bool              leading_space) {
+        auto text = source.contents().get(offset, offset + length).unwrap();
+        append_token(tokens_,
+                     kind,
+                     borrow_spelling_ ? TokenText::borrowed(text)
+                                      : TokenText { String::make(text) },
+                     location,
+                     start_of_line,
+                     leading_space);
+    }
+
+    void push_comment(const SourceFile& source,
+                      CommentKind       kind,
+                      CommentStyle      style,
+                      usize             begin,
+                      usize             end,
+                      SourceLocation    begin_location,
+                      SourceLocation    end_location,
+                      bool              start_of_line) {
+        auto text = source.contents().get(begin, end).unwrap();
+        comments_.push(CommentTrivia {
+            .kind  = kind,
+            .style = style,
+            .text = borrow_spelling_ ? TokenText::borrowed(text) : TokenText { String::make(text) },
+            .begin         = begin_location,
+            .end           = end_location,
+            .start_of_line = start_of_line,
+        });
+    }
+
+    auto finish() -> LexedFile {
+        return LexedFile { .tokens = rstd::move(tokens_), .comments = rstd::move(comments_) };
+    }
+
+private:
+    Vec<Token>         tokens_;
+    Vec<CommentTrivia> comments_;
+    bool               borrow_spelling_;
+};
+
+class ScanFileStorageSink {
+public:
+    explicit ScanFileStorageSink(SharedSourceSnapshot snapshot): builder_(rstd::move(snapshot)) {}
+
+    void push_token(const SourceFile&,
+                    TokenKind kind,
+                    usize     offset,
+                    usize     length,
+                    SourceLocation,
+                    bool start_of_line,
+                    bool leading_space) {
+        builder_.push_token(kind, offset, length, start_of_line, leading_space);
+    }
+
+    void push_comment(const SourceFile&,
+                      CommentKind  kind,
+                      CommentStyle style,
+                      usize        begin,
+                      usize        end,
+                      SourceLocation,
+                      SourceLocation,
+                      bool start_of_line) {
+        builder_.push_comment(kind, style, begin, end, start_of_line);
+    }
+
+    auto finish() -> ScanFileStorage { return builder_.finish(); }
+
+private:
+    ScanFileStorageBuilder builder_;
+};
+
+template<typename Sink>
+auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
+    auto bytes         = source.contents().as_bytes();
     auto index         = usize {};
     auto line          = usize(1);
     auto column        = usize(1);
@@ -303,14 +379,8 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
                 bytes[index + usize(1)] == u8('\n')) {
                 ++index;
             }
-            append_token(
-                tokens,
-                TokenKind::Newline,
-                token_text(
-                    source.contents().get(location.offset, location.offset + usize(1)).unwrap()),
-                location,
-                line_start,
-                false);
+            sink.push_token(
+                source, TokenKind::Newline, location.offset, usize(1), location, line_start, false);
             ++index;
             ++line;
             column        = usize(1);
@@ -347,16 +417,16 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
                         bytes[start.offset + usize(3)] != u8('/'))) {
                 kind = CommentKind::OuterDocumentation;
             }
-            comments.push(CommentTrivia {
-                .kind  = kind,
-                .style = CommentStyle::Line,
-                .text  = token_text(source.contents().get(start.offset, index).unwrap()),
-                .begin = start,
-                .end =
-                    SourceLocation {
-                        .source = source.id, .offset = index, .line = line, .column = column },
-                .start_of_line = comment_line_start,
-            });
+            sink.push_comment(
+                source,
+                kind,
+                CommentStyle::Line,
+                start.offset,
+                index,
+                start,
+                SourceLocation {
+                    .source = source.id, .offset = index, .line = line, .column = column },
+                comment_line_start);
             continue;
         }
         if (value == u8('/') && index + usize(1) < bytes.len() &&
@@ -385,14 +455,13 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
                         bytes[index + usize(1)] == u8('\n')) {
                         ++index;
                     }
-                    append_token(tokens,
-                                 TokenKind::Newline,
-                                 token_text(source.contents()
-                                                .get(location.offset, location.offset + usize(1))
-                                                .unwrap()),
-                                 location,
-                                 line_start,
-                                 false);
+                    sink.push_token(source,
+                                    TokenKind::Newline,
+                                    location.offset,
+                                    usize(1),
+                                    location,
+                                    line_start,
+                                    false);
                     ++index;
                     ++line;
                     column     = usize(1);
@@ -413,16 +482,16 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
                         bytes[start.offset + usize(3)] != u8('*'))) {
                 kind = CommentKind::OuterDocumentation;
             }
-            comments.push(CommentTrivia {
-                .kind  = kind,
-                .style = CommentStyle::Block,
-                .text  = token_text(source.contents().get(start.offset, index).unwrap()),
-                .begin = start,
-                .end =
-                    SourceLocation {
-                        .source = source.id, .offset = index, .line = line, .column = column },
-                .start_of_line = comment_line_start,
-            });
+            sink.push_comment(
+                source,
+                kind,
+                CommentStyle::Block,
+                start.offset,
+                index,
+                start,
+                SourceLocation {
+                    .source = source.id, .offset = index, .line = line, .column = column },
+                comment_line_start);
             continue;
         }
 
@@ -438,11 +507,31 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
 
         auto spelling = source.contents().get(token_start, index);
         if (spelling.is_none()) return lex_failure("invalid UTF-8 token boundary"_str, location);
-        append_token(tokens, kind, token_text(*spelling), location, line_start, pending_space);
+        sink.push_token(
+            source, kind, token_start, index - token_start, location, line_start, pending_space);
         line_start    = false;
         pending_space = false;
     }
-    return Ok(LexedFile { .tokens = rstd::move(tokens), .comments = rstd::move(comments) });
+    return Ok(empty {});
+}
+
+auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
+    -> Result<LexedFile> {
+    auto sink   = LexedFileSink(borrow_spelling);
+    auto result = lex_into(source, sink);
+    if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+    return Ok(sink.finish());
+}
+
+auto lex_scan_file(const SourceFile& source) -> Result<ScanFileStorage> {
+    if (source.contents().len().to_primitive() > uint32_t(-1)) {
+        return lex_failure("source file exceeds compact scan offset range"_str,
+                           SourceLocation { .source = source.id });
+    }
+    auto sink   = ScanFileStorageSink(source.snapshot.clone());
+    auto result = lex_into(source, sink);
+    if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+    return Ok(sink.finish());
 }
 
 auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<Token>> {

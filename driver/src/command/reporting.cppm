@@ -197,6 +197,25 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output, "source retained bytes"_str, summary.frontend.source_retained_bytes);
     append_metric(
         output, "source retained bytes peak"_str, summary.frontend.source_retained_bytes_peak);
+    append_metric(output, "source storage bytes"_str, summary.frontend.source_storage_bytes);
+    append_metric(
+        output, "source storage bytes peak"_str, summary.frontend.source_storage_bytes_peak);
+    append_metric(output, "source token bytes"_str, summary.frontend.source_token_bytes);
+    append_metric(output, "source token bytes peak"_str, summary.frontend.source_token_bytes_peak);
+    append_metric(output, "source arena used bytes"_str, summary.frontend.source_arena_used_bytes);
+    append_metric(
+        output, "source arena used bytes peak"_str, summary.frontend.source_arena_used_bytes_peak);
+    append_metric(
+        output, "source arena reserved bytes"_str, summary.frontend.source_arena_reserved_bytes);
+    append_metric(output,
+                  "source arena reserved bytes peak"_str,
+                  summary.frontend.source_arena_reserved_bytes_peak);
+    append_metric(output,
+                  "source metadata reserved bytes"_str,
+                  summary.frontend.source_metadata_reserved_bytes);
+    append_metric(output,
+                  "source metadata reserved bytes peak"_str,
+                  summary.frontend.source_metadata_reserved_bytes_peak);
     append_metric(
         output, "source in-flight entries"_str, summary.frontend.source_in_flight_entries);
     append_metric(output, "source in-flight peak"_str, summary.frontend.source_in_flight_peak);
