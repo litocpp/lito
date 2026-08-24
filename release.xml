@@ -1,3 +1,11 @@
+<release version="0.6.1" date="2026-08-24">
+  <description>
+    <ul>
+      <li>Compile-only pkg-config dependencies.</li>
+      <li>Git LFS support for cached Git source checkouts.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.6.0" date="2026-08-24">
   <description>
     <ul>

@@ -4,7 +4,7 @@ members = ["third-party/zstd", "third-party/libsodium", "archive", "frontend", "
 default-members = ["cli"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies.lito-frontend]
