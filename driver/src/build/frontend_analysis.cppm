@@ -17,6 +17,20 @@ using namespace rstd::literals;
 namespace lito
 {
 
+struct HeaderClassifierContext {
+    const cpp::HeaderOwnershipIndex* ownership {};
+};
+
+auto classify_header(const void* context, ref<rstd::path::Path> path)
+    -> frontend::HeaderCacheClassification {
+    const auto& classifier = *static_cast<const HeaderClassifierContext*>(context);
+    if (classifier.ownership == nullptr) return frontend::HeaderCacheClassification {};
+    auto classification = classifier.ownership->classify(path);
+    return frontend::HeaderCacheClassification {
+        .retention_domain = cpp::header_retention_domain(classification),
+    };
+}
+
 struct FrontendAnalysisTaskOutcome {
     BuildResult<frontend::FrontendAnalysis> analysis;
     frontend::FrontendStatistics            statistics;
@@ -24,20 +38,23 @@ struct FrontendAnalysisTaskOutcome {
 };
 
 class FrontendAnalysisTask {
-    const ClangToolchain*         toolchain_ {};
-    frontend::FrontendSourceStore source_store_;
-    ScanCacheTransaction          cache_;
-    PathBuf                       source_;
-    toolchain::PreparedScanInput  input_;
-    ScanTaskProfileContext        profile_;
+    const ClangToolchain*            toolchain_ {};
+    const cpp::HeaderOwnershipIndex* header_ownership_ {};
+    frontend::FrontendSourceStore    source_store_;
+    ScanCacheTransaction             cache_;
+    PathBuf                          source_;
+    toolchain::PreparedScanInput     input_;
+    ScanTaskProfileContext           profile_;
 
-    FrontendAnalysisTask(const ClangToolchain&         toolchain,
-                         frontend::FrontendSourceStore source_store,
-                         ScanCacheTransaction          cache,
-                         PathBuf                       source,
-                         toolchain::PreparedScanInput  input,
-                         ScanTaskProfileContext        profile)
+    FrontendAnalysisTask(const ClangToolchain&            toolchain,
+                         const cpp::HeaderOwnershipIndex& header_ownership,
+                         frontend::FrontendSourceStore    source_store,
+                         ScanCacheTransaction             cache,
+                         PathBuf                          source,
+                         toolchain::PreparedScanInput     input,
+                         ScanTaskProfileContext           profile)
         : toolchain_(rstd::addressof(toolchain)),
+          header_ownership_(rstd::addressof(header_ownership)),
           source_store_(rstd::move(source_store)),
           cache_(rstd::move(cache)),
           source_(rstd::move(source)),
@@ -55,10 +72,16 @@ public:
         if (created_profiler.is_err()) {
             return Err(BuildError::Message(rstd::move(created_profiler).unwrap_err_unchecked()));
         }
-        auto profiler = rstd::move(created_profiler).unwrap_unchecked();
-        auto observer = FrontendTaskProfileObserver::make(profiler);
-        auto frontend_service =
-            frontend::FrontendService::with_store(source_store_, Some(observer.observer()));
+        auto profiler           = rstd::move(created_profiler).unwrap_unchecked();
+        auto observer           = FrontendTaskProfileObserver::make(profiler);
+        auto classifier_context = HeaderClassifierContext { .ownership = header_ownership_ };
+        auto frontend_service   = frontend::FrontendService::with_store(
+            source_store_,
+            Some(observer.observer()),
+            Some(frontend::FrontendHeaderClassifier {
+                .context  = rstd::addressof(classifier_context),
+                .classify = classify_header,
+            }));
         auto analysis = [&]() -> BuildResult<frontend::FrontendAnalysis> {
             auto cached = cache_.lookup();
             if (cached.is_err()) {
@@ -134,6 +157,7 @@ class FrontendAnalysisService {
             .external_macros          = scan_input.external_macros.clone(),
         };
         return Ok(FrontendAnalysisTask(toolchain_,
+                                       header_ownership_,
                                        source_store_.clone(),
                                        cache_.begin(rstd::move(cache_input)),
                                        PathBuf::from(source),
@@ -142,14 +166,15 @@ class FrontendAnalysisService {
     }
 
 public:
-    static auto make(const BuildLayout&         layout,
-                     const ClangToolchain&      toolchain,
-                     frontend::FrontendService& frontend_service,
-                     ScanCacheSession&          cache,
-                     ScanProfiler&              profiler) -> FrontendAnalysisService {
-        return FrontendAnalysisService {
-            layout, toolchain, frontend_service.source_store(), cache.clone(), profiler
-        };
+    static auto make(const BuildLayout&               layout,
+                     const ClangToolchain&            toolchain,
+                     const cpp::HeaderOwnershipIndex& header_ownership,
+                     frontend::FrontendService&       frontend_service,
+                     ScanCacheSession&                cache,
+                     ScanProfiler&                    profiler) -> FrontendAnalysisService {
+        return FrontendAnalysisService { layout,           toolchain,
+                                         header_ownership, frontend_service.source_store(),
+                                         cache.clone(),    profiler };
     }
 
     auto prepare(const lito::package::PackageTargetId& target,
@@ -286,32 +311,37 @@ public:
         result.source_retained_bytes_peak = store.retained_bytes_peak;
         result.source_in_flight_entries   = store.in_flight_entries;
         result.source_in_flight_peak      = store.in_flight_peak;
-        result.source_weak_hits           = store.weak_hits;
+        result.source_cache_hits          = store.cache_hits;
         result.source_flight_waits        = store.flight_waits;
-        result.source_expired_entries     = store.expired_entries;
+        result.source_domain_releases     = store.domain_releases;
         return result;
     }
 
     auto release_source_cache() -> void { source_store_.release(); }
 
+    auto release_header_domain(ref<str> domain) -> void { source_store_.release_domain(domain); }
+
 private:
-    FrontendAnalysisService(const BuildLayout&            layout,
-                            const ClangToolchain&         toolchain,
-                            frontend::FrontendSourceStore source_store,
-                            ScanCacheSession              cache,
-                            ScanProfiler&                 profiler)
+    FrontendAnalysisService(const BuildLayout&               layout,
+                            const ClangToolchain&            toolchain,
+                            const cpp::HeaderOwnershipIndex& header_ownership,
+                            frontend::FrontendSourceStore    source_store,
+                            ScanCacheSession                 cache,
+                            ScanProfiler&                    profiler)
         : layout_(layout),
           toolchain_(toolchain),
+          header_ownership_(header_ownership),
           source_store_(rstd::move(source_store)),
           cache_(rstd::move(cache)),
           profiler_(profiler) {}
 
-    const BuildLayout&            layout_;
-    const ClangToolchain&         toolchain_;
-    frontend::FrontendSourceStore source_store_;
-    ScanCacheSession              cache_;
-    ScanProfiler&                 profiler_;
-    frontend::FrontendStatistics  statistics_;
+    const BuildLayout&               layout_;
+    const ClangToolchain&            toolchain_;
+    const cpp::HeaderOwnershipIndex& header_ownership_;
+    frontend::FrontendSourceStore    source_store_;
+    ScanCacheSession                 cache_;
+    ScanProfiler&                    profiler_;
+    frontend::FrontendStatistics     statistics_;
 };
 
 } // namespace lito

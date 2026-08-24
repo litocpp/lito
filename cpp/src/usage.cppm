@@ -8,6 +8,7 @@ import rstd;
 import lito.core;
 import :compiler.option;
 import :c.compiler;
+import :header;
 import :link;
 
 using namespace rstd::prelude;
@@ -147,14 +148,16 @@ struct ResolvedExternalTargetUsage {
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };
-    LanguageArgumentLayer compile_arguments;
-    String                identity;
+    LanguageArgumentLayer   compile_arguments;
+    Vec<ResolvedHeaderRoot> header_roots;
+    String                  identity;
 
     auto clone() const -> ResolvedExternalTargetUsage {
         return ResolvedExternalTargetUsage {
             .name              = name.clone(),
             .visibility        = visibility,
             .compile_arguments = as<Clone>(compile_arguments).clone(),
+            .header_roots      = as<Clone>(header_roots).clone(),
             .identity          = identity.clone(),
         };
     }

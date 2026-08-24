@@ -138,7 +138,7 @@ class PreprocessorSession {
         size_t directives {};
         size_t conditionals {};
         size_t macro_lookups {};
-        size_t macro_lookup_hits {};
+        size_t macro_negative_cache_hits {};
         size_t macro_expansions {};
         size_t macro_definitions {};
         size_t macro_operations {};
@@ -271,7 +271,7 @@ private:
             .directives                    = usize(raw_statistics_.directives),
             .conditionals                  = usize(raw_statistics_.conditionals),
             .macro_lookups                 = usize(raw_statistics_.macro_lookups),
-            .macro_lookup_hits             = usize(raw_statistics_.macro_lookup_hits),
+            .macro_negative_cache_hits     = usize(raw_statistics_.macro_negative_cache_hits),
             .macro_expansions              = usize(raw_statistics_.macro_expansions),
             .macro_definitions             = usize(raw_statistics_.macro_definitions),
             .macro_operations              = usize(raw_statistics_.macro_operations),
@@ -917,7 +917,7 @@ private:
             }
             auto revision = macros_.revision();
             if (token.is_known_unavailable_macro(revision)) {
-                ++raw_statistics_.macro_lookup_hits;
+                ++raw_statistics_.macro_negative_cache_hits;
                 output.push(rstd::move(token));
                 ++index;
                 continue;
@@ -1726,14 +1726,16 @@ private:
                 if (*defined) return Ok(empty {});
             }
         }
-        auto loaded = as<SourceProvider>(source_provider_).load(path);
+        auto main_file = include_stack_.is_empty();
+        auto loaded =
+            as<SourceProvider>(source_provider_)
+                .load(path, main_file ? SourceLoadRole::Primary : SourceLoadRole::Include);
         if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
         input_bytes_ += (*loaded)->snapshot->contents.len();
         ++raw_statistics_.files;
         raw_statistics_.source_tokens += (*loaded)->tokens.len().to_primitive();
         raw_statistics_.source_comments += (*loaded)->comments.len().to_primitive();
-        auto source    = sources_.add((*loaded)->snapshot.clone());
-        auto main_file = include_stack_.is_empty();
+        auto source = sources_.add((*loaded)->snapshot.clone());
         if (main_file) main_source_ = source;
         auto tokens = Vec<Token>::with_capacity((*loaded)->tokens.len());
         for (const auto& cached : (*loaded)->tokens) {

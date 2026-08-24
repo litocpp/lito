@@ -117,6 +117,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     });
     ASSERT_TRUE(updated.is_ok());
     EXPECT_EQ(fetch_events.count, usize(1));
+    EXPECT_EQ(fetch_events.completed, usize(1));
 
     auto locked = lito::lock::load_locked_project(project.as_path());
     ASSERT_TRUE(locked.is_ok());
@@ -484,6 +485,7 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     }
     ASSERT_TRUE(updated.is_ok());
     EXPECT_EQ(fetch_events.count, usize(1));
+    EXPECT_EQ(fetch_events.completed, usize(1));
     EXPECT_TRUE(fetch_events.source_matches);
     EXPECT_TRUE(fetch_events.destination_matches);
     auto updated_commit = resolved_git_commit(update_graph);

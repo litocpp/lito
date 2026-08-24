@@ -23,7 +23,11 @@ void forward_source_event(void* context, const lito::source::SourceEvent& event)
     auto* observer = static_cast<const BuildEventSink*>(context);
     if (observer == nullptr || observer->notify == nullptr) return;
     observer->notify(observer->context,
-                     BuildEvent { build_event_kind(event.kind), event.source, event.destination });
+                     BuildEvent { build_event_kind(event.kind),
+                                  event.source,
+                                  event.destination,
+                                  event.elapsed,
+                                  event.completed });
 }
 
 auto source_observer(const BuildEventSink& observer) noexcept -> lito::source::SourceEventSink {

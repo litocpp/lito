@@ -2,6 +2,7 @@ module lito.driver:cache.scan;
 
 import rstd;
 import rstd.json;
+import lito.crypto;
 import lito.core;
 import lito.cpp;
 import lito.frontend;
@@ -604,13 +605,10 @@ class ScanCacheSession {
                                          rstd::sync::Arc<rstd::io::error::Error>::make(
                                              rstd::move(contents).unwrap_err()))));
             }
-            auto hash = cache::FNV_OFFSET;
-            cache::add_text(hash, "lito-file-content-v1"_str);
-            cache::add_bytes(hash, contents->as_slice());
             return Ok(FileFingerprint {
                 .path        = PathBuf::from(path),
                 .size        = metadata->size(),
-                .fingerprint = cache::hex(hash),
+                .fingerprint = lito::crypto::sha256_hex(contents->as_slice()),
             });
         });
         {

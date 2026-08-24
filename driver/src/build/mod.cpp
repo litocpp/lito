@@ -80,6 +80,8 @@ struct PreparationObserverContext {
 
 auto external_preparation_operation(BuildEventKind kind) -> Option<ExternalPreparationOperation> {
     switch (kind) {
+    case BuildEventKind::Fetch: return Some(ExternalPreparationOperation::SourceFetch);
+    case BuildEventKind::Extract: return Some(ExternalPreparationOperation::SourceExtract);
     case BuildEventKind::CMakeConfigure: return Some(ExternalPreparationOperation::CMakeConfigure);
     case BuildEventKind::CMakeBuild: return Some(ExternalPreparationOperation::CMakeBuild);
     case BuildEventKind::CMakeInstall: return Some(ExternalPreparationOperation::CMakeInstall);
@@ -326,11 +328,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto cache_environment = rstd::move(created_environment).unwrap();
     auto scan_cache        = ScanCacheSession::create(cache_environment);
-    auto analysis_service =
-        FrontendAnalysisService::make(layout, toolchain, frontend_service, scan_cache, profiler);
 
     stage_timing.record(BuildStage::TargetPrepare, target_prepare_started.elapsed());
-    auto script_result     = stage_timing.measure(BuildStage::Script, [&] {
+    auto script_result          = stage_timing.measure(BuildStage::Script, [&] {
         return execute_build_script(metadata,
                                     native_target_plan,
                                     layout,
@@ -346,17 +346,41 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                     request.sources,
                                     execution->jobs);
     });
-    auto script_report     = rstd_try(rstd::move(script_result));
-    auto runtime_result    = stage_timing.measure(BuildStage::RuntimeResource, [&] {
+    auto script_report          = rstd_try(rstd::move(script_result));
+    auto runtime_result         = stage_timing.measure(BuildStage::RuntimeResource, [&] {
         return resolve_runtime_resources(metadata, layout, selected_targets, request.observer);
     });
-    auto runtime_resources = rstd_try(rstd::move(runtime_result));
+    auto runtime_resources      = rstd_try(rstd::move(runtime_result));
+    auto scan_started           = rstd::time::Instant::now();
+    auto scan_span              = profiler.span(ScanProbe::Total);
+    auto toolchain_header_roots = profiler.measure(
+        ScanProbe::Environment, [&]() -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
+            auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
+            for (auto target : native_target_plan.target_order) {
+                auto resolved =
+                    toolchain.header_roots(native_target_plan.contexts[target],
+                                           metadata.targets[target].source_root.as_path());
+                if (resolved.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+                }
+                for (auto& root : *resolved) roots.push(rstd::move(root));
+            }
+            return Ok(rstd::move(roots));
+        });
+    if (toolchain_header_roots.is_err()) {
+        return Err(rstd::move(toolchain_header_roots).unwrap_err());
+    }
+    auto header_ownership = cpp::resolve_header_ownership(
+        metadata, native_target_plan, rstd::move(toolchain_header_roots).unwrap());
+    auto analysis_service = FrontendAnalysisService::make(
+        layout, toolchain, header_ownership, frontend_service, scan_cache, profiler);
+    auto semantic_scan_graph =
+        cpp::SemanticScanGraphBuilder::make(metadata, native_target_plan, header_ownership);
 
-    auto scan_started = rstd::time::Instant::now();
-    auto scan_span    = profiler.span(ScanProbe::Total);
-    auto discovered   = profiler.measure(ScanProbe::Discovery, [&] {
+    auto discovered = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_sources(metadata,
                                         native_target_plan,
+                                        semantic_scan_graph,
                                         analysis_service,
                                         request.observer,
                                         execution->jobs,
@@ -390,6 +414,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto standard_modules = prepare_standard_library_modules(
         prepared_build, scans, analysis_service, layout, toolchain);
     if (standard_modules.is_err()) return Err(rstd::move(standard_modules).unwrap_err());
+    auto finalized_scan_graph = rstd::move(semantic_scan_graph).finalize(units, scans);
+    if (finalized_scan_graph.is_err()) {
+        return build_failure<BuildSummary>(rstd::move(finalized_scan_graph).unwrap_err());
+    }
+    auto incremental_graph     = rstd::move(finalized_scan_graph).unwrap();
+    auto scan_graph_statistics = incremental_graph.statistics;
 
     auto convention_valid = profiler.measure(ScanProbe::Conventions, [&] {
         return cpp::validate_module_conventions(package, units, scans);
@@ -400,7 +430,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     auto bmi_format         = toolchain.bmi_format(project.platform);
     auto resolved_semantics = profiler.measure(ScanProbe::ModuleGraph, [&] {
-        return cpp::resolve_semantic_build(package_plan, units, scans, bmi_format);
+        return cpp::resolve_semantic_build(
+            package_plan, units, scans, incremental_graph, bmi_format);
     });
     if (resolved_semantics.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(resolved_semantics).unwrap_err()));
@@ -777,6 +808,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         .compiled                   = compiled,
         .reused                     = reused,
         .frontend                   = frontend_statistics,
+        .scan_graph                 = scan_graph_statistics,
         .toolchain                  = toolchain.statistics(),
         .scan_profile               = rstd::move(scan_profile),
         .compile_execution          = compile_statistics,

@@ -9,6 +9,7 @@ import lito.core;
 import :bmi;
 import :build.plan;
 import :compiler.option;
+import :header;
 import :package.metadata;
 import :package.spec;
 import :package.target;
@@ -512,6 +513,64 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
         identity.push_str(rstd::format("undefine:{}:{}\n", value.len(), value.as_str()).as_str());
     result.identity = lito::crypto::sha256_hex(identity.as_str());
     return result;
+}
+
+auto resolve_header_ownership(const PackageMetadata&          package,
+                              const ResolvedNativeTargetPlan& plan,
+                              Vec<ResolvedHeaderRoot> toolchain_roots) -> HeaderOwnershipIndex {
+    auto roots       = rstd::move(toolchain_roots);
+    auto append_root = [&](ref<rstd::path::Path> path,
+                           HeaderOwner           owner,
+                           HeaderAccess          access,
+                           HeaderIncludeKind     kind,
+                           String                provenance) {
+        if (! path.is_absolute()) return;
+        auto canonical = rstd::fs::canonicalize(path);
+        if (canonical.is_err()) return;
+        auto metadata = rstd::fs::metadata(canonical->as_path());
+        if (metadata.is_err() || ! metadata->is_dir()) return;
+        roots.push(ResolvedHeaderRoot {
+            .root       = rstd::move(canonical).unwrap(),
+            .owner      = rstd::move(owner),
+            .access     = rstd::move(access),
+            .kind       = kind,
+            .provenance = rstd::move(provenance),
+        });
+    };
+    for (auto target : plan.target_order) {
+        const auto& resolved = package.targets[target];
+        for (const auto& root : resolved.usage.public_include_directories) {
+            append_root(
+                root.as_path(),
+                HeaderOwner::ProjectPackage(resolved.package_source_identity.clone()),
+                HeaderAccess::Public(),
+                HeaderIncludeKind::User,
+                rstd::format("target '{}' public include", target_text(resolved.id).as_str()));
+        }
+        for (const auto& root : resolved.usage.private_include_directories) {
+            append_root(
+                root.as_path(),
+                HeaderOwner::ProjectPackage(resolved.package_source_identity.clone()),
+                HeaderAccess::TargetPrivate(resolved.id.clone()),
+                HeaderIncludeKind::User,
+                rstd::format("target '{}' private include", target_text(resolved.id).as_str()));
+        }
+        for (const auto& dependency : resolved.external_dependencies) {
+            for (const auto& external : dependency.targets) {
+                for (const auto& root : external.header_roots) {
+                    append_root(
+                        root.root.as_path(),
+                        as<Clone>(root.owner).clone(),
+                        as<Clone>(root.access).clone(),
+                        root.kind,
+                        rstd::format("{} consumed by '{}'",
+                                     root.provenance.as_str(),
+                                     lito::package::package_target_id_text(resolved.id).as_str()));
+                }
+            }
+        }
+    }
+    return HeaderOwnershipIndex::make(rstd::move(roots));
 }
 
 auto add_private_include_directory(CompileContext& context, PathBuf path) -> bool {

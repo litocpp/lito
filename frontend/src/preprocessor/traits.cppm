@@ -134,13 +134,19 @@ struct Event {
     SourceLocation              location;
 };
 
+enum class SourceLoadRole
+{
+    Primary,
+    Include,
+};
+
 struct SourceProvider {
     template<typename Self, typename = void>
     struct Api {
         using Trait = SourceProvider;
 
-        auto load(ref<rstd::path::Path> path) -> Result<SharedLexedSource> {
-            return rstd::trait_call<0>(this, path);
+        auto load(ref<rstd::path::Path> path, SourceLoadRole role) -> Result<SharedLexedSource> {
+            return rstd::trait_call<0>(this, path, role);
         }
     };
 
@@ -302,7 +308,7 @@ struct PreprocessorStatistics {
     usize directives {};
     usize conditionals {};
     usize macro_lookups {};
-    usize macro_lookup_hits {};
+    usize macro_negative_cache_hits {};
     usize macro_expansions {};
     usize macro_definitions {};
     usize macro_operations {};
@@ -334,7 +340,7 @@ struct PreprocessorStatistics {
         directives += other.directives;
         conditionals += other.conditionals;
         macro_lookups += other.macro_lookups;
-        macro_lookup_hits += other.macro_lookup_hits;
+        macro_negative_cache_hits += other.macro_negative_cache_hits;
         macro_expansions += other.macro_expansions;
         macro_definitions += other.macro_definitions;
         macro_operations += other.macro_operations;

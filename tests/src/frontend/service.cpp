@@ -7,6 +7,7 @@ import lito.frontend;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito::frontend;
+using lito::frontend::preprocessor::SourceLoadRole;
 using PathBuf = rstd::path::PathBuf;
 using rstd::sync::atomic::Atomic;
 using rstd::sync::atomic::Ordering;
@@ -18,6 +19,31 @@ struct SourceReadGate {
     Atomic<bool> entered { false };
     Atomic<bool> release { false };
 };
+
+struct HeaderDomain {
+    String value;
+};
+
+struct HeaderDomains {
+    PathBuf first;
+    String  first_domain;
+    String  second_domain;
+};
+
+auto classify_header_domain(const void* context, ref<rstd::path::Path>)
+    -> HeaderCacheClassification {
+    const auto& domain = *static_cast<const HeaderDomain*>(context);
+    return HeaderCacheClassification { .retention_domain = Some(domain.value.clone()) };
+}
+
+auto classify_distinct_header_domains(const void* context, ref<rstd::path::Path> path)
+    -> HeaderCacheClassification {
+    const auto& domains = *static_cast<const HeaderDomains*>(context);
+    return HeaderCacheClassification {
+        .retention_domain = Some(path == domains.first.as_path() ? domains.first_domain.clone()
+                                                                 : domains.second_domain.clone()),
+    };
+}
 
 auto begin_source_activity(void* context, FrontendActivity activity) noexcept -> void {
     if (activity != FrontendActivity::SourceRead) return;
@@ -34,7 +60,7 @@ auto source_fixture(ref<rstd::path::Path> root) -> PathBuf {
 
 } // namespace
 
-TEST(FrontendSourceStore, SharesOnlyLiveLexedSources) {
+TEST(FrontendSourceStore, RetainsLexedSourcesForTheScanSession) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner   = rstd::move(temporary).unwrap();
@@ -43,20 +69,46 @@ TEST(FrontendSourceStore, SharesOnlyLiveLexedSources) {
     auto service = FrontendService::with_store(store);
 
     {
-        auto first = service.load(source.as_path());
+        auto first = service.load(source.as_path(), SourceLoadRole::Include);
         ASSERT_TRUE(first.is_ok());
-        auto second = service.load(source.as_path());
+        auto second = service.load(source.as_path(), SourceLoadRole::Include);
         ASSERT_TRUE(second.is_ok());
         EXPECT_EQ(service.statistics().lex_builds, usize(1));
-        EXPECT_GE(store.statistics().weak_hits, usize(1));
+        EXPECT_GE(store.statistics().cache_hits, usize(1));
         EXPECT_EQ(store.statistics().live_payloads, usize(1));
         EXPECT_GT(store.statistics().retained_bytes, usize {});
     }
 
-    auto reloaded = service.load(source.as_path());
+    auto reloaded = service.load(source.as_path(), SourceLoadRole::Include);
     ASSERT_TRUE(reloaded.is_ok());
-    EXPECT_EQ(service.statistics().lex_builds, usize(2));
-    EXPECT_GE(store.statistics().expired_entries, usize(1));
+    EXPECT_EQ(service.statistics().lex_builds, usize(1));
+    EXPECT_GE(store.statistics().cache_hits, usize(2));
+}
+
+TEST(FrontendSourceStore, ReleasesOnlyTheRequestedHeaderDomain) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto source  = source_fixture(owner.path());
+    auto store   = FrontendSourceStore::make();
+    auto domain  = HeaderDomain { .value = String::make("target:fixture"_str) };
+    auto service = FrontendService::with_store(store,
+                                               None(),
+                                               Some(FrontendHeaderClassifier {
+                                                   .context  = rstd::addressof(domain),
+                                                   .classify = classify_header_domain,
+                                               }));
+
+    auto loaded = service.load(source.as_path(), SourceLoadRole::Include);
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(store.statistics().live_payloads, usize(1));
+
+    store.release_domain(domain.value.as_str());
+
+    EXPECT_EQ(store.statistics().live_payloads, usize {});
+    EXPECT_EQ(store.statistics().retained_bytes, usize {});
+    EXPECT_EQ(store.statistics().domain_releases, usize(1));
+    EXPECT_FALSE((**loaded).tokens.is_empty());
 }
 
 TEST(FrontendSourceStore, SharesLiveSourcesByFileIdentity) {
@@ -69,13 +121,43 @@ TEST(FrontendSourceStore, SharesLiveSourcesByFileIdentity) {
     auto store   = FrontendSourceStore::make();
     auto service = FrontendService::with_store(store);
 
-    auto first  = service.load(source.as_path());
-    auto second = service.load(linked.as_path());
+    auto first  = service.load(source.as_path(), SourceLoadRole::Include);
+    auto second = service.load(linked.as_path(), SourceLoadRole::Include);
 
     ASSERT_TRUE(first.is_ok());
     ASSERT_TRUE(second.is_ok());
     EXPECT_EQ(service.statistics().lex_builds, usize(1));
-    EXPECT_GE(store.statistics().weak_hits, usize(1));
+    EXPECT_GE(store.statistics().cache_hits, usize(1));
+}
+
+TEST(FrontendSourceStore, PromotesConflictingPhysicalDomainsToSessionRetention) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner  = rstd::move(temporary).unwrap();
+    auto source = source_fixture(owner.path());
+    auto linked = PathBuf::from(owner.path()).join(PathBuf::from("linked.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::hard_link(source.as_path(), linked.as_path()).is_ok());
+    auto store   = FrontendSourceStore::make();
+    auto domains = HeaderDomains {
+        .first         = source.clone(),
+        .first_domain  = String::make("target:first"_str),
+        .second_domain = String::make("target:second"_str),
+    };
+    auto service = FrontendService::with_store(store,
+                                               None(),
+                                               Some(FrontendHeaderClassifier {
+                                                   .context  = rstd::addressof(domains),
+                                                   .classify = classify_distinct_header_domains,
+                                               }));
+
+    ASSERT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_ok());
+    ASSERT_TRUE(service.load(linked.as_path(), SourceLoadRole::Include).is_ok());
+    EXPECT_EQ(service.statistics().lex_builds, usize(1));
+
+    store.release_domain(domains.first_domain.as_str());
+    store.release_domain(domains.second_domain.as_str());
+
+    EXPECT_EQ(store.statistics().live_payloads, usize(1));
 }
 
 TEST(FrontendSourceStore, CoalescesConcurrentLoads) {
@@ -92,12 +174,12 @@ TEST(FrontendSourceStore, CoalescesConcurrentLoads) {
 
     auto first = rstd::thread::spawn([service = FrontendService::with_store(store, Some(observer)),
                                       source  = source.clone()]() mutable {
-                     return service.load(source.as_path()).is_ok();
+                     return service.load(source.as_path(), SourceLoadRole::Include).is_ok();
                  }).unwrap();
     while (! gate.entered.load(Ordering::Acquire)) rstd::thread::yield_now();
     auto second = rstd::thread::spawn([service = FrontendService::with_store(store),
                                        source  = source.clone()]() mutable {
-                      return service.load(source.as_path()).is_ok();
+                      return service.load(source.as_path(), SourceLoadRole::Include).is_ok();
                   }).unwrap();
 
     for (auto attempt = usize {}; attempt < usize(1000); ++attempt) {
@@ -123,9 +205,28 @@ TEST(FrontendSourceStore, RetriesFailedFlights) {
     auto store   = FrontendSourceStore::make();
     auto service = FrontendService::with_store(store);
 
-    EXPECT_TRUE(service.load(source.as_path()).is_err());
+    EXPECT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_err());
     ASSERT_TRUE(rstd::fs::remove_dir(source.as_path()).is_ok());
     ASSERT_TRUE(rstd::fs::write(source.as_path(), "int value = 1;\n"_str.as_bytes()).is_ok());
-    EXPECT_TRUE(service.load(source.as_path()).is_ok());
+    EXPECT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_ok());
+    EXPECT_EQ(store.statistics().in_flight_entries, usize {});
+}
+
+TEST(FrontendSourceStore, DoesNotCachePrimarySources) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto source  = source_fixture(owner.path());
+    auto store   = FrontendSourceStore::make();
+    auto service = FrontendService::with_store(store);
+
+    auto first  = service.load(source.as_path(), SourceLoadRole::Primary);
+    auto second = service.load(source.as_path(), SourceLoadRole::Primary);
+
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(service.statistics().lex_builds, usize(2));
+    EXPECT_EQ(service.statistics().source_hits, usize {});
+    EXPECT_EQ(store.statistics().ready_entries, usize {});
     EXPECT_EQ(store.statistics().in_flight_entries, usize {});
 }

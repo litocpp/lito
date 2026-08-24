@@ -95,6 +95,7 @@ inline constexpr BuildStage BUILD_STAGES[] = {
 };
 
 inline constexpr ExternalPreparationOperation EXTERNAL_PREPARATION_OPERATIONS[] = {
+    ExternalPreparationOperation::SourceFetch,     ExternalPreparationOperation::SourceExtract,
     ExternalPreparationOperation::CMakeConfigure,  ExternalPreparationOperation::CMakeBuild,
     ExternalPreparationOperation::CMakeInstall,    ExternalPreparationOperation::CMakeQuery,
     ExternalPreparationOperation::CMakeQueryBuild, ExternalPreparationOperation::CMakeSnapshot,
@@ -155,7 +156,7 @@ void append_preprocessor(String&                                               o
     append_metric(output, "directives"_str, statistics.directives);
     append_metric(output, "conditionals"_str, statistics.conditionals);
     append_metric(output, "macro lookups"_str, statistics.macro_lookups);
-    append_metric(output, "macro lookup hits"_str, statistics.macro_lookup_hits);
+    append_metric(output, "macro negative-cache hits"_str, statistics.macro_negative_cache_hits);
     append_metric(output, "macro expansions"_str, statistics.macro_expansions);
     append_metric(output, "macro definitions"_str, statistics.macro_definitions);
     append_metric(output, "macro operations"_str, statistics.macro_operations);
@@ -199,9 +200,9 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(
         output, "source in-flight entries"_str, summary.frontend.source_in_flight_entries);
     append_metric(output, "source in-flight peak"_str, summary.frontend.source_in_flight_peak);
-    append_metric(output, "source weak hits"_str, summary.frontend.source_weak_hits);
+    append_metric(output, "source cache hits"_str, summary.frontend.source_cache_hits);
     append_metric(output, "source flight waits"_str, summary.frontend.source_flight_waits);
-    append_metric(output, "source expired entries"_str, summary.frontend.source_expired_entries);
+    append_metric(output, "source domain releases"_str, summary.frontend.source_domain_releases);
     append_metric(output, "lexed sources"_str, summary.frontend.lex_builds);
     append_metric(output, "analyzed sources"_str, summary.frontend.analyze_builds);
     append_metric(output, "analysis hits"_str, summary.frontend.analyze_hits);
@@ -242,6 +243,18 @@ auto detailed_report(const BuildSummary& summary) -> String {
         rstd::format("  {:<38} {}",
                      "fingerprint wait"_str,
                      display_duration(summary.frontend.persistent_fingerprint_wait).as_str()));
+
+    append_line(output, "\nscan graph"_str);
+    append_metric(output, "headers"_str, summary.scan_graph.headers);
+    append_metric(output, "project headers"_str, summary.scan_graph.project_headers);
+    append_metric(output, "external headers"_str, summary.scan_graph.external_headers);
+    append_metric(output, "toolchain headers"_str, summary.scan_graph.toolchain_headers);
+    append_metric(output, "unknown headers"_str, summary.scan_graph.unknown_headers);
+    append_metric(output, "ambiguous headers"_str, summary.scan_graph.ambiguous_headers);
+    append_metric(output, "header edges"_str, summary.scan_graph.header_edges);
+    append_metric(output, "pending peak"_str, summary.scan_graph.pending_peak);
+    append_metric(output, "unresolved peak"_str, summary.scan_graph.unresolved_peak);
+    append_metric(output, "reactivations"_str, summary.scan_graph.reactivations);
 
     append_line(output, "\nscan execution"_str);
     const auto& execution = summary.scan_profile.execution();

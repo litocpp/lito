@@ -213,10 +213,19 @@ class SourceManager {
         return Ok(lito::tools::GitClient(git_->clone(), *environment_));
     }
 
-    auto emit_fetch(ref<str> source, ref<rstd::path::Path> destination) const noexcept -> void {
+    auto emit_fetch(ref<str>              source,
+                    ref<rstd::path::Path> destination,
+                    rstd::time::Duration  elapsed   = {},
+                    bool                  completed = false) const noexcept -> void {
         if (observer_.notify == nullptr) return;
         observer_.notify(observer_.context,
-                         SourceEvent { SourceEventKind::Fetch, source, destination });
+                         SourceEvent {
+                             .kind        = SourceEventKind::Fetch,
+                             .source      = source,
+                             .destination = destination,
+                             .elapsed     = elapsed,
+                             .completed   = completed,
+                         });
     }
 
     auto seed_checkout(ref<str> url, ref<str> commit, ref<str> owner, ref<str> source)
@@ -536,10 +545,13 @@ class SourceManager {
         auto local_reference =
             rstd::format("refs/lito/fetch/{}", lito::crypto::sha256_hex(revision).as_str());
         auto source = rstd::format("{}#{}", url, revision);
+        auto git    = rstd_try(git_client(url));
         emit_fetch(source.as_str(), repository);
-        auto git = rstd_try(git_client(url));
-        rstd_try(source_tool_result("fetch Git source"_str,
-                                    git.fetch(repository, revision, local_reference.as_str())));
+        auto started = rstd::time::Instant::now();
+        auto fetched = source_tool_result(
+            "fetch Git source"_str, git.fetch(repository, revision, local_reference.as_str()));
+        emit_fetch(source.as_str(), repository, started.elapsed(), true);
+        if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
         return Ok(rstd::move(local_reference));
     }
 

@@ -29,6 +29,7 @@ struct BuildSummary {
     usize                               compiled {};
     usize                               reused {};
     frontend::FrontendStatistics        frontend;
+    cpp::SemanticScanGraphStatistics    scan_graph;
     ToolchainStatistics                 toolchain;
     ScanProfileReport                   scan_profile;
     CompileExecutionStatistics          compile_execution;

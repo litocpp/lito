@@ -161,10 +161,11 @@ auto sort_sources(Vec<cpp::ResolvedSource> sources)
 }
 
 struct DiscoveryCandidate {
-    cpp::TargetId       target {};
-    String              key;
-    cpp::ResolvedSource source;
-    bool                discover_companion { true };
+    cpp::TargetId        target {};
+    cpp::DiscoveryUnitId graph_unit {};
+    String               key;
+    cpp::ResolvedSource  source;
+    bool                 discover_companion { true };
 };
 
 auto source_key(ref<rstd::path::Path> path) -> cpp::SourceDiscoveryResult<String> {
@@ -571,6 +572,7 @@ namespace lito
 
 auto discover_sources(const cpp::PackageMetadata&          package,
                       const cpp::ResolvedNativeTargetPlan& plan,
+                      cpp::SemanticScanGraphBuilder&       graph,
                       FrontendAnalysisService&             analysis_service,
                       const Option<BuildEventSink>&        observer,
                       usize                                jobs,
@@ -640,17 +642,22 @@ auto discover_sources(const cpp::PackageMetadata&          package,
             });
         auto prepared = Vec<Option<FrontendAnalysisTask>>::with_capacity(queue.len());
         auto pending  = usize {};
-        for (const auto& candidate : queue) {
-            const auto& target = package.targets[candidate.target];
-            if (candidate.source.scan_artifact.is_some()) {
-                prepared.push(None());
-                continue;
-            }
-            auto resolved_context = discovery_compile_context(
+        for (auto& candidate : queue) {
+            const auto& target           = package.targets[candidate.target];
+            auto        resolved_context = discovery_compile_context(
                 package, plan, candidate.target, candidate.source.relative_path.as_path());
             if (resolved_context.is_err()) return Err(rstd::move(resolved_context).unwrap_err());
             const auto& context =
                 resolved_context->is_some() ? **resolved_context : plan.contexts[candidate.target];
+            candidate.graph_unit =
+                graph.register_project_unit(candidate.target,
+                                            candidate.source.canonical_path.as_path(),
+                                            context.scan_id.as_str(),
+                                            context.id.as_str());
+            if (candidate.source.scan_artifact.is_some()) {
+                prepared.push(None());
+                continue;
+            }
             auto task = analysis_service.prepare(target.id,
                                                  candidate.source.relative_path.as_path(),
                                                  candidate.source.origin_identity.as_str(),
@@ -674,6 +681,28 @@ auto discover_sources(const cpp::PackageMetadata&          package,
         auto outcomes =
             Vec<Option<BuildResult<cpp::SourceScanArtifact>>>::with_capacity(queue.len());
         for (auto index = usize {}; index < queue.len(); ++index) outcomes.push(None());
+        auto       graph_commit       = usize {};
+        const auto commit_graph_ready = [&]() -> BuildResult<empty> {
+            while (graph_commit < queue.len()) {
+                const cpp::SourceScanArtifact* artifact = nullptr;
+                if (queue[graph_commit].source.scan_artifact.is_some()) {
+                    artifact = rstd::addressof(*queue[graph_commit].source.scan_artifact);
+                } else {
+                    if (outcomes[graph_commit].is_none()) break;
+                    const auto& outcome = *outcomes[graph_commit];
+                    if (outcome.is_err()) break;
+                    artifact = rstd::addressof(*outcome);
+                }
+                auto completed = graph.complete(queue[graph_commit].graph_unit, *artifact);
+                if (completed.is_err()) {
+                    return Err(BuildError::Message(rstd::move(completed).unwrap_err()));
+                }
+                ++graph_commit;
+            }
+            return Ok(empty {});
+        };
+        auto committed = commit_graph_ready();
+        if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
         auto submitted = usize {};
         auto completed = usize {};
         auto active    = usize {};
@@ -715,6 +744,11 @@ auto discover_sources(const cpp::PackageMetadata&          package,
                 return Ok(rstd::move(projected).unwrap());
             }();
             outcomes[completion.node] = Some(rstd::move(compacted));
+            committed                 = commit_graph_ready();
+            if (committed.is_err()) {
+                scan_executor.cancel();
+                return Err(rstd::move(committed).unwrap_err());
+            }
             --active;
             ++completed;
         }
@@ -823,10 +857,34 @@ auto discover_sources(const cpp::PackageMetadata&          package,
             candidate.source.scan_artifact = Some(rstd::move(artifact));
             discovered[candidate.target].push(rstd::move(candidate.source));
         }
+
+        for (auto& candidate : next) {
+            auto resolved_context = discovery_compile_context(
+                package, plan, candidate.target, candidate.source.relative_path.as_path());
+            if (resolved_context.is_err()) return Err(rstd::move(resolved_context).unwrap_err());
+            const auto& context =
+                resolved_context->is_some() ? **resolved_context : plan.contexts[candidate.target];
+            candidate.graph_unit =
+                graph.register_project_unit(candidate.target,
+                                            candidate.source.canonical_path.as_path(),
+                                            context.scan_id.as_str(),
+                                            context.id.as_str());
+        }
+        auto released = graph.seal_ready_targets();
+        for (const auto& domain : released) {
+            analysis_service.release_header_domain(domain.as_str());
+        }
         queue = rstd::move(next);
     }
     scan_executor.finish();
     analysis_service.profiler().record_execution(scan_executor.statistics());
+    auto released = graph.finish_discovery();
+    if (released.is_err()) {
+        return Err(BuildError::Message(rstd::move(released).unwrap_err()));
+    }
+    for (const auto& domain : *released) {
+        analysis_service.release_header_domain(domain.as_str());
+    }
 
     auto result = Vec<cpp::ResolvedTargetSources>::with_capacity(plan.target_order.len());
     for (auto target : plan.target_order) {
@@ -849,11 +907,12 @@ namespace lito
 
 auto discover_package_sources(const cpp::PackageMetadata&          package,
                               const cpp::ResolvedNativeTargetPlan& plan,
+                              cpp::SemanticScanGraphBuilder&       graph,
                               FrontendAnalysisService&             analysis_service,
                               const Option<BuildEventSink>&        observer,
                               usize                                jobs,
                               usize max_in_flight) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
-    return discover_sources(package, plan, analysis_service, observer, jobs, max_in_flight);
+    return discover_sources(package, plan, graph, analysis_service, observer, jobs, max_in_flight);
 }
 
 } // namespace lito

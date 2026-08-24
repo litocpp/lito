@@ -80,9 +80,9 @@ struct FrontendStatistics {
     usize                                source_retained_bytes_peak {};
     usize                                source_in_flight_entries {};
     usize                                source_in_flight_peak {};
-    usize                                source_weak_hits {};
+    usize                                source_cache_hits {};
     usize                                source_flight_waits {};
-    usize                                source_expired_entries {};
+    usize                                source_domain_releases {};
     usize                                lex_builds {};
     usize                                analyze_builds {};
     usize                                analyze_hits {};
@@ -137,9 +137,9 @@ struct FrontendStatistics {
         if (other.source_in_flight_peak > source_in_flight_peak) {
             source_in_flight_peak = other.source_in_flight_peak;
         }
-        source_weak_hits += other.source_weak_hits;
+        source_cache_hits += other.source_cache_hits;
         source_flight_waits += other.source_flight_waits;
-        source_expired_entries += other.source_expired_entries;
+        source_domain_releases += other.source_domain_releases;
         lex_builds += other.lex_builds;
         analyze_builds += other.analyze_builds;
         analyze_hits += other.analyze_hits;
@@ -184,9 +184,23 @@ struct FrontendSourceStoreStatistics {
     usize retained_bytes_peak {};
     usize in_flight_entries {};
     usize in_flight_peak {};
-    usize weak_hits {};
+    usize cache_hits {};
     usize flight_waits {};
-    usize expired_entries {};
+    usize domain_releases {};
+};
+
+struct HeaderCacheClassification {
+    Option<String> retention_domain;
+};
+
+struct FrontendHeaderClassifier {
+    const void* context {};
+    HeaderCacheClassification (*classify)(const void*, ref<rstd::path::Path>) {};
+
+    auto resolve(ref<rstd::path::Path> path) const -> HeaderCacheClassification {
+        if (classify == nullptr) return HeaderCacheClassification {};
+        return classify(context, path);
+    }
 };
 
 class FrontendSourceStore {
@@ -194,37 +208,37 @@ class FrontendSourceStore {
     using LoadResult      = Result<lexical::SharedLexedSource, SharedLoadError>;
     using LoadCell        = rstd::sync::OnceLock<LoadResult>;
     using SharedLoadCell  = rstd::sync::Arc<LoadCell>;
-    using WeakLexedSource = rstd::sync::Weak<lexical::LexedSource>;
-    using ReadyMap        = rstd::collections::HashMap<String, WeakLexedSource>;
-    using FlightMap       = rstd::collections::HashMap<String, SharedLoadCell>;
+    struct CacheRecord {
+        String         domain;
+        SharedLoadCell cell;
+    };
+
+    using CellMap = rstd::collections::HashMap<String, CacheRecord>;
 
     struct Fields {
-        ReadyMap  source_ready;
-        ReadyMap  identity_ready;
-        FlightMap source_flights;
-        FlightMap identity_flights;
-        usize     ready_peak {};
-        usize     live_payload_peak {};
-        usize     retained_bytes_peak {};
-        usize     in_flight_peak {};
-        usize     weak_hits {};
-        usize     flight_waits {};
-        usize     expired_entries {};
+        CellMap source_entries;
+        CellMap identity_entries;
+        usize   ready_entries {};
+        usize   ready_peak {};
+        usize   live_payloads {};
+        usize   live_payload_peak {};
+        usize   retained_bytes {};
+        usize   retained_bytes_peak {};
+        usize   in_flight_entries {};
+        usize   in_flight_peak {};
+        usize   cache_hits {};
+        usize   flight_waits {};
+        usize   domain_releases {};
 
-        Fields()
-            : source_ready(ReadyMap::make()),
-              identity_ready(ReadyMap::make()),
-              source_flights(FlightMap::make()),
-              identity_flights(FlightMap::make()) {}
+        Fields(): source_entries(CellMap::make()), identity_entries(CellMap::make()) {}
     };
 
     using State       = rstd::sync::Mutex<Fields>;
     using SharedState = rstd::sync::Arc<State>;
 
     struct Entry {
-        Option<lexical::SharedLexedSource> ready;
-        Option<SharedLoadCell>             cell;
-        bool                               existing {};
+        SharedLoadCell cell;
+        bool           existing {};
     };
 
 public:
@@ -234,44 +248,66 @@ public:
 
     auto clone() const -> FrontendSourceStore { return FrontendSourceStore { state_.clone() }; }
 
+    auto release_domain(ref<str> domain) const -> void {
+        auto       fields         = state_->lock().unwrap_unchecked();
+        auto       removed_ready  = usize {};
+        auto       removed_flight = usize {};
+        auto       removed_live   = usize {};
+        auto       removed_bytes  = usize {};
+        const auto retain         = [&](CacheRecord& record, bool payload_owner) {
+            if (record.domain != domain) return true;
+            auto stored = record.cell->get();
+            if (stored.is_none()) {
+                ++removed_flight;
+                return false;
+            }
+            ++removed_ready;
+            auto result = (**stored).as_ref();
+            if (payload_owner && result.is_ok()) {
+                ++removed_live;
+                removed_bytes += result.unwrap_unchecked()->retained_bytes();
+            }
+            return false;
+        };
+        fields->source_entries.retain([&](const String&, CacheRecord& record) {
+            return retain(record, false);
+        });
+        fields->identity_entries.retain([&](const String&, CacheRecord& record) {
+            return retain(record, true);
+        });
+        fields->ready_entries -= removed_ready;
+        fields->in_flight_entries -= removed_flight;
+        fields->live_payloads -= removed_live;
+        fields->retained_bytes -= removed_bytes;
+        if (removed_ready != usize {} || removed_flight != usize {}) {
+            ++fields->domain_releases;
+        }
+    }
+
     auto release() const -> void {
-        auto fields              = state_->lock().unwrap_unchecked();
-        fields->source_ready     = ReadyMap::make();
-        fields->identity_ready   = ReadyMap::make();
-        fields->source_flights   = FlightMap::make();
-        fields->identity_flights = FlightMap::make();
+        auto fields               = state_->lock().unwrap_unchecked();
+        fields->source_entries    = CellMap::make();
+        fields->identity_entries  = CellMap::make();
+        fields->ready_entries     = usize {};
+        fields->live_payloads     = usize {};
+        fields->retained_bytes    = usize {};
+        fields->in_flight_entries = usize {};
     }
 
     auto statistics() const -> FrontendSourceStoreStatistics {
-        auto fields         = state_->lock().unwrap_unchecked();
-        auto ready          = usize {};
-        auto live_payloads  = usize {};
-        auto retained_bytes = usize {};
-        auto count_ready    = [&](const ReadyMap& entries, bool payload_owner) {
-            auto values = entries.values();
-            for (auto value = values.next(); value.is_some(); value = values.next()) {
-                auto source = (*value)->upgrade();
-                if (! source) continue;
-                ++ready;
-                if (! payload_owner) continue;
-                ++live_payloads;
-                retained_bytes += source->retained_bytes();
-            }
-        };
-        count_ready(fields->source_ready, true);
-        count_ready(fields->identity_ready, false);
+        auto fields = state_->lock().unwrap_unchecked();
         return FrontendSourceStoreStatistics {
-            .ready_entries       = ready,
+            .ready_entries       = fields->ready_entries,
             .ready_peak          = fields->ready_peak,
-            .live_payloads       = live_payloads,
+            .live_payloads       = fields->live_payloads,
             .live_payload_peak   = fields->live_payload_peak,
-            .retained_bytes      = retained_bytes,
+            .retained_bytes      = fields->retained_bytes,
             .retained_bytes_peak = fields->retained_bytes_peak,
-            .in_flight_entries   = fields->source_flights.len() + fields->identity_flights.len(),
+            .in_flight_entries   = fields->in_flight_entries,
             .in_flight_peak      = fields->in_flight_peak,
-            .weak_hits           = fields->weak_hits,
+            .cache_hits          = fields->cache_hits,
             .flight_waits        = fields->flight_waits,
-            .expired_entries     = fields->expired_entries,
+            .domain_releases     = fields->domain_releases,
         };
     }
 
@@ -280,101 +316,86 @@ private:
 
     explicit FrontendSourceStore(SharedState state): state_(rstd::move(state)) {}
 
-    auto entry(Fields& fields, ReadyMap& ready, FlightMap& flights, ref<str> key) const -> Entry {
-        auto found_ready = ready.get(key);
-        if (found_ready.is_some()) {
-            auto value = (**found_ready).upgrade();
-            if (value) {
-                ++fields.weak_hits;
-                return Entry { .ready = Some(rstd::move(value)) };
-            }
-            (void)ready.remove(key);
-            ++fields.expired_entries;
-        }
-        auto found_flight = flights.get(key);
-        if (found_flight.is_some()) {
-            ++fields.flight_waits;
-            return Entry { .cell = Some((**found_flight).clone()), .existing = true };
+    static auto cache_key(ref<str> domain, ref<str> key) -> String {
+        return rstd::format("{}:{}{}", domain.len(), domain, key);
+    }
+
+    auto entry(Fields& fields, CellMap& entries, ref<str> domain, String resolved_key) const
+        -> Entry {
+        auto found = entries.get_mut(resolved_key.as_str());
+        if (found.is_some()) {
+            ++fields.cache_hits;
+            if ((**found).cell->get().is_none()) ++fields.flight_waits;
+            return Entry { .cell = (**found).cell.clone(), .existing = true };
         }
         auto cell = SharedLoadCell::make();
-        flights.insert(String::make(key), cell.clone());
-        auto in_flight = fields.source_flights.len() + fields.identity_flights.len();
-        if (in_flight > fields.in_flight_peak) fields.in_flight_peak = in_flight;
-        return Entry { .cell = Some(rstd::move(cell)) };
-    }
-
-    auto source(ref<str> key) const -> Entry {
-        auto fields = state_->lock().unwrap_unchecked();
-        return entry(*fields, fields->source_ready, fields->source_flights, key);
-    }
-
-    auto identity(ref<str> key) const -> Entry {
-        auto fields = state_->lock().unwrap_unchecked();
-        return entry(*fields, fields->identity_ready, fields->identity_flights, key);
-    }
-
-    auto prune_ready(Fields& fields) const -> void {
-        auto limit = fields.in_flight_peak * usize(2) + usize(64);
-        if (fields.source_ready.len() + fields.identity_ready.len() <= limit) return;
-        fields.source_ready.retain([&](const String&, WeakLexedSource& value) {
-            if (! value.expired()) return true;
-            ++fields.expired_entries;
-            return false;
-        });
-        fields.identity_ready.retain([&](const String&, WeakLexedSource& value) {
-            if (! value.expired()) return true;
-            ++fields.expired_entries;
-            return false;
-        });
-    }
-
-    auto update_live_peak(Fields& fields) const -> void {
-        auto live_payloads  = usize {};
-        auto retained_bytes = usize {};
-        auto values         = fields.source_ready.values();
-        for (auto value = values.next(); value.is_some(); value = values.next()) {
-            auto source = (*value)->upgrade();
-            if (! source) continue;
-            ++live_payloads;
-            retained_bytes += source->retained_bytes();
+        entries.insert(rstd::move(resolved_key),
+                       CacheRecord { .domain = String::make(domain), .cell = cell.clone() });
+        ++fields.in_flight_entries;
+        if (fields.in_flight_entries > fields.in_flight_peak) {
+            fields.in_flight_peak = fields.in_flight_entries;
         }
-        if (live_payloads > fields.live_payload_peak) fields.live_payload_peak = live_payloads;
-        if (retained_bytes > fields.retained_bytes_peak) {
-            fields.retained_bytes_peak = retained_bytes;
+        return Entry { .cell = rstd::move(cell) };
+    }
+
+    auto source(ref<str> domain, ref<str> key) const -> Entry {
+        auto fields       = state_->lock().unwrap_unchecked();
+        auto resolved_key = cache_key(domain, key);
+        return entry(*fields, fields->source_entries, domain, rstd::move(resolved_key));
+    }
+
+    auto identity(ref<str> domain, ref<str> key) const -> Entry {
+        auto fields = state_->lock().unwrap_unchecked();
+        auto found  = fields->identity_entries.get_mut(key);
+        if (found.is_some() && (**found).domain != domain) {
+            (**found).domain = String::make(""_str);
         }
+        return entry(*fields, fields->identity_entries, domain, String::make(key));
     }
 
     auto complete(Fields&               fields,
-                  ReadyMap&             ready,
-                  FlightMap&            flights,
+                  CellMap&              entries,
                   ref<str>              key,
                   const SharedLoadCell& cell,
-                  const LoadResult&     result) const -> void {
-        auto current = flights.get(key);
-        if (current.is_some() && SharedLoadCell::ptr_eq(**current, cell)) {
+                  const LoadResult&     result,
+                  bool                  payload_owner) const -> void {
+        auto current = entries.get(key);
+        if (current.is_some() && SharedLoadCell::ptr_eq((**current).cell, cell)) {
+            --fields.in_flight_entries;
             auto value = result.as_ref();
-            if (value.is_ok()) {
-                auto source = value.unwrap_unchecked().clone();
-                ready.insert(String::make(key), source.downgrade());
-                auto ready_entries = fields.source_ready.len() + fields.identity_ready.len();
-                if (ready_entries > fields.ready_peak) fields.ready_peak = ready_entries;
+            if (value.is_err()) {
+                (void)entries.remove(key);
+                return;
             }
-            (void)flights.remove(key);
-            prune_ready(fields);
-            update_live_peak(fields);
+            ++fields.ready_entries;
+            if (fields.ready_entries > fields.ready_peak) {
+                fields.ready_peak = fields.ready_entries;
+            }
+            if (! payload_owner) return;
+            ++fields.live_payloads;
+            fields.retained_bytes += value.unwrap_unchecked()->retained_bytes();
+            if (fields.live_payloads > fields.live_payload_peak) {
+                fields.live_payload_peak = fields.live_payloads;
+            }
+            if (fields.retained_bytes > fields.retained_bytes_peak) {
+                fields.retained_bytes_peak = fields.retained_bytes;
+            }
         }
     }
 
-    auto complete_source(ref<str> key, const SharedLoadCell& cell, const LoadResult& result) const
-        -> void {
-        auto fields = state_->lock().unwrap_unchecked();
-        complete(*fields, fields->source_ready, fields->source_flights, key, cell, result);
+    auto complete_source(ref<str>              domain,
+                         ref<str>              key,
+                         const SharedLoadCell& cell,
+                         const LoadResult&     result) const -> void {
+        auto fields       = state_->lock().unwrap_unchecked();
+        auto resolved_key = cache_key(domain, key);
+        complete(*fields, fields->source_entries, resolved_key.as_str(), cell, result, false);
     }
 
     auto complete_identity(ref<str> key, const SharedLoadCell& cell, const LoadResult& result) const
         -> void {
         auto fields = state_->lock().unwrap_unchecked();
-        complete(*fields, fields->identity_ready, fields->identity_flights, key, cell, result);
+        complete(*fields, fields->identity_entries, key, cell, result, true);
     }
 
     SharedState state_;
@@ -383,15 +404,18 @@ private:
 class FrontendService {
 public:
     static auto make(Option<FrontendObserver> observer = None()) -> FrontendService {
-        return FrontendService { FrontendSourceStore::make(), rstd::move(observer) };
+        return FrontendService { FrontendSourceStore::make(), rstd::move(observer), None() };
     }
 
-    static auto with_store(const FrontendSourceStore& store,
-                           Option<FrontendObserver>   observer = None()) -> FrontendService {
-        return FrontendService { store.clone(), rstd::move(observer) };
+    static auto with_store(const FrontendSourceStore&       store,
+                           Option<FrontendObserver>         observer   = None(),
+                           Option<FrontendHeaderClassifier> classifier = None())
+        -> FrontendService {
+        return FrontendService { store.clone(), rstd::move(observer), rstd::move(classifier) };
     }
 
-    auto load(ref<rstd::path::Path> path) -> lexical::Result<lexical::SharedLexedSource> {
+    auto load(ref<rstd::path::Path> path, preprocessor::SourceLoadRole role)
+        -> lexical::Result<lexical::SharedLexedSource> {
         ++statistics_.source_requests;
         if (path.to_str().is_none()) {
             return Err(
@@ -404,20 +428,25 @@ public:
             return Err(lexical::Error::make(rstd::format(
                 "cannot resolve source '{}': {}", path, rstd::move(canonical).unwrap_err())));
         }
-        auto canonical_text = canonical->as_path().to_str();
+        auto canonical_path = rstd::move(canonical).unwrap();
+        if (role == preprocessor::SourceLoadRole::Primary) {
+            auto loaded = read_source(canonical_path.as_path());
+            return lexical_result(loaded);
+        }
+        auto classification = classifier_.is_some() ? classifier_->resolve(canonical_path.as_path())
+                                                    : HeaderCacheClassification {};
+        auto domain         = classification.retention_domain.is_some()
+                                  ? classification.retention_domain->as_str()
+                                  : ""_str;
+        auto canonical_text = canonical_path.as_path().to_str();
         if (canonical_text.is_none()) {
             return Err(lexical::Error::make(rstd::format(
-                "canonical source path '{}' is not valid UTF-8", canonical->as_path())));
+                "canonical source path '{}' is not valid UTF-8", canonical_path.as_path())));
         }
-        auto canonical_key  = String::make(*canonical_text);
-        auto canonical_path = rstd::move(canonical).unwrap();
-        auto source_entry   = store_.source(canonical_key.as_str());
-        if (source_entry.ready.is_some()) {
-            ++statistics_.source_hits;
-            return Ok(rstd::move(source_entry.ready).unwrap());
-        }
+        auto canonical_key = String::make(*canonical_text);
+        auto source_entry  = store_.source(domain, canonical_key.as_str());
         if (source_entry.existing) ++statistics_.source_hits;
-        auto source_cell    = rstd::move(source_entry.cell).unwrap();
+        auto source_cell    = rstd::move(source_entry.cell);
         auto source_waiting = source_entry.existing && source_cell->get().is_none();
         auto source_started = rstd::time::Instant::now();
         auto initialized    = false;
@@ -449,48 +478,16 @@ public:
                                                metadata->size(),
                                                timestamp.seconds,
                                                timestamp.nanoseconds);
-            auto identity_entry = store_.identity(identity.as_str());
-            if (identity_entry.ready.is_some()) {
-                ++statistics_.source_hits;
-                return Ok(rstd::move(identity_entry.ready).unwrap());
-            }
+            auto identity_entry = store_.identity(domain, identity.as_str());
             if (identity_entry.existing) ++statistics_.source_hits;
-            auto identity_cell        = rstd::move(identity_entry.cell).unwrap();
+            auto identity_cell        = rstd::move(identity_entry.cell);
             auto identity_waiting     = identity_entry.existing && identity_cell->get().is_none();
             auto identity_started     = rstd::time::Instant::now();
             auto identity_initialized = false;
             auto identity_result =
                 identity_cell->get_or_init([&]() -> FrontendSourceStore::LoadResult {
                     identity_initialized = true;
-                    auto contents        = [&] {
-                        auto activity = observe(FrontendActivity::SourceRead);
-                        return rstd::fs::read_to_string(canonical_path.as_path());
-                    }();
-                    if (contents.is_err()) {
-                        return share_error(
-                            lexical::Error::make(rstd::format("cannot read source '{}': {}",
-                                                              canonical_path.as_path(),
-                                                              rstd::move(contents).unwrap_err())));
-                    }
-                    ++statistics_.source_reads;
-                    statistics_.source_bytes += contents->len();
-                    auto snapshot = lexical::make_source_snapshot(lexical::SourceBuffer {
-                        .path     = canonical_path.clone(),
-                        .contents = rstd::move(contents).unwrap(),
-                    });
-                    auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
-                    auto lexed    = [&] {
-                        auto activity = observe(FrontendActivity::Lex);
-                        return lexical::lex_with_comments(source, true);
-                    }();
-                    if (lexed.is_err()) return share_error(rstd::move(lexed).unwrap_err());
-                    ++statistics_.lex_builds;
-                    auto file = rstd::move(lexed).unwrap();
-                    return Ok(rstd::sync::Arc<lexical::LexedSource>::make(lexical::LexedSource {
-                        .snapshot = rstd::move(snapshot),
-                        .tokens   = rstd::move(file.tokens),
-                        .comments = rstd::move(file.comments),
-                    }));
+                    return read_source(canonical_path.as_path());
                 });
             if (identity_waiting && ! identity_initialized) {
                 ++statistics_.source_waits;
@@ -498,7 +495,9 @@ public:
                     statistics_.source_wait.saturating_add(identity_started.elapsed());
             }
             if (! identity_initialized && ! identity_entry.existing) ++statistics_.source_hits;
-            store_.complete_identity(identity.as_str(), identity_cell, *identity_result);
+            if (! identity_entry.existing) {
+                store_.complete_identity(identity.as_str(), identity_cell, *identity_result);
+            }
             return clone_load_result(*identity_result);
         });
         if (source_waiting && ! initialized) {
@@ -507,13 +506,10 @@ public:
                 statistics_.source_wait.saturating_add(source_started.elapsed());
         }
         if (! initialized && ! source_entry.existing) ++statistics_.source_hits;
-        store_.complete_source(canonical_key.as_str(), source_cell, *stored);
-        if (stored->is_err()) {
-            auto value = stored->as_ref();
-            return Err(clone_error(value.unwrap_err_unchecked()));
+        if (! source_entry.existing) {
+            store_.complete_source(domain, canonical_key.as_str(), source_cell, *stored);
         }
-        auto value = stored->as_ref();
-        return Ok(value.unwrap_unchecked().clone());
+        return lexical_result(*stored);
     }
 
     auto statistics() const noexcept -> const FrontendStatistics& { return statistics_; }
@@ -533,8 +529,12 @@ public:
     auto source_store() const -> FrontendSourceStore { return store_.clone(); }
 
 private:
-    explicit FrontendService(FrontendSourceStore store, Option<FrontendObserver> observer)
-        : store_(rstd::move(store)), observer_(rstd::move(observer)) {}
+    explicit FrontendService(FrontendSourceStore              store,
+                             Option<FrontendObserver>         observer,
+                             Option<FrontendHeaderClassifier> classifier)
+        : store_(rstd::move(store)),
+          observer_(rstd::move(observer)),
+          classifier_(rstd::move(classifier)) {}
 
     static auto clone_error(const FrontendSourceStore::SharedLoadError& error) -> lexical::Error {
         return lexical::Error {
@@ -555,14 +555,52 @@ private:
         return Ok(borrowed.unwrap_unchecked().clone());
     }
 
+    static auto lexical_result(const FrontendSourceStore::LoadResult& value)
+        -> lexical::Result<lexical::SharedLexedSource> {
+        auto borrowed = value.as_ref();
+        if (borrowed.is_err()) return Err(clone_error(borrowed.unwrap_err_unchecked()));
+        return Ok(borrowed.unwrap_unchecked().clone());
+    }
+
+    auto read_source(ref<rstd::path::Path> path) -> FrontendSourceStore::LoadResult {
+        auto contents = [&] {
+            auto activity = observe(FrontendActivity::SourceRead);
+            return rstd::fs::read_to_string(path);
+        }();
+        if (contents.is_err()) {
+            return share_error(lexical::Error::make(rstd::format(
+                "cannot read source '{}': {}", path, rstd::move(contents).unwrap_err())));
+        }
+        ++statistics_.source_reads;
+        statistics_.source_bytes += contents->len();
+        auto snapshot = lexical::make_source_snapshot(lexical::SourceBuffer {
+            .path     = rstd::path::PathBuf::from(path),
+            .contents = rstd::move(contents).unwrap(),
+        });
+        auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
+        auto lexed    = [&] {
+            auto activity = observe(FrontendActivity::Lex);
+            return lexical::lex_with_comments(source, true);
+        }();
+        if (lexed.is_err()) return share_error(rstd::move(lexed).unwrap_err());
+        ++statistics_.lex_builds;
+        auto file = rstd::move(lexed).unwrap();
+        return Ok(rstd::sync::Arc<lexical::LexedSource>::make(lexical::LexedSource {
+            .snapshot = rstd::move(snapshot),
+            .tokens   = rstd::move(file.tokens),
+            .comments = rstd::move(file.comments),
+        }));
+    }
+
     auto observe(FrontendActivity activity) noexcept -> FrontendActivityGuard {
         if (observer_.is_none()) return FrontendActivityGuard {};
         return FrontendActivityGuard { *observer_, activity };
     }
 
-    FrontendSourceStore      store_;
-    Option<FrontendObserver> observer_;
-    FrontendStatistics       statistics_;
+    FrontendSourceStore              store_;
+    Option<FrontendObserver>         observer_;
+    Option<FrontendHeaderClassifier> classifier_;
+    FrontendStatistics               statistics_;
 };
 
 } // namespace lito::frontend

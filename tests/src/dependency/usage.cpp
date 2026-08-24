@@ -169,8 +169,9 @@ TEST(DependencyUsage, ExternalCompileOptionsResolveInTheConsumerLanguage) {
     auto targets = Vec<lito::cpp::ExternalTargetUsage>::make();
     targets.push(lito::cpp::ExternalTargetUsage {
         .name            = String::make("fixture"_str),
-        .compile_options = strings("-fno-builtin"_str, "-pthread"_str),
+        .compile_options = strings("-fno-builtin"_str, "-pthread"_str, "-I/tmp/fixture"_str),
         .compile_source  = String::make("external fixture"_str),
+        .identity        = String::make("external-fixture"_str),
     });
     auto dependencies = Vec<lito::cpp::ExternalDependencyUsage>::make();
     dependencies.push(lito::cpp::ExternalDependencyUsage {
@@ -185,9 +186,16 @@ TEST(DependencyUsage, ExternalCompileOptionsResolveInTheConsumerLanguage) {
     ASSERT_EQ((*resolved)[usize {}].targets.len(), usize(1));
     const auto& arguments = (*resolved)[usize {}].targets[usize {}].compile_arguments;
     ASSERT_TRUE(arguments.is_C());
-    ASSERT_EQ(arguments.as_C().layer.occurrences.len(), usize(2));
+    ASSERT_EQ(arguments.as_C().layer.occurrences.len(), usize(3));
     EXPECT_TRUE(arguments.as_C().layer.occurrences[usize {}].argument.is_Vendor());
     EXPECT_TRUE(arguments.as_C().layer.occurrences[usize(1)].argument.is_Common());
+    const auto& roots = (*resolved)[usize {}].targets[usize {}].header_roots;
+    ASSERT_EQ(roots.len(), usize(1));
+    auto expected_root = PathBuf::from("/tmp/fixture"_str);
+    EXPECT_EQ(roots[usize {}].root.as_path(), expected_root.as_path());
+    ASSERT_TRUE(roots[usize {}].owner.is_ExternalTarget());
+    EXPECT_EQ(roots[usize {}].owner.as_ExternalTarget().identity.as_str(), "external-fixture"_str);
+    EXPECT_TRUE(roots[usize {}].access.is_Public());
 }
 
 TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {

@@ -19,7 +19,12 @@ public:
 
     auto contains(ref<str> path) const -> bool { return files_.contains_key(path); }
 
-    auto load(ref<rstd::path::Path> path) -> PpResult<SharedLexedSource> {
+    auto load(ref<rstd::path::Path> path, SourceLoadRole role) -> PpResult<SharedLexedSource> {
+        if (role == SourceLoadRole::Primary) {
+            ++primary_loads;
+        } else {
+            ++include_loads;
+        }
         auto text = path.to_str();
         if (text.is_none()) {
             return Err(
@@ -41,6 +46,9 @@ public:
             .comments = rstd::move(file.comments),
         }));
     }
+
+    usize primary_loads {};
+    usize include_loads {};
 
 private:
     rstd::collections::BTreeMap<String, String> files_;
@@ -294,6 +302,7 @@ auto run_preprocessor_test() -> int {
         pragmas,
         events);
     if (result.is_err()) return 1;
+    if (sources.primary_loads != usize(1) || sources.include_loads != usize(2)) return 28;
     if (! contains_sequence(result->tokens, "module"_str, "fixture"_str)) return 2;
     if (! contains_sequence(result->tokens, "import"_str, ":"_str)) return 3;
     if (result->sources.len() != usize(3)) return 4;

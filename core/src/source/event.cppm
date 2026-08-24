@@ -17,6 +17,8 @@ struct SourceEvent {
     SourceEventKind       kind { SourceEventKind::Fetch };
     ref<str>              source;
     ref<rstd::path::Path> destination;
+    rstd::time::Duration  elapsed;
+    bool                  completed { false };
 };
 
 struct SourceEventSink {

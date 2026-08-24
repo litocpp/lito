@@ -17,6 +17,16 @@ struct RequiredModule {
     bool                              implementation { false };
     Vec<frontend::DependencyLocation> import_locations;
     bool                              exported { false };
+
+    auto clone() const -> RequiredModule {
+        return RequiredModule {
+            .logical_name     = logical_name.clone(),
+            .imported         = imported,
+            .implementation   = implementation,
+            .import_locations = as<Clone>(import_locations).clone(),
+            .exported         = exported,
+        };
+    }
 };
 
 struct CommonScanResult {

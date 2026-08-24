@@ -122,9 +122,15 @@ auto run_profiling_test() -> int {
         return 7;
     }
     auto external_timing = lito::ExternalPreparationTimingReport {};
+    external_timing.record(lito::ExternalPreparationOperation::SourceExtract,
+                           rstd::time::Duration::from_micros(u64(60)));
     external_timing.record(lito::ExternalPreparationOperation::CargoBuild,
                            rstd::time::Duration::from_micros(u64(40)));
-    if (external_timing.timing(lito::ExternalPreparationOperation::CargoBuild).count != usize(1) ||
+    if (external_timing.timing(lito::ExternalPreparationOperation::SourceExtract)
+                .total.as_micros() != u64(60) ||
+        lito::external_preparation_operation_label(
+            lito::ExternalPreparationOperation::SourceExtract) != "external.source.extract"_str ||
+        external_timing.timing(lito::ExternalPreparationOperation::CargoBuild).count != usize(1) ||
         lito::external_preparation_operation_label(
             lito::ExternalPreparationOperation::CargoMetadata) != "external.cargo.metadata"_str) {
         return 8;

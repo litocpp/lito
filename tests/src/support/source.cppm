@@ -95,6 +95,7 @@ auto resolved_git_commit(const lito::package::ResolvedPackageGraph& graph) -> Op
 struct FetchEventCapture {
     ref<str> expected_url;
     usize    count {};
+    usize    completed {};
     bool     source_matches {};
     bool     destination_matches {};
 };
@@ -116,12 +117,20 @@ void record_fetch(FetchEventCapture&    context,
 void capture_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
     if (event.kind != lito::BuildEventKind::Fetch) return;
     auto& context = *static_cast<FetchEventCapture*>(raw_context);
+    if (event.completed) {
+        ++context.completed;
+        return;
+    }
     record_fetch(context, event.target, event.path);
 }
 
 void capture_source_fetch(void* raw_context, const lito::source::SourceEvent& event) noexcept {
     if (event.kind != lito::source::SourceEventKind::Fetch) return;
     auto& context = *static_cast<FetchEventCapture*>(raw_context);
+    if (event.completed) {
+        ++context.completed;
+        return;
+    }
     record_fetch(context, event.source, event.destination);
 }
 class EnvironmentVariableGuard {
@@ -156,14 +165,24 @@ public:
 struct FileSourceEventCapture {
     usize fetch {};
     usize extract {};
+    usize fetch_completed {};
+    usize extract_completed {};
 };
 
 void capture_file_source_event(void* raw_context, const lito::source::SourceEvent& event) noexcept {
     auto& context = *static_cast<FileSourceEventCapture*>(raw_context);
     if (event.kind == lito::source::SourceEventKind::Fetch) {
-        ++context.fetch;
+        if (event.completed) {
+            ++context.fetch_completed;
+        } else {
+            ++context.fetch;
+        }
     } else if (event.kind == lito::source::SourceEventKind::Extract) {
-        ++context.extract;
+        if (event.completed) {
+            ++context.extract_completed;
+        } else {
+            ++context.extract;
+        }
     }
 }
 

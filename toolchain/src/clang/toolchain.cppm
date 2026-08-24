@@ -662,6 +662,42 @@ public:
         return Ok(rstd::move(projection));
     }
 
+    auto header_roots(const cpp::CompileContext& compile_context,
+                      ref<rstd::path::Path>      working_directory) const
+        -> ToolchainResult<Vec<cpp::ResolvedHeaderRoot>> {
+        auto environment = environment_for(compile_context, working_directory);
+        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        auto       projection    = cpp::preprocessor_projection(compile_context);
+        const auto is_configured = [&](ref<rstd::path::Path> directory) {
+            const auto contains = [&](const Vec<String>& values) {
+                for (const auto& value : values) {
+                    auto path = PathBuf::from(value.as_str());
+                    if (! path.as_path().is_absolute()) {
+                        path = PathBuf::from(working_directory).join(path.as_path());
+                    }
+                    auto canonical = rstd::fs::canonicalize(path.as_path());
+                    if (canonical.is_ok() && canonical->as_path() == directory) return true;
+                }
+                return false;
+            };
+            return contains(projection.user_include_directories) ||
+                   contains(projection.system_include_directories);
+        };
+        auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
+        for (const auto& entry : (*environment)->include_search) {
+            if (is_configured(entry.directory.as_path())) continue;
+            roots.push(cpp::ResolvedHeaderRoot {
+                .root   = entry.directory.clone(),
+                .owner  = cpp::HeaderOwner::Toolchain(compiler_identity_.build_identity.clone()),
+                .access = cpp::HeaderAccess::Global(),
+                .kind =
+                    entry.system ? cpp::HeaderIncludeKind::System : cpp::HeaderIncludeKind::User,
+                .provenance = String::make("Clang default include search"_str),
+            });
+        }
+        return Ok(rstd::move(roots));
+    }
+
     auto prepare_scan_input(const cpp::CompileContext&         compile_context,
                             const cpp::PackageCompileMetadata& compile_metadata,
                             ref<rstd::path::Path>              working_directory) const

@@ -203,6 +203,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_EQ(first->len(), usize(1));
     EXPECT_EQ(first_events.fetch, usize(1));
     EXPECT_EQ(first_events.extract, usize(1));
+    EXPECT_EQ(first_events.fetch_completed, usize(1));
+    EXPECT_EQ(first_events.extract_completed, usize(1));
     EXPECT_TRUE((*first)[usize {}].root.as_path().starts_with(debug_layout->output()));
 
     requests.push(lito::source::ArchiveSourceFetchRequest {
@@ -239,6 +241,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_EQ(second->len(), usize(1));
     EXPECT_EQ(second_events.fetch, usize {});
     EXPECT_EQ(second_events.extract, usize(1));
+    EXPECT_EQ(second_events.fetch_completed, usize {});
+    EXPECT_EQ(second_events.extract_completed, usize(1));
     ASSERT_EQ(cache_tool_capture.capabilities.len(), usize(1));
     EXPECT_EQ(cache_tool_capture.capabilities[usize {}],
               lito::tools::HostToolCapability::ArchiveExtraction);

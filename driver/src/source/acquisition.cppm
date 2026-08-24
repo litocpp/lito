@@ -96,6 +96,8 @@ void observe_acquisition(void*                                             raw,
                                : SourceEventKind::Extract,
             .source      = event.source,
             .destination = event.destination,
+            .elapsed     = event.elapsed,
+            .completed   = event.completed,
         });
 }
 

@@ -124,6 +124,10 @@ extern "C" auto fixture_environment_two() -> int {
     EXPECT_EQ(summary->frontend.persistent_fingerprint_requests, usize(4));
     EXPECT_EQ(summary->frontend.persistent_fingerprint_hits, usize(1));
     EXPECT_EQ(summary->frontend.persistent_fingerprint_builds, usize(3));
+    EXPECT_EQ(summary->scan_graph.headers, usize(1));
+    EXPECT_EQ(summary->scan_graph.header_edges, usize(2));
+    EXPECT_EQ(summary->scan_graph.pending_peak, usize(2));
+    EXPECT_EQ(summary->scan_graph.unknown_headers, usize(1));
     auto report  = output.join(PathBuf::from("timing.txt"_str).as_path());
     auto emitted = lito::timing_output::emit(*summary,
                                              lito::timing_output::OutputOptions {
@@ -133,9 +137,75 @@ extern "C" auto fixture_environment_two() -> int {
     auto contents = rstd::fs::read_to_string(report.as_path());
     ASSERT_TRUE(contents.is_ok());
     EXPECT_TRUE(contents->as_str().contains("frontend"_str));
+    EXPECT_TRUE(contents->as_str().contains("scan graph"_str));
     EXPECT_TRUE(contents->as_str().contains("compile execution"_str));
     EXPECT_TRUE(contents->as_str().contains("build.compile"_str));
     EXPECT_TRUE(contents->as_str().contains("aggregate timing"_str));
+}
+
+TEST_F(BuildEnvironment, CompilerDefaultHeadersKeepToolchainOwnership) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-toolchain-header-owner"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-toolchain-header-owner"
+link-stdlib = false
+sources = ["main.cpp"]
+)toml"_str },
+        { "main.cpp"_str, R"cpp(#include <stddef.h>
+
+auto main() -> int {
+    return sizeof(size_t) == 0;
+}
+)cpp"_str },
+    };
+    auto project = materialize("toolchain-header-owner"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        "toolchain-header-owner"_str, project->root.as_path(), Vec<String>::make());
+    auto summary = lito::build(request);
+
+    ASSERT_TRUE(summary.is_ok());
+    EXPECT_GT(summary->scan_graph.toolchain_headers, usize {});
+    EXPECT_EQ(summary->scan_graph.unknown_headers, usize {});
+}
+
+TEST_F(BuildEnvironment, ExplicitGlobalIncludeRemainsUnknown) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-unknown-header-owner"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-unknown-header-owner"
+link-stdlib = false
+sources = ["main.cpp"]
+)toml"_str },
+        { "include/value.hpp"_str, "inline constexpr int fixture_value = 0;\n"_str },
+        { "main.cpp"_str, R"cpp(#include "value.hpp"
+
+auto main() -> int {
+    return fixture_value;
+}
+)cpp"_str },
+    };
+    auto project = materialize("unknown-header-owner"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        "unknown-header-owner"_str, project->root.as_path(), Vec<String>::make());
+    auto include = project->root.join(PathBuf::from("include"_str).as_path());
+    request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings(rstd::format("-I{}", include.as_path()).as_str()),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto summary = lito::build(request);
+
+    ASSERT_TRUE(summary.is_ok());
+    EXPECT_EQ(summary->scan_graph.headers, usize(1));
+    EXPECT_EQ(summary->scan_graph.unknown_headers, usize(1));
+    EXPECT_EQ(summary->scan_graph.toolchain_headers, usize {});
 }
 
 TEST_F(BuildEnvironment, BuildEventsUseReadablePackageTargets) {

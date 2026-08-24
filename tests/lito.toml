@@ -35,6 +35,7 @@ sources = [
   "src/config/mod.cpp",
   "src/crypto.cpp",
   "src/cpp/bmi.cpp",
+  "src/cpp/header.cpp",
   "src/cpp/mod.cppm",
   "src/cpp/policy.cpp",
   "src/dependency/cmake/manifest.cpp",

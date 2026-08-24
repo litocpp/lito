@@ -15,6 +15,7 @@ import :package.target;
 import :compiler.parser;
 import :compiler.policy;
 import :build.profile;
+import :header;
 import :source.discovery;
 import :usage;
 
@@ -900,12 +901,47 @@ auto resolve_external_usage(Vec<ExternalDependencyUsage>    dependencies,
     for (auto& dependency : dependencies) {
         auto targets = Vec<ResolvedExternalTargetUsage>::with_capacity(dependency.targets.len());
         for (auto& target : dependency.targets) {
-            auto arguments = rstd_try(parse_options(
+            auto       arguments          = rstd_try(parse_options(
                 parser, target.compile_options, target.compile_source.clone(), language));
+            auto       header_roots       = Vec<ResolvedHeaderRoot>::make();
+            const auto append_header_root = [&](const auto& include) {
+                auto kind = include.kind == decltype(include.kind)::System
+                                ? HeaderIncludeKind::System
+                                : HeaderIncludeKind::User;
+                header_roots.push(ResolvedHeaderRoot {
+                    .root       = include.path.clone(),
+                    .owner      = HeaderOwner::ExternalTarget(target.identity.clone()),
+                    .access     = HeaderAccess::Public(),
+                    .kind       = kind,
+                    .provenance = rstd::format("external target '{}'", target.name.as_str()),
+                });
+            };
+            if (arguments.is_C()) {
+                const auto& layer = arguments.as_C().layer;
+                for (const auto& include : layer.include_directories) {
+                    header_roots.push(ResolvedHeaderRoot {
+                        .root       = include.clone(),
+                        .owner      = HeaderOwner::ExternalTarget(target.identity.clone()),
+                        .access     = HeaderAccess::Public(),
+                        .kind       = HeaderIncludeKind::User,
+                        .provenance = rstd::format("external target '{}'", target.name.as_str()),
+                    });
+                }
+                for (const auto& occurrence : layer.occurrences) {
+                    if (! occurrence.argument.is_IncludeDirectory()) continue;
+                    append_header_root(occurrence.argument.as_IncludeDirectory().directory);
+                }
+            } else {
+                for (const auto& occurrence : arguments.as_Cpp().layer.occurrences) {
+                    if (! occurrence.argument.is_IncludeDirectory()) continue;
+                    append_header_root(occurrence.argument.as_IncludeDirectory().directory);
+                }
+            }
             targets.push(ResolvedExternalTargetUsage {
                 .name              = rstd::move(target.name),
                 .visibility        = target.visibility,
                 .compile_arguments = rstd::move(arguments),
+                .header_roots      = rstd::move(header_roots),
                 .identity          = rstd::move(target.identity),
             });
         }

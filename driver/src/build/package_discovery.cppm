@@ -13,6 +13,7 @@ namespace lito
 
 auto discover_package_sources(const cpp::PackageMetadata&          package,
                               const cpp::ResolvedNativeTargetPlan& plan,
+                              cpp::SemanticScanGraphBuilder&       graph,
                               FrontendAnalysisService&             analysis_service,
                               const Option<BuildEventSink>&        observer,
                               usize                                jobs,

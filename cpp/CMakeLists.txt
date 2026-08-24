@@ -33,6 +33,7 @@ target_sources(
          src/source/mod.cppm
          src/lexical/token.cppm
          src/link.cppm
+         src/header.cppm
          src/usage.cppm
          src/modules/convention.cppm
          src/modules/error.cppm

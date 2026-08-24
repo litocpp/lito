@@ -28,7 +28,7 @@ struct CMakeOverrideEvents {
 
 void capture_cmake_override_events(void* context, const lito::BuildEvent& event) noexcept {
     auto& events = *static_cast<CMakeOverrideEvents*>(context);
-    if (event.kind == lito::BuildEventKind::Fetch) ++events.fetch;
+    if (event.kind == lito::BuildEventKind::Fetch && ! event.completed) ++events.fetch;
     if (event.kind == lito::BuildEventKind::CMakeConfigure ||
         event.kind == lito::BuildEventKind::CMakeBuild ||
         event.kind == lito::BuildEventKind::CMakeInstall) {

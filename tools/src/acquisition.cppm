@@ -43,6 +43,8 @@ struct AcquisitionEvent {
     ref<str>              label;
     ref<str>              source;
     ref<rstd::path::Path> destination;
+    rstd::time::Duration  elapsed;
+    bool                  completed { false };
 };
 
 struct AcquisitionEventSink {
@@ -331,7 +333,19 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
                             .destination = source.as_path(),
                         });
     }
+    auto started    = rstd::time::Instant::now();
     auto downloaded = run_command(arguments, environment);
+    if (observer.notify != nullptr) {
+        observer.notify(observer.context,
+                        AcquisitionEvent {
+                            .kind        = AcquisitionEventKind::Fetch,
+                            .label       = request.label.as_str(),
+                            .source      = request.url.as_str(),
+                            .destination = source.as_path(),
+                            .elapsed     = started.elapsed(),
+                            .completed   = true,
+                        });
+    }
     if (downloaded.is_err()) {
         (void)rstd::fs::remove_file(staging.as_path());
         return Err(AcquisitionError::System(rstd::format("download '{}'", request.url),
@@ -643,7 +657,19 @@ auto extract_verified_archive(VerifiedFile                      file,
                             .destination = destination,
                         });
     }
-    auto status = run_command(arguments, environment, Some(destination));
+    auto started = rstd::time::Instant::now();
+    auto status  = run_command(arguments, environment, Some(destination));
+    if (observer.notify != nullptr) {
+        observer.notify(observer.context,
+                        AcquisitionEvent {
+                            .kind        = AcquisitionEventKind::Extract,
+                            .label       = file.identity.as_str(),
+                            .source      = file.identity.as_str(),
+                            .destination = destination,
+                            .elapsed     = started.elapsed(),
+                            .completed   = true,
+                        });
+    }
     if (status.is_err()) {
         (void)rstd::fs::remove_dir_all(destination);
         return Err(AcquisitionError::System(String::make("extract verified archive"_str),

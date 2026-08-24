@@ -11,6 +11,7 @@ export import :bmi;
 export import :build;
 export import :usage;
 export import :link;
+export import :header;
 export import :source;
 export import :package;
 export import :modules;

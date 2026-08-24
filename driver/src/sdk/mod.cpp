@@ -1271,6 +1271,7 @@ struct SdkComponentBuildObserver {
 };
 
 void observe_component_build(void* raw, const lito::BuildEvent& event) noexcept {
+    if (event.completed) return;
     auto& observer = *static_cast<SdkComponentBuildObserver*>(raw);
     if (event.kind == lito::BuildEventKind::Fetch) {
         emit_sdk_event(observer.sink,

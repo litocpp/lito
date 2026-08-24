@@ -92,6 +92,8 @@ enum class BuildStage
 
 enum class ExternalPreparationOperation
 {
+    SourceFetch,
+    SourceExtract,
     CMakeConfigure,
     CMakeBuild,
     CMakeInstall,
@@ -156,6 +158,8 @@ auto build_stage_label(BuildStage stage) noexcept -> ref<str> {
 auto external_preparation_operation_label(ExternalPreparationOperation operation) noexcept
     -> ref<str> {
     switch (operation) {
+    case ExternalPreparationOperation::SourceFetch: return "external.source.fetch"_str;
+    case ExternalPreparationOperation::SourceExtract: return "external.source.extract"_str;
     case ExternalPreparationOperation::CMakeConfigure: return "external.cmake.configure"_str;
     case ExternalPreparationOperation::CMakeBuild: return "external.cmake.build"_str;
     case ExternalPreparationOperation::CMakeInstall: return "external.cmake.install"_str;
@@ -175,6 +179,8 @@ struct BuildOperationTiming {
 };
 
 class ExternalPreparationTimingReport {
+    BuildOperationTiming source_fetch_;
+    BuildOperationTiming source_extract_;
     BuildOperationTiming cmake_configure_;
     BuildOperationTiming cmake_build_;
     BuildOperationTiming cmake_install_;
@@ -187,6 +193,8 @@ class ExternalPreparationTimingReport {
 
     auto timing_mut(ExternalPreparationOperation operation) noexcept -> BuildOperationTiming& {
         switch (operation) {
+        case ExternalPreparationOperation::SourceFetch: return source_fetch_;
+        case ExternalPreparationOperation::SourceExtract: return source_extract_;
         case ExternalPreparationOperation::CMakeConfigure: return cmake_configure_;
         case ExternalPreparationOperation::CMakeBuild: return cmake_build_;
         case ExternalPreparationOperation::CMakeInstall: return cmake_install_;
@@ -210,6 +218,8 @@ public:
     auto timing(ExternalPreparationOperation operation) const noexcept
         -> const BuildOperationTiming& {
         switch (operation) {
+        case ExternalPreparationOperation::SourceFetch: return source_fetch_;
+        case ExternalPreparationOperation::SourceExtract: return source_extract_;
         case ExternalPreparationOperation::CMakeConfigure: return cmake_configure_;
         case ExternalPreparationOperation::CMakeBuild: return cmake_build_;
         case ExternalPreparationOperation::CMakeInstall: return cmake_install_;
