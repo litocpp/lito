@@ -57,7 +57,20 @@ auto cargo_path_text(ref<rstd::path::Path> path, ref<str> context)
     return Ok(String::make(*text));
 }
 
-auto cargo_environment() -> CommandEnvironment {
+auto cargo_profile_environment_prefix(const ProfileConfiguration& profile) -> String {
+    auto result = String::make("CARGO_PROFILE_"_str);
+    for (auto byte : profile.selected.as_str().as_bytes()) {
+        if (byte >= u8('a') && byte <= u8('z')) {
+            result.push_ascii(byte - u8('a') + u8('A'));
+        } else {
+            result.push_ascii(byte == u8('-') ? u8('_') : byte);
+        }
+    }
+    result.push_ascii('_');
+    return result;
+}
+
+auto cargo_environment(const ProfileConfiguration* profile = nullptr) -> CommandEnvironment {
     constexpr ref<str> variables[] = {
         "CARGO_TARGET_DIR"_str,
         "CARGO_BUILD_TARGET_DIR"_str,
@@ -78,14 +91,27 @@ auto cargo_environment() -> CommandEnvironment {
             .key = String::make(variable),
         });
     }
+    if (profile != nullptr) {
+        auto               prefix     = cargo_profile_environment_prefix(*profile);
+        constexpr ref<str> settings[] = {
+            "OPT_LEVEL"_str, "DEBUG"_str, "LTO"_str, "DEBUG_ASSERTIONS"_str, "STRIP"_str,
+        };
+        for (auto setting : settings) {
+            auto key = prefix.clone();
+            key.push_str(setting);
+            result.entries.push(CommandEnvironmentEntry { .key = rstd::move(key) });
+        }
+    }
     return result;
 }
 
 auto invoke_cargo(const Vec<String>&                arguments,
                   const ResolvedProcessEnvironment& environment,
-                  Option<ref<rstd::path::Path>>     working_directory = None(),
-                  bool forward_diagnostics = false) -> lito::tools::ToolResult<CommandOutput> {
-    auto overrides    = cargo_environment();
+                  Option<ref<rstd::path::Path>>     working_directory   = None(),
+                  bool                              forward_diagnostics = false,
+                  const ProfileConfiguration*       profile             = nullptr)
+    -> lito::tools::ToolResult<CommandOutput> {
+    auto overrides    = cargo_environment(profile);
     auto override_ref = Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides)));
     auto output       = [&]() {
         if (! forward_diagnostics) {
@@ -106,6 +132,67 @@ auto invoke_cargo(const Vec<String>&                arguments,
         return Err(rstd::into<lito::tools::ToolError>(rstd::move(output).unwrap_err()));
     }
     return Ok(rstd::move(output).unwrap());
+}
+
+auto cargo_profile_string(ref<str> value) -> String {
+    auto result = String::make("\""_str);
+    result.push_str(value);
+    result.push_ascii('"');
+    return result;
+}
+
+auto append_cargo_profile_config(Vec<String>& arguments,
+                                 ref<str>     profile,
+                                 ref<str>     key,
+                                 String       value) -> void {
+    arguments.push(String::make("--config"_str));
+    arguments.push(rstd::format("profile.{}.{}={}", profile, key, value.as_str()));
+}
+
+auto append_cargo_profile_arguments(Vec<String>& arguments, const ProfileConfiguration& profile)
+    -> lito::tools::ToolResult<empty> {
+    if (profile.selected.as_str().is_empty() || profile.inherits.as_str().is_empty()) {
+        return cargo_failure<empty>("Cargo profile configuration names must not be empty"_str);
+    }
+    auto selected = profile.selected.as_str();
+    append_cargo_profile_config(
+        arguments, selected, "inherits"_str, cargo_profile_string(profile.inherits.as_str()));
+    if (profile.optimization.is_some()) {
+        auto value = profile_optimization_name(*profile.optimization);
+        append_cargo_profile_config(arguments,
+                                    selected,
+                                    "opt-level"_str,
+                                    value == "s"_str || value == "z"_str
+                                        ? cargo_profile_string(value)
+                                        : String::make(value));
+    }
+    if (profile.debug_info.is_some()) {
+        append_cargo_profile_config(
+            arguments,
+            selected,
+            "debug"_str,
+            cargo_profile_string(profile_debug_info_name(*profile.debug_info)));
+    }
+    if (profile.lto.is_some()) {
+        auto value = *profile.lto == ProfileLto::Off
+                         ? String::make("false"_str)
+                         : cargo_profile_string(profile_lto_name(*profile.lto));
+        append_cargo_profile_config(arguments, selected, "lto"_str, rstd::move(value));
+    }
+    if (profile.debug_assertions.is_some()) {
+        append_cargo_profile_config(
+            arguments,
+            selected,
+            "debug-assertions"_str,
+            String::make(*profile.debug_assertions ? "true"_str : "false"_str));
+    }
+    if (profile.strip.is_some()) {
+        append_cargo_profile_config(arguments,
+                                    selected,
+                                    "strip"_str,
+                                    cargo_profile_string(profile_strip_name(*profile.strip)));
+    }
+    return Ok(empty {});
 }
 
 auto required_member(const Json& value, ref<str> key, ref<str> context)
@@ -628,6 +715,7 @@ auto build_static_library(const Provider&                   provider,
     auto arguments = Vec<String>::make();
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    rstd_try(append_cargo_profile_arguments(arguments, request.profile));
     arguments.push(String::make("rustc"_str));
     arguments.push(String::make("--manifest-path"_str));
     arguments.push(rstd_try(cargo_path_text(request.manifest.as_path(), "Cargo manifest"_str)));
@@ -635,7 +723,7 @@ auto build_static_library(const Provider&                   provider,
     arguments.push(request.package.clone());
     arguments.push(String::make("--lib"_str));
     arguments.push(String::make("--profile"_str));
-    arguments.push(request.profile.clone());
+    arguments.push(request.profile.selected.value.clone());
     arguments.push(String::make("--target"_str));
     arguments.push(request.target.clone());
     arguments.push(String::make("--target-dir"_str));
@@ -663,8 +751,11 @@ auto build_static_library(const Provider&                   provider,
     arguments.push(String::make("--print"_str));
     arguments.push(String::make("native-static-libs"_str));
     emit_cargo(observer, EventKind::Build, request.alias.as_str(), request.work_root.as_path());
-    auto output = rstd_try(
-        invoke_cargo(arguments, environment, Some(metadata.workspace_root.as_path()), true));
+    auto output = rstd_try(invoke_cargo(arguments,
+                                        environment,
+                                        Some(metadata.workspace_root.as_path()),
+                                        true,
+                                        rstd::addressof(request.profile)));
     if (output.exit_code != i32 {}) {
         return Err(lito::tools::ToolError::Execution(
             rstd::format("Cargo dependency '{}' build", request.alias),
@@ -854,6 +945,7 @@ auto build_binaries(const Provider&                   provider,
     auto arguments = Vec<String>::make();
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    rstd_try(append_cargo_profile_arguments(arguments, request.profile));
     arguments.push(String::make("build"_str));
     arguments.push(String::make("--manifest-path"_str));
     arguments.push(rstd_try(cargo_path_text(request.manifest.as_path(), "Cargo manifest"_str)));
@@ -861,7 +953,7 @@ auto build_binaries(const Provider&                   provider,
     arguments.push(request.package.clone());
     arguments.push(String::make("--bins"_str));
     arguments.push(String::make("--profile"_str));
-    arguments.push(request.profile.clone());
+    arguments.push(request.profile.selected.value.clone());
     arguments.push(String::make("--target"_str));
     arguments.push(request.target.clone());
     arguments.push(String::make("--target-dir"_str));
@@ -886,8 +978,11 @@ auto build_binaries(const Provider&                   provider,
         arguments.push(String::make("--no-default-features"_str));
     }
     emit_cargo(observer, EventKind::Build, request.alias.as_str(), request.work_root.as_path());
-    auto output = rstd_try(
-        invoke_cargo(arguments, environment, Some(metadata.workspace_root.as_path()), true));
+    auto output = rstd_try(invoke_cargo(arguments,
+                                        environment,
+                                        Some(metadata.workspace_root.as_path()),
+                                        true,
+                                        rstd::addressof(request.profile)));
     if (output.exit_code != i32 {}) {
         return Err(lito::tools::ToolError::Execution(
             rstd::format("Cargo dependency '{}' build", request.alias),

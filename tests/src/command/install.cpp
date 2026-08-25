@@ -185,17 +185,31 @@ version = "1.0.0"
     auto source =
         lito::resolve_install_source(lito::InstallSourceRequirement::LocalProject(fixture.clone()));
     ASSERT_TRUE(source.is_ok());
+    auto build = build_request(fixture.as_path(),
+                               output.as_path(),
+                               strings("fixture-cargo-runtime-install"_str),
+                               build_profile("plain"_str));
+    build.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str, "-g1"_str, "-flto=thin"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    build.configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=thin"_str, "-Wl,--strip-debug"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
     auto request = lito::InstallRequest {
         .source = rstd::move(source).unwrap(),
-        .build  = build_request(fixture.as_path(),
-                                output.as_path(),
-                                strings("fixture-cargo-runtime-install"_str),
-                                build_profile("release"_str)),
+        .build  = rstd::move(build),
         .destination =
             lito::InstallDestination::Prefix(lito::InstallPrefix { .path = prefix.clone() }),
     };
-    request.build.locked = false;
-    auto installed       = lito::install(rstd::move(request));
+    auto setup                   = CompileProgressCapture {};
+    request.build.setup_reporter = Some(lito::BuildSetupReportSink {
+        .context = rstd::addressof(setup),
+        .notify  = capture_build_setup,
+    });
+    request.build.locked         = false;
+    auto installed               = lito::install(rstd::move(request));
     if (installed.is_err()) {
         rstd::io::eprintln("{}", error_chain_text(installed.unwrap_err()));
         FAIL();
@@ -203,6 +217,14 @@ version = "1.0.0"
     }
     ASSERT_TRUE(installed->build.is_Built());
     ASSERT_EQ(installed->build.as_Built().summary.product.external_assets.sets.len(), usize(2));
+    ASSERT_EQ(setup.cargo_profiles.len(), usize(1));
+    EXPECT_EQ(setup.cargo_profiles[usize {}].package.as_str(), "fixture-cargo-runtime-install"_str);
+    EXPECT_EQ(setup.cargo_profiles[usize {}].dependency.as_str(), "runtime"_str);
+    EXPECT_TRUE(setup.cargo_profiles[usize {}].selected.as_str().starts_with("lito-"_str));
+    EXPECT_EQ(setup.cargo_profiles[usize {}].inherits.as_str(), "dev"_str);
+    EXPECT_TRUE(setup.cargo_profiles[usize {}].settings.as_str().contains("optimization=2"_str));
+    EXPECT_TRUE(setup.cargo_profiles[usize {}].settings.as_str().contains("LTO=thin"_str));
+    EXPECT_TRUE(setup.cargo_profiles[usize {}].settings.as_str().contains("strip=debuginfo"_str));
 #if RSTD_OS_WINDOWS
     constexpr auto daemon = "bin/fixture-daemon.exe"_str;
     constexpr auto helper = "bin/fixture-helper.exe"_str;

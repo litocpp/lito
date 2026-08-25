@@ -168,6 +168,18 @@ auto render_build_setup(const lito::BuildSetupReport& report) -> String {
                                 .as_str());
         }
     }
+    if (! report.cargo_profiles.is_empty()) {
+        result.push_str("  Cargo dependencies\n"_str);
+        for (const auto& profile : report.cargo_profiles) {
+            result.push_str(rstd::format("    {}:{} {} <- {} ({})\n",
+                                         profile.package.as_str(),
+                                         profile.dependency.as_str(),
+                                         profile.selected.as_str(),
+                                         profile.inherits.as_str(),
+                                         profile.settings.as_str())
+                                .as_str());
+        }
+    }
     result.push_ascii('\n');
     return result;
 }

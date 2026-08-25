@@ -99,4 +99,9 @@ struct PackageManifest {
     Vec<WorkspaceCargoExternalDependencyReference>     workspace_cargo_external_dependencies;
 };
 
+auto package_manifest_language(const PackageManifest& manifest) noexcept -> PackageLanguage {
+    return manifest.standard.is_some() ? package_standard_language(*manifest.standard)
+                                       : PackageLanguage::Cpp;
+}
+
 } // namespace lito::manifest

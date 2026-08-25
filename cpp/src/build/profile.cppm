@@ -70,6 +70,50 @@ struct ProfileSpec {
     Vec<String>                        linker_options;
 };
 
+struct EffectiveNativeProfile {
+    lito::manifest::PackageLanguage      language { lito::manifest::PackageLanguage::Cpp };
+    Option<lito::manifest::Optimization> optimization;
+    Option<lito::manifest::DebugInfo>    debug_info;
+    Option<lito::manifest::Lto>          compile_lto;
+    Option<lito::manifest::Lto>          link_lto;
+    Option<bool>                         ndebug;
+    Option<lito::artifact::StripMode>    strip;
+    CodegenSettingSources                sources;
+    Option<String>                       link_lto_source;
+    Option<String>                       strip_source;
+};
+
+auto effective_native_profile(const ProfileSpec& profile, lito::manifest::PackageLanguage language)
+    -> EffectiveNativeProfile {
+    const auto& codegen = language == lito::manifest::PackageLanguage::C
+                              ? profile.c.common.codegen
+                              : profile.cpp.common.codegen;
+    const auto& sources =
+        language == lito::manifest::PackageLanguage::C ? profile.c_sources : profile.cpp_sources;
+    auto result = EffectiveNativeProfile {
+        .language     = language,
+        .optimization = codegen.optimization,
+        .debug_info   = codegen.debug_info,
+        .compile_lto  = codegen.lto,
+        .link_lto     = profile.link_lto,
+        .ndebug =
+            language == lito::manifest::PackageLanguage::C ? profile.c_ndebug : profile.cpp_ndebug,
+        .sources         = sources.clone(),
+        .link_lto_source = profile.link_lto_source.clone(),
+    };
+    if (result.ndebug.is_none() && result.sources.ndebug.is_some()) {
+        result.ndebug = Some(false);
+    }
+    if (profile.linker_strip.is_some()) {
+        result.strip        = profile.linker_strip;
+        result.strip_source = profile.linker_strip_source.clone();
+    } else if (profile.strip_source.is_some()) {
+        result.strip        = Some<lito::artifact::StripMode>(profile.strip);
+        result.strip_source = profile.strip_source.clone();
+    }
+    return result;
+}
+
 struct ParsedGlobalBuildOptions {
     CppArgumentLayer                    cpp;
     lito::c::CArgumentLayer             c;

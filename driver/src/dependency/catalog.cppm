@@ -275,19 +275,21 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         if (catalog_indices[package_index].is_none()) continue;
         const auto& package = graph.packages[package_index];
-        auto dependencies = resolve_cargo_dependencies(package.manifest.cargo_external_dependencies,
-                                                       package_index,
-                                                       package.manifest.name.as_str(),
-                                                       source_catalog,
-                                                       profile,
-                                                       platform,
-                                                       layout,
-                                                       cargo_config,
-                                                       tool_resolver,
-                                                       process_environment,
-                                                       jobs,
-                                                       cargo_provider,
-                                                       observer);
+        auto        dependencies =
+            resolve_cargo_dependencies(package.manifest.cargo_external_dependencies,
+                                       package_index,
+                                       package.manifest.name.as_str(),
+                                       lito::manifest::package_manifest_language(package.manifest),
+                                       source_catalog,
+                                       profile,
+                                       platform,
+                                       layout,
+                                       cargo_config,
+                                       tool_resolver,
+                                       process_environment,
+                                       jobs,
+                                       cargo_provider,
+                                       observer);
         if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
         auto& destination = result.packages[*catalog_indices[package_index]].dependencies;
         for (auto& dependency : dependencies->usage) destination.push(rstd::move(dependency));

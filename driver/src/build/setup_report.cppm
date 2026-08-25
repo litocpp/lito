@@ -4,7 +4,9 @@ import rstd;
 import lito.crypto;
 import lito.core;
 import lito.cpp;
+import lito.tools.cargo;
 import lito.toolchain;
+import :dependency.cargo;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -67,6 +69,14 @@ struct ScriptPackageReport {
     String  entry_digest;
 };
 
+struct CargoProfileReport {
+    String package;
+    String dependency;
+    String selected;
+    String inherits;
+    String settings;
+};
+
 struct BuildSetupReport {
     BuildToolchainReport         toolchain;
     BuildTargetReport            target;
@@ -74,6 +84,7 @@ struct BuildSetupReport {
     Vec<BuildProfileValueReport> profile_values;
     Vec<BuildOptionReport>       options;
     Vec<ScriptPackageReport>     script_packages;
+    Vec<CargoProfileReport>      cargo_profiles;
 };
 
 struct BuildSetupReportSink {
@@ -170,14 +181,25 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                 .entry_digest    = rstd::move(digest),
             });
         }
+        auto language = lito::manifest::package_manifest_language(package.manifest);
+        for (const auto& dependency : package.manifest.cargo_external_dependencies) {
+            auto projected = resolve_cargo_profile_configuration(
+                package.manifest.name.as_str(), dependency, profile, language);
+            if (projected.is_err()) continue;
+            report.cargo_profiles.push(CargoProfileReport {
+                .package    = package.manifest.name.clone(),
+                .dependency = dependency.alias.clone(),
+                .selected   = projected->selected.value.clone(),
+                .inherits   = projected->inherits.value.clone(),
+                .settings   = lito::tools::cargo::profile_configuration_summary(*projected),
+            });
+        }
     }
     const auto source_text = [](const Option<String>& source) {
         return source.is_some() ? source->clone() : String::make("compiler default"_str);
     };
-    const auto append_codegen = [&](BuildOptionReportDomain                 domain,
-                                    const lito::compiler::CodegenOptions&   options,
-                                    const lito::cpp::CodegenSettingSources& sources,
-                                    const Option<bool>&                     ndebug) {
+    const auto append_codegen = [&](BuildOptionReportDomain                  domain,
+                                    const lito::cpp::EffectiveNativeProfile& native) {
         const auto append_value =
             [&](ref<str> field, ref<str> value, const Option<String>& source) {
                 report.profile_values.push(BuildProfileValueReport {
@@ -188,31 +210,28 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                 });
             };
         append_value("optimization"_str,
-                     options.optimization.is_some()
-                         ? lito::cpp::cpp_optimization_option(options.optimization)
+                     native.optimization.is_some()
+                         ? lito::cpp::cpp_optimization_option(native.optimization)
                          : "compiler default"_str,
-                     sources.optimization);
+                     native.sources.optimization);
         append_value("debug info"_str,
-                     options.debug_info.is_some() ? lito::cpp::cpp_debug_option(options.debug_info)
-                                                  : "compiler default"_str,
-                     sources.debug_info);
+                     native.debug_info.is_some() ? lito::cpp::cpp_debug_option(native.debug_info)
+                                                 : "compiler default"_str,
+                     native.sources.debug_info);
         append_value("LTO"_str,
-                     options.lto.is_some() ? lito::cpp::cpp_lto_option(options.lto)
-                                           : "compiler default"_str,
-                     sources.lto);
+                     native.compile_lto.is_some() ? lito::cpp::cpp_lto_option(native.compile_lto)
+                                                  : "compiler default"_str,
+                     native.sources.lto);
         auto ndebug_value = "compiler default"_str;
-        if (ndebug.is_some()) {
-            ndebug_value = *ndebug ? "defined"_str : "undefined"_str;
-        } else if (sources.ndebug.is_some()) {
-            ndebug_value = "absent"_str;
+        if (native.ndebug.is_some()) {
+            ndebug_value = *native.ndebug ? "defined"_str : "undefined"_str;
         }
-        append_value("NDEBUG"_str, ndebug_value, sources.ndebug);
+        append_value("NDEBUG"_str, ndebug_value, native.sources.ndebug);
     };
     if (standards.cpp.is_some()) {
-        append_codegen(BuildOptionReportDomain::Cpp,
-                       profile.cpp.common.codegen,
-                       profile.cpp_sources,
-                       profile.cpp_ndebug);
+        append_codegen(
+            BuildOptionReportDomain::Cpp,
+            lito::cpp::effective_native_profile(profile, lito::manifest::PackageLanguage::Cpp));
         report.profile_values.push(BuildProfileValueReport {
             .domain = BuildOptionReportDomain::Cpp,
             .field  = String::make("exceptions"_str),
@@ -227,10 +246,9 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
         });
     }
     if (standards.c.is_some()) {
-        append_codegen(BuildOptionReportDomain::C,
-                       profile.c.common.codegen,
-                       profile.c_sources,
-                       profile.c_ndebug);
+        append_codegen(
+            BuildOptionReportDomain::C,
+            lito::cpp::effective_native_profile(profile, lito::manifest::PackageLanguage::C));
     }
     const auto append_microsoft_runtime =
         [&report](BuildOptionReportDomain                                domain,
@@ -280,28 +298,25 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                                          : (standards.c.is_some() ? "C compile settings"_str
                                                                   : "C++ compile settings"_str)),
     });
-    auto strip_value  = String::make("compiler default"_str);
-    auto strip_source = Option<String> {};
-    if (profile.linker_strip.is_some()) {
-        strip_value  = String::make(*profile.linker_strip == lito::artifact::StripMode::Symbols
-                                        ? "symbols"_str
-                                        : "debuginfo"_str);
-        strip_source = profile.linker_strip_source.clone();
-    } else if (profile.strip_source.is_some()) {
-        switch (profile.strip) {
+    auto native_link = lito::cpp::effective_native_profile(
+        profile,
+        standards.cpp.is_some() ? lito::manifest::PackageLanguage::Cpp
+                                : lito::manifest::PackageLanguage::C);
+    auto strip_value = String::make("compiler default"_str);
+    if (native_link.strip.is_some()) {
+        switch (*native_link.strip) {
         case lito::artifact::StripMode::None: strip_value = String::make("none"_str); break;
         case lito::artifact::StripMode::DebugInfo:
             strip_value = String::make("debuginfo"_str);
             break;
         case lito::artifact::StripMode::Symbols: strip_value = String::make("symbols"_str); break;
         }
-        strip_source = profile.strip_source.clone();
     }
     report.profile_values.push(BuildProfileValueReport {
         .domain = BuildOptionReportDomain::Link,
         .field  = String::make("strip"_str),
         .value  = rstd::move(strip_value),
-        .source = source_text(strip_source),
+        .source = source_text(native_link.strip_source),
     });
     const auto append = [&report](BuildOptionReportDomain                    domain,
                                   const Vec<lito::config::BuildOptionInput>& inputs) {

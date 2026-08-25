@@ -354,6 +354,7 @@ struct CompileProgressCapture {
     Vec<Vec<String>>                     option_arguments;
     String                               profile;
     Vec<lito::BuildProfileValueReport>   profile_values;
+    Vec<lito::CargoProfileReport>        cargo_profiles;
     bool                                 missing {};
 };
 
@@ -400,6 +401,15 @@ void capture_build_setup(void* raw_context, const lito::BuildSetupReport& report
             .field  = value.field.clone(),
             .value  = value.value.clone(),
             .source = value.source.clone(),
+        });
+    }
+    for (const auto& profile : report.cargo_profiles) {
+        capture.cargo_profiles.push(lito::CargoProfileReport {
+            .package    = profile.package.clone(),
+            .dependency = profile.dependency.clone(),
+            .selected   = profile.selected.clone(),
+            .inherits   = profile.inherits.clone(),
+            .settings   = profile.settings.clone(),
         });
     }
 }

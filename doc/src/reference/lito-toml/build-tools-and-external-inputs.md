@@ -114,18 +114,23 @@ Optional fields are:
 - `usage = "link" | "runtime"`, defaulting to `link`;
 - `features`, a unique list of Cargo feature names;
 - `default-features`, defaulting to `true`;
-- `profile`, a Cargo profile name;
+- `profile`, the Cargo profile used as the inheritance base for Cargo-only policy;
 - `visibility = "public" | "private" | "link"`, required for link usage and rejected for runtime
   usage;
 - `condition`, evaluated in the consuming Lito package context.
 
-Cargo features are sorted before they enter the request. Without `profile`, Lito debug and release
-families select Cargo `dev` and `release`; the plain family requires an explicit Cargo profile.
+Cargo features are sorted before they enter the request. Without `profile`, Lito debug and plain
+families use Cargo `dev` as their inheritance base and release families use `release`. Lito creates
+a generated config-only Cargo profile that inherits this base and overlays the consuming package's
+effective typed optimization, debug info, LTO, assertion, and runtime strip settings. Explicit
+`profile` changes only the inheritance base; it does not bypass these Lito-owned settings. Native
+flags are parsed by Lito's compiler and linker owners and are never forwarded through `RUSTFLAGS`.
 There is no manifest target override. For link usage, Lito discovers the package library target
 and requires Cargo metadata to report `staticlib` among its crate types. For runtime usage, Lito
 builds the package binary targets and publishes each emitted executable as a materialized external
-asset set named after the Cargo binary target. Lito validates Cargo's reported host triple against
-the effective native target.
+asset set named after the Cargo binary target. Static libraries are not stripped by Cargo; final
+native artifact stripping remains owned by Lito. Lito validates Cargo's reported host triple
+against the effective native target.
 
 `[workspace.external-dependencies.cargo.NAME]` owns `source`, `package`, and `manifest-path`. A
 member reference sets `workspace = true` and owns `usage`, `features`, `default-features`, `profile`,

@@ -1164,10 +1164,16 @@ auto parse_cargo_consumption(const Toml& specification, ref<str> context)
         }
         default_features = *parsed;
     }
-    auto profile = rstd_try(optional_string(specification, "profile"_str, context));
-    if (profile.is_some() && ! package_name_is_valid(profile->as_str())) {
+    auto profile_name = rstd_try(optional_string(specification, "profile"_str, context));
+    if (profile_name.is_some() && ! package_name_is_valid(profile_name->as_str())) {
         return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
             rstd::format("{}.profile must be a valid Cargo profile name", context));
+    }
+    auto profile = Option<lito::dependency::CargoProfileName> {};
+    if (profile_name.is_some()) {
+        profile = Some(lito::dependency::CargoProfileName {
+            .value = rstd::move(profile_name).unwrap(),
+        });
     }
     auto usage_text = rstd_try(optional_string(specification, "usage"_str, context));
     auto usage      = lito::dependency::CargoDependencyUsage::Link;

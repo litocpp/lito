@@ -16,6 +16,14 @@ enum class CargoDependencyUsage
     Runtime,
 };
 
+struct CargoProfileName {
+    String value;
+
+    auto as_str() const noexcept -> ref<str> { return value.as_str(); }
+
+    auto clone() const -> CargoProfileName { return CargoProfileName { .value = value.clone() }; }
+};
+
 struct CargoDependencyRecipe {
     String  package;
     String  source;
@@ -33,7 +41,7 @@ struct CargoDependencyRecipe {
 struct CargoDependencyConsumption {
     Vec<String>                         features;
     bool                                default_features { true };
-    Option<String>                      profile;
+    Option<CargoProfileName>            profile;
     CargoDependencyUsage                usage { CargoDependencyUsage::Link };
     Option<DependencyVisibility>        visibility;
     Option<ExternalDependencyCondition> condition;

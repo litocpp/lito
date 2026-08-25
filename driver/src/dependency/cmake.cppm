@@ -200,10 +200,12 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
     const auto append_ndebug = [&](String& output, const Option<bool>& ndebug) {
         if (ndebug.is_some()) append_flag(output, *ndebug ? "-DNDEBUG"_str : "-UNDEBUG"_str);
     };
-    auto c_flags = String::make();
-    append_flag(c_flags, cpp::cpp_optimization_option(profile.c.common.codegen.optimization));
-    append_flag(c_flags, cpp::cpp_debug_option(profile.c.common.codegen.debug_info));
-    append_flag(c_flags, cpp::cpp_lto_option(profile.c.common.codegen.lto));
+    auto c_profile   = cpp::effective_native_profile(profile, lito::manifest::PackageLanguage::C);
+    auto cpp_profile = cpp::effective_native_profile(profile, lito::manifest::PackageLanguage::Cpp);
+    auto c_flags     = String::make();
+    append_flag(c_flags, cpp::cpp_optimization_option(c_profile.optimization));
+    append_flag(c_flags, cpp::cpp_debug_option(c_profile.debug_info));
+    append_flag(c_flags, cpp::cpp_lto_option(c_profile.compile_lto));
     if (profile.c.common.microsoft_runtime_library.is_some()) {
         append_flag(c_flags,
                     rstd::format("-fms-runtime-lib={}",
@@ -211,7 +213,7 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
                                      *profile.c.common.microsoft_runtime_library))
                         .as_str());
     }
-    append_ndebug(c_flags, profile.c_ndebug);
+    append_ndebug(c_flags, c_profile.ndebug);
     auto cxx_flags = String::make();
     switch (profile.cpp.abi.standard_library) {
     case lito::config::StandardLibrary::Libcxx: append_flag(cxx_flags, "-stdlib=libc++"_str); break;
@@ -223,9 +225,9 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
     append_flag(cxx_flags,
                 profile.cpp.language.exceptions ? "-fexceptions"_str : "-fno-exceptions"_str);
     append_flag(cxx_flags, profile.cpp.language.rtti ? "-frtti"_str : "-fno-rtti"_str);
-    append_flag(cxx_flags, cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
-    append_flag(cxx_flags, cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
-    append_flag(cxx_flags, cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
+    append_flag(cxx_flags, cpp::cpp_optimization_option(cpp_profile.optimization));
+    append_flag(cxx_flags, cpp::cpp_debug_option(cpp_profile.debug_info));
+    append_flag(cxx_flags, cpp::cpp_lto_option(cpp_profile.compile_lto));
     if (profile.cpp.common.microsoft_runtime_library.is_some()) {
         append_flag(cxx_flags,
                     rstd::format("-fms-runtime-lib={}",
@@ -233,7 +235,7 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
                                      *profile.cpp.common.microsoft_runtime_library))
                         .as_str());
     }
-    append_ndebug(cxx_flags, profile.cpp_ndebug);
+    append_ndebug(cxx_flags, cpp_profile.ndebug);
     auto linker_flags = String::make();
     append_flag(linker_flags, cpp::cpp_lto_option(profile.link_lto));
     if (profile.linker_strip.is_some()) {

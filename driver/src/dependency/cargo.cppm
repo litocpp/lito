@@ -27,22 +27,125 @@ auto cargo_error(ref<str> context, lito::tools::ToolError error)
         String::make(context), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
 }
 
-auto cargo_profile(const lito::dependency::CargoDependencyRequirement& declaration,
-                   const cpp::ProfileSpec& profile) -> lito::dependency::DependencyResult<String> {
-    if (declaration.consumption.profile.is_some()) {
-        return Ok(declaration.consumption.profile->clone());
-    }
-    switch (profile.family) {
-    case lito::manifest::BuildProfileFamily::Debug: return Ok(String::make("dev"_str));
-    case lito::manifest::BuildProfileFamily::Release: return Ok(String::make("release"_str));
-    case lito::manifest::BuildProfileFamily::Plain:
-        return lito::dependency::dependency_failure<String>(rstd::format(
-            "Cargo dependency '{}' requires an explicit profile for Lito plain profile '{}'",
-            declaration.alias.as_str(),
-            profile.name.as_str()));
-    }
-    return lito::dependency::dependency_failure<String>("unknown Lito profile family"_str);
+auto cargo_profile_source(const Option<String>& source, const cpp::ProfileSpec& profile)
+    -> ref<str> {
+    return source.is_some() ? source->as_str() : profile.name.as_str();
 }
+
+auto cargo_optimization(ref<str>                                            owner,
+                        const lito::dependency::CargoDependencyRequirement& declaration,
+                        const cpp::ProfileSpec&                             profile,
+                        const cpp::EffectiveNativeProfile&                  native)
+    -> lito::dependency::DependencyResult<Option<lito::tools::cargo::ProfileOptimization>> {
+    if (native.optimization.is_none() ||
+        *native.optimization == lito::manifest::Optimization::Default) {
+        return Ok(Option<lito::tools::cargo::ProfileOptimization> {});
+    }
+    using Native = lito::manifest::Optimization;
+    using Cargo  = lito::tools::cargo::ProfileOptimization;
+    switch (*native.optimization) {
+    case Native::None: return Ok(Some(Cargo::None));
+    case Native::Level1: return Ok(Some(Cargo::Level1));
+    case Native::Level2: return Ok(Some(Cargo::Level2));
+    case Native::Level3: return Ok(Some(Cargo::Level3));
+    case Native::Size: return Ok(Some(Cargo::Size));
+    case Native::SizeMin: return Ok(Some(Cargo::SizeMin));
+    case Native::Level4:
+    case Native::Debug:
+    case Native::Fast:
+        return lito::dependency::dependency_failure<
+            Option<lito::tools::cargo::ProfileOptimization>>(rstd::format(
+            "Cargo dependency '{}:{}' cannot represent Lito optimization '{}' selected by {}",
+            owner,
+            declaration.alias.as_str(),
+            cpp::cpp_optimization_option(*native.optimization),
+            cargo_profile_source(native.sources.optimization, profile)));
+    case Native::Default: break;
+    }
+    __builtin_unreachable();
+}
+
+auto cargo_debug_info(const cpp::EffectiveNativeProfile& native)
+    -> Option<lito::tools::cargo::ProfileDebugInfo> {
+    if (native.debug_info.is_none()) return None();
+    using Native = lito::manifest::DebugInfo;
+    using Cargo  = lito::tools::cargo::ProfileDebugInfo;
+    switch (*native.debug_info) {
+    case Native::None: return Some(Cargo::None);
+    case Native::Limited: return Some(Cargo::Limited);
+    case Native::Full: return Some(Cargo::Full);
+    case Native::LineDirectivesOnly: return Some(Cargo::LineDirectivesOnly);
+    case Native::LineTablesOnly: return Some(Cargo::LineTablesOnly);
+    }
+    __builtin_unreachable();
+}
+
+auto cargo_lto(const cpp::EffectiveNativeProfile& native)
+    -> Option<lito::tools::cargo::ProfileLto> {
+    auto value = native.compile_lto.is_some() ? native.compile_lto : native.link_lto;
+    if (value.is_none()) return None();
+    switch (*value) {
+    case lito::manifest::Lto::Off: return Some(lito::tools::cargo::ProfileLto::Off);
+    case lito::manifest::Lto::Thin: return Some(lito::tools::cargo::ProfileLto::Thin);
+    case lito::manifest::Lto::Fat: return Some(lito::tools::cargo::ProfileLto::Fat);
+    }
+    __builtin_unreachable();
+}
+
+auto cargo_strip(const cpp::EffectiveNativeProfile& native)
+    -> Option<lito::tools::cargo::ProfileStrip> {
+    if (native.strip.is_none()) return None();
+    switch (*native.strip) {
+    case lito::artifact::StripMode::None: return Some(lito::tools::cargo::ProfileStrip::None);
+    case lito::artifact::StripMode::DebugInfo:
+        return Some(lito::tools::cargo::ProfileStrip::DebugInfo);
+    case lito::artifact::StripMode::Symbols: return Some(lito::tools::cargo::ProfileStrip::Symbols);
+    }
+    __builtin_unreachable();
+}
+
+} // namespace lito
+
+export namespace lito
+{
+
+auto resolve_cargo_profile_configuration(
+    ref<str>                                            owner,
+    const lito::dependency::CargoDependencyRequirement& declaration,
+    const cpp::ProfileSpec&                             profile,
+    lito::manifest::PackageLanguage                     language)
+    -> lito::dependency::DependencyResult<lito::tools::cargo::ProfileConfiguration> {
+    auto inherited =
+        declaration.consumption.profile.is_some()
+            ? declaration.consumption.profile->clone()
+            : lito::dependency::CargoProfileName {
+                  .value = String::make(
+                      profile.family == lito::manifest::BuildProfileFamily::Release ? "release"_str
+                                                                                    : "dev"_str),
+              };
+    auto native = cpp::effective_native_profile(profile, language);
+    auto result = lito::tools::cargo::ProfileConfiguration {
+        .inherits         = rstd::move(inherited),
+        .optimization     = rstd_try(cargo_optimization(owner, declaration, profile, native)),
+        .debug_info       = cargo_debug_info(native),
+        .lto              = cargo_lto(native),
+        .debug_assertions = native.ndebug.is_some() ? Some(! *native.ndebug) : None(),
+        .strip = declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Runtime
+                     ? cargo_strip(native)
+                     : Option<lito::tools::cargo::ProfileStrip> {},
+    };
+    auto projection = lito::tools::cargo::profile_configuration_identity(result);
+    auto digest     = lito::crypto::sha256_hex(projection.as_str());
+    auto selected   = String::make("lito-"_str);
+    selected.push_str(digest.as_str().get(usize {}, usize(16)).unwrap());
+    result.selected = lito::dependency::CargoProfileName { .value = rstd::move(selected) };
+    return Ok(rstd::move(result));
+}
+
+} // namespace lito
+
+namespace lito
+{
 
 auto cargo_target(const lito::tools::cargo::Provider& provider, const BuildPlatform& platform)
     -> lito::dependency::DependencyResult<String> {
@@ -100,7 +203,8 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
                             const cpp::ExternalSourceRoot&                      source,
                             const lito::dependency::CargoDependencyRequirement& declaration,
                             const lito::tools::cargo::PackageMetadata&          metadata,
-                            ref<str>                                            profile,
+                            const lito::tools::cargo::ProfileConfiguration&     profile,
+                            lito::manifest::PackageLanguage                     language,
                             ref<str> target) -> lito::dependency::DependencyResult<String> {
     auto lock = rstd::fs::read(metadata.lock_file.as_path());
     if (lock.is_err()) {
@@ -108,7 +212,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
                                                          metadata.lock_file.clone(),
                                                          rstd::move(lock).unwrap_err()));
     }
-    auto       text   = String::make("lito-cargo-request-v2\n"_str);
+    auto       text   = String::make("lito-cargo-request-v3\n"_str);
     const auto append = [&](ref<str> value) {
         text.push_str(rstd::format("{}:{}\n", value.len(), value).as_str());
     };
@@ -117,7 +221,9 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     append(lito::crypto::sha256_hex(lock->as_slice()).as_str());
     append(metadata.id.as_str());
     append(declaration.recipe.manifest_path.as_path().to_string_lossy().as_str());
-    append(profile);
+    append(profile.selected.as_str());
+    append(lito::tools::cargo::profile_configuration_identity(profile).as_str());
+    append(lito::manifest::package_language_name(language));
     append(target);
     append(declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Link
                ? "link"_str
@@ -142,6 +248,7 @@ auto resolve_cargo_dependencies(
     const Vec<lito::dependency::CargoDependencyRequirement>& declarations,
     usize                                                    package_index,
     ref<str>                                                 owner,
+    lito::manifest::PackageLanguage                          language,
     const cpp::ExternalSourceRootCatalog&                    sources,
     const cpp::ProfileSpec&                                  profile,
     const BuildPlatform&                                     platform,
@@ -197,12 +304,14 @@ auto resolve_cargo_dependencies(
                                        .as_str(),
                                    rstd::move(metadata).unwrap_err()));
         }
-        auto resolved_profile = rstd_try(cargo_profile(declaration, profile));
+        auto resolved_profile =
+            rstd_try(resolve_cargo_profile_configuration(owner, declaration, profile, language));
         auto request_identity = rstd_try(cargo_request_identity(*provider_cache,
                                                                 *source,
                                                                 declaration,
                                                                 *metadata,
-                                                                resolved_profile.as_str(),
+                                                                resolved_profile,
+                                                                language,
                                                                 target.as_str()));
         auto work_root        = layout.cargo_work_root(request_identity.as_str());
         auto target_directory = work_root.join(PathBuf::from("target"_str).as_path());
@@ -213,7 +322,7 @@ auto resolve_cargo_dependencies(
             .package          = declaration.recipe.package.clone(),
             .features         = as<Clone>(declaration.consumption.features).clone(),
             .default_features = declaration.consumption.default_features,
-            .profile          = resolved_profile.clone(),
+            .profile          = rstd::move(resolved_profile),
             .target           = target.clone(),
             .request_identity = request_identity.clone(),
             .work_root        = rstd::move(work_root),
@@ -230,7 +339,7 @@ auto resolve_cargo_dependencies(
                                  "target '{}'",
                                  owner,
                                  declaration.alias.as_str(),
-                                 resolved_profile.as_str(),
+                                 request.profile.selected.as_str(),
                                  target.as_str())
                         .as_str(),
                     rstd::move(snapshot).unwrap_err()));
@@ -265,7 +374,7 @@ auto resolve_cargo_dependencies(
                                                 "for target '{}'",
                                                 owner,
                                                 declaration.alias.as_str(),
-                                                resolved_profile.as_str(),
+                                                request.profile.selected.as_str(),
                                                 target.as_str())
                                        .as_str(),
                                    rstd::move(snapshot).unwrap_err()));

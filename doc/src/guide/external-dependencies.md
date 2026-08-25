@@ -107,10 +107,14 @@ usage = "link"
 visibility = "private"
 ```
 
-`manifest-path` is relative to the external source and defaults to `Cargo.toml`. `profile` can
-select a Cargo profile; otherwise Lito debug and release profiles map to Cargo `dev` and `release`.
-A Lito plain profile must declare `profile` explicitly. Cargo dependencies require an existing
-workspace `Cargo.lock`, and Lito invokes Cargo with `--locked` and a Lito-owned target directory.
+`manifest-path` is relative to the external source and defaults to `Cargo.toml`. `profile` selects
+the Cargo profile that supplies Cargo-only policy; it defaults to `dev` for Lito debug and plain
+profiles and to `release` for Lito release profiles. Lito selects a generated Cargo profile that
+inherits that base and projects the consuming package's effective optimization, debug info, LTO,
+assertion, and runtime strip settings. Thus a plain profile can receive values from Lito's parsed
+global build options without declaring a Cargo profile or passing native flags through
+`RUSTFLAGS`. Cargo dependencies require an existing workspace `Cargo.lock`, and Lito invokes Cargo
+with `--locked` and a Lito-owned target directory.
 
 The Cargo package owns its foreign ABI. Export stable `extern "C"` symbols, use C-compatible data
 representations, keep allocation and deallocation under one owner, and do not let Rust panic or C++
