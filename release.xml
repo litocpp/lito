@@ -1,3 +1,10 @@
+<release version="0.6.2" date="2026-08-25">
+  <description>
+    <ul>
+      <li>Effective Lito profile projection for Cargo dependencies.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.6.1" date="2026-08-24">
   <description>
     <ul>
