@@ -445,8 +445,25 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (finished_profile.is_err()) {
         return build_failure<BuildSummary>(rstd::move(finished_profile).unwrap_err_unchecked());
     }
-    auto scan_profile = rstd::move(finished_profile).unwrap_unchecked();
-    analysis_service.release_source_cache();
+    auto scan_profile   = rstd::move(finished_profile).unwrap_unchecked();
+    auto source_release = analysis_service.release_source_cache();
+    if (source_release.is_err()) {
+        auto error = rstd::move(source_release).unwrap_err();
+        if (error.kind == frontend::SourceCacheReleaseErrorKind::Closed) {
+            return build_failure<BuildSummary>("source cache was already released"_str);
+        }
+        return build_failure<BuildSummary>(
+            rstd::format("cannot release source cache while {} cache entries and {} source loads "
+                         "are in flight",
+                         error.in_flight_entries,
+                         error.active_loads));
+    }
+    auto source_release_receipt = rstd::move(source_release).unwrap();
+    if (! source_release_receipt.released_immediately()) {
+        return build_failure<BuildSummary>(
+            "source cache memory domain is retained by an active consumer"_str);
+    }
+    analysis_service.record_source_release(rstd::move(source_release_receipt));
     auto frontend_statistics                            = analysis_service.statistics();
     auto scan_cache_statistics                          = scan_cache.statistics();
     frontend_statistics.persistent_scan_hits            = scan_cache_statistics.hits;

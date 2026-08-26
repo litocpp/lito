@@ -1,6 +1,7 @@
 export module lito.frontend.lexical:lexer;
 
 import rstd;
+import lito.frontend.memory;
 import :token;
 import :source;
 import :error;
@@ -320,7 +321,8 @@ private:
 
 class ScanFileStorageSink {
 public:
-    explicit ScanFileStorageSink(SharedSourceSnapshot snapshot): builder_(rstd::move(snapshot)) {}
+    ScanFileStorageSink(SharedSourceSnapshot snapshot, ScanMemoryAllocator allocator)
+        : builder_(rstd::move(snapshot), rstd::move(allocator)) {}
 
     void push_token(const SourceFile&,
                     TokenKind kind,
@@ -523,15 +525,21 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
     return Ok(sink.finish());
 }
 
-auto lex_scan_file(const SourceFile& source) -> Result<ScanFileStorage> {
+auto lex_scan_file(const SourceFile& source, ScanMemoryAllocator allocator)
+    -> Result<ScanFileStorage> {
     if (source.contents().len().to_primitive() > uint32_t(-1)) {
         return lex_failure("source file exceeds compact scan offset range"_str,
                            SourceLocation { .source = source.id });
     }
-    auto sink   = ScanFileStorageSink(source.snapshot.clone());
+    auto sink   = ScanFileStorageSink(source.snapshot.clone(), rstd::move(allocator));
     auto result = lex_into(source, sink);
     if (result.is_err()) return Err(rstd::move(result).unwrap_err());
     return Ok(sink.finish());
+}
+
+auto lex_scan_file(const SourceFile& source) -> Result<ScanFileStorage> {
+    auto domain = ScanMemoryDomain::make();
+    return lex_scan_file(source, domain.allocator());
 }
 
 auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<Token>> {

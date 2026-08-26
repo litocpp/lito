@@ -1,6 +1,7 @@
 export module lito.frontend.lexical:source;
 
 import rstd;
+import lito.frontend.memory;
 import :token;
 
 using namespace rstd::prelude;
@@ -153,6 +154,7 @@ private:
 
 class SourceTokenStorage {
     static constexpr usize BLOCK_CAPACITY = usize(128);
+    using Arena                           = alloc::BumpArena<ScanMemoryAllocator>;
 
     struct Block {
         mut_ptr<CompactSourceToken> pointer;
@@ -160,7 +162,7 @@ class SourceTokenStorage {
     };
 
 public:
-    void push(CompactSourceToken token, alloc::BumpArena<>& arena) {
+    void push(CompactSourceToken token, Arena& arena) {
         if (blocks_.is_empty() || blocks_[blocks_.len() - usize(1)].length == BLOCK_CAPACITY) {
             auto allocator = arena.allocator();
             auto layout = rstd::alloc::Layout::array<CompactSourceToken>(BLOCK_CAPACITY).unwrap();
@@ -258,15 +260,17 @@ private:
 };
 
 struct ScanFileStorage {
+    using Arena = alloc::BumpArena<ScanMemoryAllocator>;
+
     SharedSourceSnapshot      snapshot;
-    Box<alloc::BumpArena<>>   arena;
+    Box<Arena>                arena;
     SourceTokenStorage        tokens;
     Vec<CompactSourceComment> comments;
     SourcePositionIndex       positions;
 
-    explicit ScanFileStorage(SharedSourceSnapshot snapshot)
+    ScanFileStorage(SharedSourceSnapshot snapshot, ScanMemoryAllocator allocator)
         : snapshot(rstd::move(snapshot)),
-          arena(Box<alloc::BumpArena<>>::make(usize(16 * 1024))),
+          arena(Box<Arena>::make(usize(16 * 1024), rstd::move(allocator))),
           tokens(),
           comments(),
           positions(this->snapshot->contents.as_str()) {}
@@ -318,8 +322,8 @@ using SharedScanFileStorage = rstd::sync::Arc<ScanFileStorage>;
 
 class ScanFileStorageBuilder {
 public:
-    explicit ScanFileStorageBuilder(SharedSourceSnapshot snapshot)
-        : storage_(rstd::move(snapshot)) {}
+    ScanFileStorageBuilder(SharedSourceSnapshot snapshot, ScanMemoryAllocator allocator)
+        : storage_(rstd::move(snapshot), rstd::move(allocator)) {}
 
     void
     push_token(TokenKind kind, usize offset, usize length, bool start_of_line, bool leading_space) {

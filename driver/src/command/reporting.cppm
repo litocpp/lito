@@ -210,6 +210,35 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output,
                   "source arena reserved bytes peak"_str,
                   summary.frontend.source_arena_reserved_bytes_peak);
+    append_metric(
+        output, "source domain used bytes"_str, summary.frontend.source_domain_used_bytes);
+    append_metric(output,
+                  "source domain used bytes peak"_str,
+                  summary.frontend.source_domain_used_bytes_peak);
+    append_metric(
+        output, "source domain reserved bytes"_str, summary.frontend.source_domain_reserved_bytes);
+    append_metric(output,
+                  "source domain reserved bytes peak"_str,
+                  summary.frontend.source_domain_reserved_bytes_peak);
+    append_metric(output,
+                  "source domain ordinary blocks"_str,
+                  summary.frontend.source_domain_ordinary_blocks);
+    append_metric(
+        output, "source domain large blocks"_str, summary.frontend.source_domain_large_blocks);
+    append_metric(
+        output, "source domain mapped bytes"_str, summary.frontend.source_domain_mapped_bytes);
+    append_metric(output,
+                  "source domain mapped bytes peak"_str,
+                  summary.frontend.source_domain_mapped_bytes_peak);
+    append_metric(output, "source domain mappings"_str, summary.frontend.source_domain_mappings);
+    append_metric(
+        output, "source domain mappings peak"_str, summary.frontend.source_domain_mappings_peak);
+    append_metric(output,
+                  "source domain release immediate"_str,
+                  summary.frontend.source_domain_release_immediate);
+    append_metric(output,
+                  "source domain release delayed"_str,
+                  summary.frontend.source_domain_release_delayed);
     append_metric(output,
                   "source metadata reserved bytes"_str,
                   summary.frontend.source_metadata_reserved_bytes);
@@ -219,6 +248,9 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(
         output, "source in-flight entries"_str, summary.frontend.source_in_flight_entries);
     append_metric(output, "source in-flight peak"_str, summary.frontend.source_in_flight_peak);
+    append_metric(output, "source active loads"_str, summary.frontend.source_active_loads);
+    append_metric(
+        output, "source active loads peak"_str, summary.frontend.source_active_loads_peak);
     append_metric(output, "source cache hits"_str, summary.frontend.source_cache_hits);
     append_metric(output, "source flight waits"_str, summary.frontend.source_flight_waits);
     append_metric(output, "source domain releases"_str, summary.frontend.source_domain_releases);

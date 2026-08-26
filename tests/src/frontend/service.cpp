@@ -100,8 +100,10 @@ TEST(FrontendSourceStore, DropsStorageAfterStoreAndConsumerRelease) {
         auto service = FrontendService::with_store(store);
         auto loaded  = service.load(source.as_path(), SourceLoadRole::Include);
         EXPECT_TRUE(loaded.is_ok());
-        auto result = (*loaded).downgrade();
-        store.release();
+        auto result   = (*loaded).downgrade();
+        auto released = store.release();
+        EXPECT_TRUE(released.is_ok());
+        EXPECT_FALSE(released->released_immediately());
         EXPECT_TRUE(static_cast<bool>(result.upgrade()));
         return result;
     }();
@@ -131,6 +133,9 @@ TEST(FrontendSourceStore, ReleasesOnlyTheRequestedHeaderDomain) {
     EXPECT_GT(retained.token_bytes, usize {});
     EXPECT_GT(retained.arena_used_bytes, usize {});
     EXPECT_GE(retained.arena_reserved_bytes, retained.arena_used_bytes);
+    EXPECT_GT(retained.domain_reserved_bytes, usize {});
+    EXPECT_GT(retained.domain_mapped_bytes, usize {});
+    EXPECT_GT(retained.domain_mappings, usize {});
     EXPECT_GT(retained.metadata_reserved_bytes, usize {});
 
     store.release_domain(domain.value.as_str());
@@ -142,9 +147,120 @@ TEST(FrontendSourceStore, ReleasesOnlyTheRequestedHeaderDomain) {
     EXPECT_EQ(released.token_bytes, usize {});
     EXPECT_EQ(released.arena_used_bytes, usize {});
     EXPECT_EQ(released.arena_reserved_bytes, usize {});
+    EXPECT_GT(released.domain_reserved_bytes, usize {});
+    EXPECT_GT(released.domain_mapped_bytes, usize {});
     EXPECT_EQ(released.metadata_reserved_bytes, usize {});
     EXPECT_EQ(released.domain_releases, usize(1));
     EXPECT_FALSE((**loaded).tokens.is_empty());
+}
+
+TEST(FrontendSourceStore, ReleasesMemoryDomainImmediatelyWithoutExternalConsumer) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto source  = source_fixture(owner.path());
+    auto store   = FrontendSourceStore::make();
+    auto service = FrontendService::with_store(store);
+
+    ASSERT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_ok());
+    auto before = store.statistics();
+    ASSERT_GT(before.domain_mapped_bytes, usize {});
+
+    auto released = store.release();
+    ASSERT_TRUE(released.is_ok());
+    EXPECT_TRUE(released->released_immediately());
+    EXPECT_TRUE(released->released());
+    EXPECT_EQ(store.statistics().domain_mapped_bytes, usize {});
+    EXPECT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_err());
+    auto repeated = store.release();
+    ASSERT_TRUE(repeated.is_err());
+    EXPECT_EQ(repeated.unwrap_err_unchecked().kind, SourceCacheReleaseErrorKind::Closed);
+}
+
+TEST(FrontendSourceStore, DelaysMemoryDomainReleaseForExternalConsumer) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto source  = source_fixture(owner.path());
+    auto store   = FrontendSourceStore::make();
+    auto service = FrontendService::with_store(store);
+    auto receipt = Option<SourceCacheReleaseReceipt> {};
+    {
+        auto loaded = service.load(source.as_path(), SourceLoadRole::Include);
+        ASSERT_TRUE(loaded.is_ok());
+        auto released = store.release();
+        ASSERT_TRUE(released.is_ok());
+        EXPECT_FALSE(released->released_immediately());
+        EXPECT_FALSE(released->released());
+        EXPECT_EQ((**loaded).token(usize(1), usize {}).text(), "int"_str);
+        receipt = Some(rstd::move(released).unwrap());
+    }
+
+    EXPECT_TRUE(receipt->released());
+}
+
+TEST(FrontendSourceStore, RejectsReleaseWhileSourceLoadIsInFlight) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner    = rstd::move(temporary).unwrap();
+    auto source   = source_fixture(owner.path());
+    auto store    = FrontendSourceStore::make();
+    auto gate     = SourceReadGate {};
+    auto observer = FrontendObserver {
+        .context = rstd::addressof(gate),
+        .begin   = begin_source_activity,
+    };
+
+    auto worker = rstd::thread::spawn([service = FrontendService::with_store(store, Some(observer)),
+                                       source  = source.clone()]() mutable {
+                      return service.load(source.as_path(), SourceLoadRole::Include).is_ok();
+                  }).unwrap();
+    while (! gate.entered.load(Ordering::Acquire)) rstd::thread::yield_now();
+
+    auto rejected = store.release();
+    ASSERT_TRUE(rejected.is_err());
+    const auto& error = rejected.unwrap_err_unchecked();
+    EXPECT_EQ(error.kind, SourceCacheReleaseErrorKind::InFlight);
+    EXPECT_GT(error.in_flight_entries, usize {});
+    EXPECT_GT(error.active_loads, usize {});
+
+    gate.release.store(true, Ordering::Release);
+    EXPECT_TRUE(rstd::move(worker).join().unwrap());
+    auto released = store.release();
+    ASSERT_TRUE(released.is_ok());
+    EXPECT_TRUE(released->released_immediately());
+}
+
+TEST(FrontendSourceStore, RejectsReleaseWhilePrimarySourceLoadIsActive) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner    = rstd::move(temporary).unwrap();
+    auto source   = source_fixture(owner.path());
+    auto store    = FrontendSourceStore::make();
+    auto gate     = SourceReadGate {};
+    auto observer = FrontendObserver {
+        .context = rstd::addressof(gate),
+        .begin   = begin_source_activity,
+    };
+
+    auto worker = rstd::thread::spawn([service = FrontendService::with_store(store, Some(observer)),
+                                       source  = source.clone()]() mutable {
+                      return service.load(source.as_path(), SourceLoadRole::Primary).is_ok();
+                  }).unwrap();
+    while (! gate.entered.load(Ordering::Acquire)) rstd::thread::yield_now();
+
+    auto rejected = store.release();
+    ASSERT_TRUE(rejected.is_err());
+    const auto& error = rejected.unwrap_err_unchecked();
+    EXPECT_EQ(error.kind, SourceCacheReleaseErrorKind::InFlight);
+    EXPECT_EQ(error.in_flight_entries, usize {});
+    EXPECT_GT(error.active_loads, usize {});
+
+    gate.release.store(true, Ordering::Release);
+    EXPECT_TRUE(rstd::move(worker).join().unwrap());
+    auto released = store.release();
+    ASSERT_TRUE(released.is_ok());
+    EXPECT_TRUE(released->released_immediately());
 }
 
 TEST(FrontendSourceStore, SharesLiveSourcesByFileIdentity) {

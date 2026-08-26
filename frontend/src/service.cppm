@@ -1,6 +1,7 @@
 export module lito.frontend:service;
 
 import rstd;
+import lito.frontend.memory;
 import lito.frontend.lexical;
 import lito.frontend.preprocessor;
 
@@ -86,10 +87,24 @@ struct FrontendStatistics {
     usize                                source_arena_used_bytes_peak {};
     usize                                source_arena_reserved_bytes {};
     usize                                source_arena_reserved_bytes_peak {};
+    usize                                source_domain_used_bytes {};
+    usize                                source_domain_used_bytes_peak {};
+    usize                                source_domain_reserved_bytes {};
+    usize                                source_domain_reserved_bytes_peak {};
+    usize                                source_domain_ordinary_blocks {};
+    usize                                source_domain_large_blocks {};
+    usize                                source_domain_mapped_bytes {};
+    usize                                source_domain_mapped_bytes_peak {};
+    usize                                source_domain_mappings {};
+    usize                                source_domain_mappings_peak {};
+    usize                                source_domain_release_immediate {};
+    usize                                source_domain_release_delayed {};
     usize                                source_metadata_reserved_bytes {};
     usize                                source_metadata_reserved_bytes_peak {};
     usize                                source_in_flight_entries {};
     usize                                source_in_flight_peak {};
+    usize                                source_active_loads {};
+    usize                                source_active_loads_peak {};
     usize                                source_cache_hits {};
     usize                                source_flight_waits {};
     usize                                source_domain_releases {};
@@ -159,6 +174,26 @@ struct FrontendStatistics {
         if (other.source_arena_reserved_bytes_peak > source_arena_reserved_bytes_peak) {
             source_arena_reserved_bytes_peak = other.source_arena_reserved_bytes_peak;
         }
+        source_domain_used_bytes += other.source_domain_used_bytes;
+        if (other.source_domain_used_bytes_peak > source_domain_used_bytes_peak) {
+            source_domain_used_bytes_peak = other.source_domain_used_bytes_peak;
+        }
+        source_domain_reserved_bytes += other.source_domain_reserved_bytes;
+        if (other.source_domain_reserved_bytes_peak > source_domain_reserved_bytes_peak) {
+            source_domain_reserved_bytes_peak = other.source_domain_reserved_bytes_peak;
+        }
+        source_domain_ordinary_blocks += other.source_domain_ordinary_blocks;
+        source_domain_large_blocks += other.source_domain_large_blocks;
+        source_domain_mapped_bytes += other.source_domain_mapped_bytes;
+        if (other.source_domain_mapped_bytes_peak > source_domain_mapped_bytes_peak) {
+            source_domain_mapped_bytes_peak = other.source_domain_mapped_bytes_peak;
+        }
+        source_domain_mappings += other.source_domain_mappings;
+        if (other.source_domain_mappings_peak > source_domain_mappings_peak) {
+            source_domain_mappings_peak = other.source_domain_mappings_peak;
+        }
+        source_domain_release_immediate += other.source_domain_release_immediate;
+        source_domain_release_delayed += other.source_domain_release_delayed;
         source_metadata_reserved_bytes += other.source_metadata_reserved_bytes;
         if (other.source_metadata_reserved_bytes_peak > source_metadata_reserved_bytes_peak) {
             source_metadata_reserved_bytes_peak = other.source_metadata_reserved_bytes_peak;
@@ -166,6 +201,10 @@ struct FrontendStatistics {
         source_in_flight_entries += other.source_in_flight_entries;
         if (other.source_in_flight_peak > source_in_flight_peak) {
             source_in_flight_peak = other.source_in_flight_peak;
+        }
+        source_active_loads += other.source_active_loads;
+        if (other.source_active_loads_peak > source_active_loads_peak) {
+            source_active_loads_peak = other.source_active_loads_peak;
         }
         source_cache_hits += other.source_cache_hits;
         source_flight_waits += other.source_flight_waits;
@@ -220,13 +259,73 @@ struct FrontendSourceStoreStatistics {
     usize arena_used_bytes_peak {};
     usize arena_reserved_bytes {};
     usize arena_reserved_bytes_peak {};
+    usize domain_used_bytes {};
+    usize domain_used_bytes_peak {};
+    usize domain_reserved_bytes {};
+    usize domain_reserved_bytes_peak {};
+    usize domain_ordinary_blocks {};
+    usize domain_large_blocks {};
+    usize domain_mapped_bytes {};
+    usize domain_mapped_bytes_peak {};
+    usize domain_mappings {};
+    usize domain_mappings_peak {};
     usize metadata_reserved_bytes {};
     usize metadata_reserved_bytes_peak {};
     usize in_flight_entries {};
     usize in_flight_peak {};
+    usize active_loads {};
+    usize active_loads_peak {};
     usize cache_hits {};
     usize flight_waits {};
     usize domain_releases {};
+};
+
+enum class SourceCacheReleaseErrorKind
+{
+    InFlight,
+    Closed,
+};
+
+struct SourceCacheReleaseError {
+    SourceCacheReleaseErrorKind kind;
+    usize                       in_flight_entries;
+    usize                       active_loads;
+};
+
+class FrontendSourceStore;
+
+class SourceCacheReleaseReceipt {
+    FrontendSourceStoreStatistics logical_;
+    ScanMemoryDomainStatistics    domain_;
+    ScanMemoryDomainObserver      observer_;
+    bool                          immediate_ {};
+
+    SourceCacheReleaseReceipt(FrontendSourceStoreStatistics logical,
+                              ScanMemoryDomainStatistics    domain,
+                              ScanMemoryDomainObserver      observer,
+                              bool                          immediate)
+        : logical_(logical),
+          domain_(domain),
+          observer_(rstd::move(observer)),
+          immediate_(immediate) {}
+
+    friend class FrontendSourceStore;
+
+public:
+    SourceCacheReleaseReceipt(const SourceCacheReleaseReceipt&)                        = delete;
+    auto operator=(const SourceCacheReleaseReceipt&) -> SourceCacheReleaseReceipt&     = delete;
+    SourceCacheReleaseReceipt(SourceCacheReleaseReceipt&&) noexcept                    = default;
+    auto operator=(SourceCacheReleaseReceipt&&) noexcept -> SourceCacheReleaseReceipt& = default;
+
+    auto logical_statistics() const noexcept -> const FrontendSourceStoreStatistics& {
+        return logical_;
+    }
+
+    auto domain_statistics() const noexcept -> const ScanMemoryDomainStatistics& { return domain_; }
+
+    auto released_immediately() const noexcept -> bool { return immediate_; }
+
+    auto released() const noexcept -> bool { return observer_.expired(); }
 };
 
 struct HeaderCacheClassification {
@@ -256,35 +355,76 @@ class FrontendSourceStore {
     using CellMap = rstd::collections::HashMap<String, CacheRecord>;
 
     struct Fields {
-        CellMap source_entries;
-        CellMap identity_entries;
-        usize   ready_entries {};
-        usize   ready_peak {};
-        usize   live_payloads {};
-        usize   live_payload_peak {};
-        usize   retained_bytes {};
-        usize   retained_bytes_peak {};
-        usize   storage_bytes {};
-        usize   storage_bytes_peak {};
-        usize   token_bytes {};
-        usize   token_bytes_peak {};
-        usize   arena_used_bytes {};
-        usize   arena_used_bytes_peak {};
-        usize   arena_reserved_bytes {};
-        usize   arena_reserved_bytes_peak {};
-        usize   metadata_reserved_bytes {};
-        usize   metadata_reserved_bytes_peak {};
-        usize   in_flight_entries {};
-        usize   in_flight_peak {};
-        usize   cache_hits {};
-        usize   flight_waits {};
-        usize   domain_releases {};
+        Option<ScanMemoryDomain> memory_domain;
+        CellMap                  source_entries;
+        CellMap                  identity_entries;
+        bool                     closed {};
+        usize                    ready_entries {};
+        usize                    ready_peak {};
+        usize                    live_payloads {};
+        usize                    live_payload_peak {};
+        usize                    retained_bytes {};
+        usize                    retained_bytes_peak {};
+        usize                    storage_bytes {};
+        usize                    storage_bytes_peak {};
+        usize                    token_bytes {};
+        usize                    token_bytes_peak {};
+        usize                    arena_used_bytes {};
+        usize                    arena_used_bytes_peak {};
+        usize                    arena_reserved_bytes {};
+        usize                    arena_reserved_bytes_peak {};
+        usize                    domain_used_bytes_peak {};
+        usize                    domain_reserved_bytes_peak {};
+        usize                    domain_mapped_bytes_peak {};
+        usize                    domain_mappings_peak {};
+        usize                    metadata_reserved_bytes {};
+        usize                    metadata_reserved_bytes_peak {};
+        usize                    in_flight_entries {};
+        usize                    in_flight_peak {};
+        usize                    active_loads {};
+        usize                    active_loads_peak {};
+        usize                    cache_hits {};
+        usize                    flight_waits {};
+        usize                    domain_releases {};
 
-        Fields(): source_entries(CellMap::make()), identity_entries(CellMap::make()) {}
+        Fields()
+            : memory_domain(Some(ScanMemoryDomain::make())),
+              source_entries(CellMap::make()),
+              identity_entries(CellMap::make()) {}
     };
 
     using State       = rstd::sync::Mutex<Fields>;
     using SharedState = rstd::sync::Arc<State>;
+
+    class SourceLoadLease {
+        SharedState         state_;
+        ScanMemoryAllocator allocator_;
+        bool                active_ { true };
+
+    public:
+        SourceLoadLease(SharedState state, ScanMemoryAllocator allocator)
+            : state_(rstd::move(state)), allocator_(rstd::move(allocator)) {}
+
+        SourceLoadLease(const SourceLoadLease&)                    = delete;
+        auto operator=(const SourceLoadLease&) -> SourceLoadLease& = delete;
+
+        SourceLoadLease(SourceLoadLease&& other) noexcept
+            : state_(rstd::move(other.state_)),
+              allocator_(rstd::move(other.allocator_)),
+              active_(other.active_) {
+            other.active_ = false;
+        }
+
+        auto operator=(SourceLoadLease&&) -> SourceLoadLease& = delete;
+
+        ~SourceLoadLease() {
+            if (! active_) return;
+            auto fields = state_->lock().unwrap_unchecked();
+            --fields->active_loads;
+        }
+
+        auto allocator() -> ScanMemoryAllocator { return allocator_.clone(); }
+    };
 
     struct Entry {
         SharedLoadCell cell;
@@ -299,7 +439,8 @@ public:
     auto clone() const -> FrontendSourceStore { return FrontendSourceStore { state_.clone() }; }
 
     auto release_domain(ref<str> domain) const -> void {
-        auto       fields                          = state_->lock().unwrap_unchecked();
+        auto fields = state_->lock().unwrap_unchecked();
+        if (fields->closed) return;
         auto       removed_ready                   = usize {};
         auto       removed_flight                  = usize {};
         auto       removed_live                    = usize {};
@@ -350,49 +491,127 @@ public:
         }
     }
 
-    auto release() const -> void {
-        auto fields                     = state_->lock().unwrap_unchecked();
-        fields->source_entries          = CellMap::make();
-        fields->identity_entries        = CellMap::make();
-        fields->ready_entries           = usize {};
-        fields->live_payloads           = usize {};
-        fields->retained_bytes          = usize {};
-        fields->storage_bytes           = usize {};
-        fields->token_bytes             = usize {};
-        fields->arena_used_bytes        = usize {};
-        fields->arena_reserved_bytes    = usize {};
-        fields->metadata_reserved_bytes = usize {};
-        fields->in_flight_entries       = usize {};
+    auto release() const -> Result<SourceCacheReleaseReceipt, SourceCacheReleaseError> {
+        auto retired_sources    = CellMap::make();
+        auto retired_identities = CellMap::make();
+        auto retired_domain     = Option<ScanMemoryDomain> {};
+        auto observer           = Option<ScanMemoryDomainObserver> {};
+        auto logical            = FrontendSourceStoreStatistics {};
+        auto domain             = ScanMemoryDomainStatistics {};
+        {
+            auto fields = state_->lock().unwrap_unchecked();
+            if (fields->in_flight_entries != usize {} || fields->active_loads != usize {}) {
+                return Err(SourceCacheReleaseError {
+                    .kind              = SourceCacheReleaseErrorKind::InFlight,
+                    .in_flight_entries = fields->in_flight_entries,
+                    .active_loads      = fields->active_loads,
+                });
+            }
+            if (fields->closed || fields->memory_domain.is_none()) {
+                return Err(SourceCacheReleaseError {
+                    .kind              = SourceCacheReleaseErrorKind::Closed,
+                    .in_flight_entries = usize {},
+                    .active_loads      = usize {},
+                });
+            }
+
+            logical  = snapshot(*fields);
+            domain   = fields->memory_domain->statistics();
+            observer = Some(fields->memory_domain->downgrade());
+
+            retired_sources                 = rstd::move(fields->source_entries);
+            retired_identities              = rstd::move(fields->identity_entries);
+            retired_domain                  = fields->memory_domain.take();
+            fields->source_entries          = CellMap::make();
+            fields->identity_entries        = CellMap::make();
+            fields->closed                  = true;
+            fields->ready_entries           = usize {};
+            fields->live_payloads           = usize {};
+            fields->retained_bytes          = usize {};
+            fields->storage_bytes           = usize {};
+            fields->token_bytes             = usize {};
+            fields->arena_used_bytes        = usize {};
+            fields->arena_reserved_bytes    = usize {};
+            fields->metadata_reserved_bytes = usize {};
+        }
+
+        retired_sources        = CellMap::make();
+        retired_identities     = CellMap::make();
+        retired_domain         = None();
+        auto released_observer = rstd::move(observer).unwrap();
+        auto immediate         = released_observer.expired();
+        return Ok(
+            SourceCacheReleaseReceipt(logical, domain, rstd::move(released_observer), immediate));
     }
 
     auto statistics() const -> FrontendSourceStoreStatistics {
         auto fields = state_->lock().unwrap_unchecked();
-        return FrontendSourceStoreStatistics {
-            .ready_entries                = fields->ready_entries,
-            .ready_peak                   = fields->ready_peak,
-            .live_payloads                = fields->live_payloads,
-            .live_payload_peak            = fields->live_payload_peak,
-            .retained_bytes               = fields->retained_bytes,
-            .retained_bytes_peak          = fields->retained_bytes_peak,
-            .storage_bytes                = fields->storage_bytes,
-            .storage_bytes_peak           = fields->storage_bytes_peak,
-            .token_bytes                  = fields->token_bytes,
-            .token_bytes_peak             = fields->token_bytes_peak,
-            .arena_used_bytes             = fields->arena_used_bytes,
-            .arena_used_bytes_peak        = fields->arena_used_bytes_peak,
-            .arena_reserved_bytes         = fields->arena_reserved_bytes,
-            .arena_reserved_bytes_peak    = fields->arena_reserved_bytes_peak,
-            .metadata_reserved_bytes      = fields->metadata_reserved_bytes,
-            .metadata_reserved_bytes_peak = fields->metadata_reserved_bytes_peak,
-            .in_flight_entries            = fields->in_flight_entries,
-            .in_flight_peak               = fields->in_flight_peak,
-            .cache_hits                   = fields->cache_hits,
-            .flight_waits                 = fields->flight_waits,
-            .domain_releases              = fields->domain_releases,
-        };
+        return snapshot(*fields);
     }
 
 private:
+    auto begin_load() const -> Option<SourceLoadLease> {
+        auto fields = state_->lock().unwrap_unchecked();
+        if (fields->closed || fields->memory_domain.is_none()) return None();
+        ++fields->active_loads;
+        if (fields->active_loads > fields->active_loads_peak) {
+            fields->active_loads_peak = fields->active_loads;
+        }
+        return Some(SourceLoadLease(state_.clone(), fields->memory_domain->allocator()));
+    }
+
+    static auto snapshot(Fields& fields) -> FrontendSourceStoreStatistics {
+        auto domain = fields.memory_domain.is_some() ? fields.memory_domain->statistics()
+                                                     : ScanMemoryDomainStatistics {};
+        if (domain.used_bytes_peak > fields.domain_used_bytes_peak) {
+            fields.domain_used_bytes_peak = domain.used_bytes_peak;
+        }
+        if (domain.reserved_bytes > fields.domain_reserved_bytes_peak) {
+            fields.domain_reserved_bytes_peak = domain.reserved_bytes;
+        }
+        if (domain.mapped_bytes_peak > fields.domain_mapped_bytes_peak) {
+            fields.domain_mapped_bytes_peak = domain.mapped_bytes_peak;
+        }
+        if (domain.mappings_peak > fields.domain_mappings_peak) {
+            fields.domain_mappings_peak = domain.mappings_peak;
+        }
+        return FrontendSourceStoreStatistics {
+            .ready_entries                = fields.ready_entries,
+            .ready_peak                   = fields.ready_peak,
+            .live_payloads                = fields.live_payloads,
+            .live_payload_peak            = fields.live_payload_peak,
+            .retained_bytes               = fields.retained_bytes,
+            .retained_bytes_peak          = fields.retained_bytes_peak,
+            .storage_bytes                = fields.storage_bytes,
+            .storage_bytes_peak           = fields.storage_bytes_peak,
+            .token_bytes                  = fields.token_bytes,
+            .token_bytes_peak             = fields.token_bytes_peak,
+            .arena_used_bytes             = fields.arena_used_bytes,
+            .arena_used_bytes_peak        = fields.arena_used_bytes_peak,
+            .arena_reserved_bytes         = fields.arena_reserved_bytes,
+            .arena_reserved_bytes_peak    = fields.arena_reserved_bytes_peak,
+            .domain_used_bytes            = domain.used_bytes,
+            .domain_used_bytes_peak       = fields.domain_used_bytes_peak,
+            .domain_reserved_bytes        = domain.reserved_bytes,
+            .domain_reserved_bytes_peak   = fields.domain_reserved_bytes_peak,
+            .domain_ordinary_blocks       = domain.ordinary_blocks,
+            .domain_large_blocks          = domain.large_blocks,
+            .domain_mapped_bytes          = domain.mapped_bytes,
+            .domain_mapped_bytes_peak     = fields.domain_mapped_bytes_peak,
+            .domain_mappings              = domain.mappings,
+            .domain_mappings_peak         = fields.domain_mappings_peak,
+            .metadata_reserved_bytes      = fields.metadata_reserved_bytes,
+            .metadata_reserved_bytes_peak = fields.metadata_reserved_bytes_peak,
+            .in_flight_entries            = fields.in_flight_entries,
+            .in_flight_peak               = fields.in_flight_peak,
+            .active_loads                 = fields.active_loads,
+            .active_loads_peak            = fields.active_loads_peak,
+            .cache_hits                   = fields.cache_hits,
+            .flight_waits                 = fields.flight_waits,
+            .domain_releases              = fields.domain_releases,
+        };
+    }
+
     friend class FrontendService;
 
     explicit FrontendSourceStore(SharedState state): state_(rstd::move(state)) {}
@@ -402,12 +621,13 @@ private:
     }
 
     auto entry(Fields& fields, CellMap& entries, ref<str> domain, String resolved_key) const
-        -> Entry {
+        -> Option<Entry> {
+        if (fields.closed) return None();
         auto found = entries.get_mut(resolved_key.as_str());
         if (found.is_some()) {
             ++fields.cache_hits;
             if ((**found).cell->get().is_none()) ++fields.flight_waits;
-            return Entry { .cell = (**found).cell.clone(), .existing = true };
+            return Some(Entry { .cell = (**found).cell.clone(), .existing = true });
         }
         auto cell = SharedLoadCell::make();
         entries.insert(rstd::move(resolved_key),
@@ -416,16 +636,16 @@ private:
         if (fields.in_flight_entries > fields.in_flight_peak) {
             fields.in_flight_peak = fields.in_flight_entries;
         }
-        return Entry { .cell = rstd::move(cell) };
+        return Some(Entry { .cell = rstd::move(cell) });
     }
 
-    auto source(ref<str> domain, ref<str> key) const -> Entry {
+    auto source(ref<str> domain, ref<str> key) const -> Option<Entry> {
         auto fields       = state_->lock().unwrap_unchecked();
         auto resolved_key = cache_key(domain, key);
         return entry(*fields, fields->source_entries, domain, rstd::move(resolved_key));
     }
 
-    auto identity(ref<str> domain, ref<str> key) const -> Entry {
+    auto identity(ref<str> domain, ref<str> key) const -> Option<Entry> {
         auto fields = state_->lock().unwrap_unchecked();
         auto found  = fields->identity_entries.get_mut(key);
         if (found.is_some() && (**found).domain != domain) {
@@ -545,8 +765,12 @@ public:
             return Err(lexical::Error::make(rstd::format(
                 "canonical source path '{}' is not valid UTF-8", canonical_path.as_path())));
         }
-        auto canonical_key = String::make(*canonical_text);
-        auto source_entry  = store_.source(domain, canonical_key.as_str());
+        auto canonical_key       = String::make(*canonical_text);
+        auto source_entry_option = store_.source(domain, canonical_key.as_str());
+        if (source_entry_option.is_none()) {
+            return Err(lexical::Error::make(String::make("source store is closed"_str)));
+        }
+        auto source_entry = rstd::move(source_entry_option).unwrap();
         if (source_entry.existing) ++statistics_.source_hits;
         auto source_cell    = rstd::move(source_entry.cell);
         auto source_waiting = source_entry.existing && source_cell->get().is_none();
@@ -573,14 +797,19 @@ public:
                                  canonical_path.as_path(),
                                  rstd::move(modified).unwrap_err())));
             }
-            auto timestamp      = modified->as_unix_time();
-            auto identity       = rstd::format("{}:{}:{}:{}:{}",
-                                               metadata->dev(),
-                                               metadata->ino(),
-                                               metadata->size(),
-                                               timestamp.seconds,
-                                               timestamp.nanoseconds);
-            auto identity_entry = store_.identity(domain, identity.as_str());
+            auto timestamp             = modified->as_unix_time();
+            auto identity              = rstd::format("{}:{}:{}:{}:{}",
+                                                      metadata->dev(),
+                                                      metadata->ino(),
+                                                      metadata->size(),
+                                                      timestamp.seconds,
+                                                      timestamp.nanoseconds);
+            auto identity_entry_option = store_.identity(domain, identity.as_str());
+            if (identity_entry_option.is_none()) {
+                return share_error(
+                    lexical::Error::make(String::make("source store is closed"_str)));
+            }
+            auto identity_entry = rstd::move(identity_entry_option).unwrap();
             if (identity_entry.existing) ++statistics_.source_hits;
             auto identity_cell        = rstd::move(identity_entry.cell);
             auto identity_waiting     = identity_entry.existing && identity_cell->get().is_none();
@@ -626,7 +855,9 @@ public:
         statistics_.preprocessor.add(statistics);
     }
 
-    auto release_source_cache() -> void { store_.release(); }
+    auto release_source_cache() -> Result<SourceCacheReleaseReceipt, SourceCacheReleaseError> {
+        return store_.release();
+    }
 
     auto source_store() const -> FrontendSourceStore { return store_.clone(); }
 
@@ -665,7 +896,12 @@ private:
     }
 
     auto read_source(ref<rstd::path::Path> path) -> FrontendSourceStore::LoadResult {
-        auto contents = [&] {
+        auto load = store_.begin_load();
+        if (load.is_none()) {
+            return share_error(lexical::Error::make(String::make("source store is closed"_str)));
+        }
+        auto allocator = load->allocator();
+        auto contents  = [&] {
             auto activity = observe(FrontendActivity::SourceRead);
             return rstd::fs::read_to_string(path);
         }();
@@ -682,7 +918,7 @@ private:
         auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
         auto lexed    = [&] {
             auto activity = observe(FrontendActivity::Lex);
-            return lexical::lex_scan_file(source);
+            return lexical::lex_scan_file(source, rstd::move(allocator));
         }();
         if (lexed.is_err()) return share_error(rstd::move(lexed).unwrap_err());
         ++statistics_.lex_builds;

@@ -301,33 +301,67 @@ public:
     auto profiler() noexcept -> ScanProfiler& { return profiler_; }
 
     auto statistics() const -> frontend::FrontendStatistics {
-        auto result                                = statistics_;
-        auto store                                 = source_store_.statistics();
-        result.source_ready_entries                = store.ready_entries;
-        result.source_ready_peak                   = store.ready_peak;
-        result.source_live_payloads                = store.live_payloads;
-        result.source_live_payload_peak            = store.live_payload_peak;
-        result.source_retained_bytes               = store.retained_bytes;
-        result.source_retained_bytes_peak          = store.retained_bytes_peak;
-        result.source_storage_bytes                = store.storage_bytes;
-        result.source_storage_bytes_peak           = store.storage_bytes_peak;
-        result.source_token_bytes                  = store.token_bytes;
-        result.source_token_bytes_peak             = store.token_bytes_peak;
-        result.source_arena_used_bytes             = store.arena_used_bytes;
-        result.source_arena_used_bytes_peak        = store.arena_used_bytes_peak;
-        result.source_arena_reserved_bytes         = store.arena_reserved_bytes;
-        result.source_arena_reserved_bytes_peak    = store.arena_reserved_bytes_peak;
+        auto result                              = statistics_;
+        auto store                               = source_store_.statistics();
+        result.source_ready_entries              = store.ready_entries;
+        result.source_ready_peak                 = store.ready_peak;
+        result.source_live_payloads              = store.live_payloads;
+        result.source_live_payload_peak          = store.live_payload_peak;
+        result.source_retained_bytes             = store.retained_bytes;
+        result.source_retained_bytes_peak        = store.retained_bytes_peak;
+        result.source_storage_bytes              = store.storage_bytes;
+        result.source_storage_bytes_peak         = store.storage_bytes_peak;
+        result.source_token_bytes                = store.token_bytes;
+        result.source_token_bytes_peak           = store.token_bytes_peak;
+        result.source_arena_used_bytes           = store.arena_used_bytes;
+        result.source_arena_used_bytes_peak      = store.arena_used_bytes_peak;
+        result.source_arena_reserved_bytes       = store.arena_reserved_bytes;
+        result.source_arena_reserved_bytes_peak  = store.arena_reserved_bytes_peak;
+        result.source_domain_used_bytes          = store.domain_used_bytes;
+        result.source_domain_used_bytes_peak     = store.domain_used_bytes_peak;
+        result.source_domain_reserved_bytes      = store.domain_reserved_bytes;
+        result.source_domain_reserved_bytes_peak = store.domain_reserved_bytes_peak;
+        result.source_domain_ordinary_blocks     = store.domain_ordinary_blocks;
+        result.source_domain_large_blocks        = store.domain_large_blocks;
+        result.source_domain_mapped_bytes        = store.domain_mapped_bytes;
+        result.source_domain_mapped_bytes_peak   = store.domain_mapped_bytes_peak;
+        result.source_domain_mappings            = store.domain_mappings;
+        result.source_domain_mappings_peak       = store.domain_mappings_peak;
+        if (source_release_.is_some()) {
+            const auto& receipt                  = *source_release_;
+            const auto& domain                   = receipt.domain_statistics();
+            auto        released                 = receipt.released();
+            result.source_domain_used_bytes      = released ? usize {} : domain.used_bytes;
+            result.source_domain_reserved_bytes  = released ? usize {} : domain.reserved_bytes;
+            result.source_domain_ordinary_blocks = domain.ordinary_blocks;
+            result.source_domain_large_blocks    = domain.large_blocks;
+            result.source_domain_mapped_bytes    = released ? usize {} : domain.mapped_bytes;
+            result.source_domain_mappings        = released ? usize {} : domain.mappings;
+            result.source_domain_release_immediate =
+                receipt.released_immediately() ? usize(1) : usize {};
+            result.source_domain_release_delayed =
+                receipt.released_immediately() ? usize {} : usize(1);
+        }
         result.source_metadata_reserved_bytes      = store.metadata_reserved_bytes;
         result.source_metadata_reserved_bytes_peak = store.metadata_reserved_bytes_peak;
         result.source_in_flight_entries            = store.in_flight_entries;
         result.source_in_flight_peak               = store.in_flight_peak;
+        result.source_active_loads                 = store.active_loads;
+        result.source_active_loads_peak            = store.active_loads_peak;
         result.source_cache_hits                   = store.cache_hits;
         result.source_flight_waits                 = store.flight_waits;
         result.source_domain_releases              = store.domain_releases;
         return result;
     }
 
-    auto release_source_cache() -> void { source_store_.release(); }
+    auto release_source_cache()
+        -> Result<frontend::SourceCacheReleaseReceipt, frontend::SourceCacheReleaseError> {
+        return source_store_.release();
+    }
+
+    auto record_source_release(frontend::SourceCacheReleaseReceipt receipt) -> void {
+        source_release_ = Some(rstd::move(receipt));
+    }
 
     auto release_header_domain(ref<str> domain) -> void { source_store_.release_domain(domain); }
 
@@ -342,16 +376,18 @@ private:
           toolchain_(toolchain),
           header_ownership_(header_ownership),
           source_store_(rstd::move(source_store)),
+          source_release_(),
           cache_(rstd::move(cache)),
           profiler_(profiler) {}
 
-    const BuildLayout&               layout_;
-    const ClangToolchain&            toolchain_;
-    const cpp::HeaderOwnershipIndex& header_ownership_;
-    frontend::FrontendSourceStore    source_store_;
-    ScanCacheSession                 cache_;
-    ScanProfiler&                    profiler_;
-    frontend::FrontendStatistics     statistics_;
+    const BuildLayout&                          layout_;
+    const ClangToolchain&                       toolchain_;
+    const cpp::HeaderOwnershipIndex&            header_ownership_;
+    frontend::FrontendSourceStore               source_store_;
+    Option<frontend::SourceCacheReleaseReceipt> source_release_;
+    ScanCacheSession                            cache_;
+    ScanProfiler&                               profiler_;
+    frontend::FrontendStatistics                statistics_;
 };
 
 } // namespace lito
