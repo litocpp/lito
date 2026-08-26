@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly VERSION="v0.6.2"
+readonly VERSION="v0.6.3"
 readonly REPOSITORY="https://github.com/litocpp/lito"
 readonly INSTALL_DIRECTORY="${HOME}/.local/bin"
 

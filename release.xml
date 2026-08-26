@@ -1,3 +1,12 @@
+<release version="0.6.3" date="2026-08-26">
+  <description>
+    <ul>
+      <li>Reduced scan and build memory retention.</li>
+      <li>Automatic LTO flags.</li>
+      <li>Static library archive reuse.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.6.2" date="2026-08-25">
   <description>
     <ul>
