@@ -77,6 +77,8 @@ TEST(FrontendSourceStore, RetainsLexedSourcesForTheScanSession) {
         EXPECT_GE(store.statistics().cache_hits, usize(1));
         EXPECT_EQ(store.statistics().live_payloads, usize(1));
         EXPECT_GT(store.statistics().retained_bytes, usize {});
+        EXPECT_EQ(store.statistics().storage_bytes, service.statistics().source_bytes);
+        EXPECT_GE(store.statistics().domain_used_bytes, store.statistics().storage_bytes);
         auto first_token = (**first).token(usize(9), usize {});
         EXPECT_EQ(first_token.text(), "int"_str);
         EXPECT_EQ(first_token.location().source, usize(9));
@@ -88,6 +90,28 @@ TEST(FrontendSourceStore, RetainsLexedSourcesForTheScanSession) {
     ASSERT_TRUE(reloaded.is_ok());
     EXPECT_EQ(service.statistics().lex_builds, usize(1));
     EXPECT_GE(store.statistics().cache_hits, usize(2));
+}
+
+TEST(FrontendSourceStore, RejectsInvalidUtf8SourceAndReleasesItsStorage) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner    = rstd::move(temporary).unwrap();
+    auto source   = PathBuf::from(owner.path()).join(PathBuf::from("invalid.cpp"_str).as_path());
+    auto contents = Vec<u8>::make();
+    contents.push(u8(0xff));
+    ASSERT_TRUE(rstd::fs::write(source.as_path(), contents.as_slice()).is_ok());
+    auto store   = FrontendSourceStore::make();
+    auto service = FrontendService::with_store(store);
+
+    EXPECT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_err());
+    EXPECT_EQ(store.statistics().ready_entries, usize {});
+    EXPECT_EQ(store.statistics().in_flight_entries, usize {});
+    EXPECT_GT(store.statistics().domain_mapped_bytes, usize {});
+
+    auto released = store.release();
+    ASSERT_TRUE(released.is_ok());
+    EXPECT_TRUE(released->released_immediately());
+    EXPECT_TRUE(released->released());
 }
 
 TEST(FrontendSourceStore, DropsStorageAfterStoreAndConsumerRelease) {

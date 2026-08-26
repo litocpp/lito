@@ -9,6 +9,71 @@ using namespace rstd::prelude;
 export namespace lito::frontend::lexical
 {
 
+class SourceText {
+    using DomainBytes = Vec<u8, ScanMemoryAllocator>;
+
+    String              owned_;
+    Option<DomainBytes> domain_bytes_;
+
+    explicit SourceText(String owned): owned_(rstd::move(owned)) {}
+
+    explicit SourceText(DomainBytes bytes): domain_bytes_(Some(rstd::move(bytes))) {}
+
+public:
+    SourceText(const SourceText&)                        = delete;
+    auto operator=(const SourceText&) -> SourceText&     = delete;
+    SourceText(SourceText&&) noexcept                    = default;
+    auto operator=(SourceText&&) noexcept -> SourceText& = default;
+
+    static auto from(String owned) -> SourceText { return SourceText(rstd::move(owned)); }
+
+    static auto read(ref<rstd::path::Path> path, ScanMemoryAllocator allocator)
+        -> rstd::io::Result<SourceText> {
+        auto file_result = rstd::fs::File::open(path);
+        if (file_result.is_err()) return Err(rstd::move(file_result).unwrap_err_unchecked());
+        auto file = rstd::move(file_result).unwrap_unchecked();
+
+        auto metadata = file.metadata();
+        if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err_unchecked());
+        auto raw_size = metadata->len().to_primitive();
+        if (raw_size > static_cast<rstd::uint64_t>(rstd::size_t(-1))) {
+            return Err(rstd::io::error::Error::from_kind(
+                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::InvalidData }));
+        }
+
+        auto bytes = DomainBytes::with_capacity_in(usize(static_cast<rstd::size_t>(raw_size)),
+                                                   rstd::move(allocator));
+        byte chunk[16 * 1024];
+        while (true) {
+            auto writable = mut_ref<u8[]>::from_raw_parts(chunk, usize(sizeof(chunk)));
+            auto result   = file.read(writable);
+            if (result.is_err()) return Err(rstd::move(result).unwrap_err_unchecked());
+            auto count = result.unwrap_unchecked();
+            if (count == usize {}) break;
+            bytes.extend_from_slice(slice<u8>::from_raw_parts(chunk, count));
+        }
+
+        if (rstd::str_::validate_utf8(bytes.as_slice()).is_err()) {
+            return Err(rstd::io::error::Error::from_kind(
+                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::InvalidData }));
+        }
+        return Ok(SourceText(rstd::move(bytes)));
+    }
+
+    auto as_str() const noexcept [[clang::lifetimebound]] -> ref<str> {
+        if (domain_bytes_.is_some()) {
+            return rstd::str_::from_utf8_unchecked(domain_bytes_->as_slice());
+        }
+        return owned_.as_str();
+    }
+
+    auto len() const noexcept -> usize { return as_str().len(); }
+
+    auto capacity() const noexcept -> usize {
+        return domain_bytes_.is_some() ? domain_bytes_->capacity() : owned_.capacity();
+    }
+};
+
 struct SourceBuffer {
     rstd::path::PathBuf path;
     String              contents;
@@ -16,7 +81,7 @@ struct SourceBuffer {
 
 struct SourceSnapshot {
     rstd::path::PathBuf path;
-    String              contents;
+    SourceText          contents;
 };
 
 using SharedSourceSnapshot = rstd::sync::Arc<SourceSnapshot>;
@@ -24,7 +89,14 @@ using SharedSourceSnapshot = rstd::sync::Arc<SourceSnapshot>;
 auto make_source_snapshot(SourceBuffer buffer) -> SharedSourceSnapshot {
     return rstd::sync::Arc<SourceSnapshot>::make(SourceSnapshot {
         .path     = rstd::move(buffer.path),
-        .contents = rstd::move(buffer.contents),
+        .contents = SourceText::from(rstd::move(buffer.contents)),
+    });
+}
+
+auto make_source_snapshot(rstd::path::PathBuf path, SourceText contents) -> SharedSourceSnapshot {
+    return rstd::sync::Arc<SourceSnapshot>::make(SourceSnapshot {
+        .path     = rstd::move(path),
+        .contents = rstd::move(contents),
     });
 }
 

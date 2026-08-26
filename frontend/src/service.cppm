@@ -903,7 +903,7 @@ private:
         auto allocator = load->allocator();
         auto contents  = [&] {
             auto activity = observe(FrontendActivity::SourceRead);
-            return rstd::fs::read_to_string(path);
+            return lexical::SourceText::read(path, allocator.clone());
         }();
         if (contents.is_err()) {
             return share_error(lexical::Error::make(rstd::format(
@@ -911,10 +911,8 @@ private:
         }
         ++statistics_.source_reads;
         statistics_.source_bytes += contents->len();
-        auto snapshot = lexical::make_source_snapshot(lexical::SourceBuffer {
-            .path     = rstd::path::PathBuf::from(path),
-            .contents = rstd::move(contents).unwrap(),
-        });
+        auto snapshot = lexical::make_source_snapshot(rstd::path::PathBuf::from(path),
+                                                      rstd::move(contents).unwrap());
         auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
         auto lexed    = [&] {
             auto activity = observe(FrontendActivity::Lex);
