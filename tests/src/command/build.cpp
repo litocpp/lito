@@ -197,16 +197,7 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::Executable), usize(1));
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::TestExecutable), usize {});
-    EXPECT_FALSE(summary->documentation_units.is_empty());
-    for (const auto& unit : summary->documentation_units) {
-        EXPECT_FALSE(unit.invocation.arguments.is_empty());
-        EXPECT_FALSE(unit.invocation.identity.is_empty());
-        auto selected = false;
-        for (const auto& target : summary->selected_targets) {
-            if (target == unit.target) selected = true;
-        }
-        EXPECT_TRUE(selected);
-    }
+    EXPECT_TRUE(summary->documentation_units.is_empty());
 }
 
 TEST_F(BuildCommand, InstallLinkVariantReusesObjectsAndHasAnIndependentReceipt) {
@@ -1047,8 +1038,9 @@ TEST_F(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {
     auto root    = project->root.clone();
     auto output  = build_root("build-doc"_str);
     auto request = build_request(root.as_path(), output.as_path(), strings("fixture-test-lib"_str));
-    request.purpose = lito::package::PackageSelectionPurpose::Documentation;
-    auto summary    = lito::build(request);
+    request.purpose              = lito::package::PackageSelectionPurpose::Documentation;
+    request.result.documentation = true;
+    auto summary                 = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::Executable), usize {});

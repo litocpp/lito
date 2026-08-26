@@ -14,7 +14,7 @@ namespace lito::frontend::preprocessor
 
 class ExpressionParser {
 public:
-    explicit ExpressionParser(const Vec<Token>& tokens): tokens_(tokens) {}
+    explicit ExpressionParser(slice<Token> tokens): tokens_(tokens) {}
 
     auto parse() -> Result<i64> {
         auto result = conditional();
@@ -316,9 +316,9 @@ private:
         return Ok(value);
     }
 
-    const Vec<Token>& tokens_;
-    usize             index_ {};
-    bool              evaluating_ { true };
+    slice<Token> tokens_;
+    usize        index_ {};
+    bool         evaluating_ { true };
 };
 
 } // namespace lito::frontend::preprocessor
@@ -326,7 +326,7 @@ private:
 export namespace lito::frontend::preprocessor
 {
 
-auto evaluate_expression(const Vec<Token>& tokens) -> Result<i64> {
+auto evaluate_expression(slice<Token> tokens) -> Result<i64> {
     return ExpressionParser(tokens).parse();
 }
 

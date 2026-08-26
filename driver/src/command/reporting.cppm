@@ -173,6 +173,18 @@ void append_preprocessor(String&                                               o
     append_metric(output, "include hits"_str, statistics.include_hits);
     append_metric(output, "consumer batches"_str, statistics.consumer_batches);
     append_metric(output, "consumer tokens"_str, statistics.consumer_tokens);
+    append_metric(output, "scratch live bytes"_str, statistics.scratch_live_bytes);
+    append_metric(output, "scratch live bytes peak"_str, statistics.scratch_live_bytes_peak);
+    append_metric(output, "scratch reserved bytes"_str, statistics.scratch_reserved_bytes);
+    append_metric(output, "scratch free bytes"_str, statistics.scratch_free_bytes);
+    append_metric(output, "scratch reused bytes"_str, statistics.scratch_reused_bytes);
+    append_metric(output, "scratch ordinary blocks"_str, statistics.scratch_ordinary_blocks);
+    append_metric(output, "scratch large blocks"_str, statistics.scratch_large_blocks);
+    append_metric(output, "scratch allocations"_str, statistics.scratch_allocations);
+    append_metric(output, "scratch reuses"_str, statistics.scratch_reuses);
+    append_metric(output, "scratch mapped bytes peak"_str, statistics.scratch_mapped_bytes_peak);
+    append_metric(output, "scratch mappings peak"_str, statistics.scratch_mappings_peak);
+    append_metric(output, "scratch releases"_str, statistics.scratch_releases);
 }
 
 auto detailed_report(const BuildSummary& summary) -> String {
@@ -306,6 +318,11 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output, "pending peak"_str, summary.scan_graph.pending_peak);
     append_metric(output, "unresolved peak"_str, summary.scan_graph.unresolved_peak);
     append_metric(output, "reactivations"_str, summary.scan_graph.reactivations);
+    append_metric(output,
+                  "incremental graph retained bytes"_str,
+                  summary.scan_graph.incremental_retained_bytes);
+    append_metric(
+        output, "resolved graph retained bytes"_str, summary.scan_graph.resolved_retained_bytes);
 
     append_line(output, "\nscan execution"_str);
     const auto& execution = summary.scan_profile.execution();
@@ -335,6 +352,16 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output, "failed"_str, compile_execution.failed);
     append_metric(output, "blocked"_str, compile_execution.blocked);
     append_metric(output, "max active"_str, compile_execution.max_active);
+    append_metric(output, "plan nodes"_str, compile_execution.plan_nodes);
+    append_metric(output, "plan retained bytes"_str, compile_execution.plan_retained_bytes);
+    append_metric(output, "plan invocation bytes"_str, compile_execution.plan_invocation_bytes);
+    append_metric(output, "plan dependency bytes"_str, compile_execution.plan_dependency_bytes);
+    append_metric(output, "documentation units"_str, compile_execution.documentation_units);
+    append_metric(
+        output, "documentation retained bytes"_str, compile_execution.documentation_retained_bytes);
+    append_metric(output, "cache evaluations"_str, compile_execution.cache_evaluations);
+    append_metric(
+        output, "cache retained bytes peak"_str, compile_execution.cache_retained_bytes_peak);
     append_line(output,
                 rstd::format("  {:<38} {}",
                              "ready wait"_str,

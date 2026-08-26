@@ -342,6 +342,14 @@ auto run_preprocessor_test() -> int {
         statistics.macro_va_opt_uses < usize(5)) {
         return 27;
     }
+    if (statistics.scratch_live_bytes != usize {} ||
+        statistics.scratch_live_bytes_peak == usize {} ||
+        statistics.scratch_reserved_bytes == usize {} ||
+        statistics.scratch_mapped_bytes_peak == usize {} ||
+        statistics.scratch_allocations == usize {} || statistics.scratch_reuses == usize {} ||
+        statistics.scratch_releases != usize(1)) {
+        return 33;
+    }
     if (! contains_token(result->tokens, "LITO_LATE"_str) ||
         ! contains_token(result->tokens, "42"_str)) {
         return 12;
@@ -387,6 +395,7 @@ auto run_preprocessor_test() -> int {
         ! facts->imports[usize {}].exported) {
         return 10;
     }
+    if (streamed->statistics.scratch_releases != usize(1)) return 34;
     return 0;
 }
 

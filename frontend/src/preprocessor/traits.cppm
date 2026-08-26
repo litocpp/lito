@@ -280,8 +280,8 @@ struct PreprocessedTokenConsumer {
     struct Api {
         using Trait = PreprocessedTokenConsumer;
 
-        auto consume(Vec<Token> tokens) -> Result<empty> {
-            return rstd::trait_call<0>(this, rstd::move(tokens));
+        auto consume(slice<Token> tokens) -> Result<empty> {
+            return rstd::trait_call<0>(this, tokens);
         }
     };
 
@@ -326,6 +326,18 @@ struct PreprocessorStatistics {
     usize include_hits {};
     usize consumer_batches {};
     usize consumer_tokens {};
+    usize scratch_live_bytes {};
+    usize scratch_live_bytes_peak {};
+    usize scratch_reserved_bytes {};
+    usize scratch_free_bytes {};
+    usize scratch_reused_bytes {};
+    usize scratch_ordinary_blocks {};
+    usize scratch_large_blocks {};
+    usize scratch_allocations {};
+    usize scratch_reuses {};
+    usize scratch_mapped_bytes_peak {};
+    usize scratch_mappings_peak {};
+    usize scratch_releases {};
 
     auto add(const PreprocessorStatistics& other) noexcept -> void {
         files += other.files;
@@ -358,6 +370,24 @@ struct PreprocessorStatistics {
         include_hits += other.include_hits;
         consumer_batches += other.consumer_batches;
         consumer_tokens += other.consumer_tokens;
+        scratch_live_bytes += other.scratch_live_bytes;
+        if (other.scratch_live_bytes_peak > scratch_live_bytes_peak) {
+            scratch_live_bytes_peak = other.scratch_live_bytes_peak;
+        }
+        scratch_reserved_bytes += other.scratch_reserved_bytes;
+        scratch_free_bytes += other.scratch_free_bytes;
+        scratch_reused_bytes += other.scratch_reused_bytes;
+        scratch_ordinary_blocks += other.scratch_ordinary_blocks;
+        scratch_large_blocks += other.scratch_large_blocks;
+        scratch_allocations += other.scratch_allocations;
+        scratch_reuses += other.scratch_reuses;
+        if (other.scratch_mapped_bytes_peak > scratch_mapped_bytes_peak) {
+            scratch_mapped_bytes_peak = other.scratch_mapped_bytes_peak;
+        }
+        if (other.scratch_mappings_peak > scratch_mappings_peak) {
+            scratch_mappings_peak = other.scratch_mappings_peak;
+        }
+        scratch_releases += other.scratch_releases;
     }
 };
 

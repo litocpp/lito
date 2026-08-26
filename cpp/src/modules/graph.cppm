@@ -166,6 +166,8 @@ struct SemanticScanGraphStatistics {
     usize pending_peak {};
     usize unresolved_peak {};
     usize reactivations {};
+    usize incremental_retained_bytes {};
+    usize resolved_retained_bytes {};
 };
 
 struct IncrementalSemanticScanGraph {
@@ -173,6 +175,33 @@ struct IncrementalSemanticScanGraph {
     Vec<IncrementalHeaderArtifact> headers;
     SemanticScanGraphStatistics    statistics;
 };
+
+auto incremental_graph_retained_bytes(const Vec<IncrementalScanUnit>&       units,
+                                      const Vec<IncrementalHeaderArtifact>& headers) noexcept
+    -> usize {
+    auto result = units.capacity() * usize(sizeof(IncrementalScanUnit)) +
+                  headers.capacity() * usize(sizeof(IncrementalHeaderArtifact));
+    for (const auto& unit : units) {
+        result += unit.target_identity.capacity() + unit.source.capacity() +
+                  unit.context_identity.capacity() +
+                  unit.standard_library_context_identity.capacity() +
+                  unit.requirements.capacity() * usize(sizeof(IncrementalModuleRequirement)) +
+                  unit.header_inputs.capacity() * usize(sizeof(HeaderArtifactId));
+        if (unit.provided.is_some()) result += unit.provided->logical_name.capacity();
+        for (const auto& requirement : unit.requirements) {
+            result +=
+                requirement.provider_key.capacity() + requirement.requirement.retained_bytes();
+        }
+    }
+    for (const auto& header : headers) {
+        result += header.physical_identity.capacity() +
+                  header.paths.capacity() * usize(sizeof(PathBuf)) +
+                  header.classification.retained_bytes() +
+                  header.consumers.capacity() * usize(sizeof(DiscoveryUnitId));
+        for (const auto& path : header.paths) result += path.capacity();
+    }
+    return result;
+}
 
 class SemanticScanGraphBuilder {
     using UnitMap          = rstd::collections::BTreeMap<String, DiscoveryUnitId>;
@@ -636,9 +665,10 @@ auto SemanticScanGraphBuilder::finalize(
             ++statistics.unknown_headers;
     }
     for (const auto& unit : aligned) statistics.header_edges += unit.header_inputs.len();
-    statistics.pending_peak    = pending_peak_;
-    statistics.unresolved_peak = unresolved_peak_;
-    statistics.reactivations   = reactivations_;
+    statistics.pending_peak               = pending_peak_;
+    statistics.unresolved_peak            = unresolved_peak_;
+    statistics.reactivations              = reactivations_;
+    statistics.incremental_retained_bytes = incremental_graph_retained_bytes(aligned, headers_);
     return Ok(IncrementalSemanticScanGraph {
         .units      = rstd::move(aligned),
         .headers    = rstd::move(headers_),
@@ -647,19 +677,39 @@ auto SemanticScanGraphBuilder::finalize(
 }
 
 struct ResolvedSemanticBuildGraph {
-    Vec<UnitId>      c_units;
-    Vec<UnitId>      cpp_units;
-    Vec<UnitId>      compile_order;
-    Vec<Vec<UnitId>> direct_inputs;
-    Vec<Vec<UnitId>> resolved_inputs;
-    Vec<Vec<UnitId>> public_inputs;
+    Vec<UnitId>                 c_units;
+    Vec<UnitId>                 cpp_units;
+    Vec<UnitId>                 compile_order;
+    Vec<Vec<UnitId>>            direct_inputs;
+    Vec<Vec<UnitId>>            resolved_inputs;
+    Vec<Vec<UnitId>>            public_inputs;
+    SemanticScanGraphStatistics statistics;
 };
 
-auto resolve_semantic_build(const PackagePlan&                  package,
-                            const Vec<PreparedUnit>&            units,
-                            const Vec<ScanResult>&              scans,
-                            const IncrementalSemanticScanGraph& incremental,
-                            const BmiFormatIdentity&            format)
+auto resolved_graph_retained_bytes(const ResolvedSemanticBuildGraph& graph) noexcept -> usize {
+    auto result = graph.c_units.capacity() * usize(sizeof(UnitId)) +
+                  graph.cpp_units.capacity() * usize(sizeof(UnitId)) +
+                  graph.compile_order.capacity() * usize(sizeof(UnitId)) +
+                  graph.direct_inputs.capacity() * usize(sizeof(Vec<UnitId>)) +
+                  graph.resolved_inputs.capacity() * usize(sizeof(Vec<UnitId>)) +
+                  graph.public_inputs.capacity() * usize(sizeof(Vec<UnitId>));
+    for (const auto& inputs : graph.direct_inputs) {
+        result += inputs.capacity() * usize(sizeof(UnitId));
+    }
+    for (const auto& inputs : graph.resolved_inputs) {
+        result += inputs.capacity() * usize(sizeof(UnitId));
+    }
+    for (const auto& inputs : graph.public_inputs) {
+        result += inputs.capacity() * usize(sizeof(UnitId));
+    }
+    return result;
+}
+
+auto resolve_semantic_build(const PackagePlan&           package,
+                            const Vec<PreparedUnit>&     units,
+                            const Vec<ScanResult>&       scans,
+                            IncrementalSemanticScanGraph incremental,
+                            const BmiFormatIdentity&     format)
     -> ModuleResult<ResolvedSemanticBuildGraph> {
     if (units.len() != scans.len() || units.len() != incremental.units.len()) {
         return graph_failure<ResolvedSemanticBuildGraph>(
@@ -950,14 +1000,17 @@ auto resolve_semantic_build(const PackagePlan&                  package,
         }
     }
 
-    return Ok(ResolvedSemanticBuildGraph {
+    auto resolved = ResolvedSemanticBuildGraph {
         .c_units         = rstd::move(c_units),
         .cpp_units       = rstd::move(cpp_units),
         .compile_order   = rstd::move(compile_order),
         .direct_inputs   = rstd::move(direct_inputs),
         .resolved_inputs = rstd::move(resolved_inputs),
         .public_inputs   = rstd::move(public_inputs),
-    });
+        .statistics      = incremental.statistics,
+    };
+    resolved.statistics.resolved_retained_bytes = resolved_graph_retained_bytes(resolved);
+    return Ok(rstd::move(resolved));
 }
 
 } // namespace lito::cpp

@@ -33,6 +33,10 @@ struct BuildExecutionPolicy {
     CompileExecutionPolicy compile;
 };
 
+struct BuildResultProjection {
+    bool documentation { false };
+};
+
 struct InstallArtifactLinkPolicy : DefaultInClass<InstallArtifactLinkPolicy, Clone> {
     lito::artifact::ElfRunpath runtime_search;
     String                     identity;
@@ -79,6 +83,7 @@ struct BuildRequest {
     };
     bool                                        locked { false };
     BuildExecutionPolicy                        execution;
+    BuildResultProjection                       result;
     Option<BuildEventSink>                      observer;
     Option<BuildSetupReportSink>                setup_reporter;
     Option<lito::tools::HostToolResolutionSink> tool_reporter;

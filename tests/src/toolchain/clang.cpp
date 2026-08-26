@@ -475,12 +475,12 @@ TEST(ClangToolchain, RemovesTransientBmiOnlyObject) {
     auto script        = rstd::format(
         "printf object > '{}'; printf bmi > '{}'", staged_object.as_path(), staged_bmi.as_path());
     auto result = toolchain.execute_compile_capture(CompileInvocation {
-        .arguments         = strings("/bin/sh"_str, "-c"_str, script.as_str()),
-        .working_directory = directory.clone(),
-        .identity          = String::make("bmi-only-output"_str),
-        .staged_object     = staged_object.clone(),
-        .staged_bmi        = Some(staged_bmi.clone()),
-        .final_bmi         = Some(final_bmi.clone()),
+        .arguments                  = strings("/bin/sh"_str, "-c"_str, script.as_str()),
+        .working_directory          = directory.clone(),
+        .identity_working_directory = String::make("bmi-only-output"_str),
+        .staged_object              = staged_object.clone(),
+        .staged_bmi                 = Some(staged_bmi.clone()),
+        .final_bmi                  = Some(final_bmi.clone()),
     });
     ASSERT_TRUE(result.is_ok());
     auto object_exists = rstd::fs::exists(staged_object.as_path());
@@ -627,13 +627,13 @@ TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
     auto final_bmi     = directory.join(PathBuf::from("module.pcm"_str).as_path());
     auto script        = rstd::format("printf bmi > '{}'", staged_bmi.as_path());
     auto invocation    = CompileInvocation {
-        .arguments         = strings("/bin/sh"_str, "-c"_str, script.as_str()),
-        .working_directory = directory.clone(),
-        .identity          = String::make("partial-output"_str),
-        .staged_object     = staged_object.clone(),
-        .final_object      = Some(final_object.clone()),
-        .staged_bmi        = Some(staged_bmi.clone()),
-        .final_bmi         = Some(final_bmi.clone()),
+        .arguments                  = strings("/bin/sh"_str, "-c"_str, script.as_str()),
+        .working_directory          = directory.clone(),
+        .identity_working_directory = String::make("partial-output"_str),
+        .staged_object              = staged_object.clone(),
+        .final_object               = Some(final_object.clone()),
+        .staged_bmi                 = Some(staged_bmi.clone()),
+        .final_bmi                  = Some(final_bmi.clone()),
     };
     auto result = toolchain.execute_compile_capture(invocation);
     EXPECT_TRUE(result.is_err());

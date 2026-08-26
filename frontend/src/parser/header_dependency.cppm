@@ -13,7 +13,7 @@ class HeaderDependencyConsumer {
 public:
     static auto make() -> HeaderDependencyConsumer { return HeaderDependencyConsumer {}; }
 
-    auto consume(Vec<lexical::Token> tokens) -> lexical::Result<empty> {
+    auto consume(slice<lexical::Token> tokens) -> lexical::Result<empty> {
         static_cast<void>(tokens);
         return Ok(empty {});
     }

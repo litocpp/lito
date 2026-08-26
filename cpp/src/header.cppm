@@ -41,6 +41,17 @@ public:
         }
         rstd::unreachable();
     }
+
+    auto retained_bytes() const noexcept -> usize {
+        if (is_ProjectPackage()) return as_ProjectPackage().identity.capacity();
+        if (is_ExternalTarget()) return as_ExternalTarget().identity.capacity();
+        if (is_Toolchain()) return as_Toolchain().identity.capacity();
+        if (! is_Ambiguous()) return usize {};
+        const auto& identities = as_Ambiguous().identities;
+        auto        result     = identities.capacity() * usize(sizeof(String));
+        for (const auto& identity : identities) result += identity.capacity();
+        return result;
+    }
 };
 
 class HeaderAccess : public DefaultInClass<HeaderAccess, Clone> {
@@ -55,6 +66,12 @@ public:
         if (is_Global()) return Global();
         if (is_Public()) return Public();
         return TargetPrivate(as_TargetPrivate().target.clone());
+    }
+
+    auto retained_bytes() const noexcept -> usize {
+        if (! is_TargetPrivate()) return usize {};
+        const auto& target = as_TargetPrivate().target;
+        return target.package.capacity() + target.name.capacity();
     }
 };
 
@@ -91,6 +108,10 @@ struct HeaderClassification : DefaultInClass<HeaderClassification, Clone> {
             .owner  = as<Clone>(owner).clone(),
             .access = as<Clone>(access).clone(),
         };
+    }
+
+    auto retained_bytes() const noexcept -> usize {
+        return owner.retained_bytes() + access.retained_bytes();
     }
 };
 

@@ -418,8 +418,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (finalized_scan_graph.is_err()) {
         return build_failure<BuildSummary>(rstd::move(finalized_scan_graph).unwrap_err());
     }
-    auto incremental_graph     = rstd::move(finalized_scan_graph).unwrap();
-    auto scan_graph_statistics = incremental_graph.statistics;
+    auto incremental_graph = rstd::move(finalized_scan_graph).unwrap();
 
     auto convention_valid = profiler.measure(ScanProbe::Conventions, [&] {
         return cpp::validate_module_conventions(package, units, scans);
@@ -431,13 +430,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto bmi_format         = toolchain.bmi_format(project.platform);
     auto resolved_semantics = profiler.measure(ScanProbe::ModuleGraph, [&] {
         return cpp::resolve_semantic_build(
-            package_plan, units, scans, incremental_graph, bmi_format);
+            package_plan, units, scans, rstd::move(incremental_graph), bmi_format);
     });
     if (resolved_semantics.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(resolved_semantics).unwrap_err()));
     }
-    auto semantic_graph = rstd::move(resolved_semantics).unwrap();
-    auto completed_scan = profiler.complete(scan_span);
+    auto semantic_graph        = rstd::move(resolved_semantics).unwrap();
+    auto scan_graph_statistics = semantic_graph.statistics;
+    auto completed_scan        = profiler.complete(scan_span);
     if (completed_scan.is_err()) {
         return build_failure<BuildSummary>(rstd::move(completed_scan).unwrap_err_unchecked());
     }
@@ -488,25 +488,31 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_fingerprint_builds = scan_cache_statistics.fingerprint_builds;
     frontend_statistics.persistent_fingerprint_waits  = scan_cache_statistics.fingerprint_waits;
     frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
+    auto scanned                                      = scans.len();
     stage_timing.record(BuildStage::Scan, scan_started.elapsed());
 
     auto compile_plan_started = rstd::time::Instant::now();
     auto cache                = CompileCacheSession::create(cache_environment, layout.output());
-    auto materialized         = materialize_compile_plan(
-        package, layout, toolchain, bmi_format, units, scans, semantic_graph);
+    auto materialized         = materialize_build_actions(package,
+                                                          layout,
+                                                          toolchain,
+                                                          bmi_format,
+                                                          units,
+                                                          rstd::move(scans),
+                                                          rstd::move(semantic_graph),
+                                                          selected_targets.as_slice(),
+                                                          request.result);
     if (materialized.is_err()) {
         return Err(rstd::move(materialized).unwrap_err());
     }
-    auto documentation_units =
-        materialize_documentation_units(package, units, scans, *materialized, selected_targets);
-    if (documentation_units.is_err()) {
-        return Err(rstd::move(documentation_units).unwrap_err());
-    }
+    auto actions                = rstd::move(materialized).unwrap();
+    auto documentation_units    = rstd::move(actions.documentation);
+    auto documentation_retained = documentation_retained_bytes(documentation_units);
     stage_timing.record(BuildStage::CompilePlan, compile_plan_started.elapsed());
     auto executed = stage_timing.measure(BuildStage::CompileExecute, [&] {
         return execute_compile_plan(package,
                                     units,
-                                    rstd::move(materialized).unwrap(),
+                                    rstd::move(actions.compile),
                                     cache,
                                     toolchain.compile_executor(),
                                     request.observer,
@@ -515,12 +521,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (executed.is_err()) {
         return Err(rstd::move(executed).unwrap_err());
     }
-    auto compile_result     = rstd::move(executed).unwrap();
-    auto compiled           = compile_result.compiled;
-    auto reused             = compile_result.reused;
-    auto compile_tests      = rstd::move(compile_result.compile_tests);
-    auto compile_statistics = compile_result.statistics;
-    auto build_timing       = rstd::move(compile_result.timing);
+    auto compile_result                             = rstd::move(executed).unwrap();
+    auto compiled                                   = compile_result.compiled;
+    auto reused                                     = compile_result.reused;
+    auto compile_tests                              = rstd::move(compile_result.compile_tests);
+    auto compile_statistics                         = compile_result.statistics;
+    compile_statistics.documentation_units          = documentation_units.len();
+    compile_statistics.documentation_retained_bytes = documentation_retained;
+    auto build_timing                               = rstd::move(compile_result.timing);
 
     auto cache_finish_started = rstd::time::Instant::now();
     for (auto target : package_plan.target_order) {
@@ -821,7 +829,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         .external_source_provenance = rstd::move(project.external_source_provenance),
         .platform                   = project.platform.clone(),
         .language_standard          = request.configuration.language_standard.clone(),
-        .scanned                    = scans.len(),
+        .scanned                    = scanned,
         .compiled                   = compiled,
         .reused                     = reused,
         .frontend                   = frontend_statistics,
@@ -835,7 +843,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         .compile_tests              = rstd::move(compile_tests),
         .script                     = rstd::move(script_report),
         .compiler                   = toolchain.compiler_identity().clone(),
-        .documentation_units        = rstd::move(documentation_units).unwrap(),
+        .documentation_units        = rstd::move(documentation_units),
     });
 }
 

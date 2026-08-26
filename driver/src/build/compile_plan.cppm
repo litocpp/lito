@@ -125,16 +125,45 @@ auto emit_compile_event(const Option<BuildEventSink>& observer,
 }
 
 struct CompileNodePlan {
-    cpp::UnitId               unit {};
     Vec<cpp::UnitId>          prerequisites;
     Vec<cpp::UnitId>          dependents;
     Vec<DependencyArtifact>   dependencies;
     Option<CompileInvocation> invocation;
-    String                    command;
 };
 
 struct CompilePlan {
     Vec<CompileNodePlan> nodes;
+};
+
+struct CompilePlanRetainedBytes {
+    usize total {};
+    usize invocations {};
+    usize dependencies {};
+};
+
+auto compile_plan_retained_bytes(const CompilePlan& plan) noexcept -> CompilePlanRetainedBytes {
+    auto result = CompilePlanRetainedBytes {
+        .total = plan.nodes.capacity() * usize(sizeof(CompileNodePlan)),
+    };
+    for (const auto& node : plan.nodes) {
+        result.total += node.prerequisites.capacity() * usize(sizeof(cpp::UnitId)) +
+                        node.dependents.capacity() * usize(sizeof(cpp::UnitId)) +
+                        node.dependencies.capacity() * usize(sizeof(DependencyArtifact));
+        for (const auto& dependency : node.dependencies) {
+            result.dependencies += dependency.retained_bytes();
+        }
+        result.dependencies += node.dependencies.capacity() * usize(sizeof(DependencyArtifact));
+        if (node.invocation.is_some()) {
+            result.invocations += node.invocation->retained_bytes();
+        }
+    }
+    result.total += result.invocations + result.dependencies;
+    return result;
+}
+
+struct MaterializedBuildActions {
+    CompilePlan                 compile;
+    Vec<DocumentationBuildUnit> documentation;
 };
 
 struct CompileExecutionResult {
@@ -161,11 +190,11 @@ auto documentation_unit_kind(const cpp::ScanResult& scan) -> DocumentationUnitKi
     return DocumentationUnitKind::TranslationUnit;
 }
 
-auto materialize_documentation_units(const cpp::PackageSpec&                    package,
-                                     const Vec<cpp::PreparedUnit>&              units,
-                                     const Vec<cpp::ScanResult>&                scans,
-                                     const CompilePlan&                         plan,
-                                     const Vec<lito::package::PackageTargetId>& selected_targets)
+auto materialize_documentation_units(const cpp::PackageSpec&               package,
+                                     const Vec<cpp::PreparedUnit>&         units,
+                                     const Vec<cpp::ScanResult>&           scans,
+                                     const CompilePlan&                    plan,
+                                     slice<lito::package::PackageTargetId> selected_targets)
     -> BuildResult<Vec<DocumentationBuildUnit>> {
     if (units.len() != scans.len() || units.len() != plan.nodes.len()) {
         return compile_failure<Vec<DocumentationBuildUnit>>(
@@ -224,13 +253,13 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
     return Ok(rstd::move(result));
 }
 
-auto materialize_compile_plan(const cpp::PackageSpec&                package,
-                              const BuildLayout&                     layout,
-                              const ClangToolchain&                  toolchain,
-                              const cpp::BmiFormatIdentity&          bmi_format,
-                              Vec<cpp::PreparedUnit>&                units,
-                              const Vec<cpp::ScanResult>&            scans,
-                              const cpp::ResolvedSemanticBuildGraph& semantics)
+auto materialize_compile_plan(const cpp::PackageSpec&         package,
+                              const BuildLayout&              layout,
+                              const ClangToolchain&           toolchain,
+                              const cpp::BmiFormatIdentity&   bmi_format,
+                              Vec<cpp::PreparedUnit>&         units,
+                              const Vec<cpp::ScanResult>&     scans,
+                              cpp::ResolvedSemanticBuildGraph semantics)
     -> BuildResult<CompilePlan> {
     if (scans.len() != units.len() || semantics.direct_inputs.len() != units.len() ||
         semantics.resolved_inputs.len() != units.len() ||
@@ -398,17 +427,41 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
             return compile_failure<CompilePlan>("compile plan left a unit unmaterialized"_str);
         }
         auto invocation = rstd::move(invocations[unit]).unwrap_unchecked();
-        auto command    = command_text(invocation.arguments);
         nodes.push(CompileNodePlan {
-            .unit          = unit,
-            .prerequisites = semantics.direct_inputs[unit].clone(),
+            .prerequisites = rstd::move(semantics.direct_inputs[unit]),
             .dependents    = rstd::move(dependents[unit]),
             .dependencies  = rstd::move(dependencies[unit]).unwrap_unchecked(),
             .invocation    = Some(rstd::move(invocation)),
-            .command       = rstd::move(command),
         });
     }
     return Ok(CompilePlan { .nodes = rstd::move(nodes) });
+}
+
+auto materialize_build_actions(const cpp::PackageSpec&               package,
+                               const BuildLayout&                    layout,
+                               const ClangToolchain&                 toolchain,
+                               const cpp::BmiFormatIdentity&         bmi_format,
+                               Vec<cpp::PreparedUnit>&               units,
+                               Vec<cpp::ScanResult>                  scans,
+                               cpp::ResolvedSemanticBuildGraph       semantics,
+                               slice<lito::package::PackageTargetId> selected_targets,
+                               BuildResultProjection                 projection)
+    -> BuildResult<MaterializedBuildActions> {
+    auto compile = materialize_compile_plan(
+        package, layout, toolchain, bmi_format, units, scans, rstd::move(semantics));
+    if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
+
+    auto documentation = Vec<DocumentationBuildUnit>::make();
+    if (projection.documentation) {
+        auto materialized =
+            materialize_documentation_units(package, units, scans, *compile, selected_targets);
+        if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+        documentation = rstd::move(materialized).unwrap();
+    }
+    return Ok(MaterializedBuildActions {
+        .compile       = rstd::move(compile).unwrap(),
+        .documentation = rstd::move(documentation),
+    });
 }
 
 auto execute_compile_plan(const cpp::PackageSpec&       package,
@@ -421,6 +474,11 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
     auto result = CompileExecutionResult {
         .compile_tests = Vec<CompileTestExecution>::make(),
     };
+    auto retained                           = compile_plan_retained_bytes(plan);
+    result.statistics.plan_nodes            = plan.nodes.len();
+    result.statistics.plan_retained_bytes   = retained.total;
+    result.statistics.plan_invocation_bytes = retained.invocations;
+    result.statistics.plan_dependency_bytes = retained.dependencies;
     if (plan.nodes.is_empty()) {
         result.statistics.jobs          = policy.jobs;
         result.statistics.max_in_flight = policy.max_in_flight;
@@ -433,18 +491,21 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
     auto runtime    = Vec<CompileNodeRuntime>::with_capacity(plan.nodes.len());
     auto errors     = Vec<Option<BuildError>>::with_capacity(plan.nodes.len());
     auto dependents = Vec<Vec<cpp::UnitId>>::with_capacity(plan.nodes.len());
-    for (const auto& node : plan.nodes) {
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+        auto&      node      = plan.nodes[unit];
         const auto remaining = node.prerequisites.len();
+        node.prerequisites   = Vec<cpp::UnitId>::make();
         runtime.push(CompileNodeRuntime {
             .status = remaining == usize {} ? CompileNodeStatus::Ready : CompileNodeStatus::Pending,
             .remaining = remaining,
         });
         errors.emplace_back();
-        dependents.push(node.dependents.clone());
+        dependents.push(rstd::move(node.dependents));
     }
 
-    auto wall_started  = rstd::time::Instant::now();
-    auto compile_total = usize {};
+    auto wall_started   = rstd::time::Instant::now();
+    auto compile_total  = usize {};
+    auto cache_retained = usize {};
     for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
         auto started = rstd::time::Instant::now();
         auto target  = cpp::project_target(units[unit].unit);
@@ -463,6 +524,11 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
             result.statistics.coordinator_work.saturating_add(started.elapsed());
         if (decision.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
+        }
+        ++result.statistics.cache_evaluations;
+        cache_retained += decision->retained_bytes();
+        if (cache_retained > result.statistics.cache_retained_bytes_peak) {
+            result.statistics.cache_retained_bytes_peak = cache_retained;
         }
         const auto* test = units[unit].unit.compile_test;
         if (! decision->current() ||

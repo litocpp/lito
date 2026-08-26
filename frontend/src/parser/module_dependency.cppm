@@ -105,8 +105,8 @@ class ModuleDependencyConsumer {
 public:
     static auto make() -> ModuleDependencyConsumer { return ModuleDependencyConsumer {}; }
 
-    auto consume(Vec<lexical::Token> tokens) -> lexical::Result<empty> {
-        for (auto& token : tokens) {
+    auto consume(slice<lexical::Token> tokens) -> lexical::Result<empty> {
+        for (const auto& token : tokens) {
             while (states_.len() <= token.expansion.source) states_.emplace_back();
             auto& state = states_[token.expansion.source];
             if (token.kind == lexical::TokenKind::Newline) continue;
@@ -130,7 +130,7 @@ public:
             if (state.ignore_statement) {
                 if (text == "module"_str || text == "import"_str || text == "export"_str) {
                     state.ignore_statement = false;
-                    state.candidate.push(rstd::move(token));
+                    state.candidate.push(token.clone());
                 } else if (text == ";"_str) {
                     state.ignore_statement = false;
                 }
@@ -138,7 +138,7 @@ public:
             }
             if (state.candidate.is_empty()) {
                 if (text == "module"_str || text == "import"_str || text == "export"_str) {
-                    state.candidate.push(rstd::move(token));
+                    state.candidate.push(token.clone());
                 } else if (text != ";"_str) {
                     state.ignore_statement = true;
                 }
@@ -152,7 +152,7 @@ public:
                 continue;
             }
             auto complete = text == ";"_str;
-            state.candidate.push(rstd::move(token));
+            state.candidate.push(token.clone());
             if (complete) {
                 auto parsed     = parse_candidate(state.candidate);
                 state.candidate = Vec<lexical::Token>::make();
@@ -270,7 +270,7 @@ auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& 
     auto consumer = ModuleDependencyConsumer::make();
     auto tokens   = Vec<lexical::Token>::with_capacity(translation.tokens.len());
     for (const auto& token : translation.tokens) tokens.push(token.clone());
-    auto consumed = consumer.consume(rstd::move(tokens));
+    auto consumed = consumer.consume(tokens.as_slice());
     if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
     return consumer.finish(translation);
 }

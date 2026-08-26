@@ -8,6 +8,8 @@ export namespace lito::frontend
 {
 
 using ScanMemoryAllocator = rstd::alloc::SharedArenaAllocator<rstd::alloc::VirtualMemoryAllocator>;
+using FrontendScratchAllocator =
+    ::alloc::RecyclingArenaAllocator<rstd::alloc::VirtualMemoryAllocator>;
 
 struct ScanMemoryDomainStatistics {
     usize used_bytes {};
@@ -16,6 +18,22 @@ struct ScanMemoryDomainStatistics {
     usize padding_bytes {};
     usize ordinary_blocks {};
     usize large_blocks {};
+    usize mapped_bytes {};
+    usize mapped_bytes_peak {};
+    usize mappings {};
+    usize mappings_peak {};
+};
+
+struct FrontendScratchStatistics {
+    usize live_bytes {};
+    usize live_bytes_peak {};
+    usize reserved_bytes {};
+    usize free_bytes {};
+    usize reused_bytes {};
+    usize ordinary_blocks {};
+    usize large_blocks {};
+    usize allocations {};
+    usize reuses {};
     usize mapped_bytes {};
     usize mapped_bytes_peak {};
     usize mappings {};
@@ -77,6 +95,47 @@ public:
             .mapped_bytes_peak = statistics.upstream.mapped_bytes_peak,
             .mappings          = statistics.upstream.mappings,
             .mappings_peak     = statistics.upstream.mappings_peak,
+        };
+    }
+};
+
+class FrontendScratchDomain {
+    static constexpr usize DEFAULT_BLOCK_SIZE = usize(1024 * 1024);
+    using Arena = ::alloc::RecyclingArena<rstd::alloc::VirtualMemoryAllocator>;
+
+    Arena arena_;
+
+    explicit FrontendScratchDomain(usize block_size): arena_(block_size) {}
+
+public:
+    FrontendScratchDomain(const FrontendScratchDomain&)                    = delete;
+    auto operator=(const FrontendScratchDomain&) -> FrontendScratchDomain& = delete;
+    FrontendScratchDomain(FrontendScratchDomain&&)                         = delete;
+    auto operator=(FrontendScratchDomain&&) -> FrontendScratchDomain&      = delete;
+
+    static auto make(usize block_size = DEFAULT_BLOCK_SIZE) -> FrontendScratchDomain {
+        return FrontendScratchDomain(block_size);
+    }
+
+    auto allocator() -> FrontendScratchAllocator { return arena_.allocator(); }
+
+    auto statistics() const -> FrontendScratchStatistics {
+        auto arena    = arena_.stats();
+        auto upstream = arena_.upstream_statistics();
+        return FrontendScratchStatistics {
+            .live_bytes        = arena.live_bytes,
+            .live_bytes_peak   = arena.peak_live_bytes,
+            .reserved_bytes    = arena.reserved_bytes,
+            .free_bytes        = arena.free_bytes,
+            .reused_bytes      = arena.reused_bytes,
+            .ordinary_blocks   = arena.ordinary_slabs,
+            .large_blocks      = arena.large_slabs,
+            .allocations       = arena.allocations,
+            .reuses            = arena.reuses,
+            .mapped_bytes      = upstream.mapped_bytes,
+            .mapped_bytes_peak = upstream.mapped_bytes_peak,
+            .mappings          = upstream.mappings,
+            .mappings_peak     = upstream.mappings_peak,
         };
     }
 };

@@ -27,6 +27,13 @@ struct RequiredModule {
             .exported         = exported,
         };
     }
+
+    auto retained_bytes() const noexcept -> usize {
+        auto result = logical_name.capacity() +
+                      import_locations.capacity() * usize(sizeof(frontend::DependencyLocation));
+        for (const auto& location : import_locations) result += location.path.capacity();
+        return result;
+    }
 };
 
 struct CommonScanResult {

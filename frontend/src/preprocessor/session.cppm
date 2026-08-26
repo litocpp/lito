@@ -2,6 +2,7 @@ export module lito.frontend.preprocessor:session;
 
 import rstd;
 import lito.frontend.lexical;
+import lito.frontend.memory;
 import :builtin;
 import :traits;
 import :macro;
@@ -14,6 +15,9 @@ using namespace lito::frontend::lexical;
 
 export namespace lito::frontend::preprocessor
 {
+
+using ScratchTokenVec    = Vec<Token, FrontendScratchAllocator>;
+using ScratchTokenVecVec = Vec<ScratchTokenVec, FrontendScratchAllocator>;
 
 struct PreprocessRequest {
     rstd::path::PathBuf source;
@@ -181,18 +185,20 @@ class PreprocessorSession {
     };
 
 public:
-    PreprocessorSession(PreprocessRequest request,
-                        Sources&          sources,
-                        Includes&         includes,
-                        Embeds&           embeds,
-                        Builtins&         builtins,
-                        Externals&        externals,
-                        Identifiers&      identifiers,
-                        Pragmas&          pragmas,
-                        Events&           events,
-                        Consumer&         consumer,
-                        Observer&         observer)
+    PreprocessorSession(PreprocessRequest        request,
+                        FrontendScratchAllocator scratch_allocator,
+                        Sources&                 sources,
+                        Includes&                includes,
+                        Embeds&                  embeds,
+                        Builtins&                builtins,
+                        Externals&               externals,
+                        Identifiers&             identifiers,
+                        Pragmas&                 pragmas,
+                        Events&                  events,
+                        Consumer&                consumer,
+                        Observer&                observer)
         : request_(rstd::move(request)),
+          scratch_allocator_(scratch_allocator),
           source_provider_(sources),
           include_resolver_(includes),
           embed_resolver_(embeds),
@@ -237,7 +243,6 @@ public:
             }
         }
         auto statistics = finish_statistics();
-        as<PreprocessorObserver>(observer_).record(statistics);
         return Ok(PreprocessedTranslationUnit {
             .sources              = rstd::move(sources_),
             .main_source          = main_source_,
@@ -253,6 +258,16 @@ public:
     }
 
 private:
+    auto scratch_tokens() -> ScratchTokenVec { return ScratchTokenVec::new_in(scratch_allocator_); }
+
+    auto scratch_tokens(usize capacity) -> ScratchTokenVec {
+        return ScratchTokenVec::with_capacity_in(capacity, scratch_allocator_);
+    }
+
+    auto scratch_token_vectors(usize capacity = usize {}) -> ScratchTokenVecVec {
+        return ScratchTokenVecVec::with_capacity_in(capacity, scratch_allocator_);
+    }
+
     auto begin_activity(PreprocessorActivity activity) -> void {
         as<PreprocessorObserver>(observer_).begin(activity);
     }
@@ -380,9 +395,17 @@ private:
         return token;
     }
 
-    auto clone_tokens_counted(const Vec<Token>& tokens, TokenCloneKind kind) -> Vec<Token> {
-        auto result = Vec<Token>::with_capacity(tokens.len());
+    template<typename Allocator>
+    auto clone_tokens_counted(const Vec<Token, Allocator>& tokens, TokenCloneKind kind)
+        -> ScratchTokenVec {
+        auto result = scratch_tokens(tokens.len());
         for (const auto& token : tokens) result.push(clone_token(token, kind));
+        return result;
+    }
+
+    auto into_scratch(Vec<Token> tokens) -> ScratchTokenVec {
+        auto result = scratch_tokens(tokens.len());
+        for (auto& token : tokens) result.push(rstd::move(token));
         return result;
     }
 
@@ -482,7 +505,7 @@ private:
         return result;
     }
 
-    auto stringify(const Vec<Token>& argument, const Token& origin) -> Token {
+    auto stringify(slice<Token> argument, const Token& origin) -> Token {
         auto text = String::make();
         text.push_ascii('"');
         auto first = true;
@@ -642,7 +665,7 @@ private:
         usize              next;
     };
 
-    auto parse_arguments(const Vec<Token>& input, usize open) -> Result<ParsedArguments> {
+    auto parse_arguments(const ScratchTokenVec& input, usize open) -> Result<ParsedArguments> {
         auto ranges = Vec<ArgumentRange>::make();
         auto begin  = open + usize(1);
         auto depth  = usize {};
@@ -670,11 +693,11 @@ private:
         return Err(failure("unterminated macro invocation"_str, input[open].expansion));
     }
 
-    auto materialize_arguments(Vec<Token>& input, const Vec<ArgumentRange>& ranges)
-        -> Vec<Vec<Token>> {
-        auto arguments = Vec<Vec<Token>>::with_capacity(ranges.len());
+    auto materialize_arguments(ScratchTokenVec& input, const Vec<ArgumentRange>& ranges)
+        -> ScratchTokenVecVec {
+        auto arguments = scratch_token_vectors(ranges.len());
         for (const auto& range : ranges) {
-            auto argument = Vec<Token>::with_capacity(range.end - range.begin);
+            auto argument = scratch_tokens(range.end - range.begin);
             for (auto index = range.begin; index < range.end; ++index) {
                 if (input[index].kind != TokenKind::Newline)
                     argument.push(rstd::move(input[index]));
@@ -685,10 +708,10 @@ private:
     }
 
     auto variadic_argument(const MacroDefinition& macro,
-                           Vec<Vec<Token>>&       arguments,
+                           ScratchTokenVecVec&    arguments,
                            const Token&           origin,
-                           bool                   consume_arguments) -> Vec<Token> {
-        auto result = Vec<Token>::make();
+                           bool                   consume_arguments) -> ScratchTokenVec {
+        auto result = scratch_tokens();
         auto fixed  = macro.parameters.is_some() ? macro.parameters->len() : usize {};
         for (auto index = fixed; index < arguments.len(); ++index) {
             if (! result.is_empty()) {
@@ -710,17 +733,20 @@ private:
     auto substitute_operations(const MacroDefinition& macro,
                                usize                  begin,
                                usize                  end,
-                               Vec<Vec<Token>>&       arguments,
-                               Vec<Token>&            variadic,
+                               ScratchTokenVecVec&    arguments,
+                               ScratchTokenVec&       variadic,
                                const Token&           origin,
                                DisabledMacros&        disabled,
-                               bool                   consume_arguments) -> Result<Vec<Token>> {
-        auto fixed              = macro.parameters.is_some() ? macro.parameters->len() : usize {};
-        auto expanded_arguments = Vec<Option<Vec<Token>>>::with_capacity(fixed + usize(1));
+                               bool consume_arguments) -> Result<ScratchTokenVec> {
+        auto fixed = macro.parameters.is_some() ? macro.parameters->len() : usize {};
+        auto expanded_arguments =
+            Vec<Option<ScratchTokenVec>, FrontendScratchAllocator>::with_capacity_in(
+                fixed + usize(1), scratch_allocator_);
         for (auto index = usize {}; index <= fixed; ++index)
             expanded_arguments.emplace_back(None());
-        auto expanded_argument =
-            [&](usize parameter, Vec<Token>& argument, bool last_use) -> Result<Vec<Token>> {
+        auto expanded_argument = [&](usize            parameter,
+                                     ScratchTokenVec& argument,
+                                     bool             last_use) -> Result<ScratchTokenVec> {
             if (expanded_arguments[parameter].is_none()) {
                 auto input =
                     consume_arguments && macro.can_consume_argument(parameter)
@@ -734,12 +760,12 @@ private:
             return Ok(clone_tokens_counted(*expanded_arguments[parameter],
                                            TokenCloneKind::MacroExpandedArgumentReuse));
         };
-        auto        result     = Vec<Token>::make();
+        auto        result     = scratch_tokens();
         const auto& operations = macro.operations();
         for (auto index = begin; index < end;) {
             const auto& operation = operations[index];
             const auto& token     = macro.replacement[operation.token_index];
-            auto        piece     = Vec<Token>::make();
+            auto        piece     = scratch_tokens();
             if (operation.kind == MacroReplacementOperationKind::VaOpt) {
                 ++raw_statistics_.macro_va_opt_uses;
                 if (! operation.valid) {
@@ -761,7 +787,7 @@ private:
                 ++raw_statistics_.macro_stringifications;
                 auto* argument = &variadic;
                 if (operation.parameter < fixed) argument = &arguments[operation.parameter];
-                piece.push(stringify(*argument, origin));
+                piece.push(stringify(argument->as_slice(), origin));
             } else if (operation.kind == MacroReplacementOperationKind::RawParameter) {
                 ++raw_statistics_.macro_raw_parameter_uses;
                 auto* argument = &variadic;
@@ -819,10 +845,10 @@ private:
     }
 
     auto substitute(const MacroDefinition& macro,
-                    Vec<Vec<Token>>&       arguments,
+                    ScratchTokenVecVec&    arguments,
                     const Token&           origin,
                     DisabledMacros&        disabled,
-                    bool                   consume_arguments = true) -> Result<Vec<Token>> {
+                    bool                   consume_arguments = true) -> Result<ScratchTokenVec> {
         auto fixed          = macro.parameters.is_some() ? macro.parameters->len() : usize {};
         auto argument_count = arguments.len();
         if (! macro.variadic && fixed == usize {} && argument_count == usize(1) &&
@@ -849,7 +875,7 @@ private:
                                      consume_arguments);
     }
 
-    auto joined_argument(const Vec<Token>& tokens) -> String {
+    auto joined_argument(const ScratchTokenVec& tokens) -> String {
         auto result = String::make();
         for (const auto& token : tokens) {
             if (token.kind != TokenKind::Newline) result.push_str(token.text.as_str());
@@ -858,7 +884,8 @@ private:
     }
 
     template<typename Query>
-    auto evaluate_builtin_query(const Vec<Token>& argument, const Token& origin) -> Result<i64> {
+    auto evaluate_builtin_query(const ScratchTokenVec& argument, const Token& origin)
+        -> Result<i64> {
         using Handler = typename Query::Handler;
 
         auto value = String::make();
@@ -879,7 +906,7 @@ private:
             .evaluate(BuiltinQueryKey::template make<Query>(value.as_str()));
     }
 
-    auto include_query(const Token& origin, bool include_next, const Vec<Token>& argument)
+    auto include_query(const Token& origin, bool include_next, const ScratchTokenVec& argument)
         -> Result<bool> {
         if (include_stack_.is_empty()) {
             return Err(failure("include query has no current source"_str, origin.expansion));
@@ -930,8 +957,8 @@ private:
         return Ok(resolved->is_some());
     }
 
-    auto expand(Vec<Token> input, DisabledMacros& disabled) -> Result<Vec<Token>> {
-        auto output = Vec<Token>::make();
+    auto expand(ScratchTokenVec input, DisabledMacros& disabled) -> Result<ScratchTokenVec> {
+        auto output = scratch_tokens();
         for (auto index = usize {}; index < input.len();) {
             auto token = rstd::move(input[index]);
             if (token.kind != TokenKind::Identifier || token.disable_expand) {
@@ -1144,7 +1171,7 @@ private:
             auto        macro      = rstd::move(found).unwrap();
             const auto& definition = *macro;
             ++raw_statistics_.macro_expansions;
-            auto replacement = Vec<Token>::make();
+            auto replacement = scratch_tokens();
             if (definition.parameters.is_some()) {
                 auto open = next;
                 while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
@@ -1156,7 +1183,7 @@ private:
                 replacement = rstd::move(substituted).unwrap();
                 next        = parsed->next;
             } else {
-                auto arguments   = Vec<Vec<Token>>::make();
+                auto arguments   = scratch_token_vectors();
                 auto substituted = substitute(definition, arguments, token, disabled);
                 if (substituted.is_err()) return substituted;
                 replacement = rstd::move(substituted).unwrap();
@@ -1193,8 +1220,8 @@ private:
         return Ok(empty {});
     }
 
-    auto replace_defined(const Vec<Token>& line) -> Result<Vec<Token>> {
-        auto result = Vec<Token>::make();
+    auto replace_defined(const Vec<Token>& line) -> Result<ScratchTokenVec> {
+        auto result = scratch_tokens();
         for (auto index = usize {}; index < line.len();) {
             const auto& token = line[index];
             if (token.text.as_str() != "defined"_str) {
@@ -1232,11 +1259,11 @@ private:
         auto disabled = DisabledMacros {};
         auto expanded = expand(rstd::move(defined).unwrap(), disabled);
         if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
-        auto filtered = Vec<Token>::make();
+        auto filtered = scratch_tokens();
         for (auto& token : *expanded) {
             if (token.kind != TokenKind::Newline) filtered.push(rstd::move(token));
         }
-        auto value = evaluate_expression(filtered);
+        auto value = evaluate_expression(filtered.as_slice());
         if (value.is_err()) return Err(rstd::move(value).unwrap_err());
         return Ok(*value != i64 {});
     }
@@ -1258,7 +1285,7 @@ private:
         return value;
     }
 
-    auto embed_parameter_tokens(const Vec<Token>& line, usize& cursor, SourceLocation location)
+    auto embed_parameter_tokens(slice<Token> line, usize& cursor, SourceLocation location)
         -> Result<Vec<Token>> {
         if (cursor >= line.len() || line[cursor].text.as_str() != "("_str) {
             return Err(failure("#embed parameter requires parentheses"_str, location));
@@ -1282,7 +1309,7 @@ private:
         return Err(failure("unterminated #embed parameter"_str, location));
     }
 
-    auto embed_count(const Vec<Token>& tokens, ref<str> parameter, SourceLocation location)
+    auto embed_count(slice<Token> tokens, ref<str> parameter, SourceLocation location)
         -> Result<usize> {
         if (tokens.is_empty()) {
             return Err(
@@ -1297,7 +1324,7 @@ private:
         return Ok(usize(static_cast<size_t>(value->to_primitive())));
     }
 
-    auto parse_embed(Vec<Token> line, SourceLocation location) -> Result<EmbedDirective> {
+    auto parse_embed(ScratchTokenVec line, SourceLocation location) -> Result<EmbedDirective> {
         auto disabled = DisabledMacros {};
         auto expanded = expand(rstd::move(line), disabled);
         if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
@@ -1349,12 +1376,12 @@ private:
                 name.push_str(embed_parameter_name(tokens[cursor + usize(1)].text.as_str()));
                 cursor += usize(2);
             }
-            auto value = embed_parameter_tokens(tokens, cursor, parameter_location);
+            auto value = embed_parameter_tokens(tokens.as_slice(), cursor, parameter_location);
             if (value.is_err()) return Err(rstd::move(value).unwrap_err());
             if (name.as_str() == "limit"_str) {
                 if (saw_limit)
                     return Err(failure("duplicate #embed limit parameter"_str, parameter_location));
-                auto count = embed_count(*value, "limit"_str, parameter_location);
+                auto count = embed_count(value->as_slice(), "limit"_str, parameter_location);
                 if (count.is_err()) return Err(rstd::move(count).unwrap_err());
                 saw_limit    = true;
                 result.limit = Some(*count);
@@ -1362,7 +1389,7 @@ private:
                 if (saw_offset)
                     return Err(
                         failure("duplicate #embed offset parameter"_str, parameter_location));
-                auto count = embed_count(*value, "offset"_str, parameter_location);
+                auto count = embed_count(value->as_slice(), "offset"_str, parameter_location);
                 if (count.is_err()) return Err(rstd::move(count).unwrap_err());
                 saw_offset    = true;
                 result.offset = *count;
@@ -1439,7 +1466,7 @@ private:
     }
 
     auto handle_embed(Vec<Token> line, SourceLocation location) -> Result<empty> {
-        auto directive = parse_embed(rstd::move(line), location);
+        auto directive = parse_embed(into_scratch(rstd::move(line)), location);
         if (directive.is_err()) return Err(rstd::move(directive).unwrap_err());
         auto resolved = resolve_embed(*directive, location, false);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
@@ -1476,10 +1503,10 @@ private:
         if (output.is_empty()) return Ok(empty {});
         ++raw_statistics_.consumer_batches;
         raw_statistics_.consumer_tokens += output.len().to_primitive();
-        return as<PreprocessedTokenConsumer>(consumer_).consume(rstd::move(output));
+        return as<PreprocessedTokenConsumer>(consumer_).consume(output.as_slice());
     }
 
-    auto include_name(const Vec<Token>& line, IncludeKind& kind, SourceLocation location)
+    auto include_name(slice<Token> line, IncludeKind& kind, SourceLocation location)
         -> Result<String> {
         if (line.len() == usize(1) && line[usize {}].kind == TokenKind::StringLiteral) {
             auto text = line[usize {}].text.as_str();
@@ -1553,16 +1580,16 @@ private:
         direct_header =
             direct_header || (line.len() >= usize(2) && line[usize {}].text.as_str() == "<"_str &&
                               line[line.len() - usize(1)].text.as_str() == ">"_str);
-        auto expanded = Result<Vec<Token>>(Ok(Vec<Token>::make()));
+        auto expanded = Result<ScratchTokenVec>(Ok(scratch_tokens()));
         if (! direct_header) {
             auto disabled = DisabledMacros {};
-            expanded      = expand(rstd::move(line), disabled);
+            expanded      = expand(into_scratch(rstd::move(line)), disabled);
             if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
         } else {
-            expanded = Ok(rstd::move(line));
+            expanded = Ok(into_scratch(rstd::move(line)));
         }
         auto kind = next ? IncludeKind::NextQuoted : IncludeKind::Quoted;
-        auto name = include_name(*expanded, kind, location);
+        auto name = include_name(expanded->as_slice(), kind, location);
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
         const auto& frame = include_stack_[include_stack_.len() - usize(1)];
         auto        resolved =
@@ -1674,20 +1701,20 @@ private:
         return Ok(false);
     }
 
-    auto flush_normal(Vec<Token>& normal) -> Result<empty> {
+    auto flush_normal(ScratchTokenVec& normal) -> Result<empty> {
         if (normal.is_empty()) return Ok(empty {});
         auto module_names = validate_module_name_macros(normal);
         if (module_names.is_err()) return Err(rstd::move(module_names).unwrap_err());
         auto disabled = DisabledMacros {};
         auto expanded = expand(rstd::move(normal), disabled);
-        normal        = Vec<Token>::make();
+        normal        = scratch_tokens();
         if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
         ++raw_statistics_.consumer_batches;
         raw_statistics_.consumer_tokens += expanded->len().to_primitive();
-        return as<PreprocessedTokenConsumer>(consumer_).consume(rstd::move(expanded).unwrap());
+        return as<PreprocessedTokenConsumer>(consumer_).consume(expanded->as_slice());
     }
 
-    auto validate_module_name_macros(const Vec<Token>& tokens) -> Result<empty> {
+    auto validate_module_name_macros(const ScratchTokenVec& tokens) -> Result<empty> {
         for (auto index = usize {}; index < tokens.len(); ++index) {
             if (! tokens[index].start_of_line || tokens[index].kind != TokenKind::Identifier) {
                 continue;
@@ -1791,7 +1818,7 @@ private:
         });
         if (entered.is_err()) return Err(rstd::move(entered).unwrap_err());
 
-        auto normal         = Vec<Token>::make();
+        auto normal         = scratch_tokens();
         auto conditions     = Vec<ConditionalFrame>::make();
         auto comment_cursor = usize {};
         for (auto cursor = usize {}; cursor < (*loaded)->tokens.len();) {
@@ -1885,14 +1912,14 @@ private:
                 if (event.is_err()) return Err(rstd::move(event).unwrap_err());
             } else if (keyword == "line"_str) {
                 auto disabled = DisabledMacros {};
-                auto expanded = expand(rstd::move(rest), disabled);
+                auto expanded = expand(into_scratch(rstd::move(rest)), disabled);
                 if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
                 if (expanded->is_empty() || (*expanded)[usize {}].kind != TokenKind::PpNumber) {
                     return Err(failure("#line requires a line number"_str, location));
                 }
                 auto number = Vec<Token>::make();
                 number.push(clone_token((*expanded)[usize {}]));
-                auto value = evaluate_expression(number);
+                auto value = evaluate_expression(number.as_slice());
                 if (value.is_err() || *value <= i64 {}) {
                     return Err(failure("#line requires a positive line number"_str, location));
                 }
@@ -1965,6 +1992,7 @@ private:
     }
 
     PreprocessRequest                           request_;
+    FrontendScratchAllocator                    scratch_allocator_;
     Sources&                                    source_provider_;
     Includes&                                   include_resolver_;
     Embeds&                                     embed_resolver_;
@@ -1995,8 +2023,8 @@ private:
 
 class CollectPreprocessedTokens {
 public:
-    auto consume(Vec<Token> tokens) -> Result<empty> {
-        for (auto& token : tokens) tokens_.push(rstd::move(token));
+    auto consume(slice<Token> tokens) -> Result<empty> {
+        for (const auto& token : tokens) tokens_.push(token.clone());
         return Ok(empty {});
     }
 
@@ -2028,27 +2056,50 @@ auto preprocess_with_embeds_to(PreprocessRequest request,
                                Events&           events,
                                Consumer&         consumer,
                                Observer&         observer) -> Result<PreprocessedTranslationUnit> {
-    return PreprocessorSession<Sources,
-                               Includes,
-                               Embeds,
-                               Builtins,
-                               Externals,
-                               Identifiers,
-                               Pragmas,
-                               Events,
-                               Consumer,
-                               Observer>(rstd::move(request),
-                                         sources,
-                                         includes,
-                                         embeds,
-                                         builtins,
-                                         externals,
-                                         identifiers,
-                                         pragmas,
-                                         events,
-                                         consumer,
-                                         observer)
-        .run();
+    auto scratch_statistics = FrontendScratchStatistics {};
+    auto result             = [&]() {
+        auto scratch       = FrontendScratchDomain::make();
+        auto result        = PreprocessorSession<Sources,
+                                                 Includes,
+                                                 Embeds,
+                                                 Builtins,
+                                                 Externals,
+                                                 Identifiers,
+                                                 Pragmas,
+                                                 Events,
+                                                 Consumer,
+                                                 Observer>(rstd::move(request),
+                                                           scratch.allocator(),
+                                                           sources,
+                                                           includes,
+                                                           embeds,
+                                                           builtins,
+                                                           externals,
+                                                           identifiers,
+                                                           pragmas,
+                                                           events,
+                                                           consumer,
+                                                           observer)
+                                 .run();
+        scratch_statistics = scratch.statistics();
+        return result;
+    }();
+    if (result.is_ok()) {
+        result->statistics.scratch_live_bytes        = scratch_statistics.live_bytes;
+        result->statistics.scratch_live_bytes_peak   = scratch_statistics.live_bytes_peak;
+        result->statistics.scratch_reserved_bytes    = scratch_statistics.reserved_bytes;
+        result->statistics.scratch_free_bytes        = scratch_statistics.free_bytes;
+        result->statistics.scratch_reused_bytes      = scratch_statistics.reused_bytes;
+        result->statistics.scratch_ordinary_blocks   = scratch_statistics.ordinary_blocks;
+        result->statistics.scratch_large_blocks      = scratch_statistics.large_blocks;
+        result->statistics.scratch_allocations       = scratch_statistics.allocations;
+        result->statistics.scratch_reuses            = scratch_statistics.reuses;
+        result->statistics.scratch_mapped_bytes_peak = scratch_statistics.mapped_bytes_peak;
+        result->statistics.scratch_mappings_peak     = scratch_statistics.mappings_peak;
+        result->statistics.scratch_releases          = usize(1);
+        as<PreprocessorObserver>(observer).record(result->statistics);
+    }
+    return result;
 }
 
 template<typename Sources,

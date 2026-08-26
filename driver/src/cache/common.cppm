@@ -113,14 +113,24 @@ auto output_exists(ref<rstd::path::Path> path) -> CacheResult<bool> {
 }
 
 auto output_content_digest(ref<rstd::path::Path> path) -> CacheResult<String> {
-    auto contents = rstd::fs::read(path);
-    if (contents.is_err()) {
+    auto opened = rstd::fs::File::open(path);
+    if (opened.is_err()) {
         return cache_io_failure<String>(
-            "read compiler output"_str, path, rstd::move(contents).unwrap_err());
+            "open compiler output"_str, path, rstd::move(opened).unwrap_err());
     }
+    auto file = rstd::move(opened).unwrap();
     auto hash = cache::FNV_OFFSET;
     cache::add_text(hash, "lito-output-content-v1"_str);
-    cache::add_bytes(hash, contents->as_slice());
+    auto buffer = array<u8, 65536> {};
+    while (true) {
+        auto read = file.read(buffer.as_mut_slice());
+        if (read.is_err()) {
+            return cache_io_failure<String>(
+                "read compiler output"_str, path, rstd::move(read).unwrap_err());
+        }
+        if (*read == usize {}) break;
+        cache::add_bytes(hash, slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
+    }
     return Ok(cache::hex(hash));
 }
 
@@ -242,6 +252,10 @@ struct DependencyArtifact {
     String  logical_name;
     String  artifact;
     PathBuf path;
+
+    auto retained_bytes() const noexcept -> usize {
+        return logical_name.capacity() + artifact.capacity() + path.capacity();
+    }
 };
 
 class CacheEnvironment {

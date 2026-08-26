@@ -282,6 +282,14 @@ struct CompileExecutionStatistics {
     usize                failed {};
     usize                blocked {};
     usize                max_active {};
+    usize                plan_nodes {};
+    usize                plan_retained_bytes {};
+    usize                plan_invocation_bytes {};
+    usize                plan_dependency_bytes {};
+    usize                documentation_units {};
+    usize                documentation_retained_bytes {};
+    usize                cache_evaluations {};
+    usize                cache_retained_bytes_peak {};
     rstd::time::Duration ready_wait;
     rstd::time::Duration completion_wait;
     rstd::time::Duration task_work;

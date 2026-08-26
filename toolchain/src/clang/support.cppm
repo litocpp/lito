@@ -106,19 +106,14 @@ auto verify_staged_output(ref<rstd::path::Path> path) -> ToolchainResult<empty> 
     return Ok(empty {});
 }
 
-auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> working_directory)
+auto invocation_working_directory(ref<rstd::path::Path> working_directory)
     -> ToolchainResult<String> {
     auto working = working_directory.to_str();
     if (working.is_none()) {
         return failure<String>(
             rstd::format("compile working directory '{}' is not valid UTF-8", working_directory));
     }
-    auto identity = String::make("lito-clang-compile-invocation-v1\n"_str);
-    identity.push_str(rstd::format("{}:{}\n", working->size(), *working).as_str());
-    for (const auto& argument : arguments) {
-        identity.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
-    }
-    return Ok(rstd::move(identity));
+    return Ok(String::make(*working));
 }
 
 auto argument_identity(ref<str> recipe, const Vec<String>& arguments) -> String {

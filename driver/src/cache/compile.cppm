@@ -18,27 +18,139 @@ using JsonMap = rstd::json::Map;
 namespace lito
 {
 
-class CacheDecision {
-    bool            current_ { false };
-    String          artifact_;
-    PathBuf         record_;
-    Json            building_;
-    Json            complete_;
-    Option<PathBuf> object_;
-    Vec<PathBuf>    stale_outputs_;
+struct CacheModuleReceipt {
+    String artifact;
+    String logical_name;
+};
 
-    CacheDecision(bool            current,
-                  String          artifact,
-                  PathBuf         record,
-                  Json            building,
-                  Json            complete,
-                  Option<PathBuf> object,
-                  Vec<PathBuf>    stale_outputs)
+struct CacheBmiOutputReceipt {
+    String format;
+    String path;
+    String recipe;
+    String representation;
+    String source_embedding;
+};
+
+struct CacheObjectOutputReceipt {
+    String path;
+    String recipe;
+};
+
+struct CompileCacheReceipt {
+    String                           artifact;
+    String                           command;
+    String                           context;
+    Vec<CacheModuleReceipt>          direct_modules;
+    String                           environment;
+    Option<CacheBmiOutputReceipt>    bmi;
+    Option<CacheObjectOutputReceipt> object;
+    String                           scan_receipt;
+    String                           source;
+    String                           source_path;
+    String                           source_origin;
+    String                           target;
+
+    auto retained_bytes() const noexcept -> usize {
+        auto result = artifact.capacity() + command.capacity() + context.capacity() +
+                      direct_modules.capacity() * usize(sizeof(CacheModuleReceipt)) +
+                      environment.capacity() + scan_receipt.capacity() + source.capacity() +
+                      source_path.capacity() + source_origin.capacity() + target.capacity();
+        for (const auto& module : direct_modules) {
+            result += module.artifact.capacity() + module.logical_name.capacity();
+        }
+        if (bmi.is_some()) {
+            result += bmi->format.capacity() + bmi->path.capacity() + bmi->recipe.capacity() +
+                      bmi->representation.capacity() + bmi->source_embedding.capacity();
+        }
+        if (object.is_some()) result += object->path.capacity() + object->recipe.capacity();
+        return result;
+    }
+};
+
+auto complete_receipt_json(const CompileCacheReceipt& receipt) -> Json {
+    auto direct = JsonArray::with_capacity(receipt.direct_modules.len());
+    for (const auto& dependency : receipt.direct_modules) {
+        auto value = JsonMap::make();
+        value.insert(String::make("artifact"_str), cache_string(dependency.artifact.as_str()));
+        value.insert(String::make("logical-name"_str),
+                     cache_string(dependency.logical_name.as_str()));
+        direct.push(Json::Object(rstd::move(value)));
+    }
+
+    auto outputs  = JsonMap::make();
+    auto bmi_json = Json::Null();
+    if (receipt.bmi.is_some()) {
+        const auto& bmi   = *receipt.bmi;
+        auto        value = JsonMap::make();
+        value.insert(String::make("format"_str), cache_string(bmi.format.as_str()));
+        value.insert(String::make("kind"_str), cache_string("bmi"_str));
+        value.insert(String::make("path"_str), cache_string(bmi.path.as_str()));
+        value.insert(String::make("recipe"_str), cache_string(bmi.recipe.as_str()));
+        value.insert(String::make("representation"_str), cache_string(bmi.representation.as_str()));
+        value.insert(String::make("source-embedding"_str),
+                     cache_string(bmi.source_embedding.as_str()));
+        bmi_json = Json::Object(rstd::move(value));
+    }
+    outputs.insert(String::make("bmi"_str), rstd::move(bmi_json));
+
+    auto object_json = Json::Null();
+    if (receipt.object.is_some()) {
+        const auto& object = *receipt.object;
+        auto        value  = JsonMap::make();
+        value.insert(String::make("kind"_str), cache_string("object"_str));
+        value.insert(String::make("path"_str), cache_string(object.path.as_str()));
+        value.insert(String::make("recipe"_str), cache_string(object.recipe.as_str()));
+        object_json = Json::Object(rstd::move(value));
+    }
+    outputs.insert(String::make("object"_str), rstd::move(object_json));
+
+    auto complete = JsonMap::make();
+    complete.insert(String::make("artifact"_str), cache_string(receipt.artifact.as_str()));
+    complete.insert(String::make("command"_str), cache_string(receipt.command.as_str()));
+    complete.insert(String::make("context"_str), cache_string(receipt.context.as_str()));
+    complete.insert(String::make("direct-modules"_str), Json::Array(rstd::move(direct)));
+    complete.insert(String::make("environment"_str), cache_string(receipt.environment.as_str()));
+    complete.insert(String::make("outputs"_str), Json::Object(rstd::move(outputs)));
+    complete.insert(String::make("scan-receipt"_str), cache_string(receipt.scan_receipt.as_str()));
+    complete.insert(String::make("source"_str), cache_string(receipt.source.as_str()));
+    complete.insert(String::make("source-path"_str), cache_string(receipt.source_path.as_str()));
+    complete.insert(String::make("source-origin"_str),
+                    cache_string(receipt.source_origin.as_str()));
+    complete.insert(String::make("state"_str), cache_string("complete"_str));
+    complete.insert(String::make("target"_str), cache_string(receipt.target.as_str()));
+    complete.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+    return Json::Object(rstd::move(complete));
+}
+
+auto building_receipt_json(const CompileCacheReceipt& receipt) -> Json {
+    auto building = JsonMap::make();
+    building.insert(String::make("artifact"_str), cache_string(receipt.artifact.as_str()));
+    building.insert(String::make("command"_str), cache_string(receipt.command.as_str()));
+    building.insert(String::make("environment"_str), cache_string(receipt.environment.as_str()));
+    building.insert(String::make("source"_str), cache_string(receipt.source.as_str()));
+    building.insert(String::make("source-origin"_str),
+                    cache_string(receipt.source_origin.as_str()));
+    building.insert(String::make("state"_str), cache_string("building"_str));
+    building.insert(String::make("target"_str), cache_string(receipt.target.as_str()));
+    building.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+    return Json::Object(rstd::move(building));
+}
+
+class CacheDecision {
+    bool                current_ { false };
+    CompileCacheReceipt receipt_;
+    PathBuf             record_;
+    Option<PathBuf>     object_;
+    Vec<PathBuf>        stale_outputs_;
+
+    CacheDecision(bool                current,
+                  CompileCacheReceipt receipt,
+                  PathBuf             record,
+                  Option<PathBuf>     object,
+                  Vec<PathBuf>        stale_outputs)
         : current_(current),
-          artifact_(rstd::move(artifact)),
+          receipt_(rstd::move(receipt)),
           record_(rstd::move(record)),
-          building_(rstd::move(building)),
-          complete_(rstd::move(complete)),
           object_(rstd::move(object)),
           stale_outputs_(rstd::move(stale_outputs)) {}
 
@@ -49,8 +161,15 @@ public:
     auto operator=(CacheDecision&&) noexcept -> CacheDecision& = default;
 
     auto current() const noexcept -> bool { return current_; }
-    auto artifact() const -> ref<str> { return artifact_.as_str(); }
+    auto artifact() const -> ref<str> { return receipt_.artifact.as_str(); }
     auto record() const -> ref<rstd::path::Path> { return record_.as_path(); }
+    auto retained_bytes() const noexcept -> usize {
+        auto result = receipt_.retained_bytes() + record_.capacity() +
+                      stale_outputs_.capacity() * usize(sizeof(PathBuf));
+        if (object_.is_some()) result += object_->capacity();
+        for (const auto& output : stale_outputs_) result += output.capacity();
+        return result;
+    }
 };
 
 class CompileCacheSession {
@@ -58,9 +177,9 @@ class CompileCacheSession {
     PathBuf owner_root_;
     bool    force_refresh_ { false };
 
-    auto record_current(const cpp::PreparedUnit& unit,
-                        const Json&              complete,
-                        const Option<PathBuf>&   final_object) const -> CacheResult<bool> {
+    auto record_current(const cpp::PreparedUnit&   unit,
+                        const CompileCacheReceipt& receipt,
+                        const Option<PathBuf>&     final_object) const -> CacheResult<bool> {
         if (force_refresh_) return Ok(false);
         auto exists = rstd::fs::exists(unit.unit.cache_record.as_path());
         if (exists.is_err()) {
@@ -81,6 +200,7 @@ class CompileCacheSession {
         auto comparable_object = comparable.as_object_mut();
         if (comparable_object.is_none()) return Ok(false);
         (**comparable_object).remove("content-digests"_str);
+        auto complete = complete_receipt_json(receipt);
         if (comparable != complete) return Ok(false);
         auto stored_digests = parsed->get("content-digests"_str);
         if (stored_digests.is_none()) return Ok(false);
@@ -136,8 +256,9 @@ public:
 
         auto context_key =
             cache::text_identity("lito-context-key-v1"_str, unit.unit.context->id.as_str());
+        auto invocation_identity = invocation.identity();
         auto command_key =
-            cache::text_identity("lito-command-key-v1"_str, invocation.identity.as_str());
+            cache::text_identity("lito-command-key-v1"_str, invocation_identity.as_str());
         auto artifact_hash = cache::FNV_OFFSET;
         cache::add_text(artifact_hash, "lito-artifact-v2"_str);
         cache::add_text(artifact_hash, environment_.as_str());
@@ -146,79 +267,55 @@ public:
         cache::add_text(artifact_hash, scan_receipt);
         cache::add_text(artifact_hash, unit.unit.source_origin_identity.as_str());
 
-        auto direct = JsonArray::make();
+        auto direct = Vec<CacheModuleReceipt>::with_capacity(dependencies.len());
         for (const auto& dependency : dependencies) {
-            auto value = JsonMap::make();
-            value.insert(String::make("artifact"_str), cache_string(dependency.artifact.as_str()));
-            value.insert(String::make("logical-name"_str),
-                         cache_string(dependency.logical_name.as_str()));
-            direct.push(Json::Object(rstd::move(value)));
+            direct.push(CacheModuleReceipt {
+                .artifact     = dependency.artifact.clone(),
+                .logical_name = dependency.logical_name.clone(),
+            });
             cache::add_text(artifact_hash, dependency.logical_name.as_str());
             cache::add_text(artifact_hash, dependency.artifact.as_str());
         }
         auto artifact = cache::hex(artifact_hash);
 
-        auto        outputs      = JsonMap::make();
-        auto        bmi_json     = Json::Null();
+        auto        bmi_receipt  = Option<CacheBmiOutputReceipt> {};
         const auto* bmi_artifact = cpp::unit_bmi(unit.unit);
         if (bmi_artifact != nullptr) {
             auto bmi = path_string(bmi_artifact->path.as_path());
             if (bmi.is_err()) return Err(rstd::move(bmi).unwrap_err());
-            auto bmi_output = JsonMap::make();
-            bmi_output.insert(
-                String::make("format"_str),
-                cache_string(cpp::bmi_format_identity(bmi_artifact->format).as_str()));
-            bmi_output.insert(String::make("kind"_str), cache_string("bmi"_str));
-            bmi_output.insert(String::make("path"_str), cache_string(bmi->as_str()));
-            bmi_output.insert(String::make("recipe"_str),
-                              cache_string(bmi_artifact->key.value.as_str()));
-            bmi_output.insert(
-                String::make("representation"_str),
-                cache_string(cpp::bmi_representation_name(bmi_artifact->request.representation)));
-            bmi_output.insert(String::make("source-embedding"_str),
-                              cache_string(cpp::bmi_source_embedding_name(
-                                  bmi_artifact->request.source_embedding)));
-            bmi_json = Json::Object(rstd::move(bmi_output));
+            bmi_receipt = Some(CacheBmiOutputReceipt {
+                .format         = cpp::bmi_format_identity(bmi_artifact->format),
+                .path           = rstd::move(bmi).unwrap(),
+                .recipe         = bmi_artifact->key.value.clone(),
+                .representation = String::make(
+                    cpp::bmi_representation_name(bmi_artifact->request.representation)),
+                .source_embedding = String::make(
+                    cpp::bmi_source_embedding_name(bmi_artifact->request.source_embedding)),
+            });
         }
-        outputs.insert(String::make("bmi"_str), rstd::move(bmi_json));
-        auto object_json = Json::Null();
+
+        auto object_receipt = Option<CacheObjectOutputReceipt> {};
         if (object.is_some()) {
-            auto object_output = JsonMap::make();
-            object_output.insert(String::make("kind"_str), cache_string("object"_str));
-            object_output.insert(String::make("path"_str), cache_string(object->as_str()));
-            object_output.insert(String::make("recipe"_str), cache_string(command_key.as_str()));
-            object_json = Json::Object(rstd::move(object_output));
+            object_receipt = Some(CacheObjectOutputReceipt {
+                .path   = rstd::move(object).unwrap(),
+                .recipe = command_key.clone(),
+            });
         }
-        outputs.insert(String::make("object"_str), rstd::move(object_json));
 
-        auto complete = JsonMap::make();
-        complete.insert(String::make("artifact"_str), cache_string(artifact.as_str()));
-        complete.insert(String::make("command"_str), cache_string(command_key.as_str()));
-        complete.insert(String::make("context"_str), cache_string(context_key.as_str()));
-        complete.insert(String::make("direct-modules"_str), Json::Array(rstd::move(direct)));
-        complete.insert(String::make("environment"_str), cache_string(environment_.as_str()));
-        complete.insert(String::make("outputs"_str), Json::Object(rstd::move(outputs)));
-        complete.insert(String::make("scan-receipt"_str), cache_string(scan_receipt));
-        complete.insert(String::make("source"_str), cache_string(relative->as_str()));
-        complete.insert(String::make("source-path"_str), cache_string(source->as_str()));
-        complete.insert(String::make("source-origin"_str),
-                        cache_string(unit.unit.source_origin_identity.as_str()));
-        complete.insert(String::make("state"_str), cache_string("complete"_str));
-        complete.insert(String::make("target"_str), cache_string(target));
-        complete.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
-        auto complete_json = Json::Object(rstd::move(complete));
-
-        auto building = JsonMap::make();
-        building.insert(String::make("artifact"_str), cache_string(artifact.as_str()));
-        building.insert(String::make("command"_str), cache_string(command_key.as_str()));
-        building.insert(String::make("environment"_str), cache_string(environment_.as_str()));
-        building.insert(String::make("source"_str), cache_string(relative->as_str()));
-        building.insert(String::make("source-origin"_str),
-                        cache_string(unit.unit.source_origin_identity.as_str()));
-        building.insert(String::make("state"_str), cache_string("building"_str));
-        building.insert(String::make("target"_str), cache_string(target));
-        building.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
-        auto building_json = Json::Object(rstd::move(building));
+        auto receipt = CompileCacheReceipt {
+            .artifact       = rstd::move(artifact),
+            .command        = rstd::move(command_key),
+            .context        = rstd::move(context_key),
+            .direct_modules = rstd::move(direct),
+            .environment    = environment_.clone(),
+            .bmi            = rstd::move(bmi_receipt),
+            .object         = rstd::move(object_receipt),
+            .scan_receipt   = String::make(scan_receipt),
+            .source         = rstd::move(relative).unwrap(),
+            .source_path    = rstd::move(source).unwrap(),
+            .source_origin  = unit.unit.source_origin_identity.clone(),
+            .target         = String::make(target),
+        };
 
         auto previous_outputs = read_receipt_output_paths(unit.unit.cache_record.as_path());
         if (previous_outputs.is_err()) return Err(rstd::move(previous_outputs).unwrap_err());
@@ -232,13 +329,11 @@ public:
             if (! current_output) stale_outputs.push(rstd::move(path));
         }
 
-        auto current = record_current(unit, complete_json, invocation.final_object);
+        auto current = record_current(unit, receipt, invocation.final_object);
         if (current.is_err()) return Err(rstd::move(current).unwrap_err());
         return Ok(CacheDecision { *current,
-                                  rstd::move(artifact),
+                                  rstd::move(receipt),
                                   unit.unit.cache_record.clone(),
-                                  rstd::move(building_json),
-                                  rstd::move(complete_json),
                                   invocation.final_object.is_some()
                                       ? Some(invocation.final_object->clone())
                                       : Option<PathBuf> {},
@@ -246,7 +341,8 @@ public:
     }
 
     auto begin_compile(const CacheDecision& decision) -> CacheResult<empty> {
-        return write_json(decision.record_.as_path(), decision.building_);
+        auto building = building_receipt_json(decision.receipt_);
+        return write_json(decision.record_.as_path(), building);
     }
 
     auto begin_compile_test(const CacheDecision&                decision,
@@ -254,7 +350,7 @@ public:
                             const cpp::ResolvedCompileTestCase& test) -> CacheResult<empty> {
         auto root = JsonMap::make();
         root.insert(String::make("case"_str), cache_string(test.name.as_str()));
-        root.insert(String::make("compile"_str), decision.complete_.clone());
+        root.insert(String::make("compile"_str), complete_receipt_json(decision.receipt_));
         root.insert(String::make("expected"_str),
                     cache_string(test.outcome == lito::manifest::CompileTestOutcome::Success
                                      ? "success"_str
@@ -286,7 +382,7 @@ public:
 
         auto root = JsonMap::make();
         root.insert(String::make("case"_str), cache_string(execution.name.as_str()));
-        root.insert(String::make("compile"_str), decision.complete_.clone());
+        root.insert(String::make("compile"_str), complete_receipt_json(decision.receipt_));
         root.insert(String::make("expected"_str),
                     cache_string(execution.expected == lito::manifest::CompileTestOutcome::Success
                                      ? "success"_str
@@ -323,7 +419,7 @@ public:
             if (bmi_digest.is_err()) return Err(rstd::move(bmi_digest).unwrap_err());
             digests.insert(String::make("bmi"_str), cache_string(bmi_digest->as_str()));
         }
-        auto complete        = decision.complete_.clone();
+        auto complete        = complete_receipt_json(decision.receipt_);
         auto complete_object = complete.as_object_mut();
         if (complete_object.is_none()) {
             return cache_failure<empty>(String::make("compile cache receipt is not an object"_str));

@@ -192,11 +192,12 @@ auto write_extraction_request(ref<rstd::path::Path> path, ref<str> contents) -> 
 auto request_identity(const DocumentationBuildUnit&       unit,
                       const cpp::SelectedPackageMetadata& package,
                       const ResolvedDocTool&              tool) -> String {
+    auto invocation_identity = unit.invocation.identity();
     auto value = rstd::format("lito-doc-extract-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                               package.source_identity.as_str(),
                               lito::package::package_target_id_text(unit.target).as_str(),
                               unit.source_identity.as_str(),
-                              unit.invocation.identity.as_str(),
+                              invocation_identity.as_str(),
                               tool.build_identity.as_str(),
                               tool.sdk.identity.as_str(),
                               unit.kind,
@@ -512,6 +513,7 @@ namespace lito
 {
 
 auto doc(DocRequest request) -> DocResult<DocSummary> {
+    request.build.result.documentation = true;
     auto environment = ResolvedProcessEnvironment::resolve(request.build.environment);
     if (environment.is_err())
         return Err(rstd::into<DocError>(rstd::move(environment).unwrap_err()));

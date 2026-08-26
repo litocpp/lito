@@ -22,6 +22,10 @@ struct DocumentationBmiDependency {
     String  logical_name;
     String  artifact_identity;
     PathBuf path;
+
+    auto retained_bytes() const noexcept -> usize {
+        return logical_name.capacity() + artifact_identity.capacity() + path.capacity();
+    }
 };
 
 struct DocumentationBuildUnit {
@@ -36,7 +40,24 @@ struct DocumentationBuildUnit {
     String                          source_identity;
     CompileInvocation               invocation;
     Vec<DocumentationBmiDependency> bmi_dependencies;
+
+    auto retained_bytes() const noexcept -> usize {
+        auto result = target.package.capacity() + target.name.capacity() + package_root.capacity() +
+                      source.capacity() + relative_source.capacity() + source_identity.capacity() +
+                      invocation.retained_bytes() +
+                      bmi_dependencies.capacity() * usize(sizeof(DocumentationBmiDependency));
+        if (logical_module.is_some()) result += logical_module->capacity();
+        if (root_module.is_some()) result += root_module->capacity();
+        for (const auto& dependency : bmi_dependencies) result += dependency.retained_bytes();
+        return result;
+    }
 };
+
+auto documentation_retained_bytes(const Vec<DocumentationBuildUnit>& units) noexcept -> usize {
+    auto result = units.capacity() * usize(sizeof(DocumentationBuildUnit));
+    for (const auto& unit : units) result += unit.retained_bytes();
+    return result;
+}
 
 } // namespace lito
 

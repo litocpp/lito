@@ -876,14 +876,14 @@ public:
             toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
             pushed = toolchain::command::push_path(command, staged_object->as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-            auto identity = invocation_identity(command, prepared.working_directory.as_path());
+            auto identity = invocation_working_directory(prepared.working_directory.as_path());
             if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
             return Ok(CompileInvocation {
-                .arguments         = rstd::move(command),
-                .working_directory = prepared.working_directory.clone(),
-                .identity          = rstd::move(identity).unwrap(),
-                .staged_object     = rstd::move(staged_object).unwrap(),
-                .final_object      = Some(prepared.unit.object.clone()),
+                .arguments                  = rstd::move(command),
+                .working_directory          = prepared.working_directory.clone(),
+                .identity_working_directory = rstd::move(identity).unwrap(),
+                .staged_object              = rstd::move(staged_object).unwrap(),
+                .final_object               = Some(prepared.unit.object.clone()),
             });
         }
         if (! scan_result.language.is_Cpp() || ! prepared.unit.language.is_Cpp()) {
@@ -965,19 +965,19 @@ public:
         pushed = toolchain::command::push_path(command, staged_object->as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
-        auto identity = invocation_identity(command, prepared.working_directory.as_path());
+        auto identity = invocation_working_directory(prepared.working_directory.as_path());
         if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
         return Ok(CompileInvocation {
-            .arguments         = rstd::move(command),
-            .working_directory = prepared.working_directory.clone(),
-            .identity          = rstd::move(identity).unwrap(),
-            .staged_object     = rstd::move(staged_object).unwrap(),
-            .final_object      = disposition == cpp::CppCompileDisposition::BmiOnly
-                                     ? Option<PathBuf> {}
-                                     : Some(prepared.unit.object.clone()),
-            .staged_bmi        = rstd::move(staged_bmi),
-            .final_bmi         = source_unit.bmi.is_some() ? Some(source_unit.bmi->path.clone())
-                                                           : Option<PathBuf> {},
+            .arguments                  = rstd::move(command),
+            .working_directory          = prepared.working_directory.clone(),
+            .identity_working_directory = rstd::move(identity).unwrap(),
+            .staged_object              = rstd::move(staged_object).unwrap(),
+            .final_object               = disposition == cpp::CppCompileDisposition::BmiOnly
+                                              ? Option<PathBuf> {}
+                                              : Some(prepared.unit.object.clone()),
+            .staged_bmi                 = rstd::move(staged_bmi),
+            .final_bmi = source_unit.bmi.is_some() ? Some(source_unit.bmi->path.clone())
+                                                   : Option<PathBuf> {},
         });
     }
 
