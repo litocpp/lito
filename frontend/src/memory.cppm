@@ -35,6 +35,11 @@ struct FrontendScratchStatistics {
     usize large_blocks {};
     usize allocations {};
     usize reuses {};
+    usize layout_classes {};
+    usize recycled_capacity {};
+    usize metadata_used_bytes {};
+    usize metadata_reserved_bytes {};
+    usize metadata_blocks {};
     usize mapped_bytes {};
     usize mapped_bytes_peak {};
     usize mappings {};
@@ -126,19 +131,24 @@ public:
         auto arena    = arena_.stats();
         auto upstream = arena_.upstream_statistics();
         return FrontendScratchStatistics {
-            .live_bytes        = arena.live_bytes,
-            .live_bytes_peak   = arena.peak_live_bytes,
-            .reserved_bytes    = arena.reserved_bytes,
-            .free_bytes        = arena.free_bytes,
-            .reused_bytes      = arena.reused_bytes,
-            .ordinary_blocks   = arena.ordinary_slabs,
-            .large_blocks      = arena.large_slabs,
-            .allocations       = arena.allocations,
-            .reuses            = arena.reuses,
-            .mapped_bytes      = upstream.mapped_bytes,
-            .mapped_bytes_peak = upstream.mapped_bytes_peak,
-            .mappings          = upstream.mappings,
-            .mappings_peak     = upstream.mappings_peak,
+            .live_bytes              = arena.live_bytes,
+            .live_bytes_peak         = arena.peak_live_bytes,
+            .reserved_bytes          = arena.reserved_bytes,
+            .free_bytes              = arena.free_bytes,
+            .reused_bytes            = arena.reused_bytes,
+            .ordinary_blocks         = arena.ordinary_slabs,
+            .large_blocks            = arena.large_slabs,
+            .allocations             = arena.allocations,
+            .reuses                  = arena.reuses,
+            .layout_classes          = arena.layout_classes,
+            .recycled_capacity       = arena.recycled_capacity,
+            .metadata_used_bytes     = arena.metadata_used_bytes,
+            .metadata_reserved_bytes = arena.metadata_reserved_bytes,
+            .metadata_blocks         = arena.metadata_blocks,
+            .mapped_bytes            = upstream.mapped_bytes,
+            .mapped_bytes_peak       = upstream.mapped_bytes_peak,
+            .mappings                = upstream.mappings,
+            .mappings_peak           = upstream.mappings_peak,
         };
     }
 };

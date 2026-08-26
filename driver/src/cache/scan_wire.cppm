@@ -258,8 +258,8 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WritePath> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSource> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer, const lito::scan_cache_wire::WriteSource& value) ->
-        typename Serializer::result_type {
+    static auto serialize(Serializer& serializer, const lito::scan_cache_wire::WriteSource& value)
+        -> typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(4)));
         rstd_try(serde::field(map, "fingerprint"_str, value.fingerprint));
         rstd_try(serde::field(map, "path"_str, value.path));
@@ -272,14 +272,13 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSource> {
 template<typename File>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteFile<File>> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                   serializer,
                           const lito::scan_cache_wire::WriteFile<File>& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(3)));
         rstd_try(serde::field(map, "fingerprint"_str, value.value->fingerprint));
-        rstd_try(serde::field(map,
-                              "path"_str,
-                              lito::scan_cache_wire::WritePath { value.value->path.as_path() }));
+        rstd_try(serde::field(
+            map, "path"_str, lito::scan_cache_wire::WritePath { value.value->path.as_path() }));
         rstd_try(serde::field(map, "size"_str, value.value->size));
         return map.end();
     }
@@ -288,7 +287,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteFile<File>> {
 template<typename Files>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteFiles<Files>> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                     serializer,
                           const lito::scan_cache_wire::WriteFiles<Files>& value) ->
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
@@ -306,9 +305,8 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteFiles<Files>> {
 template<typename Resolved>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteResolvedLookup<Resolved>> {
     template<typename Serializer>
-    static auto serialize(
-        Serializer& serializer,
-        const lito::scan_cache_wire::WriteResolvedLookup<Resolved>& value) ->
+    static auto serialize(Serializer&                                                 serializer,
+                          const lito::scan_cache_wire::WriteResolvedLookup<Resolved>& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(3)));
         rstd_try(serde::field(
@@ -327,14 +325,13 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteResolvedLookup<Resolve
 template<typename Resolved>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved>> {
     template<typename Serializer>
-    static auto serialize(
-        Serializer& serializer,
-        const lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved>& value) ->
-        typename Serializer::result_type {
+    static auto serialize(Serializer& serializer,
+                          const lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved>& value)
+        -> typename Serializer::result_type {
         if (value.value->is_none()) return serializer.serialize_none();
-        return serde::serialize(
-            serializer,
-            lito::scan_cache_wire::WriteResolvedLookup<Resolved> { rstd::addressof(**value.value) });
+        return serde::serialize(serializer,
+                                lito::scan_cache_wire::WriteResolvedLookup<Resolved> {
+                                    rstd::addressof(**value.value) });
     }
 };
 
@@ -345,8 +342,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WritePaths> {
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
         for (const auto& path : *value.values) {
-            rstd_try(sequence.element(
-                lito::scan_cache_wire::WritePath { path.as_path() }));
+            rstd_try(sequence.element(lito::scan_cache_wire::WritePath { path.as_path() }));
         }
         return sequence.end();
     }
@@ -355,17 +351,17 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WritePaths> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteIncludeLookup> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                      serializer,
                           const lito::scan_cache_wire::WriteIncludeLookup& value) ->
         typename Serializer::result_type {
         const auto& lookup = *value.value;
         auto        map    = rstd_try(serializer.begin_map(usize(6)));
-        rstd_try(serde::field(
-            map,
-            "including"_str,
-            lito::scan_cache_wire::WritePath { lookup.including_path.as_path() }));
-        rstd_try(serde::field(
-            map, "kind"_str, lito::scan_cache_wire::include_kind_name(lookup.kind)));
+        rstd_try(
+            serde::field(map,
+                         "including"_str,
+                         lito::scan_cache_wire::WritePath { lookup.including_path.as_path() }));
+        rstd_try(
+            serde::field(map, "kind"_str, lito::scan_cache_wire::include_kind_name(lookup.kind)));
         rstd_try(serde::field(
             map,
             "missing"_str,
@@ -377,12 +373,11 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteIncludeLookup> {
         }
         rstd_try(serde::field(map, "previous-search-index"_str, previous));
         using Resolved = mtp::rm_cvf<decltype(*lookup.resolved)>;
-        rstd_try(serde::field(
-            map,
-            "resolved"_str,
-            lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved> {
-                rstd::addressof(lookup.resolved),
-            }));
+        rstd_try(serde::field(map,
+                              "resolved"_str,
+                              lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved> {
+                                  rstd::addressof(lookup.resolved),
+                              }));
         return map.end();
     }
 };
@@ -390,7 +385,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteIncludeLookup> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteIncludeLookups> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                       serializer,
                           const lito::scan_cache_wire::WriteIncludeLookups& value) ->
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
@@ -405,29 +400,28 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteIncludeLookups> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbedLookup> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                    serializer,
                           const lito::scan_cache_wire::WriteEmbedLookup& value) ->
         typename Serializer::result_type {
         const auto& lookup = *value.value;
         auto        map    = rstd_try(serializer.begin_map(usize(5)));
-        rstd_try(serde::field(
-            map,
-            "including"_str,
-            lito::scan_cache_wire::WritePath { lookup.including_path.as_path() }));
-        rstd_try(serde::field(
-            map, "kind"_str, lito::scan_cache_wire::embed_kind_name(lookup.kind)));
+        rstd_try(
+            serde::field(map,
+                         "including"_str,
+                         lito::scan_cache_wire::WritePath { lookup.including_path.as_path() }));
+        rstd_try(
+            serde::field(map, "kind"_str, lito::scan_cache_wire::embed_kind_name(lookup.kind)));
         rstd_try(serde::field(
             map,
             "missing"_str,
             lito::scan_cache_wire::WritePaths { rstd::addressof(lookup.missing_candidates) }));
         rstd_try(serde::field(map, "name"_str, lookup.name));
         using Resolved = mtp::rm_cvf<decltype(*lookup.resolved)>;
-        rstd_try(serde::field(
-            map,
-            "resolved"_str,
-            lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved> {
-                rstd::addressof(lookup.resolved),
-            }));
+        rstd_try(serde::field(map,
+                              "resolved"_str,
+                              lito::scan_cache_wire::WriteOptionalResolvedLookup<Resolved> {
+                                  rstd::addressof(lookup.resolved),
+                              }));
         return map.end();
     }
 };
@@ -435,7 +429,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbedLookup> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbedLookups> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                     serializer,
                           const lito::scan_cache_wire::WriteEmbedLookups& value) ->
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
@@ -450,7 +444,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbedLookups> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteProvidedModule> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                       serializer,
                           const lito::scan_cache_wire::WriteProvidedModule& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(2)));
@@ -463,7 +457,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteProvidedModule> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteOptionalProvidedModule> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                               serializer,
                           const lito::scan_cache_wire::WriteOptionalProvidedModule& value) ->
         typename Serializer::result_type {
         if (value.value->is_none()) return serializer.serialize_none();
@@ -476,15 +470,13 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteOptionalProvidedModule
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteDependencyLocation> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                           serializer,
                           const lito::scan_cache_wire::WriteDependencyLocation& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(2)));
         rstd_try(serde::field(map, "line"_str, as_cast<u64>(value.value->line)));
         rstd_try(serde::field(
-            map,
-            "path"_str,
-            lito::scan_cache_wire::WritePath { value.value->path.as_path() }));
+            map, "path"_str, lito::scan_cache_wire::WritePath { value.value->path.as_path() }));
         return map.end();
     }
 };
@@ -492,17 +484,16 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteDependencyLocation> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteModuleImport> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                     serializer,
                           const lito::scan_cache_wire::WriteModuleImport& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(3)));
         rstd_try(serde::field(map, "exported"_str, value.value->exported));
-        rstd_try(serde::field(
-            map,
-            "location"_str,
-            lito::scan_cache_wire::WriteDependencyLocation {
-                rstd::addressof(value.value->location),
-            }));
+        rstd_try(serde::field(map,
+                              "location"_str,
+                              lito::scan_cache_wire::WriteDependencyLocation {
+                                  rstd::addressof(value.value->location),
+                              }));
         rstd_try(serde::field(map, "logical-name"_str, value.value->logical_name));
         return map.end();
     }
@@ -511,7 +502,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteModuleImport> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteModuleImports> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                      serializer,
                           const lito::scan_cache_wire::WriteModuleImports& value) ->
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
@@ -526,7 +517,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteModuleImports> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbeddedInput> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                      serializer,
                           const lito::scan_cache_wire::WriteEmbeddedInput& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(5)));
@@ -534,9 +525,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbeddedInput> {
         rstd_try(serde::field(map, "length"_str, as_cast<u64>(value.value->length)));
         rstd_try(serde::field(map, "offset"_str, as_cast<u64>(value.value->offset)));
         rstd_try(serde::field(
-            map,
-            "path"_str,
-            lito::scan_cache_wire::WritePath { value.value->path.as_path() }));
+            map, "path"_str, lito::scan_cache_wire::WritePath { value.value->path.as_path() }));
         rstd_try(serde::field(map, "size"_str, value.value->size));
         return map.end();
     }
@@ -545,7 +534,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbeddedInput> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbeddedInputs> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                       serializer,
                           const lito::scan_cache_wire::WriteEmbeddedInputs& value) ->
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
@@ -560,17 +549,17 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbeddedInputs> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteExternalMacro> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                      serializer,
                           const lito::scan_cache_wire::WriteExternalMacro& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(5)));
         rstd_try(serde::field(map, "compiler-definition"_str, value.value->compiler_definition));
         rstd_try(serde::field(map, "dependency-key"_str, value.value->dependency_key));
         rstd_try(serde::field(map, "name"_str, value.value->name));
-        rstd_try(serde::field(
-            map,
-            "state"_str,
-            lito::scan_cache_wire::external_macro_state_name(value.value->state)));
+        rstd_try(
+            serde::field(map,
+                         "state"_str,
+                         lito::scan_cache_wire::external_macro_state_name(value.value->state)));
         rstd_try(serde::field(map, "value-identity"_str, value.value->value_identity));
         return map.end();
     }
@@ -579,7 +568,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteExternalMacro> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteExternalMacros> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                       serializer,
                           const lito::scan_cache_wire::WriteExternalMacros& value) ->
         typename Serializer::result_type {
         auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
@@ -594,46 +583,39 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteExternalMacros> {
 template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSnapshot> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
-                          const lito::scan_cache_wire::WriteSnapshot& value) ->
-        typename Serializer::result_type {
+    static auto serialize(Serializer& serializer, const lito::scan_cache_wire::WriteSnapshot& value)
+        -> typename Serializer::result_type {
         const auto& result = *value.value;
         auto        map    = rstd_try(serializer.begin_map(usize(9)));
-        rstd_try(serde::field(
-            map,
-            "embedded-inputs"_str,
-            lito::scan_cache_wire::WriteEmbeddedInputs {
-                rstd::addressof(result.embedded_inputs),
-            }));
-        rstd_try(serde::field(
-            map,
-            "external-macros"_str,
-            lito::scan_cache_wire::WriteExternalMacros {
-                rstd::addressof(result.external_macros),
-            }));
+        rstd_try(serde::field(map,
+                              "embedded-inputs"_str,
+                              lito::scan_cache_wire::WriteEmbeddedInputs {
+                                  rstd::addressof(result.embedded_inputs),
+                              }));
+        rstd_try(serde::field(map,
+                              "external-macros"_str,
+                              lito::scan_cache_wire::WriteExternalMacros {
+                                  rstd::addressof(result.external_macros),
+                              }));
         rstd_try(serde::field(
             map,
             "header-inputs"_str,
             lito::scan_cache_wire::WritePaths { rstd::addressof(result.header_inputs) }));
-        rstd_try(serde::field(
-            map, "implementation-module"_str, result.implementation_module));
+        rstd_try(serde::field(map, "implementation-module"_str, result.implementation_module));
         rstd_try(serde::field(
             map,
             "imports"_str,
             lito::scan_cache_wire::WriteModuleImports { rstd::addressof(result.imports) }));
         rstd_try(serde::field(map, "input-bytes"_str, as_cast<u64>(result.input_bytes)));
+        rstd_try(
+            serde::field(map, "preprocessor-environment"_str, result.preprocessor_environment));
+        rstd_try(serde::field(map,
+                              "provided-module"_str,
+                              lito::scan_cache_wire::WriteOptionalProvidedModule {
+                                  rstd::addressof(result.provided),
+                              }));
         rstd_try(serde::field(
-            map, "preprocessor-environment"_str, result.preprocessor_environment));
-        rstd_try(serde::field(
-            map,
-            "provided-module"_str,
-            lito::scan_cache_wire::WriteOptionalProvidedModule {
-                rstd::addressof(result.provided),
-            }));
-        rstd_try(serde::field(
-            map,
-            "source"_str,
-            lito::scan_cache_wire::WritePath { result.source.as_path() }));
+            map, "source"_str, lito::scan_cache_wire::WritePath { result.source.as_path() }));
         return map.end();
     }
 };
@@ -641,30 +623,26 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSnapshot> {
 template<typename Files>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteReceipt<Files>> {
     template<typename Serializer>
-    static auto serialize(Serializer& serializer,
+    static auto serialize(Serializer&                                       serializer,
                           const lito::scan_cache_wire::WriteReceipt<Files>& value) ->
         typename Serializer::result_type {
         auto map = rstd_try(serializer.begin_map(usize(15)));
         rstd_try(serde::field(map, "context"_str, value.context));
-        rstd_try(serde::field(
-            map,
-            "embed-lookups"_str,
-            lito::scan_cache_wire::WriteEmbedLookups { value.embed_lookups }));
+        rstd_try(serde::field(map,
+                              "embed-lookups"_str,
+                              lito::scan_cache_wire::WriteEmbedLookups { value.embed_lookups }));
         rstd_try(serde::field(map, "environment"_str, value.environment));
+        rstd_try(serde::field(map, "external-macro-schema"_str, value.external_macro_schema));
         rstd_try(serde::field(
-            map, "external-macro-schema"_str, value.external_macro_schema));
-        rstd_try(serde::field(
-            map,
-            "files"_str,
-            lito::scan_cache_wire::WriteFiles<Files> { value.files }));
-        rstd_try(serde::field(
-            map,
-            "include-lookups"_str,
-            lito::scan_cache_wire::WriteIncludeLookups { value.include_lookups }));
+            map, "files"_str, lito::scan_cache_wire::WriteFiles<Files> { value.files }));
+        rstd_try(
+            serde::field(map,
+                         "include-lookups"_str,
+                         lito::scan_cache_wire::WriteIncludeLookups { value.include_lookups }));
         rstd_try(serde::field(map, "receipt"_str, value.receipt));
         rstd_try(serde::field(map, "recipe"_str, value.recipe));
-        rstd_try(serde::field(
-            map, "result"_str, lito::scan_cache_wire::WriteSnapshot { value.result }));
+        rstd_try(
+            serde::field(map, "result"_str, lito::scan_cache_wire::WriteSnapshot { value.result }));
         rstd_try(serde::field(map, "source"_str, value.source));
         rstd_try(serde::field(map, "source-origin"_str, value.source_origin));
         rstd_try(serde::field(map, "state"_str, value.state));

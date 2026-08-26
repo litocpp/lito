@@ -2092,15 +2092,22 @@ auto preprocess_with_embeds_to(PreprocessRequest request,
         return result;
     }();
     if (result.is_ok()) {
-        result->statistics.scratch_live_bytes        = scratch_statistics.live_bytes;
-        result->statistics.scratch_live_bytes_peak   = scratch_statistics.live_bytes_peak;
-        result->statistics.scratch_reserved_bytes    = scratch_statistics.reserved_bytes;
-        result->statistics.scratch_free_bytes        = scratch_statistics.free_bytes;
-        result->statistics.scratch_reused_bytes      = scratch_statistics.reused_bytes;
-        result->statistics.scratch_ordinary_blocks   = scratch_statistics.ordinary_blocks;
-        result->statistics.scratch_large_blocks      = scratch_statistics.large_blocks;
-        result->statistics.scratch_allocations       = scratch_statistics.allocations;
-        result->statistics.scratch_reuses            = scratch_statistics.reuses;
+        result->statistics.scratch_live_bytes          = scratch_statistics.live_bytes;
+        result->statistics.scratch_live_bytes_peak     = scratch_statistics.live_bytes_peak;
+        result->statistics.scratch_reserved_bytes      = scratch_statistics.reserved_bytes;
+        result->statistics.scratch_free_bytes          = scratch_statistics.free_bytes;
+        result->statistics.scratch_reused_bytes        = scratch_statistics.reused_bytes;
+        result->statistics.scratch_ordinary_blocks     = scratch_statistics.ordinary_blocks;
+        result->statistics.scratch_large_blocks        = scratch_statistics.large_blocks;
+        result->statistics.scratch_allocations         = scratch_statistics.allocations;
+        result->statistics.scratch_reuses              = scratch_statistics.reuses;
+        result->statistics.scratch_layout_classes      = scratch_statistics.layout_classes;
+        result->statistics.scratch_layout_classes_peak = scratch_statistics.layout_classes;
+        result->statistics.scratch_recycled_capacity   = scratch_statistics.recycled_capacity;
+        result->statistics.scratch_metadata_used_bytes = scratch_statistics.metadata_used_bytes;
+        result->statistics.scratch_metadata_reserved_bytes =
+            scratch_statistics.metadata_reserved_bytes;
+        result->statistics.scratch_metadata_blocks   = scratch_statistics.metadata_blocks;
         result->statistics.scratch_mapped_bytes_peak = scratch_statistics.mapped_bytes_peak;
         result->statistics.scratch_mappings_peak     = scratch_statistics.mappings_peak;
         result->statistics.scratch_releases          = usize(1);

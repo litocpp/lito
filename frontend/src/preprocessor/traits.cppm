@@ -335,6 +335,12 @@ struct PreprocessorStatistics {
     usize scratch_large_blocks {};
     usize scratch_allocations {};
     usize scratch_reuses {};
+    usize scratch_layout_classes {};
+    usize scratch_layout_classes_peak {};
+    usize scratch_recycled_capacity {};
+    usize scratch_metadata_used_bytes {};
+    usize scratch_metadata_reserved_bytes {};
+    usize scratch_metadata_blocks {};
     usize scratch_mapped_bytes_peak {};
     usize scratch_mappings_peak {};
     usize scratch_releases {};
@@ -381,6 +387,14 @@ struct PreprocessorStatistics {
         scratch_large_blocks += other.scratch_large_blocks;
         scratch_allocations += other.scratch_allocations;
         scratch_reuses += other.scratch_reuses;
+        scratch_layout_classes += other.scratch_layout_classes;
+        if (other.scratch_layout_classes_peak > scratch_layout_classes_peak) {
+            scratch_layout_classes_peak = other.scratch_layout_classes_peak;
+        }
+        scratch_recycled_capacity += other.scratch_recycled_capacity;
+        scratch_metadata_used_bytes += other.scratch_metadata_used_bytes;
+        scratch_metadata_reserved_bytes += other.scratch_metadata_reserved_bytes;
+        scratch_metadata_blocks += other.scratch_metadata_blocks;
         if (other.scratch_mapped_bytes_peak > scratch_mapped_bytes_peak) {
             scratch_mapped_bytes_peak = other.scratch_mapped_bytes_peak;
         }

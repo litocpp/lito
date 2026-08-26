@@ -127,6 +127,7 @@ target_sources(
          src/cache/hash.cppm
          src/cache/mod.cppm
          src/cache/scan.cppm
+         src/cache/scan_wire.cppm
          src/command/artifact.cppm
          src/command/doc_tool.cppm
          src/install/catalog.cppm

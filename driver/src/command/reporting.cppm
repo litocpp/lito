@@ -182,6 +182,15 @@ void append_preprocessor(String&                                               o
     append_metric(output, "scratch large blocks"_str, statistics.scratch_large_blocks);
     append_metric(output, "scratch allocations"_str, statistics.scratch_allocations);
     append_metric(output, "scratch reuses"_str, statistics.scratch_reuses);
+    append_metric(output, "scratch layout classes"_str, statistics.scratch_layout_classes);
+    append_metric(
+        output, "scratch layout classes peak"_str, statistics.scratch_layout_classes_peak);
+    append_metric(output, "scratch recycled capacity"_str, statistics.scratch_recycled_capacity);
+    append_metric(
+        output, "scratch metadata used bytes"_str, statistics.scratch_metadata_used_bytes);
+    append_metric(
+        output, "scratch metadata reserved bytes"_str, statistics.scratch_metadata_reserved_bytes);
+    append_metric(output, "scratch metadata blocks"_str, statistics.scratch_metadata_blocks);
     append_metric(output, "scratch mapped bytes peak"_str, statistics.scratch_mapped_bytes_peak);
     append_metric(output, "scratch mappings peak"_str, statistics.scratch_mappings_peak);
     append_metric(output, "scratch releases"_str, statistics.scratch_releases);

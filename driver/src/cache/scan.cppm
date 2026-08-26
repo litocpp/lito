@@ -387,15 +387,13 @@ class ScanCacheSession {
         return clone_fingerprint_result(*stored);
     }
 
-    auto receipt(
-        const ScanCacheInput&                                              input,
-        const FileFingerprint&                                            source,
-        const rstd::collections::BTreeMap<String, FileFingerprint>&       files,
-        const Vec<frontend::IncludeLookupDependency>&                     lookups,
-        const Vec<frontend::EmbedLookupDependency>&                       embed_lookups,
-        const frontend::FrontendResult&                                   result) const
-        -> CacheResult<String> {
-        auto hash = cache::FNV_OFFSET;
+    auto receipt(const ScanCacheInput&                                       input,
+                 const FileFingerprint&                                      source,
+                 const rstd::collections::BTreeMap<String, FileFingerprint>& files,
+                 const Vec<frontend::IncludeLookupDependency>&               lookups,
+                 const Vec<frontend::EmbedLookupDependency>&                 embed_lookups,
+                 const frontend::FrontendResult& result) const -> CacheResult<String> {
+        auto hash     = cache::FNV_OFFSET;
         auto add_path = [&](ref<rstd::path::Path> path) -> CacheResult<empty> {
             auto text = path.to_str();
             if (text.is_none()) {
@@ -667,12 +665,8 @@ private:
             if (file.is_err()) return Err(rstd::move(file).unwrap_err());
             files.insert(rstd::move(path).unwrap(), rstd::move(file).unwrap());
         }
-        auto scan_receipt = receipt(input,
-                                    *source_file,
-                                    files,
-                                    value.include_lookups,
-                                    value.embed_lookups,
-                                    value.result);
+        auto scan_receipt = receipt(
+            input, *source_file, files, value.include_lookups, value.embed_lookups, value.result);
         if (scan_receipt.is_err()) return Err(rstd::move(scan_receipt).unwrap_err());
         auto cacheable = value.result.preprocessor_environment.as_str() ==
                          input.preprocessor_environment.as_str();
