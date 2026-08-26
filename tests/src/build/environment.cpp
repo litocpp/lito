@@ -116,6 +116,10 @@ extern "C" auto fixture_environment_two() -> int {
     EXPECT_EQ(summary->compile_execution.jobs, usize(2));
     EXPECT_EQ(summary->compile_execution.tasks, usize(2));
     EXPECT_EQ(summary->compile_execution.max_active, usize(2));
+    EXPECT_EQ(summary->compile_execution.plan_nodes, usize(2));
+    EXPECT_GT(summary->compile_execution.plan_retained_bytes, usize {});
+    EXPECT_GT(summary->compile_execution.plan_invocation_bytes, usize {});
+    EXPECT_EQ(summary->compile_execution.cache_evaluations, usize(2));
     EXPECT_FALSE(summary->compile_execution.task_work.is_zero());
     EXPECT_FALSE(summary->compile_execution.wall.is_zero());
     EXPECT_EQ(summary->frontend.source_requests, usize(4));

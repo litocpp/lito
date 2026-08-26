@@ -34,7 +34,7 @@ auto classify_header(const void* context, ref<rstd::path::Path> path)
 struct FrontendAnalysisTaskOutcome {
     BuildResult<frontend::FrontendAnalysis> analysis;
     frontend::FrontendStatistics            statistics;
-    ScanTaskProfile                         profile;
+    Option<ScanTaskProfile>                 profile;
 };
 
 class FrontendAnalysisTask {
@@ -68,6 +68,16 @@ public:
     auto operator=(FrontendAnalysisTask&&) noexcept -> FrontendAnalysisTask& = default;
 
     auto run() && -> BuildResult<FrontendAnalysisTaskOutcome> {
+        auto cached = cache_.lookup();
+        if (cached.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(cached).unwrap_err()));
+        }
+        if (cached->hit.is_some()) {
+            return Ok(FrontendAnalysisTaskOutcome {
+                .analysis = Ok(rstd::move(cached->hit).unwrap()),
+                .profile  = None(),
+            });
+        }
         auto created_profiler = ScanTaskProfiler::create(rstd::move(profile_));
         if (created_profiler.is_err()) {
             return Err(BuildError::Message(rstd::move(created_profiler).unwrap_err_unchecked()));
@@ -83,11 +93,6 @@ public:
                 .classify = classify_header,
             }));
         auto analysis = [&]() -> BuildResult<frontend::FrontendAnalysis> {
-            auto cached = cache_.lookup();
-            if (cached.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(cached).unwrap_err()));
-            }
-            if (cached->hit.is_some()) return Ok(rstd::move(cached->hit).unwrap());
             auto frontend_span         = profiler.span(ScanProbe::Frontend);
             auto preprocessor_span     = profiler.span(ScanProbe::Preprocessor);
             auto preprocessor_observer = PreprocessorTaskProfileObserver(profiler);
@@ -125,7 +130,7 @@ public:
         return Ok(FrontendAnalysisTaskOutcome {
             .analysis   = rstd::move(analysis),
             .statistics = frontend_service.statistics(),
-            .profile    = rstd::move(finished).unwrap_unchecked(),
+            .profile    = Some(rstd::move(finished).unwrap_unchecked()),
         });
     }
 };
@@ -214,9 +219,11 @@ public:
 
     auto commit(FrontendAnalysisTaskOutcome outcome) -> BuildResult<frontend::FrontendAnalysis> {
         statistics_.add(outcome.statistics);
-        auto ingested = profiler_.ingest(rstd::move(outcome.profile));
-        if (ingested.is_err()) {
-            return Err(BuildError::Message(rstd::move(ingested).unwrap_err_unchecked()));
+        if (outcome.profile.is_some()) {
+            auto ingested = profiler_.ingest(rstd::move(outcome.profile).unwrap_unchecked());
+            if (ingested.is_err()) {
+                return Err(BuildError::Message(rstd::move(ingested).unwrap_err_unchecked()));
+            }
         }
         return rstd::move(outcome.analysis);
     }

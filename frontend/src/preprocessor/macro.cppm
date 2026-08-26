@@ -1,6 +1,7 @@
 export module lito.frontend.preprocessor:macro;
 
 import rstd;
+import lito.frontend.memory;
 import lito.frontend.lexical;
 import :builtin;
 
@@ -33,12 +34,19 @@ struct MacroReplacementOperation {
 };
 
 struct MacroDefinition {
-    String              name;
-    Option<Vec<String>> parameters;
-    bool                variadic { false };
-    String              variadic_name;
-    Vec<Token>          replacement;
-    SourceLocation      location;
+    String                               name;
+    Option<Vec<String>>                  parameters;
+    bool                                 variadic { false };
+    String                               variadic_name;
+    Vec<Token, FrontendScratchAllocator> replacement;
+    SourceLocation                       location;
+
+    MacroDefinition(): MacroDefinition(rstd::alloc::allocator_ref(rstd::alloc::GLOBAL)) {}
+
+    explicit MacroDefinition(FrontendScratchAllocator allocator)
+        : replacement(Vec<Token, FrontendScratchAllocator>::new_in(allocator)),
+          operations_(Vec<MacroReplacementOperation, FrontendScratchAllocator>::new_in(allocator)),
+          unexpanded_parameter_uses_(Vec<bool, FrontendScratchAllocator>::new_in(allocator)) {}
 
     auto set_name(String value) -> void {
         dynamic_builtin_name_ = DynamicBuiltinSet::contains(value.as_str());
@@ -47,14 +55,15 @@ struct MacroDefinition {
 
     auto is_dynamic_builtin() const noexcept -> bool { return dynamic_builtin_name_; }
 
-    auto set_replacement(Vec<Token> value) -> void;
+    template<typename Allocator>
+    auto set_replacement(Vec<Token, Allocator> value) -> void;
 
     auto retain_source(SharedSourceSnapshot source) -> void {
         source_owner_ = Some(rstd::move(source));
     }
 
-    auto operations() const noexcept -> const Vec<MacroReplacementOperation>& {
-        return operations_;
+    auto operations() const noexcept -> slice<MacroReplacementOperation> {
+        return operations_.as_slice();
     }
 
     auto can_consume_argument(usize parameter) const -> bool {
@@ -64,6 +73,10 @@ struct MacroDefinition {
 
     auto clone() const -> MacroDefinition;
 
+    static auto scratch(FrontendScratchAllocator allocator) -> MacroDefinition {
+        return MacroDefinition(allocator);
+    }
+
 private:
     auto parameter_index(ref<str> value) const -> Option<usize>;
     auto paste_before(usize index, usize begin) const -> bool;
@@ -72,40 +85,163 @@ private:
     auto cloned_parameters() const -> Option<Vec<String>>;
     auto copied_replacement() const -> Vec<Token>;
 
-    Vec<MacroReplacementOperation> operations_;
-    Vec<bool>                      unexpanded_parameter_uses_;
-    Option<SharedSourceSnapshot>   source_owner_;
-    bool                           contains_va_opt_ { false };
-    bool                           dynamic_builtin_name_ { false };
+    Vec<MacroReplacementOperation, FrontendScratchAllocator> operations_;
+    Vec<bool, FrontendScratchAllocator>                      unexpanded_parameter_uses_;
+    Option<SharedSourceSnapshot>                             source_owner_;
+    bool                                                     contains_va_opt_ { false };
+    bool                                                     dynamic_builtin_name_ { false };
 };
 
 using SharedMacroDefinition = rstd::sync::Arc<MacroDefinition>;
 
-class MacroTable {
-public:
-    static auto make() -> MacroTable { return MacroTable {}; }
+class MacroName {
+    using Bytes = Vec<u8, FrontendScratchAllocator>;
 
-    auto get(ref<str> name) const -> Option<SharedMacroDefinition> {
+    Bytes bytes_;
+
+    explicit MacroName(Bytes bytes): bytes_(rstd::move(bytes)) {}
+
+public:
+    MacroName(const MacroName&)                        = delete;
+    auto operator=(const MacroName&) -> MacroName&     = delete;
+    MacroName(MacroName&&) noexcept                    = default;
+    auto operator=(MacroName&&) noexcept -> MacroName& = default;
+
+    static auto make(ref<str> value, FrontendScratchAllocator allocator) -> MacroName {
+        auto bytes = Bytes::with_capacity_in(value.as_bytes().len(), allocator);
+        for (auto byte : value.as_bytes()) bytes.push(rstd::move(byte));
+        return MacroName(rstd::move(bytes));
+    }
+
+    auto as_str() const noexcept -> ref<str> {
+        return rstd::str_::from_utf8_unchecked(bytes_.as_slice());
+    }
+
+    auto operator==(const MacroName& other) const noexcept -> bool {
+        return as_str() == other.as_str();
+    }
+
+    auto operator==(ref<str> other) const noexcept -> bool { return as_str() == other; }
+};
+
+} // namespace lito::frontend::preprocessor
+
+namespace rstd
+{
+
+template<>
+struct Impl<hash::Hash, lito::frontend::preprocessor::MacroName>
+    : ImplBase<lito::frontend::preprocessor::MacroName> {
+    template<typename H>
+        requires Impled<H, hash::Hasher>
+    void hash(H& state) const noexcept {
+        hash::hash_into(this->self().as_str(), state);
+    }
+};
+
+template<>
+struct Impl<borrow::Borrow<str>, lito::frontend::preprocessor::MacroName>
+    : ImplBase<lito::frontend::preprocessor::MacroName> {
+    auto borrow() const noexcept -> ref<str> { return this->self().as_str(); }
+};
+
+} // namespace rstd
+
+export namespace lito::frontend::preprocessor
+{
+
+class MacroDefinitionHandle {
+    enum class StorageKind : uint8_t
+    {
+        Shared,
+        Session,
+    };
+
+    using SessionDefinition = rstd::rc::Rc<MacroDefinition>;
+    using Storage = rstd::Choice<rstd::choice_case<StorageKind::Shared, SharedMacroDefinition>,
+                                 rstd::choice_case<StorageKind::Session, SessionDefinition>>;
+
+    Storage storage_;
+
+    explicit MacroDefinitionHandle(Storage storage): storage_(rstd::move(storage)) {}
+
+public:
+    MacroDefinitionHandle(const MacroDefinitionHandle&)                        = delete;
+    auto operator=(const MacroDefinitionHandle&) -> MacroDefinitionHandle&     = delete;
+    MacroDefinitionHandle(MacroDefinitionHandle&&) noexcept                    = default;
+    auto operator=(MacroDefinitionHandle&&) noexcept -> MacroDefinitionHandle& = default;
+
+    static auto shared(SharedMacroDefinition definition) -> MacroDefinitionHandle {
+        return MacroDefinitionHandle(Storage::with<StorageKind::Shared>(rstd::move(definition)));
+    }
+
+    static auto session(MacroDefinition definition, FrontendScratchAllocator allocator)
+        -> MacroDefinitionHandle {
+        return MacroDefinitionHandle(Storage::with<StorageKind::Session>(
+            rstd::rc::make_rc_in<MacroDefinition>(allocator, rstd::move(definition))));
+    }
+
+    auto clone() const -> MacroDefinitionHandle {
+        if (storage_.is<StorageKind::Shared>()) {
+            return shared(storage_.as<StorageKind::Shared>().clone());
+        }
+        return MacroDefinitionHandle(
+            Storage::with<StorageKind::Session>(storage_.as<StorageKind::Session>().clone()));
+    }
+
+    auto operator->() const noexcept -> const MacroDefinition* {
+        if (storage_.is<StorageKind::Shared>()) {
+            return storage_.as<StorageKind::Shared>().as_ptr().as_raw_ptr();
+        }
+        return storage_.as<StorageKind::Session>().get();
+    }
+
+    auto operator*() const noexcept -> const MacroDefinition& { return *operator->(); }
+};
+
+class MacroTable {
+    using Values = rstd::collections::HashMap<MacroName,
+                                              MacroDefinitionHandle,
+                                              rstd::hash::RandomState,
+                                              ::alloc::collections::DefaultHashEqual<MacroName>,
+                                              FrontendScratchAllocator>;
+
+public:
+    explicit MacroTable(FrontendScratchAllocator allocator)
+        : allocator_(allocator), values_(Values::new_in(allocator)) {}
+
+    static auto make(FrontendScratchAllocator allocator) -> MacroTable {
+        return MacroTable(allocator);
+    }
+
+    auto get(ref<str> name) const -> Option<MacroDefinitionHandle> {
         auto found = values_.get(name);
-        return found.is_some() ? Some((**found).clone()) : Option<SharedMacroDefinition> {};
+        return found.is_some() ? Some((**found).clone()) : Option<MacroDefinitionHandle> {};
     }
 
     auto contains(ref<str> name) const -> bool { return values_.contains_key(name); }
 
-    auto define(MacroDefinition definition) -> Option<SharedMacroDefinition> {
-        auto name   = definition.name.clone();
-        auto shared = rstd::sync::Arc<MacroDefinition>::make(rstd::move(definition));
+    auto define(MacroDefinition definition) -> Option<MacroDefinitionHandle> {
+        auto name   = MacroName::make(definition.name.as_str(), allocator_);
+        auto shared = MacroDefinitionHandle::session(rstd::move(definition), allocator_);
         ++revision_;
         return values_.insert(rstd::move(name), rstd::move(shared));
     }
 
-    auto define_shared(SharedMacroDefinition definition) -> Option<SharedMacroDefinition> {
-        auto name = definition->name.clone();
+    auto define_shared(SharedMacroDefinition definition) -> Option<MacroDefinitionHandle> {
+        auto name = MacroName::make(definition->name.as_str(), allocator_);
+        ++revision_;
+        return values_.insert(rstd::move(name),
+                              MacroDefinitionHandle::shared(rstd::move(definition)));
+    }
+
+    auto define_handle(MacroDefinitionHandle definition) -> Option<MacroDefinitionHandle> {
+        auto name = MacroName::make(definition->name.as_str(), allocator_);
         ++revision_;
         return values_.insert(rstd::move(name), rstd::move(definition));
     }
 
-    auto undefine(ref<str> name) -> Option<SharedMacroDefinition> {
+    auto undefine(ref<str> name) -> Option<MacroDefinitionHandle> {
         auto removed = values_.remove(name);
         if (removed.is_some()) ++revision_;
         return removed;
@@ -114,8 +250,9 @@ public:
     auto revision() const noexcept -> u32 { return revision_; }
 
 private:
-    rstd::collections::HashMap<String, SharedMacroDefinition> values_;
-    u32                                                       revision_ {};
+    FrontendScratchAllocator allocator_;
+    Values                   values_;
+    u32                      revision_ {};
 };
 
 auto clone_tokens(const Vec<Token>& input) -> Vec<Token> {
@@ -124,13 +261,14 @@ auto clone_tokens(const Vec<Token>& input) -> Vec<Token> {
     return result;
 }
 
-auto parse_macro_definition(const Vec<Token>& line) -> lexical::Result<MacroDefinition> {
+template<typename Allocator>
+auto parse_macro_definition(const Vec<Token, Allocator>& line, MacroDefinition macro = {})
+    -> lexical::Result<MacroDefinition> {
     if (line.is_empty() || line[usize {}].kind != TokenKind::Identifier) {
         auto location = line.is_empty() ? SourceLocation {} : line[usize {}].expansion;
         return Err(
             lexical::Error::at(String::make("#define requires an identifier"_str), location));
     }
-    auto macro = MacroDefinition {};
     macro.set_name(line[usize {}].text.clone());
     macro.location = line[usize {}].expansion;
     auto index     = usize(1);
@@ -175,7 +313,8 @@ auto parse_macro_definition(const Vec<Token>& line) -> lexical::Result<MacroDefi
         }
         macro.parameters = Some(rstd::move(parameters));
     }
-    auto replacement = Vec<Token>::with_capacity(line.len() - index);
+    auto replacement =
+        Vec<Token, Allocator>::with_capacity_in(line.len() - index, line.allocator());
     for (; index < line.len(); ++index) replacement.push(line[index].clone());
     macro.set_replacement(rstd::move(replacement));
     return Ok(rstd::move(macro));
@@ -270,12 +409,16 @@ auto MacroDefinition::parameter_index(ref<str> value) const -> Option<usize> {
     return None();
 }
 
-auto MacroDefinition::set_replacement(Vec<Token> value) -> void {
-    replacement = rstd::move(value);
-    operations_ = Vec<MacroReplacementOperation>::make();
-    auto count  = parameters.is_some() ? parameters->len() : usize {};
+template<typename Allocator>
+auto MacroDefinition::set_replacement(Vec<Token, Allocator> value) -> void {
+    replacement.clear();
+    replacement.reserve(value.len());
+    for (auto& token : value) replacement.push(rstd::move(token));
+    operations_.clear();
+    auto count = parameters.is_some() ? parameters->len() : usize {};
     if (variadic) ++count;
-    unexpanded_parameter_uses_ = Vec<bool>::with_capacity(count);
+    unexpanded_parameter_uses_.clear();
+    unexpanded_parameter_uses_.reserve(count);
     for (auto index = usize {}; index < count; ++index) unexpanded_parameter_uses_.push(false);
     contains_va_opt_ = false;
     compile_range(usize {}, replacement.len());
@@ -376,9 +519,10 @@ auto MacroDefinition::compile_range(usize token_begin, usize token_end) -> void 
     }
 
     auto operation_end = operations_.len();
-    auto last_uses     = Vec<Option<usize>>::with_capacity(unexpanded_parameter_uses_.len());
+    auto last_uses = Vec<Option<usize>, FrontendScratchAllocator>::new_in(operations_.allocator());
+    last_uses.reserve(unexpanded_parameter_uses_.len());
     for (auto index = usize {}; index < unexpanded_parameter_uses_.len(); ++index) {
-        last_uses.emplace_back(None());
+        last_uses.push(Option<usize> {});
     }
     for (auto index = operation_begin; index < operation_end;) {
         const auto& operation = operations_[index];

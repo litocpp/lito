@@ -778,12 +778,14 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
 
     auto executor_statistics = executor.statistics();
     executor.finish();
-    executor_statistics.reused           = result.statistics.reused;
-    executor_statistics.failed           = result.statistics.failed;
-    executor_statistics.blocked          = result.statistics.blocked;
-    executor_statistics.coordinator_work = result.statistics.coordinator_work;
-    executor_statistics.wall             = wall_started.elapsed();
-    result.statistics                    = executor_statistics;
+    result.statistics.jobs            = executor_statistics.jobs;
+    result.statistics.max_in_flight   = executor_statistics.max_in_flight;
+    result.statistics.tasks           = executor_statistics.tasks;
+    result.statistics.max_active      = executor_statistics.max_active;
+    result.statistics.ready_wait      = executor_statistics.ready_wait;
+    result.statistics.completion_wait = executor_statistics.completion_wait;
+    result.statistics.task_work       = executor_statistics.task_work;
+    result.statistics.wall            = wall_started.elapsed();
 
     for (auto unit = cpp::UnitId {}; unit < runtime.len(); ++unit) {
         if (runtime[unit].compile_test.is_some()) {

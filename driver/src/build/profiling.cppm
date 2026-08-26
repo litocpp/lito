@@ -550,10 +550,11 @@ class ScanTaskProfiler {
 
 public:
     static auto create(ScanTaskProfileContext context) -> Result<ScanTaskProfiler, String> {
-        auto config     = rstd::bench::probe::RecorderConfig {};
-        config.overflow = rstd::bench::probe::OverflowPolicy::Grow();
-        auto recorder   = context.session_->recorder(rstd::move(config));
-        auto begun      = recorder.begin_frame(context.frame_.id);
+        auto config            = rstd::bench::probe::RecorderConfig {};
+        config.sample_capacity = usize(64);
+        config.overflow        = rstd::bench::probe::OverflowPolicy::Grow();
+        auto recorder          = context.session_->recorder(rstd::move(config));
+        auto begun             = recorder.begin_frame(context.frame_.id);
         if (begun.is_err()) {
             return Err(probe_error_message(rstd::move(begun).unwrap_err_unchecked()));
         }

@@ -80,6 +80,31 @@ auto write_json(ref<rstd::path::Path> path, const Json& document) -> CacheResult
     return Ok(empty {});
 }
 
+template<rstd::serde::Serializable T>
+auto write_typed_json(ref<rstd::path::Path> path, const T& document) -> CacheResult<empty> {
+    auto parent = path.parent();
+    if (parent.is_none()) {
+        return cache_failure<empty>(rstd::format("cache path '{}' has no parent", path));
+    }
+    auto created = rstd::fs::create_dir_all(*parent);
+    if (created.is_err()) {
+        return cache_io_failure<empty>(
+            "create directory"_str, *parent, rstd::move(created).unwrap_err());
+    }
+    auto text = rstd::json::encode_direct(
+        document, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
+    if (text.is_err()) {
+        return cache_failure<empty>(
+            rstd::format("serialize cache record: {}", rstd::move(text).unwrap_err()));
+    }
+    text->push_ascii('\n');
+    auto written = rstd::fs::write_atomic(path, text->as_str().as_bytes());
+    if (written.is_err()) {
+        return cache_io_failure<empty>("write record"_str, path, rstd::move(written).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
 struct FileFingerprint {
     PathBuf path;
     u64     size {};

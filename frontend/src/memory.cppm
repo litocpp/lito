@@ -8,8 +8,9 @@ export namespace lito::frontend
 {
 
 using ScanMemoryAllocator = rstd::alloc::SharedArenaAllocator<rstd::alloc::VirtualMemoryAllocator>;
-using FrontendScratchAllocator =
-    ::alloc::RecyclingArenaAllocator<rstd::alloc::VirtualMemoryAllocator>;
+using FrontendScratchAllocatorStorage =
+    rstd::alloc::RecyclingArenaAllocator<rstd::alloc::VirtualMemoryAllocator>;
+using FrontendScratchAllocator = ref<dyn<rstd::alloc::Allocator>>;
 
 struct ScanMemoryDomainStatistics {
     usize used_bytes {};
@@ -101,11 +102,13 @@ public:
 
 class FrontendScratchDomain {
     static constexpr usize DEFAULT_BLOCK_SIZE = usize(1024 * 1024);
-    using Arena = ::alloc::RecyclingArena<rstd::alloc::VirtualMemoryAllocator>;
+    using Arena = rstd::alloc::RecyclingArena<rstd::alloc::VirtualMemoryAllocator>;
 
-    Arena arena_;
+    Arena                           arena_;
+    FrontendScratchAllocatorStorage allocator_;
 
-    explicit FrontendScratchDomain(usize block_size): arena_(block_size) {}
+    explicit FrontendScratchDomain(usize block_size)
+        : arena_(block_size), allocator_(arena_.allocator()) {}
 
 public:
     FrontendScratchDomain(const FrontendScratchDomain&)                    = delete;
@@ -117,7 +120,7 @@ public:
         return FrontendScratchDomain(block_size);
     }
 
-    auto allocator() -> FrontendScratchAllocator { return arena_.allocator(); }
+    auto allocator() -> FrontendScratchAllocator { return rstd::alloc::allocator_ref(allocator_); }
 
     auto statistics() const -> FrontendScratchStatistics {
         auto arena    = arena_.stats();

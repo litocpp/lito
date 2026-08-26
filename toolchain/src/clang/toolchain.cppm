@@ -750,8 +750,9 @@ public:
             auto consumer    = frontend::parser::HeaderDependencyConsumer::make();
             auto translation = preprocessor::preprocess_with_embeds_to(
                 preprocessor::PreprocessRequest {
-                    .source               = PathBuf::from(source),
-                    .environment_identity = input.environment->identity.clone(),
+                    .source                 = PathBuf::from(source),
+                    .environment_identity   = input.environment->identity.clone(),
+                    .retain_active_comments = false,
                 },
                 frontend_service,
                 includes,
@@ -781,8 +782,9 @@ public:
         auto consumer    = frontend::parser::ModuleDependencyConsumer::make();
         auto translation = preprocessor::preprocess_with_embeds_to(
             preprocessor::PreprocessRequest {
-                .source               = PathBuf::from(source),
-                .environment_identity = input.environment->identity.clone(),
+                .source                 = PathBuf::from(source),
+                .environment_identity   = input.environment->identity.clone(),
+                .retain_active_comments = false,
             },
             frontend_service,
             includes,

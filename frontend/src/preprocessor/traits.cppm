@@ -106,7 +106,7 @@ enum class PragmaOutcome
 };
 
 struct PragmaRequest {
-    Vec<Token>     tokens;
+    slice<Token>   tokens;
     SourceLocation location;
 };
 
