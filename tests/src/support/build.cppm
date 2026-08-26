@@ -361,7 +361,9 @@ struct CompileProgressCapture {
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
     if (event.kind == lito::BuildEventKind::Scan || event.kind == lito::BuildEventKind::Compile ||
-        event.kind == lito::BuildEventKind::Archive || event.kind == lito::BuildEventKind::Link) {
+        event.kind == lito::BuildEventKind::Archive ||
+        event.kind == lito::BuildEventKind::ArchiveReuse ||
+        event.kind == lito::BuildEventKind::Link) {
         auto kind = event.kind;
         capture.target_event_kinds.push(rstd::move(kind));
         capture.target_names.push(String::make(event.target));

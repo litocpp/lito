@@ -122,6 +122,7 @@ target_sources(
          src/build/prepared_project.cppm
          src/build/unit_plan.cppm
          src/build/standard_library_module.cppm
+         src/cache/archive.cppm
          src/cache/common.cppm
          src/cache/compile.cppm
          src/cache/hash.cppm

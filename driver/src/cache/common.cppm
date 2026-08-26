@@ -173,6 +173,7 @@ auto receipt_output_paths(const Json& document) -> Vec<PathBuf> {
     };
     append("bmi"_str);
     append("object"_str);
+    append("archive"_str);
     return result;
 }
 
@@ -273,6 +274,18 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
 namespace lito
 {
 
+struct CachedArtifactIdentity {
+    String recipe;
+    String content;
+
+    auto clone() const -> CachedArtifactIdentity {
+        return CachedArtifactIdentity {
+            .recipe  = recipe.clone(),
+            .content = content.clone(),
+        };
+    }
+};
+
 struct DependencyArtifact {
     String  logical_name;
     String  artifact;
@@ -290,6 +303,7 @@ class CacheEnvironment {
 
     friend class ScanCacheSession;
     friend class CompileCacheSession;
+    friend class ArchiveCacheSession;
 
 public:
     static auto create(const BuildLayout&      layout,

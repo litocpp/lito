@@ -331,6 +331,11 @@ public:
         return relative_source_path(directory.as_path(), relative_source, ".json"_str);
     }
 
+    auto cache_archive(const lito::package::PackageTargetId& target) const -> PathBuf {
+        auto directory = join(cache_target_directory(target).as_path(), "artifacts"_str);
+        return join(directory.as_path(), "archive.json"_str);
+    }
+
     auto standard_module_cache_directory(ref<str> context_identity) const -> PathBuf {
         auto root = join(compile_cache_directory().as_path(), "standard-library"_str);
         return join(root.as_path(), lito::crypto::sha256_hex(context_identity).as_str());

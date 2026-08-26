@@ -167,11 +167,12 @@ struct MaterializedBuildActions {
 };
 
 struct CompileExecutionResult {
-    usize                      compiled {};
-    usize                      reused {};
-    Vec<CompileTestExecution>  compile_tests;
-    CompileExecutionStatistics statistics;
-    BuildTimingReport          timing;
+    usize                               compiled {};
+    usize                               reused {};
+    Vec<Option<CachedArtifactIdentity>> object_identities;
+    Vec<CompileTestExecution>           compile_tests;
+    CompileExecutionStatistics          statistics;
+    BuildTimingReport                   timing;
 };
 
 auto documentation_unit_kind(const cpp::ScanResult& scan) -> DocumentationUnitKind {
@@ -472,8 +473,12 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
                           const Option<BuildEventSink>& observer,
                           ResolvedCompileExecution policy) -> BuildResult<CompileExecutionResult> {
     auto result = CompileExecutionResult {
-        .compile_tests = Vec<CompileTestExecution>::make(),
+        .object_identities = Vec<Option<CachedArtifactIdentity>>::with_capacity(plan.nodes.len()),
+        .compile_tests     = Vec<CompileTestExecution>::make(),
     };
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+        result.object_identities.emplace_back();
+    }
     auto retained                           = compile_plan_retained_bytes(plan);
     result.statistics.plan_nodes            = plan.nodes.len();
     result.statistics.plan_retained_bytes   = retained.total;
@@ -555,6 +560,10 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
             auto        cache_decision      = rstd::move(runtime[unit].decision).unwrap_unchecked();
             const auto* test                = units[unit].unit.compile_test;
             if (cache_decision.current() && test == nullptr) {
+                auto object_identity = cache_decision.object_identity();
+                if (object_identity.is_some()) {
+                    result.object_identities[unit] = Some((**object_identity).clone());
+                }
                 ++result.reused;
                 ++result.statistics.reused;
                 emit_compile_event(observer, package, units, unit, BuildEventKind::Reuse);
@@ -764,6 +773,7 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
                         coordinator_started.elapsed());
                 continue;
             }
+            result.object_identities[unit] = rstd::move(committed).unwrap();
             ++result.compiled;
         }
         auto succeeded = succeed_node(unit, dependents, runtime, terminal);

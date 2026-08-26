@@ -21,6 +21,7 @@ enum class BuildEventKind
     Compile,
     Reuse,
     Archive,
+    ArchiveReuse,
     Link,
     Strip,
     Configure,
@@ -81,6 +82,7 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::Compile: name = "compile"_str; break;
         case lito::BuildEventKind::Reuse: name = "reuse"_str; break;
         case lito::BuildEventKind::Archive: name = "archive"_str; break;
+        case lito::BuildEventKind::ArchiveReuse: name = "archive-reuse"_str; break;
         case lito::BuildEventKind::Link: name = "link"_str; break;
         case lito::BuildEventKind::Strip: name = "strip"_str; break;
         case lito::BuildEventKind::Configure: name = "configure"_str; break;

@@ -103,8 +103,9 @@ public:
             rstd::move(compiler_command), "clang++ --version"_str, environment);
         auto c_compiler_version = toolchain::command::tool_output(
             rstd::move(c_compiler_command), "clang --version"_str, environment);
-        auto linker_identity = probe_linker(linker_path.as_path(), environment);
-        auto target          = toolchain::command::tool_output(
+        auto linker_identity   = probe_linker(linker_path.as_path(), environment);
+        auto archiver_identity = probe_archiver(archiver_path.as_path(), environment);
+        auto target            = toolchain::command::tool_output(
             rstd::move(target_command), "clang++ target query"_str, environment);
         auto resource = toolchain::command::tool_output(
             rstd::move(resource_command), "clang++ resource query"_str, environment);
@@ -115,6 +116,7 @@ public:
             return Err(rstd::move(c_compiler_version).unwrap_err());
         }
         if (linker_identity.is_err()) return Err(rstd::move(linker_identity).unwrap_err());
+        if (archiver_identity.is_err()) return Err(rstd::move(archiver_identity).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
@@ -225,7 +227,7 @@ public:
         return Ok(ClangToolchain { rstd::move(compiler_path),
                                    rstd::move(c_compiler_path),
                                    rstd::move(linker_identity).unwrap(),
-                                   rstd::move(archiver_path),
+                                   rstd::move(archiver_identity).unwrap(),
                                    rstd::move(resolved_resource),
                                    rstd::move(identity),
                                    rstd::move(target_info).unwrap(),
@@ -240,7 +242,9 @@ public:
     auto cxx_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
     auto cc_path() const -> ref<rstd::path::Path> { return c_compiler_.as_path(); }
     auto ld_path() const -> ref<rstd::path::Path> { return linker_identity_.executable.as_path(); }
-    auto ar_path() const -> ref<rstd::path::Path> { return archiver_.as_path(); }
+    auto ar_path() const -> ref<rstd::path::Path> {
+        return archiver_identity_.executable.as_path();
+    }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto target_info() const -> const TargetInfo& { return target_info_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
@@ -1008,37 +1012,45 @@ public:
         return compile_executor().execute(invocation);
     }
 
-    auto archive(ref<rstd::path::Path> output_path,
-                 const Vec<PathBuf>&   objects,
-                 ref<rstd::path::Path> working_directory) const
+    auto prepare_archive(ref<rstd::path::Path> output_path,
+                         const Vec<PathBuf>&   objects,
+                         ref<rstd::path::Path> working_directory) const
+        -> ToolchainResult<ArchiveInvocation> {
+        auto command = Vec<String>::make();
+        rstd_try(toolchain::command::push_path(command, archiver_identity_.executable.as_path()));
+        toolchain::command::push_option(command, toolchain::clang_options::ARCHIVE_CREATE);
+        rstd_try(toolchain::command::push_path(command, output_path));
+        for (const auto& object : objects) {
+            rstd_try(toolchain::command::push_path(command, object.as_path()));
+        }
+        return Ok(ArchiveInvocation {
+            .arguments         = rstd::move(command),
+            .working_directory = PathBuf::from(working_directory),
+            .output            = PathBuf::from(output_path),
+            .archiver_identity = archiver_identity_.build_identity.clone(),
+        });
+    }
+
+    auto execute_archive(const ArchiveInvocation& invocation) const
         -> ToolchainResult<rstd::time::Duration> {
-        auto parent = create_parent(output_path);
+        auto parent = create_parent(invocation.output.as_path());
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
-        auto archive_exists = rstd::fs::exists(output_path);
+        auto archive_exists = rstd::fs::exists(invocation.output.as_path());
         if (archive_exists.is_err()) {
             return Err(ToolchainError::Io(String::make("inspect archive"_str),
-                                          PathBuf::from(output_path),
+                                          invocation.output.clone(),
                                           rstd::move(archive_exists).unwrap_err()));
         }
         if (*archive_exists) {
-            auto removed = rstd::fs::remove_file(output_path);
+            auto removed = rstd::fs::remove_file(invocation.output.as_path());
             if (removed.is_err()) {
                 return Err(ToolchainError::Io(String::make("replace archive"_str),
-                                              PathBuf::from(output_path),
+                                              invocation.output.clone(),
                                               rstd::move(removed).unwrap_err()));
             }
         }
-        auto command = Vec<String>::make();
-        auto pushed  = toolchain::command::push_path(command, archiver_.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(command, toolchain::clang_options::ARCHIVE_CREATE);
-        pushed = toolchain::command::push_path(command, output_path);
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        for (const auto& object : objects) {
-            pushed = toolchain::command::push_path(command, object.as_path());
-            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        }
-        auto output = run_command(command, environment_, Some(working_directory));
+        auto output = run_command(
+            invocation.arguments, environment_, Some(invocation.working_directory.as_path()));
         if (output.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
         }
@@ -1046,8 +1058,8 @@ public:
         if (command_output.exit_code != i32 {}) {
             return failure<rstd::time::Duration>(
                 rstd::format("llvm-ar failed for '{}'\n{}\n{}",
-                             output_path,
-                             command_text(command).as_str(),
+                             invocation.output.as_path(),
+                             command_text(invocation.arguments).as_str(),
                              command_output.standard_error.as_str()));
         }
         return Ok(command_output.elapsed);
@@ -1389,7 +1401,7 @@ private:
     ClangToolchain(PathBuf                       compiler,
                    PathBuf                       c_compiler,
                    LinkerIdentity                linker_identity,
-                   PathBuf                       archiver,
+                   ArchiverIdentity              archiver_identity,
                    PathBuf                       resource_dir,
                    CompilerIdentity              identity,
                    TargetInfo                    target_info,
@@ -1400,7 +1412,7 @@ private:
         : compiler_(rstd::move(compiler)),
           c_compiler_(rstd::move(c_compiler)),
           linker_identity_(rstd::move(linker_identity)),
-          archiver_(rstd::move(archiver)),
+          archiver_identity_(rstd::move(archiver_identity)),
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
           target_info_(rstd::move(target_info)),
@@ -1650,7 +1662,7 @@ private:
     PathBuf                                                       compiler_;
     PathBuf                                                       c_compiler_;
     LinkerIdentity                                                linker_identity_;
-    PathBuf                                                       archiver_;
+    ArchiverIdentity                                              archiver_identity_;
     PathBuf                                                       resource_dir_;
     CompilerIdentity                                              compiler_identity_;
     TargetInfo                                                    target_info_;

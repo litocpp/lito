@@ -268,4 +268,45 @@ link-stdlib = false
     EXPECT_TRUE(saw_compile);
     EXPECT_TRUE(saw_archive);
     EXPECT_TRUE(saw_link);
+
+    auto repeated_capture = CompileProgressCapture {};
+    request.observer      = Some(lito::BuildEventSink {
+        .context = rstd::addressof(repeated_capture),
+        .notify  = capture_compile_progress,
+    });
+    auto repeated         = lito::build(request);
+    ASSERT_TRUE(repeated.is_ok());
+    auto saw_archive_reuse = false;
+    saw_archive            = false;
+    for (auto kind : repeated_capture.target_event_kinds) {
+        if (kind == lito::BuildEventKind::ArchiveReuse) saw_archive_reuse = true;
+        if (kind == lito::BuildEventKind::Archive) saw_archive = true;
+    }
+    EXPECT_TRUE(saw_archive_reuse);
+    EXPECT_FALSE(saw_archive);
+
+    const lito::BuiltArtifact* archive = nullptr;
+    for (const auto& artifact : repeated->product.artifacts) {
+        if (artifact.kind == lito::cpp::ArtifactKind::StaticLibrary) {
+            archive = rstd::addressof(artifact);
+            break;
+        }
+    }
+    ASSERT_NE(archive, nullptr);
+    ASSERT_TRUE(rstd::fs::write(archive->path.as_path(), "damaged"_str.as_bytes()).is_ok());
+    auto repaired_capture = CompileProgressCapture {};
+    request.observer      = Some(lito::BuildEventSink {
+        .context = rstd::addressof(repaired_capture),
+        .notify  = capture_compile_progress,
+    });
+    auto repaired         = lito::build(request);
+    ASSERT_TRUE(repaired.is_ok());
+    saw_archive       = false;
+    saw_archive_reuse = false;
+    for (auto kind : repaired_capture.target_event_kinds) {
+        if (kind == lito::BuildEventKind::Archive) saw_archive = true;
+        if (kind == lito::BuildEventKind::ArchiveReuse) saw_archive_reuse = true;
+    }
+    EXPECT_TRUE(saw_archive);
+    EXPECT_FALSE(saw_archive_reuse);
 }

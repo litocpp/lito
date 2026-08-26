@@ -493,6 +493,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     auto compile_plan_started = rstd::time::Instant::now();
     auto cache                = CompileCacheSession::create(cache_environment, layout.output());
+    auto archive_cache        = ArchiveCacheSession::create(cache_environment, layout.output());
     auto materialized         = materialize_build_actions(package,
                                                           layout,
                                                           toolchain,
@@ -522,6 +523,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::move(executed).unwrap_err());
     }
     auto compile_result                             = rstd::move(executed).unwrap();
+    auto object_identities                          = rstd::move(compile_result.object_identities);
     auto compiled                                   = compile_result.compiled;
     auto reused                                     = compile_result.reused;
     auto compile_tests                              = rstd::move(compile_result.compile_tests);
@@ -542,6 +544,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             if (units[unit].unit.compile_test_record.is_some()) {
                 records.push((*units[unit].unit.compile_test_record).clone());
             }
+        }
+        if (package.targets[target].artifact_kind == cpp::ArtifactKind::StaticLibrary ||
+            package.targets[target].artifact_kind == cpp::ArtifactKind::TestAttachmentArchive) {
+            records.push(layout.cache_archive(package.targets[target].id));
         }
         auto finished = cache.finish_target(layout, package.targets[target].id, records);
         if (finished.is_err()) {
@@ -568,15 +574,51 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                  target_spec.archive_stem.as_str())
                 : layout.archive(target_spec.id, target_spec.artifact_name.as_str());
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
-        for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
-        auto target_identity = lito::package::package_target_id_text(target_spec.id);
-        emit(request, BuildEventKind::Archive, target_identity.as_str(), archive_path.as_path());
-        auto archived =
-            toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
-        if (archived.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(archived).unwrap_err()));
+        auto inputs  = Vec<CachedArtifactIdentity>::with_capacity(target_units[target].len());
+        for (auto unit : target_units[target]) {
+            objects.push(units[unit].unit.object.clone());
+            if (unit >= object_identities.len() || object_identities[unit].is_none()) {
+                return build_failure<BuildSummary>(
+                    rstd::format("archive input '{}' has no compiled object identity",
+                                 units[unit].unit.object.as_path()));
+            }
+            inputs.push(object_identities[unit]->clone());
         }
-        build_timing.record(BuildOperation::Archive, *archived);
+        auto target_identity = lito::package::package_target_id_text(target_spec.id);
+        auto invocation =
+            toolchain.prepare_archive(archive_path.as_path(), objects, target_spec.root.as_path());
+        if (invocation.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
+        }
+        auto decision = archive_cache.evaluate(target_identity.as_str(),
+                                               layout.cache_archive(target_spec.id).as_path(),
+                                               *invocation,
+                                               inputs);
+        if (decision.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
+        }
+        if (decision->current()) {
+            emit(request,
+                 BuildEventKind::ArchiveReuse,
+                 target_identity.as_str(),
+                 archive_path.as_path());
+        } else {
+            auto begun = archive_cache.begin_archive(*decision);
+            if (begun.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(begun).unwrap_err()));
+            }
+            emit(
+                request, BuildEventKind::Archive, target_identity.as_str(), archive_path.as_path());
+            auto archived = toolchain.execute_archive(*invocation);
+            if (archived.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(archived).unwrap_err()));
+            }
+            build_timing.record(BuildOperation::Archive, *archived);
+            auto committed = archive_cache.commit_success(*decision);
+            if (committed.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(committed).unwrap_err()));
+            }
+        }
         library_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
             .target        = target_spec.id.clone(),

@@ -577,7 +577,10 @@ TEST(ClangToolchain, LinksTypedElfSharedLibraryWithGnuLd) {
     ASSERT_TRUE(directory.is_ok());
     auto archive =
         PathBuf::from(directory->path()).join(PathBuf::from("libfixture.a"_str).as_path());
-    auto archived = created->archive(archive.as_path(), Vec<PathBuf>::make(), directory->path());
+    auto archive_invocation =
+        created->prepare_archive(archive.as_path(), Vec<PathBuf>::make(), directory->path());
+    ASSERT_TRUE(archive_invocation.is_ok());
+    auto archived = created->execute_archive(*archive_invocation);
     ASSERT_TRUE(archived.is_ok());
     auto version_script =
         PathBuf::from(directory->path()).join(PathBuf::from("fixture.map"_str).as_path());

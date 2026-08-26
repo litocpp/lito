@@ -29,6 +29,7 @@ target_sources(
          src/clang/strip.cppm
          src/clang/standard_library_module.cppm
          src/clang/toolchain.cppm
+         src/common/archive.cppm
          src/common/command.cppm
          src/common/compiler.cppm
          src/common/error.cppm
