@@ -132,7 +132,8 @@ struct Impl<fmt::Display, lito::link::ArgumentError> : ImplBase<lito::link::Argu
         if (error.is_UnsupportedLto()) {
             return formatter.write_fmt(
                 fmt::Arguments::make("linker option '{}' from {} requests unsupported LTO mode; "
-                                     "expected -fno-lto, -flto, -flto=thin, or -flto=full",
+                                     "expected -fno-lto, -flto, -flto=thin, -flto=full, or "
+                                     "-flto=auto",
                                      error.as_UnsupportedLto().token,
                                      error.as_UnsupportedLto().source));
         }
@@ -248,7 +249,8 @@ auto requirements_identity(const Requirements& requirements) -> String {
 
 auto lto_argument(ref<str> token) -> Option<lito::manifest::Lto> {
     if (token == "-fno-lto"_str) return Some(lito::manifest::Lto::Off);
-    if (token == "-flto"_str || token == "-flto=full"_str || token == "-flto=fat"_str) {
+    if (token == "-flto"_str || token == "-flto=full"_str || token == "-flto=fat"_str ||
+        token == "-flto=auto"_str) {
         return Some(lito::manifest::Lto::Fat);
     }
     if (token == "-flto=thin"_str) return Some(lito::manifest::Lto::Thin);

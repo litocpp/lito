@@ -187,10 +187,10 @@ auto codegen_setting(CppCompilerArgumentKind      kind,
     auto value = matched.value.is_some() ? matched.value->as_str() : "full"_str;
     if (value == "thin"_str)
         return Ok(lito::compiler::CodegenCompilerSetting::Lto(lito::manifest::Lto::Thin));
-    if (value == "full"_str || value == "fat"_str)
+    if (value == "full"_str || value == "fat"_str || value == "auto"_str)
         return Ok(lito::compiler::CodegenCompilerSetting::Lto(lito::manifest::Lto::Fat));
     return invalid_codegen_setting(
-        matched, source, "-fno-lto, -flto, -flto=thin, or -flto=full"_str);
+        matched, source, "-fno-lto, -flto, -flto=thin, -flto=full, or -flto=auto"_str);
 }
 
 auto family_domain(CppCompilerArgumentKind kind) noexcept -> CppOptionFamilyDomain {

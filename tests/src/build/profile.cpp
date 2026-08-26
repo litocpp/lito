@@ -534,7 +534,7 @@ TEST_F(BuildProfile, PlainProfileAcceptsTypedGlobalCodegenIndependentlyByLanguag
     ASSERT_TRUE(parser.is_ok());
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
-        .arguments = strings("-O2"_str, "-g"_str, "-flto=thin"_str),
+        .arguments = strings("-O2"_str, "-g"_str, "-flto=auto"_str),
         .source    = String::make("CXXFLAGS"_str),
     });
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
@@ -553,7 +553,7 @@ TEST_F(BuildProfile, PlainProfileAcceptsTypedGlobalCodegenIndependentlyByLanguag
     ASSERT_TRUE(profile->c.common.codegen.debug_info.is_some());
     EXPECT_EQ(*profile->cpp.common.codegen.optimization, lito::manifest::Optimization::Level2);
     EXPECT_EQ(*profile->cpp.common.codegen.debug_info, lito::manifest::DebugInfo::Full);
-    EXPECT_EQ(*profile->cpp.common.codegen.lto, lito::manifest::Lto::Thin);
+    EXPECT_EQ(*profile->cpp.common.codegen.lto, lito::manifest::Lto::Fat);
     EXPECT_EQ(*profile->c.common.codegen.optimization, lito::manifest::Optimization::Level3);
     EXPECT_EQ(*profile->c.common.codegen.debug_info, lito::manifest::DebugInfo::None);
     EXPECT_TRUE(profile->c.common.codegen.lto.is_none());

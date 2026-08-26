@@ -232,18 +232,18 @@ TEST(CompilerArguments, NormalizesRuntimeSearchRequirements) {
 TEST(CompilerArguments, PreservesTypedLinkProfileArguments) {
     auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
         .tokens =
-            strings("-Wl,--as-needed"_str, "-flto=thin"_str, "-Wl,--strip-debug"_str, "-lm"_str),
+            strings("-Wl,--as-needed"_str, "-flto=auto"_str, "-Wl,--strip-debug"_str, "-lm"_str),
         .source   = String::make("LDFLAGS"_str),
         .identity = String::make("profile-link-v1"_str),
     });
     ASSERT_TRUE(normalized.is_ok());
     ASSERT_EQ(normalized->profile_arguments.len(), usize(2));
     EXPECT_EQ(normalized->profile_arguments[usize {}].argument.as_Lto().value,
-              lito::manifest::Lto::Thin);
+              lito::manifest::Lto::Fat);
     EXPECT_EQ(normalized->profile_arguments[usize(1)].argument.as_Strip().value,
               lito::artifact::StripMode::DebugInfo);
     ASSERT_EQ(normalized->arguments.tokens.len(), usize(4));
-    EXPECT_EQ(normalized->arguments.tokens[usize(1)].as_str(), "-flto=thin"_str);
+    EXPECT_EQ(normalized->arguments.tokens[usize(1)].as_str(), "-flto=auto"_str);
     EXPECT_EQ(normalized->arguments.tokens[usize(2)].as_str(), "-Wl,--strip-debug"_str);
 }
 
@@ -273,7 +273,7 @@ TEST(CompilerArguments, KeepsCVendorOptionsInTheCLanguageDomain) {
 TEST(CompilerArguments, DecodesCommonCodegenSettingsForCAndCpp) {
     auto parser = make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto values = strings("-O2"_str, "-gline-tables-only"_str, "-flto=thin"_str);
+    auto values = strings("-O2"_str, "-gline-tables-only"_str, "-flto=auto"_str);
     auto cpp    = parser->parse(values, "CXXFLAGS"_str);
     auto c      = parser->parse_c(values, "CFLAGS"_str);
     ASSERT_TRUE(cpp.is_ok());
@@ -286,13 +286,13 @@ TEST(CompilerArguments, DecodesCommonCodegenSettingsForCAndCpp) {
     EXPECT_EQ(cpp->occurrences[usize(1)].argument.as_CodegenSetting().setting.as_DebugInfo().value,
               lito::manifest::DebugInfo::LineTablesOnly);
     EXPECT_EQ(cpp->occurrences[usize(2)].argument.as_CodegenSetting().setting.as_Lto().value,
-              lito::manifest::Lto::Thin);
+              lito::manifest::Lto::Fat);
     EXPECT_EQ(c->occurrences[usize {}].argument.as_CodegenSetting().setting.as_Optimization().value,
               lito::manifest::Optimization::Level2);
     EXPECT_EQ(c->occurrences[usize(1)].argument.as_CodegenSetting().setting.as_DebugInfo().value,
               lito::manifest::DebugInfo::LineTablesOnly);
     EXPECT_EQ(c->occurrences[usize(2)].argument.as_CodegenSetting().setting.as_Lto().value,
-              lito::manifest::Lto::Thin);
+              lito::manifest::Lto::Fat);
 }
 
 TEST(CompilerArguments, DecodesMicrosoftRuntimeForCAndCppWithLastValueWins) {
