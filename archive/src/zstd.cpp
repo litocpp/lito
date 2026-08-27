@@ -233,7 +233,7 @@ auto ZstdWriter::create(ref<rstd::path::Path> path) -> ArchiveResult<ZstdWriter>
         }
         return Ok(empty {});
     };
-    auto level = configure(ZSTD_c_compressionLevel, 19);
+    auto level = configure(ZSTD_c_compressionLevel, 9);
     if (level.is_err()) {
         auto error = rstd::move(level).unwrap_err();
         ZSTD_freeCCtx(context);
