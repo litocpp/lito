@@ -1,5 +1,6 @@
 add_library(lito.tools STATIC)
 target_compile_features(lito.tools PUBLIC cxx_std_20)
+target_sources(lito.tools PRIVATE src/cargo/flatpak.cpp)
 target_sources(
   lito.tools
   PUBLIC FILE_SET
@@ -9,6 +10,7 @@ target_sources(
          FILES
          src/acquisition.cppm
          src/cargo/executor.cppm
+         src/cargo/flatpak.cppm
          src/cargo/mod.cppm
          src/cargo/model.cppm
          src/cargo/request.cppm
@@ -29,4 +31,4 @@ target_sources(
          src/resolver.cppm)
 target_link_libraries(
   lito.tools
-  PUBLIC lito.core rstd.std rstd.json)
+  PUBLIC lito.core rstd.std rstd.json rstd.toml)

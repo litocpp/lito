@@ -5,6 +5,7 @@ import rstd;
 export import lito.system;
 export import lito.crypto;
 export import :artifact;
+export import :flatpak;
 export import :config;
 export import :condition;
 export import :template_;

@@ -46,7 +46,7 @@ lito update --offline --source-bundle packaging/source-bundle
 ## `lito lock export`
 
 ```text
-lito lock export --format FORMAT --output FILE
+lito lock export --format FORMAT [--attach-cargo-lock FILE] --output FILE
 ```
 
 Both options are required. The current format is `flatpak-sources`. It writes Flatpak source entries
@@ -57,6 +57,19 @@ the source identity index.
 lito lock export \
   --format flatpak-sources \
   --output packaging/lito-sources.json
+```
+
+`--attach-cargo-lock FILE` explicitly adds the registry and Git vendor inputs described by one
+Cargo lock to the same Flatpak JSON array. Relative paths are resolved from the Lito project root.
+Lito reads the Cargo lock only for this export: it does not discover one automatically, modify it,
+copy Cargo data into `lito.lock`, or make Cargo participate in Lito lock freshness. Git packages
+may require an exact checkout through the normal Lito source cache or network policy.
+
+```sh
+lito lock export \
+  --format flatpak-sources \
+  --attach-cargo-lock Cargo.lock \
+  --output packaging/sources.json
 ```
 
 ## `lito config path`

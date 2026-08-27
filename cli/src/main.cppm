@@ -1235,17 +1235,29 @@ extern "C++" int main() {
         auto options = rstd::move(command).as_Export().options;
         switch (options.format) {
         case lito::lock::LockExportFormat::FlatpakSources: {
-            auto result = lito::lock::export_flatpak_sources(
-                project.root.as_path(), project.lock, options.output.as_path());
+            auto event_context = EventContext {};
+            auto request       = lito::LockExportRequest {
+                .root          = rstd::move(project.root),
+                .lock          = rstd::move(project.lock),
+                .format        = options.format,
+                .output        = rstd::move(options.output),
+                .cargo_lock    = rstd::move(options.cargo_lock),
+                .environment   = rstd::move(project.environment),
+                .tools         = rstd::move(project.tools),
+                .sources       = rstd::move(project.sources),
+                .tool_reporter = Some(lito::tools::HostToolResolutionSink {
+                    .context = rstd::addressof(event_context),
+                    .notify  = report_host_tool_resolution,
+                }),
+            };
+            auto result = lito::export_lock_sources(request);
             if (result.is_err()) {
                 auto error = rstd::move(result).unwrap_err();
                 report_error(error);
                 return 1;
             }
-            auto output = options.output.as_path().is_absolute()
-                              ? rstd::move(options.output)
-                              : project.root.join(options.output.as_path());
-            rstd::io::println("exported Flatpak sources to {}", output.as_path());
+            auto summary = rstd::move(result).unwrap();
+            rstd::io::println("exported Flatpak sources to {}", summary.output.as_path());
             return 0;
         }
         }

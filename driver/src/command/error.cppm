@@ -9,6 +9,7 @@ import :project.error;
 import :build.error;
 import lito.system;
 import lito.tools;
+import lito.tools.cargo;
 import lito.toolchain.common;
 import lito.cpp;
 import :build.layout_error;
@@ -23,6 +24,10 @@ export namespace lito
 class CommandError {
     RSTD_ENUM(CommandError,
               (Project, (ProjectError source;)),
+              (Lock, (lito::lock::LockError source;)),
+              (Flatpak, (lito::flatpak::Error source;)),
+              (CargoFlatpak, (lito::tools::cargo::FlatpakExportError source;)),
+              (Source, (lito::source::SourceError source;)),
               (Package, (lito::package::PackageError source;)),
               (Build, (BuildError source;)),
               (System, (SystemError source;)),
@@ -40,6 +45,34 @@ using CommandResult = Result<T, CommandError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<lito::lock::LockError>, lito::CommandError> {
+    static auto from(lito::lock::LockError error) -> lito::CommandError {
+        return lito::CommandError::Lock(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::flatpak::Error>, lito::CommandError> {
+    static auto from(lito::flatpak::Error error) -> lito::CommandError {
+        return lito::CommandError::Flatpak(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::tools::cargo::FlatpakExportError>, lito::CommandError> {
+    static auto from(lito::tools::cargo::FlatpakExportError error) -> lito::CommandError {
+        return lito::CommandError::CargoFlatpak(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::source::SourceError>, lito::CommandError> {
+    static auto from(lito::source::SourceError error) -> lito::CommandError {
+        return lito::CommandError::Source(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::ProjectError>, lito::CommandError> {
@@ -105,6 +138,21 @@ struct Impl<fmt::Display, lito::CommandError> : ImplBase<lito::CommandError> {
             return formatter.write_raw("project preparation failed",
                                        sizeof("project preparation failed") - 1);
         }
+        if (error.is_Lock()) {
+            return formatter.write_raw("lock export failed", sizeof("lock export failed") - 1);
+        }
+        if (error.is_Flatpak()) {
+            return formatter.write_raw("Flatpak source export failed",
+                                       sizeof("Flatpak source export failed") - 1);
+        }
+        if (error.is_CargoFlatpak()) {
+            return formatter.write_raw("Cargo lock attachment failed",
+                                       sizeof("Cargo lock attachment failed") - 1);
+        }
+        if (error.is_Source()) {
+            return formatter.write_raw("lock export source acquisition failed",
+                                       sizeof("lock export source acquisition failed") - 1);
+        }
         if (error.is_Package()) {
             return formatter.write_raw("command package resolution failed",
                                        sizeof("command package resolution failed") - 1);
@@ -149,6 +197,18 @@ struct Impl<error::Error, lito::CommandError> : ImplBase<lito::CommandError> {
         const auto& error = this->self();
         if (error.is_Project()) {
             return Some(dyn<error::Error>::from_ref(error.as_Project().source));
+        }
+        if (error.is_Lock()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Lock().source));
+        }
+        if (error.is_Flatpak()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Flatpak().source));
+        }
+        if (error.is_CargoFlatpak()) {
+            return Some(dyn<error::Error>::from_ref(error.as_CargoFlatpak().source));
+        }
+        if (error.is_Source()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         }
         if (error.is_Package()) {
             return Some(dyn<error::Error>::from_ref(error.as_Package().source));

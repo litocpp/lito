@@ -21,6 +21,7 @@ target_sources(
          src/config/toolchain.cppm
          src/condition/mod.cppm
          src/crypto.cppm
+         src/flatpak.cppm
          src/lib.cppm
          src/dependency/asset.cppm
          src/dependency/cargo.cppm

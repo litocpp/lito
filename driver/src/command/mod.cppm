@@ -10,6 +10,7 @@ export import :command.doc;
 export import :command.format;
 export import :command.update;
 export import :command.fetch;
+export import :command.lock;
 export import :command.install;
 export import :command.reporting;
 export import :command.package;

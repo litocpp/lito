@@ -5,6 +5,7 @@ import lito.crypto;
 import rstd.test;
 import lito.core;
 import lito.system;
+import lito.tools.cargo;
 import lito.tools.cmake;
 import lito.toolchain;
 import lito.driver;
@@ -14,6 +15,20 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
+using PathBuf = rstd::path::PathBuf;
+
+namespace
+{
+
+auto cargo_fixture_path(const rstd::test::TempDir& directory, ref<str> name) -> PathBuf {
+    return PathBuf::from(directory.path()).join(PathBuf::from(name).as_path());
+}
+
+auto write_cargo_fixture(ref<rstd::path::Path> path, ref<str> contents) -> bool {
+    return rstd::fs::write(path, contents.as_bytes()).is_ok();
+}
+
+} // namespace
 
 TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     auto format = lito::lock::parse_lock_export_format("flatpak-sources"_str);
@@ -92,4 +107,131 @@ TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {
     ASSERT_TRUE(git_source.is_some());
     EXPECT_FALSE(git_source->get<1>().contains("\"type\": \"git\""_str));
     EXPECT_TRUE(exported->as_str().contains("https://example.invalid/wavsen.git"_str));
+}
+
+TEST(Lock, CargoAttachmentProjectsRegistrySourcesAndSkipsPathPackages) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto lock  = cargo_fixture_path(owner, "Cargo.lock"_str);
+    ASSERT_TRUE(write_cargo_fixture(lock.as_path(),
+                                    R"(version = 4
+
+[[package]]
+name = "local"
+version = "0.1.0"
+
+[[package]]
+name = "serde"
+version = "1.0.228"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)"_str));
+
+    auto document = lito::tools::cargo::parse_locked_document(lock.as_path());
+    ASSERT_TRUE(document.is_ok());
+    EXPECT_EQ(document->version, u64(4));
+    EXPECT_EQ(document->packages.len(), usize(2));
+    EXPECT_TRUE(lito::tools::cargo::locked_git_requests(*document).is_empty());
+
+    auto projected = lito::tools::cargo::project_flatpak_sources(
+        *document, Vec<lito::tools::cargo::GitCheckout>::make());
+    ASSERT_TRUE(projected.is_ok());
+    auto serialized = lito::flatpak::sources_json(*projected);
+    ASSERT_TRUE(serialized.is_ok());
+    EXPECT_TRUE(serialized->as_str().contains(
+        "https://static.crates.io/crates/serde/serde-1.0.228.crate"_str));
+    EXPECT_TRUE(serialized->as_str().contains("cargo/vendor/serde-1.0.228"_str));
+    EXPECT_TRUE(serialized->as_str().contains(".cargo-checksum.json"_str));
+    EXPECT_TRUE(serialized->as_str().contains("\"dest-filename\": \"config\""_str));
+    EXPECT_FALSE(serialized->as_str().contains("cargo/vendor/local"_str));
+
+    ASSERT_TRUE(write_cargo_fixture(lock.as_path(),
+                                    R"(version = 4
+
+[[package]]
+name = "private"
+version = "1.0.0"
+source = "registry+https://example.invalid/index"
+checksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)"_str));
+    EXPECT_TRUE(lito::tools::cargo::parse_locked_document(lock.as_path()).is_err());
+}
+
+TEST(Lock, CargoAttachmentProjectsGitWorkspacePackage) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner    = rstd::move(temporary).unwrap();
+    auto checkout = cargo_fixture_path(owner, "checkout"_str);
+    auto member   = checkout.join(PathBuf::from("member"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(member.as_path()).is_ok());
+    ASSERT_TRUE(
+        write_cargo_fixture(checkout.join(PathBuf::from("Cargo.toml"_str).as_path()).as_path(),
+                            R"([workspace]
+members = ["member"]
+
+[workspace.package]
+version = "1.2.3"
+edition = "2021"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+)"_str));
+    ASSERT_TRUE(
+        write_cargo_fixture(member.join(PathBuf::from("Cargo.toml"_str).as_path()).as_path(),
+                            R"([package]
+name = "fixture-git"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["alloc"] }
+)"_str));
+
+    constexpr auto commit = "0123456789abcdef0123456789abcdef01234567"_str;
+    auto           lock   = cargo_fixture_path(owner, "Cargo.lock"_str);
+    ASSERT_TRUE(write_cargo_fixture(lock.as_path(),
+                                    R"(version = 4
+
+[[package]]
+name = "fixture-git"
+version = "1.2.3"
+source = "git+https://github.com/Example/Repo.git?rev=main#0123456789abcdef0123456789abcdef01234567"
+)"_str));
+    auto document = lito::tools::cargo::parse_locked_document(lock.as_path());
+    ASSERT_TRUE(document.is_ok());
+    auto requests = lito::tools::cargo::locked_git_requests(*document);
+    ASSERT_EQ(requests.len(), usize(1));
+    EXPECT_EQ(requests[usize {}].url.as_str(), "https://github.com/example/repo"_str);
+    EXPECT_EQ(requests[usize {}].commit.as_str(), commit);
+
+    auto checkouts = Vec<lito::tools::cargo::GitCheckout>::make();
+    checkouts.push(lito::tools::cargo::GitCheckout {
+        .url    = requests[usize {}].url.clone(),
+        .commit = requests[usize {}].commit.clone(),
+        .root   = checkout.clone(),
+    });
+    auto projected = lito::tools::cargo::project_flatpak_sources(*document, checkouts);
+    ASSERT_TRUE(projected.is_ok());
+    auto manifest_contents = Option<ref<str>> {};
+    auto config_contents   = Option<ref<str>> {};
+    for (const auto& entry : projected->entries) {
+        if (! entry.source.is_Inline()) continue;
+        const auto& value = entry.source.as_Inline();
+        if (value.filename.as_str() == "Cargo.toml"_str) {
+            manifest_contents = Some(value.contents.as_str());
+        } else if (value.filename.as_str() == "config"_str) {
+            config_contents = Some(value.contents.as_str());
+        }
+    }
+    ASSERT_TRUE(manifest_contents.is_some());
+    EXPECT_TRUE((*manifest_contents).contains("version = \"1.2.3\""_str));
+    EXPECT_TRUE((*manifest_contents).contains("edition = \"2021\""_str));
+    EXPECT_TRUE((*manifest_contents).contains("\"alloc\", \"derive\""_str));
+    ASSERT_TRUE(config_contents.is_some());
+    EXPECT_TRUE((*config_contents).contains("rev = \"main\""_str));
+    auto serialized = lito::flatpak::sources_json(*projected);
+    ASSERT_TRUE(serialized.is_ok());
+    EXPECT_TRUE(serialized->as_str().contains("flatpak-cargo/git/repo-0123456"_str));
+    EXPECT_TRUE(serialized->as_str().contains("cargo/vendor/fixture-git"_str));
 }

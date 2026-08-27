@@ -19,6 +19,10 @@ visibility = "public"
 workspace = true
 visibility = "public"
 
+[dependencies.rstd-toml]
+workspace = true
+visibility = "public"
+
 [dependencies.rstd-nostd]
 workspace = true
 visibility = "link"

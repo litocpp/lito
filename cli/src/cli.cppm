@@ -166,6 +166,7 @@ struct PublishOptions {
 struct LockExportOptions {
     lito::lock::LockExportFormat format { lito::lock::LockExportFormat::FlatpakSources };
     PathBuf                      output;
+    Option<PathBuf>              cargo_lock;
 };
 
 struct ConfigGetOptions {
@@ -505,6 +506,7 @@ struct LockExportSchema {
     CommandKey                           command;
     ArgKey<lito::lock::LockExportFormat> format;
     ArgKey<String>                       output;
+    ArgKey<String>                       cargo_lock;
 
     auto decode(const Matches& matches) const -> Result<LockExportOptions, CliDecodeError>;
 };
@@ -1182,11 +1184,16 @@ auto make_lock_definition() -> CommandDefinition<LockSchema> {
             .value_name("FORMAT"_str)
             .help("Select the exported source format"_str)
             .required());
-    auto output = export_command.add_arg(Arg<String>::value("output"_str, string_parser())
-                                             .long_name("output"_str)
-                                             .value_name("FILE"_str)
-                                             .help("Write exported sources to a file"_str)
-                                             .required());
+    auto output     = export_command.add_arg(Arg<String>::value("output"_str, string_parser())
+                                                 .long_name("output"_str)
+                                                 .value_name("FILE"_str)
+                                                 .help("Write exported sources to a file"_str)
+                                                 .required());
+    auto cargo_lock = export_command.add_arg(
+        Arg<String>::value("attach-cargo-lock"_str, string_parser())
+            .long_name("attach-cargo-lock"_str)
+            .value_name("FILE"_str)
+            .help("Attach sources projected from an explicit Cargo.lock"_str));
 
     auto command = Command::make("lock"_str);
     command.about("Inspect and export the lock file"_str);
@@ -1197,7 +1204,12 @@ auto make_lock_definition() -> CommandDefinition<LockSchema> {
         LockSchema {
             .command = key,
             .export_command =
-                LockExportSchema { .command = export_key, .format = format, .output = output },
+                LockExportSchema {
+                    .command    = export_key,
+                    .format     = format,
+                    .output     = output,
+                    .cargo_lock = cargo_lock,
+                },
         },
         rstd::move(command),
     };
@@ -1854,8 +1866,9 @@ auto LockExportSchema::decode(const Matches& matches) const
     }
     auto output_value = rstd_try(required_string(matches, output, "output"_str));
     return Ok(LockExportOptions {
-        .format = **format_value,
-        .output = PathBuf::from(rstd::move(output_value)),
+        .format     = **format_value,
+        .output     = PathBuf::from(rstd::move(output_value)),
+        .cargo_lock = rstd_try(optional_path(matches, cargo_lock)),
     });
 }
 

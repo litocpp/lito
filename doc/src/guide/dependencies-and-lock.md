@@ -58,6 +58,11 @@ reusable checkout does not require Git merely to reinterpret Git's internal repo
 Flatpak source entries. Their destinations use the same versioned source-bundle layout consumed by
 Lito, while `lito.lock` remains the only source identity index.
 
+For a project that also has Rust inputs, add `--attach-cargo-lock FILE` explicitly. The export then
+contains both Lito source-bundle entries and Cargo vendor entries, but the locks remain independent:
+Cargo owns `Cargo.lock`, Lito owns `lito.lock`, and neither lock records the attachment. Lito does
+not search for Cargo locks or attach one by default.
+
 ## Local Git patches
 
 Keep a Git identity in `lito.toml` and redirect it locally through config:

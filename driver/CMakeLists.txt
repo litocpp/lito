@@ -10,6 +10,7 @@ target_sources(
           src/command/format.cpp
           src/command/fetch.cpp
           src/command/install.cpp
+          src/command/lock.cpp
           src/command/scan.cpp
           src/command/update.cpp
           src/config/mod.cpp
@@ -56,6 +57,7 @@ target_sources(
          src/command/format.cppm
          src/command/fetch.cppm
          src/command/install.cppm
+         src/command/lock.cppm
          src/command/package.cppm
          src/command/reporting.cppm
          src/command/scan.cppm

@@ -4,8 +4,8 @@ module;
 export module lito.core:lock.flatpak;
 
 import rstd;
-import rstd.json;
 import lito.system;
+import :flatpak;
 import :lock;
 import :lock.config;
 import :lock.document;
@@ -16,9 +16,6 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
-using Json  = rstd::json::Value;
-using Map   = rstd::json::Map;
-using Array = rstd::json::Array;
 using namespace lito::lock;
 
 export namespace lito::lock
@@ -33,7 +30,7 @@ constexpr auto lock_export_format_name(LockExportFormat format) noexcept -> ref<
     switch (format) {
     case LockExportFormat::FlatpakSources: return "flatpak-sources"_str;
     }
-    __builtin_unreachable();
+    rstd::unreachable();
 }
 
 auto parse_lock_export_format(ref<str> value) noexcept -> Option<LockExportFormat> {
@@ -52,31 +49,12 @@ auto lock_export_format_names() -> Vec<String> {
 } // namespace lito::lock
 
 template<typename T>
-auto flatpak_failure(String message) -> LockResult<T> {
+auto lock_flatpak_failure(String message) -> LockResult<T> {
     return Err(LockError::Schema(rstd::move(message)));
 }
 
-template<typename T>
-auto flatpak_failure(ref<str> message) -> LockResult<T> {
-    return flatpak_failure<T>(String::make(message));
-}
-
-auto flatpak_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
-auto public_http_url(ref<str> value) -> bool {
-    auto remainder = value.strip_prefix("https://"_str);
-    if (remainder.is_none()) remainder = value.strip_prefix("http://"_str);
-    if (remainder.is_none() || remainder->is_empty()) return false;
-    auto has_authority = false;
-    for (const auto character : *remainder) {
-        const auto ascii = character.to_primitive();
-        if (ascii == '/' || ascii == '?' || ascii == '#') break;
-        if (ascii == '@' || ascii <= 0x20 || ascii == 0x7f) return false;
-        has_authority = true;
-    }
-    return has_authority;
+auto lock_flatpak_failure(lito::flatpak::Error error) -> LockError {
+    return LockError::Schema(rstd::format("Flatpak source export failed: {}", error));
 }
 
 struct FlatpakCandidate {
@@ -106,7 +84,7 @@ auto merge_architectures(FlatpakCandidate& candidate, const Vec<Architecture>& a
     for (const auto& architecture : architectures) {
         if (architecture != Architecture::X86_64 && architecture != Architecture::Aarch64) {
             auto owners = candidate_owners(candidate);
-            return flatpak_failure<empty>(
+            return lock_flatpak_failure<empty>(
                 rstd::format("Flatpak source export does not support architecture '{}' for {}",
                              architecture_name(architecture),
                              owners.as_str()));
@@ -145,16 +123,19 @@ auto add_candidate(rstd::collections::BTreeMap<String, FlatpakCandidate>& candid
     return Ok(empty {});
 }
 
-auto architecture_json(const FlatpakCandidate& candidate) -> Option<Json> {
-    if (candidate.all_architectures || candidate.architectures.is_empty()) return None();
-    auto architectures = Array::make();
-    for (const auto& architecture : candidate.architectures) {
-        architectures.push(flatpak_string(architecture_name(architecture)));
+auto flatpak_architectures(const FlatpakCandidate& candidate) -> Vec<String> {
+    auto result = Vec<String>::with_capacity(candidate.architectures.len());
+    if (candidate.all_architectures) return result;
+    for (const auto architecture : candidate.architectures) {
+        result.push(String::make(architecture_name(architecture)));
     }
-    return Some(Json::Array(rstd::move(architectures)));
+    return result;
 }
 
-auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> {
+export namespace lito::lock
+{
+
+auto project_flatpak_sources(const LockedProject& project) -> LockResult<lito::flatpak::SourceSet> {
     auto candidates = rstd::collections::BTreeMap<String, FlatpakCandidate>::make();
     for (usize index {}; index < project.packages.len(); ++index) {
         const auto& package = project.packages[index];
@@ -187,75 +168,50 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         }
     }
 
-    auto sources = Array::make();
-    auto values  = candidates.values();
-    auto layout  = lito::source::SourceBundleLayout(PathBuf::from(".lito/source-bundle"_str));
+    auto result = lito::flatpak::SourceSet {};
+    auto values = candidates.values();
+    auto layout = lito::source::SourceBundleLayout(PathBuf::from(".lito/source-bundle"_str));
     for (auto value : values) {
-        const auto& candidate    = *value;
-        auto        flatpak      = Map::make();
-        auto        architecture = architecture_json(candidate);
+        auto& candidate     = *value;
+        auto  owners        = candidate_owners(candidate);
+        auto  architectures = flatpak_architectures(candidate);
         if (candidate.identity.is_Git()) {
-            const auto& source = candidate.identity.as_Git();
-            if (! public_http_url(source.url.as_str())) {
-                auto owners = candidate_owners(candidate);
-                return flatpak_failure<Json>(
-                    rstd::format("Flatpak source export requires a public HTTP(S) Git URL for {}",
-                                 owners.as_str()));
-            }
-            auto destination = layout.git(candidate.identity);
-            flatpak.insert(String::make("commit"_str), flatpak_string(source.commit.as_str()));
-            flatpak.insert(String::make("dest"_str),
-                           flatpak_string(destination.as_path().to_str().unwrap()));
-            flatpak.insert(String::make("type"_str), flatpak_string("git"_str));
-            flatpak.insert(String::make("url"_str), flatpak_string(source.url.as_str()));
-        } else {
-            const auto& source = candidate.identity.as_Archive();
-            if (! public_http_url(source.url.as_str())) {
-                auto owners = candidate_owners(candidate);
-                return flatpak_failure<Json>(rstd::format(
-                    "Flatpak source export requires a public HTTP(S) archive URL for {}",
-                    owners.as_str()));
-            }
-            auto destination = layout.archive(candidate.identity);
-            flatpak.insert(
-                String::make("dest"_str),
-                flatpak_string(destination.as_path().parent().unwrap().to_str().unwrap()));
-            flatpak.insert(String::make("dest-filename"_str), flatpak_string("source.archive"_str));
-            auto sha256 = source.sha256.to_hex();
-            flatpak.insert(String::make("sha256"_str), flatpak_string(sha256.as_str()));
-            flatpak.insert(String::make("type"_str), flatpak_string("file"_str));
-            flatpak.insert(String::make("url"_str), flatpak_string(source.url.as_str()));
+            const auto& source      = candidate.identity.as_Git();
+            auto        destination = layout.git(candidate.identity);
+            result.push(rstd::format("Lito lock {}", owners.as_str()),
+                        lito::flatpak::Source::Git(source.url.clone(),
+                                                   source.commit.clone(),
+                                                   rstd::move(destination),
+                                                   rstd::move(architectures)));
+            continue;
         }
-        if (architecture.is_some()) {
-            flatpak.insert(String::make("only-arches"_str), rstd::move(architecture).unwrap());
-        }
-        sources.push(Json::Object(rstd::move(flatpak)));
+        const auto& source      = candidate.identity.as_Archive();
+        auto        destination = layout.archive(candidate.identity);
+        result.push(
+            rstd::format("Lito lock {}", owners.as_str()),
+            lito::flatpak::Source::File(String::make(source.url.as_str()),
+                                        source.sha256.clone(),
+                                        PathBuf::from(destination.as_path().parent().unwrap()),
+                                        String::make("source.archive"_str),
+                                        rstd::move(architectures)));
     }
-    return Ok(Json::Array(rstd::move(sources)));
+    return Ok(rstd::move(result));
 }
 
-export namespace lito::lock
-{
-
 auto flatpak_sources_json(const LockedProject& project) -> LockResult<String> {
-    auto document = rstd_try(flatpak_sources_document(project));
-    return Ok(rstd::json::to_string(
-        document, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
+    auto sources = rstd_try(project_flatpak_sources(project));
+    auto json    = lito::flatpak::sources_json(sources);
+    if (json.is_err()) return Err(lock_flatpak_failure(rstd::move(json).unwrap_err()));
+    return Ok(rstd::move(json).unwrap());
 }
 
 auto export_flatpak_sources(ref<rstd::path::Path> root,
                             const LockConfig&     lock,
                             ref<rstd::path::Path> output) -> LockResult<empty> {
-    auto project  = rstd_try(load_locked_project(root, lock));
-    auto contents = rstd_try(flatpak_sources_json(project));
-    auto destination =
-        output.is_absolute() ? PathBuf::from(output) : PathBuf::from(root).join(output);
-    auto written = rstd::fs::write_atomic(destination.as_path(), contents.as_str().as_bytes());
-    if (written.is_err()) {
-        return Err(LockError::Io(String::make("write Flatpak sources"_str),
-                                 rstd::move(destination),
-                                 rstd::move(written).unwrap_err()));
-    }
+    auto project = rstd_try(load_locked_project(root, lock));
+    auto sources = rstd_try(project_flatpak_sources(project));
+    auto written = lito::flatpak::write_sources(root, output, sources);
+    if (written.is_err()) return Err(lock_flatpak_failure(rstd::move(written).unwrap_err()));
     return Ok(empty {});
 }
 
