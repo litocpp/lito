@@ -4,7 +4,7 @@ module;
 module lito.driver:build.script;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.tools;
 import rstd.json;
 import luato;
@@ -600,7 +600,7 @@ auto action_file_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String>
         return script_io_failure<String>(
             "read build-tool action file"_str, path, rstd::move(data).unwrap_err());
     }
-    return Ok(lito::crypto::sha256_hex(data->as_slice()));
+    return Ok(licrypto::sha256_hex(data->as_slice()));
 }
 
 struct ActionDependency {
@@ -1439,7 +1439,7 @@ public:
                          package->as_str(),
                          profile_.as_str(),
                          relative.as_path(),
-                         lito::crypto::sha256_hex(rendered.as_str().as_bytes()).as_str());
+                         licrypto::sha256_hex(rendered.as_str().as_bytes()).as_str());
         for (const auto& input : input_records) {
             identity_text.push_str("\ninput:"_str);
             identity_text.push_str(input.path.as_path().to_string_lossy().as_str());
@@ -1458,7 +1458,7 @@ public:
         }
         auto outputs = Vec<PathBuf>::make();
         outputs.push(rstd::move(relative));
-        auto identity = lito::crypto::sha256_hex(identity_text.as_str());
+        auto identity = licrypto::sha256_hex(identity_text.as_str());
         auto producer = actions_.len();
         actions_.push(RegisteredAction {
             .kind              = RegisteredActionKind::Write,
@@ -1521,15 +1521,14 @@ public:
             rstd_try(normal_relative_path(rstd::move(output).unwrap(), "lito.copy.output"_str));
         rstd_try(
             output_registry_->claim(package->as_str(), relative.as_path(), script_owner_.as_str()));
-        auto identity =
-            lito::crypto::sha256_hex(rstd::format("lito-copy-action-v1\n{}\n{}\n{}:{}\n{}",
-                                                  package->as_str(),
-                                                  profile_.as_str(),
-                                                  resolved.path.as_path(),
-                                                  resolved.digest.as_str(),
-                                                  relative.as_path())
-                                         .as_str());
-        auto inputs = Vec<ResolvedActionInput>::make();
+        auto identity = licrypto::sha256_hex(rstd::format("lito-copy-action-v1\n{}\n{}\n{}:{}\n{}",
+                                                          package->as_str(),
+                                                          profile_.as_str(),
+                                                          resolved.path.as_path(),
+                                                          resolved.digest.as_str(),
+                                                          relative.as_path())
+                                                 .as_str());
+        auto inputs   = Vec<ResolvedActionInput>::make();
         inputs.push(rstd::move(resolved));
         auto outputs = Vec<PathBuf>::make();
         outputs.push(rstd::move(relative));
@@ -1626,7 +1625,7 @@ public:
             .digest   = source->action_identity.clone(),
             .producer = Some(usize(source->producer.to_primitive())),
         });
-        auto identity = lito::crypto::sha256_hex(identity_text.as_str());
+        auto identity = licrypto::sha256_hex(identity_text.as_str());
         auto producer = actions_.len();
         actions_.push(RegisteredAction {
             .kind              = RegisteredActionKind::CppLeadingPreamble,
@@ -1662,7 +1661,7 @@ public:
             closure.push_str(module.as_str());
         }
         for (auto& action : actions_) {
-            action.identity = lito::crypto::sha256_hex(
+            action.identity = licrypto::sha256_hex(
                 rstd::format("{}\n{}", action.identity.as_str(), closure.as_str()).as_str());
         }
         for (auto& output : generated_outputs_) {
@@ -1995,7 +1994,7 @@ public:
         }
         identity_text.push_ascii('\n');
         identity_text.push_str(environment_->child_path().to_string_lossy().as_str());
-        auto identity = lito::crypto::sha256_hex(identity_text.as_str());
+        auto identity = licrypto::sha256_hex(identity_text.as_str());
         auto producer = actions_.len();
         actions_.push(RegisteredAction {
             .kind                     = RegisteredActionKind::Process,
@@ -2552,7 +2551,7 @@ private:
                                                          final.as_path(),
                                                          rstd::move(written).unwrap_err());
             }
-            digests.push(lito::crypto::sha256_hex(bytes->as_slice()));
+            digests.push(licrypto::sha256_hex(bytes->as_slice()));
         }
         auto receipt_text =
             action_receipt_text(action.identity.as_str(), action.outputs, digests, dependencies);

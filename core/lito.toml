@@ -27,6 +27,6 @@ visibility = "private"
 workspace = true
 visibility = "link"
 
-[dependencies.lito-sodium]
+[dependencies.licrypto]
 workspace = true
-visibility = "private"
+visibility = "public"

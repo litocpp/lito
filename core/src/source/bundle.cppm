@@ -1,7 +1,7 @@
 export module lito.core:source.bundle;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import :source.fetch;
 import :source.error;
 import :registry.digest;
@@ -57,7 +57,7 @@ public:
         -> PathBuf {
         auto identity = rstd::format(
             "lito-source-bundle-cargo-v1\n{}\n{}\n{}", source_identity, manifest, target);
-        auto key = lito::crypto::sha256_hex(identity.as_str());
+        auto key = licrypto::sha256_hex(identity.as_str());
         return version_root()
             .join(PathBuf::from("cargo"_str).as_path())
             .join(PathBuf::from(key.as_str()).as_path());

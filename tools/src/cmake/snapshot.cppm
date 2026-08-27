@@ -4,7 +4,7 @@ module;
 export module lito.tools.cmake:snapshot;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import lito.tools;
 import :model;
@@ -210,7 +210,7 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
             return Ok(None());
         auto executable = PathBuf::from(*path);
         auto bytes      = rstd::fs::read(executable.as_path());
-        if (bytes.is_err() || lito::crypto::sha256_hex(bytes->as_slice()) != *digest) {
+        if (bytes.is_err() || licrypto::sha256_hex(bytes->as_slice()) != *digest) {
             return Ok(None());
         }
         host_tools.push(CMakeHostToolSnapshot {

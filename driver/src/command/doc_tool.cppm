@@ -4,7 +4,7 @@ module;
 module lito.driver:command.doc_tool;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.tools;
 import rstd.json;
 import lito.core;
@@ -292,7 +292,7 @@ auto doc_tool_file_digest(ref<rstd::path::Path> path) -> DocResult<String> {
             doc_io_failure("open litodoc executable"_str, path, rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
-    auto state  = lito::crypto::Sha256::make();
+    auto state  = licrypto::Sha256::make();
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
@@ -303,7 +303,7 @@ auto doc_tool_file_digest(ref<rstd::path::Path> path) -> DocResult<String> {
         if (*read == usize {}) break;
         state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
     }
-    return Ok(lito::crypto::sha256_hex(rstd::move(state).finalize()));
+    return Ok(licrypto::sha256_hex(rstd::move(state).finalize()));
 }
 
 struct PublishedDocTool {
@@ -330,8 +330,8 @@ auto copy_doc_tool_file(ref<rstd::path::Path> source, ref<rstd::path::Path> dest
 auto published_doc_tool(ref<rstd::path::Path> tool_root,
                         ref<rstd::path::Path> executable,
                         ref<str>              executable_digest) -> DocResult<PublishedDocTool> {
-    auto identity = lito::crypto::sha256_hex(
-        rstd::format("litodoc-artifact-v2\n{}", executable_digest).as_str());
+    auto identity =
+        licrypto::sha256_hex(rstd::format("litodoc-artifact-v2\n{}", executable_digest).as_str());
     auto artifacts        = PathBuf::from(tool_root).join(PathBuf::from("artifacts"_str).as_path());
     auto final            = artifacts.join(PathBuf::from(identity.clone()).as_path());
     auto final_executable = final.join(PathBuf::from("bin/litodoc"_str).as_path());
@@ -425,7 +425,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
                                      project.compiler.target.as_str(),
                                      config.litodoc_path.is_some() ? "path"_str : "git"_str,
                                      lito::lock::LOCK_FORMAT_VERSION);
-    auto key          = lito::crypto::sha256_hex(key_material.as_str());
+    auto key          = licrypto::sha256_hex(key_material.as_str());
     auto tool_root    = create_doc_tool_root(key.as_str());
     if (tool_root.is_err()) return Err(rstd::move(tool_root).unwrap_err());
     auto lock = acquire_doc_tool_lock(tool_root->as_path());

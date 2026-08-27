@@ -3,7 +3,7 @@ export module lito.core;
 import rstd;
 
 export import lito.system;
-export import lito.crypto;
+export import licrypto;
 export import :artifact;
 export import :flatpak;
 export import :config;

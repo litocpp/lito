@@ -16,6 +16,7 @@
       "binaryDir": "${sourceDir}/build/cmake-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "FETCHCONTENT_SOURCE_DIR_LICRYPTO": "${sourceDir}/../licrypto",
         "FETCHCONTENT_SOURCE_DIR_LUATO": "${sourceDir}/../luato",
         "FETCHCONTENT_SOURCE_DIR_RSTD": "${sourceDir}/../rstd"
       }
@@ -26,6 +27,7 @@
       "binaryDir": "${sourceDir}/build/cmake-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "FETCHCONTENT_SOURCE_DIR_LICRYPTO": "${sourceDir}/../licrypto",
         "FETCHCONTENT_SOURCE_DIR_LUATO": "${sourceDir}/../luato",
         "FETCHCONTENT_SOURCE_DIR_RSTD": "${sourceDir}/../rstd"
       }

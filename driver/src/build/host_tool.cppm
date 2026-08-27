@@ -4,7 +4,7 @@ module;
 export module lito.driver:build.host_tool;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.tools;
 import rstd.json;
 import lito.core;
@@ -47,7 +47,7 @@ auto executable_digest(ref<rstd::path::Path> path) -> HostBuildToolResult<String
                             PathBuf::from(path),
                             rstd::move(data).unwrap_err())));
     }
-    return Ok(lito::crypto::sha256_hex(data->as_slice()));
+    return Ok(licrypto::sha256_hex(data->as_slice()));
 }
 
 auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         owned,
@@ -55,7 +55,7 @@ auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         
                                 const HostInfo&                                 host,
                                 ref<str>                                        source_identity,
                                 ref<str>                                        digest) -> String {
-    return lito::crypto::sha256_hex(
+    return licrypto::sha256_hex(
         rstd::format("host-build-tool-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                      owned.package.as_str(),
                      owned.requirement.alias.as_str(),
@@ -311,7 +311,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                                                              rstd::move(canonical).unwrap()));
         }
         const auto& archive = *selected[index];
-        auto        key     = lito::crypto::sha256_hex(
+        auto        key     = licrypto::sha256_hex(
             rstd::format("host-build-tool-store-v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                          owned.package.as_str(),
                          requirement.alias.as_str(),

@@ -6,7 +6,7 @@ export module lito.driver:registry.publish;
 
 import rstd;
 import rstd.json;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.system;
 import :config.registry;
@@ -667,7 +667,7 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
             "publish status poll limit must be positive"_str);
     }
     auto body        = request_body(request);
-    auto idempotency = rstd::format("lito-{}", lito::crypto::sha256_hex(body.as_str()));
+    auto idempotency = rstd::format("lito-{}", licrypto::sha256_hex(body.as_str()));
     auto headers     = authorization_headers(*request.token);
     headers.push(RegistryPublishHeader {
         .name  = String::make("Content-Type"_str),

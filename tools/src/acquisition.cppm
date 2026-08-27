@@ -5,7 +5,7 @@ module;
 export module lito.tools:acquisition;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.system;
 import :error;
@@ -55,7 +55,7 @@ struct AcquisitionEventSink {
 struct VerifiedArchiveRequest {
     String                           label;
     lito::parse::FetchUrl            url;
-    lito::crypto::Sha256Digest       sha256;
+    licrypto::Sha256Digest           sha256;
     Option<u64>                      expected_size;
     Option<PathBuf>                  provided_source;
     lito::tools::HostToolRequirement download_requirement;
@@ -211,15 +211,15 @@ auto process_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> Acquisi
     return Ok(empty {});
 }
 
-auto archive_identity(const lito::parse::FetchUrl& url, const lito::crypto::Sha256Digest& sha256)
+auto archive_identity(const lito::parse::FetchUrl& url, const licrypto::Sha256Digest& sha256)
     -> String {
     return rstd::format("archive+{}#sha256:{}", url, sha256);
 }
 
-auto archive_fetch_key(const lito::parse::FetchUrl& url, const lito::crypto::Sha256Digest& sha256)
+auto archive_fetch_key(const lito::parse::FetchUrl& url, const licrypto::Sha256Digest& sha256)
     -> String {
     auto identity = rstd::format("lito-fetch-v1\narchive\n{}\n{}", url, sha256);
-    return lito::crypto::sha256_hex(identity.as_str());
+    return licrypto::sha256_hex(identity.as_str());
 }
 
 auto ordinary_file_metadata(ref<rstd::path::Path> path)
@@ -240,14 +240,14 @@ auto ordinary_file_metadata(ref<rstd::path::Path> path)
         "inspect acquisition file"_str, path, rstd::move(error));
 }
 
-auto file_digest_matches(ref<rstd::path::Path> path, const lito::crypto::Sha256Digest& expected)
+auto file_digest_matches(ref<rstd::path::Path> path, const licrypto::Sha256Digest& expected)
     -> AcquisitionResult<bool> {
     auto opened = rstd::fs::File::open(path);
     if (opened.is_err()) {
         return io_failure<bool>("open acquisition file"_str, path, rstd::move(opened).unwrap_err());
     }
     auto file   = rstd::move(opened).unwrap();
-    auto state  = lito::crypto::Sha256::make();
+    auto state  = licrypto::Sha256::make();
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());

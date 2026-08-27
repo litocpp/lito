@@ -4,7 +4,7 @@ module;
 module lito.core;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import rstd.toml;
 import :parse;
@@ -136,14 +136,14 @@ auto lito::parse::value_kind_name(ValueKind kind) noexcept -> ref<str> {
 }
 
 auto lito::parse::parse_sha256(ref<str> value, Sha256TextMode mode)
-    -> Result<lito::crypto::Sha256Digest, Sha256Error> {
+    -> Result<licrypto::Sha256Digest, Sha256Error> {
     if (mode == Sha256TextMode::Canonical) {
         for (auto index = usize {}; index < value.len(); ++index) {
             const auto byte = value[index].to_primitive();
             if (byte >= 'A' && byte <= 'F') return Err(Sha256Error::NonCanonicalCase(index));
         }
     }
-    auto parsed = lito::crypto::Sha256Digest::parse_hex(value);
+    auto parsed = licrypto::Sha256Digest::parse_hex(value);
     if (parsed.is_err()) return Err(Sha256Error::Digest(rstd::move(parsed).unwrap_err()));
     return Ok(rstd::move(parsed).unwrap());
 }
@@ -417,7 +417,7 @@ auto lito::parse::json::required_sha256(const rstd::json::Value& value,
                                         ref<str>                 key,
                                         const NodePath&          path,
                                         Sha256TextMode           mode)
-    -> ParseResult<lito::crypto::Sha256Digest> {
+    -> ParseResult<licrypto::Sha256Digest> {
     auto member = rstd_try(required_member(value, key, path));
     return sha256(*member, path.field(key), mode);
 }
@@ -495,11 +495,11 @@ auto lito::parse::json::reject_unknown(const rstd::json::Value& value,
 
 auto lito::parse::json::sha256(const rstd::json::Value& value,
                                const NodePath&          path,
-                               Sha256TextMode mode) -> ParseResult<lito::crypto::Sha256Digest> {
+                               Sha256TextMode mode) -> ParseResult<licrypto::Sha256Digest> {
     auto parsed = parse_sha256(rstd_try(string(value, path)), mode);
     if (parsed.is_err()) {
-        return invalid_value<lito::crypto::Sha256Digest>(ref<NodePath>::from_raw_parts(&path),
-                                                         rstd::move(parsed).unwrap_err());
+        return invalid_value<licrypto::Sha256Digest>(ref<NodePath>::from_raw_parts(&path),
+                                                     rstd::move(parsed).unwrap_err());
     }
     return Ok(rstd::move(parsed).unwrap());
 }
@@ -630,7 +630,7 @@ auto lito::parse::toml::required_sha256(const rstd::toml::Value& value,
                                         ref<str>                 key,
                                         const NodePath&          path,
                                         Sha256TextMode           mode)
-    -> ParseResult<lito::crypto::Sha256Digest> {
+    -> ParseResult<licrypto::Sha256Digest> {
     auto member = rstd_try(required_member(value, key, path));
     return sha256(*member, path.field(key), mode);
 }
@@ -708,11 +708,11 @@ auto lito::parse::toml::reject_unknown(const rstd::toml::Value& value,
 
 auto lito::parse::toml::sha256(const rstd::toml::Value& value,
                                const NodePath&          path,
-                               Sha256TextMode mode) -> ParseResult<lito::crypto::Sha256Digest> {
+                               Sha256TextMode mode) -> ParseResult<licrypto::Sha256Digest> {
     auto parsed = parse_sha256(rstd_try(string(value, path)), mode);
     if (parsed.is_err()) {
-        return invalid_value<lito::crypto::Sha256Digest>(ref<NodePath>::from_raw_parts(&path),
-                                                         rstd::move(parsed).unwrap_err());
+        return invalid_value<licrypto::Sha256Digest>(ref<NodePath>::from_raw_parts(&path),
+                                                     rstd::move(parsed).unwrap_err());
     }
     return Ok(rstd::move(parsed).unwrap());
 }

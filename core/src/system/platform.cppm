@@ -8,7 +8,7 @@ module;
 export module lito.system:platform;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -751,7 +751,7 @@ auto resolve_build_platform(const HostInfo&   host,
     auto output_key = String::make();
     if (intent == BuildTargetIntent::ExplicitTarget) {
         output_key = String::make("target-"_str);
-        output_key.push_str(lito::crypto::sha256_hex(effective.triple.as_str()).as_str());
+        output_key.push_str(licrypto::sha256_hex(effective.triple.as_str()).as_str());
     }
     return Ok(BuildPlatform {
         .host             = host.clone(),

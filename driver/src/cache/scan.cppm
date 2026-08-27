@@ -5,7 +5,7 @@ module lito.driver:cache.scan;
 
 import rstd;
 import rstd.json;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.cpp;
 import lito.frontend;
@@ -346,7 +346,7 @@ class ScanCacheSession {
                                              rstd::move(opened).unwrap_err()))));
             }
             auto file   = rstd::move(opened).unwrap_unchecked();
-            auto digest = lito::crypto::Sha256::make();
+            auto digest = licrypto::Sha256::make();
             auto buffer = array<u8, 65536> {};
             while (true) {
                 auto read = file.read(buffer.as_mut_slice());
@@ -363,7 +363,7 @@ class ScanCacheSession {
             return Ok(FileFingerprint {
                 .path        = PathBuf::from(path),
                 .size        = metadata->size(),
-                .fingerprint = lito::crypto::sha256_hex(rstd::move(digest).finalize()),
+                .fingerprint = licrypto::sha256_hex(rstd::move(digest).finalize()),
             });
         });
         {

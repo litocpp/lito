@@ -5,7 +5,7 @@ export module lito.core:flatpak;
 
 import rstd;
 import rstd.json;
-import lito.crypto;
+import licrypto;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -33,12 +33,12 @@ class Source {
     RSTD_ENUM(Source,
               (Git, (String url; String commit; PathBuf destination; Vec<String> only_arches;)),
               (File,
-               (String url; lito::crypto::Sha256Digest sha256; PathBuf destination; String filename;
+               (String url; licrypto::Sha256Digest sha256; PathBuf destination; String filename;
                 Vec<String> only_arches;)),
               (Archive,
-               (String url; lito::crypto::Sha256Digest sha256; ArchiveType archive_type;
-                PathBuf                                                    destination;
-                Vec<String>                                                only_arches;)),
+               (String url; licrypto::Sha256Digest sha256; ArchiveType archive_type;
+                PathBuf                                                destination;
+                Vec<String>                                            only_arches;)),
               (Inline, (String contents; PathBuf destination; String filename;)),
               (Shell, (Vec<String> commands;)))
 };

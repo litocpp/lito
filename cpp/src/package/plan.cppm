@@ -4,7 +4,7 @@ module;
 export module lito.cpp:package.plan;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import :bmi;
 import :build.plan;
@@ -511,7 +511,7 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
         identity.push_str(rstd::format("define:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.undefinitions)
         identity.push_str(rstd::format("undefine:{}:{}\n", value.len(), value.as_str()).as_str());
-    result.identity = lito::crypto::sha256_hex(identity.as_str());
+    result.identity = licrypto::sha256_hex(identity.as_str());
     return result;
 }
 

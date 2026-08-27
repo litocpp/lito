@@ -1,7 +1,7 @@
 export module lito.toolchain.clang:preprocessor_provider;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.frontend;
 import :preprocessor_model;
@@ -202,7 +202,7 @@ private:
             .path         = rstd::move(canonical_path),
             .search_index = search_index,
             .size         = metadata->size(),
-            .digest       = lito::crypto::sha256_hex(contents->as_slice()),
+            .digest       = licrypto::sha256_hex(contents->as_slice()),
         }));
     }
 

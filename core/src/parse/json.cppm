@@ -1,7 +1,7 @@
 export module lito.core:parse.json;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import :parse.error;
 import :parse.value;
@@ -34,7 +34,7 @@ auto required_array(const rstd::json::Value& value, ref<str> key, const NodePath
 auto required_sha256(const rstd::json::Value& value,
                      ref<str>                 key,
                      const NodePath&          path,
-                     Sha256TextMode           mode) -> ParseResult<lito::crypto::Sha256Digest>;
+                     Sha256TextMode           mode) -> ParseResult<licrypto::Sha256Digest>;
 auto required_fetch_url(const rstd::json::Value& value, ref<str> key, const NodePath& path)
     -> ParseResult<FetchUrl>;
 auto required_https_url(const rstd::json::Value& value, ref<str> key, const NodePath& path)
@@ -56,7 +56,7 @@ auto reject_unknown(const rstd::json::Value& value, const NodePath& path, bool (
     -> ParseResult<empty>;
 
 auto sha256(const rstd::json::Value& value, const NodePath& path, Sha256TextMode mode)
-    -> ParseResult<lito::crypto::Sha256Digest>;
+    -> ParseResult<licrypto::Sha256Digest>;
 auto fetch_url(const rstd::json::Value& value, const NodePath& path) -> ParseResult<FetchUrl>;
 auto https_url(const rstd::json::Value& value, const NodePath& path) -> ParseResult<HttpsUrl>;
 auto normal_relative_path(const rstd::json::Value& value, const NodePath& path)

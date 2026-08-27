@@ -41,10 +41,10 @@ class LockedSource {
 };
 
 struct LockedPackage {
-    String                             name;
-    String                             version;
-    Option<LockedSource>               source;
-    Option<lito::crypto::Sha256Digest> checksum;
+    String                         name;
+    String                         version;
+    Option<LockedSource>           source;
+    Option<licrypto::Sha256Digest> checksum;
 };
 
 struct LockedDocument {

@@ -5,7 +5,7 @@ module;
 export module lito.toolchain.android:sdk_catalog;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import rstd.serde;
 import lito.core;
@@ -28,9 +28,9 @@ template<typename T>
 using AndroidNdkCatalogResult = Result<T, AndroidNdkCatalogError>;
 
 struct AndroidNdkLicense {
-    String                     id;
-    lito::parse::HttpsUrl      url;
-    lito::crypto::Sha256Digest sha256;
+    String                 id;
+    lito::parse::HttpsUrl  url;
+    licrypto::Sha256Digest sha256;
 
     auto clone() const -> AndroidNdkLicense {
         return AndroidNdkLicense { .id = id.clone(), .url = url.clone(), .sha256 = sha256.clone() };
@@ -40,7 +40,7 @@ struct AndroidNdkLicense {
 struct AndroidNdkArchive {
     String                     format;
     lito::parse::HttpsUrl      url;
-    lito::crypto::Sha256Digest sha256;
+    licrypto::Sha256Digest     sha256;
     u64                        size {};
     lito::parse::PathComponent root;
 

@@ -4,7 +4,7 @@ module;
 export module lito.driver:dependency.cargo;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.cpp;
 import lito.system;
@@ -135,7 +135,7 @@ auto resolve_cargo_profile_configuration(
                      : Option<lito::tools::cargo::ProfileStrip> {},
     };
     auto projection = lito::tools::cargo::profile_configuration_identity(result);
-    auto digest     = lito::crypto::sha256_hex(projection.as_str());
+    auto digest     = licrypto::sha256_hex(projection.as_str());
     auto selected   = String::make("lito-"_str);
     selected.push_str(digest.as_str().get(usize {}, usize(16)).unwrap());
     result.selected = lito::dependency::CargoProfileName { .value = rstd::move(selected) };
@@ -243,7 +243,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     };
     append(provider.identity.as_str());
     append(source.identity.as_str());
-    append(lito::crypto::sha256_hex(lock->as_slice()).as_str());
+    append(licrypto::sha256_hex(lock->as_slice()).as_str());
     append(metadata.id.as_str());
     append(declaration.recipe.manifest_path.as_path().to_string_lossy().as_str());
     append(profile.selected.as_str());
@@ -256,7 +256,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     append(declaration.consumption.default_features ? "default-features"_str
                                                     : "no-default-features"_str);
     for (const auto& feature : declaration.consumption.features) append(feature.as_str());
-    return Ok(lito::crypto::sha256_hex(text.as_str()));
+    return Ok(licrypto::sha256_hex(text.as_str()));
 }
 
 } // namespace lito

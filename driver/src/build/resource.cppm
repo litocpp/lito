@@ -4,7 +4,7 @@ module;
 module lito.driver:build.resource;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import :build.event;
 import :build.artifact;
@@ -71,7 +71,7 @@ auto collect_resource_files(ref<rstd::path::Path> root,
 
 auto resource_identity(ref<rstd::path::Path> root, const Vec<PathBuf>& files)
     -> BuildScriptResult<String> {
-    auto state = lito::crypto::Sha256::make();
+    auto state = licrypto::Sha256::make();
     for (const auto& relative : files) {
         auto text = relative.as_path().to_str();
         if (text.is_none()) {
@@ -90,7 +90,7 @@ auto resource_identity(ref<rstd::path::Path> root, const Vec<PathBuf>& files)
         state.update(data->as_slice());
         state.update(separator.as_slice());
     }
-    return Ok(lito::crypto::sha256_hex(rstd::move(state).finalize()));
+    return Ok(licrypto::sha256_hex(rstd::move(state).finalize()));
 }
 
 auto selected_resource_target(const Vec<lito::package::PackageTargetId>& selected,

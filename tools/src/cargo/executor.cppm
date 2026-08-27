@@ -5,7 +5,7 @@ export module lito.tools.cargo:executor;
 
 import rstd;
 import rstd.json;
-import lito.crypto;
+import licrypto;
 import lito.system;
 import lito.tools;
 import :model;
@@ -951,7 +951,7 @@ auto build_static_library(const Provider&                   provider,
                                                        archive.as_path(),
                                                        rstd::move(contents).unwrap_err());
     }
-    auto digest        = lito::crypto::sha256_hex(contents->as_slice());
+    auto digest        = licrypto::sha256_hex(contents->as_slice());
     auto identity_text = String::make("lito-cargo-staticlib-v1\n"_str);
     identity_text.push_str(request.request_identity.as_str());
     identity_text.push_ascii(u8('\n'));
@@ -966,7 +966,7 @@ auto build_static_library(const Provider&                   provider,
     for (const auto& argument : messages.native_arguments) {
         identity_text.push_str(rstd::format("{}:{}\n", argument.len(), argument).as_str());
     }
-    auto identity = lito::crypto::sha256_hex(identity_text.as_str());
+    auto identity = licrypto::sha256_hex(identity_text.as_str());
     emit_cargo(observer,
                messages.artifact_fresh ? EventKind::Reuse : EventKind::Build,
                request.alias.as_str(),
@@ -1177,7 +1177,7 @@ auto build_binaries(const Provider&                   provider,
                                                     executable.as_path(),
                                                     rstd::move(contents).unwrap_err());
         }
-        auto digest        = lito::crypto::sha256_hex(contents->as_slice());
+        auto digest        = licrypto::sha256_hex(contents->as_slice());
         auto identity_text = String::make("lito-cargo-bin-v1\n"_str);
         identity_text.push_str(request.request_identity.as_str());
         identity_text.push_ascii(u8('\n'));
@@ -1189,7 +1189,7 @@ auto build_binaries(const Provider&                   provider,
         identity_text.push_ascii(u8('\n'));
         identity_text.push_str(digest.as_str());
         identity_text.push_ascii(u8('\n'));
-        auto identity = lito::crypto::sha256_hex(identity_text.as_str());
+        auto identity = licrypto::sha256_hex(identity_text.as_str());
         emit_cargo(observer,
                    artifact.fresh ? EventKind::Reuse : EventKind::Build,
                    request.alias.as_str(),

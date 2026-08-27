@@ -268,7 +268,7 @@ auto cargo::parse_locked_document(ref<rstd::path::Path> path)
             }
             source = Some(rstd::move(parsed_source).unwrap());
         }
-        auto checksum = Option<lito::crypto::Sha256Digest> {};
+        auto checksum = Option<licrypto::Sha256Digest> {};
         if (checksum_text.is_some()) {
             auto parsed_checksum = lito::parse::parse_sha256(
                 checksum_text->as_str(), lito::parse::Sha256TextMode::Canonical);
@@ -554,7 +554,7 @@ auto normalized_manifest(const ScannedPackage& package, ref<rstd::path::Path> pa
     return Ok(rstd::move(serialized).unwrap());
 }
 
-auto checksum_json(Option<ref<lito::crypto::Sha256Digest>> checksum) -> String {
+auto checksum_json(Option<ref<licrypto::Sha256Digest>> checksum) -> String {
     auto files = JsonMap::make();
     auto root  = JsonMap::make();
     if (checksum.is_some()) {
@@ -732,7 +732,7 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
                                                        Vec<String>::make()));
             result.push(rstd::move(origin),
                         lito::flatpak::Source::Inline(
-                            checksum_json(Some(ref<lito::crypto::Sha256Digest>::from_raw_parts(
+                            checksum_json(Some(ref<licrypto::Sha256Digest>::from_raw_parts(
                                 rstd::addressof(*package.checksum)))),
                             PathBuf::from(destination.as_str()),
                             String::make(".cargo-checksum.json"_str)));

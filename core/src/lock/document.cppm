@@ -4,7 +4,7 @@ module;
 export module lito.core:lock.document;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.system;
 import :source.git;
 import :parse;
@@ -23,7 +23,7 @@ inline constexpr auto LOCK_FORMAT_VERSION = u64(1);
 class LockedSource {
     RSTD_ENUM(LockedSource,
               (Git, (String url; String commit;)),
-              (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
+              (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)),
               (Registry,
                (lito::registry::RegistryPackageId package; lito::registry::SemanticVersion version;
                 lito::registry::PackageChecksum checksum;)))

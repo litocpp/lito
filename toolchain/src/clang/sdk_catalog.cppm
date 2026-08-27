@@ -5,7 +5,7 @@ module;
 export module lito.toolchain.clang:sdk_catalog;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import rstd.serde;
 import lito.core;
@@ -72,7 +72,7 @@ struct LlvmSdkPaths {
 struct LlvmSdkArchive {
     String                     format;
     lito::parse::HttpsUrl      url;
-    lito::crypto::Sha256Digest sha256;
+    licrypto::Sha256Digest     sha256;
     u64                        size {};
     lito::parse::PathComponent root;
 
@@ -161,9 +161,9 @@ struct LlvmSdkCatalog {
 
 auto parse_llvm_version(ref<str> value) -> LlvmSdkCatalogResult<LlvmVersion>;
 auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalog>;
-auto validate_llvm_sdk_archive_identity(const lito::parse::HttpsUrl&      url,
-                                        const lito::crypto::Sha256Digest& sha256,
-                                        u64                               size,
+auto validate_llvm_sdk_archive_identity(const lito::parse::HttpsUrl&  url,
+                                        const licrypto::Sha256Digest& sha256,
+                                        u64                           size,
                                         ref<str> context) -> LlvmSdkCatalogResult<empty>;
 auto validate_llvm_sdk_paths(const LlvmSdkPaths& paths, ref<str> context)
     -> LlvmSdkCatalogResult<empty>;
@@ -644,7 +644,7 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
 }
 
 auto validate_llvm_sdk_archive_identity(const lito::parse::HttpsUrl&,
-                                        const lito::crypto::Sha256Digest&,
+                                        const licrypto::Sha256Digest&,
                                         u64      size,
                                         ref<str> context) -> LlvmSdkCatalogResult<empty> {
     if (size == u64 {}) {

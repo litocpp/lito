@@ -6,7 +6,7 @@ export module lito.driver:registry.index;
 import rstd;
 import rstd.json;
 import lito.core;
-import lito.crypto;
+import licrypto;
 import lito.system;
 import :config.registry;
 
@@ -101,7 +101,7 @@ auto index_failure(RegistryIndexErrorKind kind, const RegistryPackageId& package
 }
 
 auto cache_record_path(ref<rstd::path::Path> root, const RegistryPackageId& package) -> PathBuf {
-    auto registry_key = lito::crypto::sha256_hex(package.registry.as_str());
+    auto registry_key = licrypto::sha256_hex(package.registry.as_str());
     return PathBuf::from(root)
         .join(PathBuf::from("indices"_str).as_path())
         .join(PathBuf::from(registry_key).as_path())

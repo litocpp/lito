@@ -20,7 +20,6 @@ target_sources(
          src/config/project.cppm
          src/config/toolchain.cppm
          src/condition/mod.cppm
-         src/crypto.cppm
          src/flatpak.cppm
          src/lib.cppm
          src/dependency/asset.cppm
@@ -115,5 +114,5 @@ target_sources(
          src/workspace/mod.cppm)
 target_link_libraries(
   lito.core
-  PUBLIC rstd.std
-  PRIVATE rstd.json rstd.serde rstd.toml lito.sodium)
+  PUBLIC rstd.std licrypto
+  PRIVATE rstd.json rstd.serde rstd.toml)

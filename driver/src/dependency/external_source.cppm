@@ -330,7 +330,7 @@ auto resolve_external_acquisition_plan(const lito::package::ResolvedPackageGraph
         const auto& source = sources.sources[index];
         if (source.acquired.is_some()) continue;
         auto url    = Option<lito::parse::FetchUrl> {};
-        auto sha256 = Option<lito::crypto::Sha256Digest> {};
+        auto sha256 = Option<licrypto::Sha256Digest> {};
         if (source.source.is_Archive()) {
             url    = Some(source.source.as_Archive().url.clone());
             sha256 = Some(source.source.as_Archive().sha256.clone());

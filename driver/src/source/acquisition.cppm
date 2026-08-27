@@ -4,7 +4,7 @@ module;
 export module lito.driver:source.acquisition;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.tools;
 import lito.system;
@@ -31,8 +31,8 @@ auto git_requirement_identity(ref<str> url, const GitReference& reference) -> St
         "git\n{}\n{}\n{}", url, git_reference_kind_name(reference.kind), reference.value.as_str());
 }
 
-auto archive_source_identity(const lito::parse::FetchUrl&      url,
-                             const lito::crypto::Sha256Digest& sha256) -> String {
+auto archive_source_identity(const lito::parse::FetchUrl& url, const licrypto::Sha256Digest& sha256)
+    -> String {
     return rstd::format("archive+{}#sha256:{}", url, sha256);
 }
 
@@ -64,10 +64,10 @@ struct PackageSourceFetchRequest {
 };
 
 struct ArchiveSourceFetchRequest {
-    String                     owner;
-    String                     name;
-    lito::parse::FetchUrl      url;
-    lito::crypto::Sha256Digest sha256;
+    String                 owner;
+    String                 name;
+    lito::parse::FetchUrl  url;
+    licrypto::Sha256Digest sha256;
 };
 
 struct ExternalSourceFetchOutcome {
@@ -134,7 +134,7 @@ auto archive_materialization_layout(ref<rstd::path::Path> materialization_root, 
     -> ArchiveMaterializationLayout {
     auto archives =
         PathBuf::from(materialization_root).join(PathBuf::from("archives"_str).as_path());
-    auto area = archives.join(PathBuf::from(lito::crypto::sha256_hex(identity)).as_path());
+    auto area = archives.join(PathBuf::from(licrypto::sha256_hex(identity)).as_path());
     return ArchiveMaterializationLayout {
         .area      = area.clone(),
         .lock      = area.join(PathBuf::from("lock"_str).as_path()),

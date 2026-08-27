@@ -4,7 +4,7 @@ module;
 export module lito.driver:dependency.preparation;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import :dependency.cmake;
 import :source.acquisition;
@@ -22,7 +22,7 @@ class PreparedCMakeDependencySource {
     RSTD_ENUM(PreparedCMakeDependencySource,
               (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
-              (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
+              (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)),
               (ArchitectureArchives, (Vec<lito::dependency::ExternalArchiveVariant> variants;)))
 };
 
@@ -78,7 +78,7 @@ class SelectedCMakeDependencySource {
     RSTD_ENUM(SelectedCMakeDependencySource,
               (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
-              (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)))
+              (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)))
 };
 
 struct SelectedCMakeDependencyRequirement {

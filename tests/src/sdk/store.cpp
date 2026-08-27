@@ -2,7 +2,7 @@
 #include <rstd/macro.hpp>
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import rstd.test;
 import lito.driver;
@@ -161,13 +161,12 @@ auto materialize_installed_sdk(ref<rstd::path::Path>         data_home,
     rstd_try(rstd::fs::write(license.as_path(), license_contents.as_bytes()));
     auto link = prefix.join(PathBuf::from("lib/libxml2.so.2"_str).as_path());
     rstd_try(rstd::fs::soft_link(PathBuf::from("libxml2.so.2.13.8"_str).as_path(), link.as_path()));
-    auto text =
-        installed_descriptor_with_files(version,
-                                        host,
-                                        u64(runtime_contents.len().to_primitive()),
-                                        lito::crypto::sha256_hex(runtime_contents).as_str(),
-                                        u64(license_contents.len().to_primitive()),
-                                        lito::crypto::sha256_hex(license_contents).as_str());
+    auto text = installed_descriptor_with_files(version,
+                                                host,
+                                                u64(runtime_contents.len().to_primitive()),
+                                                licrypto::sha256_hex(runtime_contents).as_str(),
+                                                u64(license_contents.len().to_primitive()),
+                                                licrypto::sha256_hex(license_contents).as_str());
     auto descriptor = prefix.join(PathBuf::from("sdk.json"_str).as_path());
     rstd_try(rstd::fs::write(descriptor.as_path(), text.as_str().as_bytes()));
     return Ok(rstd::move(prefix));

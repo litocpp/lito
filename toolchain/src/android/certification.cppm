@@ -4,7 +4,7 @@ module;
 export module lito.toolchain.android:certification;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.system;
 import lito.toolchain.common;
@@ -271,12 +271,12 @@ auto certify_android_ndk(const AndroidNdkDistribution&     distribution,
         rstd::move(linker_command), "Android NDK LLD version"_str, environment);
     if (linker_version.is_err()) return Err(rstd::move(linker_version).unwrap_err());
     auto identity =
-        lito::crypto::sha256_hex(rstd::format("android-ndk-certification-v2\n{}\n{}\n{}\n{}",
-                                              distribution.identity(),
-                                              clang->compiler_identity().version.as_str(),
-                                              linker_version->as_str(),
-                                              target->clang_target.as_str())
-                                     .as_str());
+        licrypto::sha256_hex(rstd::format("android-ndk-certification-v2\n{}\n{}\n{}\n{}",
+                                          distribution.identity(),
+                                          clang->compiler_identity().version.as_str(),
+                                          linker_version->as_str(),
+                                          target->clang_target.as_str())
+                                 .as_str());
     return Ok(AndroidNdkCertification {
         .compiler_version = clang->compiler_identity().version.clone(),
         .linker_version   = rstd::move(linker_version).unwrap(),

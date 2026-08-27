@@ -4,7 +4,7 @@ module;
 export module lito.driver:dependency.catalog;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.tools;
 import lito.tools.cargo;
 import lito.core;

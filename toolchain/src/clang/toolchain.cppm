@@ -4,7 +4,7 @@ module;
 export module lito.toolchain.clang:toolchain;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.cpp;
 import lito.toolchain.common;
@@ -618,7 +618,7 @@ public:
                          family,
                          target.triple.as_str(),
                          target.environment_name(),
-                         lito::crypto::sha256_hex(queried->standard_output.as_str()).as_str());
+                         licrypto::sha256_hex(queried->standard_output.as_str()).as_str());
         auto identity      = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
                                           headers_identity.as_str(),
                                           binary_identity.as_str(),
@@ -742,7 +742,7 @@ public:
             else
                 projection.user_include_directories.push(rstd::move(directory));
         }
-        projection.identity = lito::crypto::sha256_hex(
+        projection.identity = licrypto::sha256_hex(
             rstd::format(
                 "lito-build-tool-preprocessor-projection-v1\nprojection={}\nenvironment={}",
                 projection.identity.as_str(),
@@ -1445,10 +1445,10 @@ public:
             linker_identity_.build_identity.as_str(),
             request.archive.path.as_path(),
             archive_metadata->size(),
-            lito::crypto::sha256_hex(archive_contents->as_slice()).as_str(),
+            licrypto::sha256_hex(archive_contents->as_slice()).as_str(),
             request.archive.mode == LinkArchiveMode::Whole ? "whole"_str : "normal"_str,
             request.soname.as_str(),
-            lito::crypto::sha256_hex(version_script->as_slice()).as_str());
+            licrypto::sha256_hex(version_script->as_slice()).as_str());
         return Ok(ElfSharedLibraryArtifact {
             .file          = request.output.clone(),
             .soname        = request.soname.clone(),

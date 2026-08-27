@@ -75,13 +75,12 @@ if(NOT LITO_USE_SYSTEM_ZSTD)
 endif()
 
 FetchContent_Declare(
-  sodium
-  GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
-  GIT_TAG 77e1ce5d6dee871c49ef211222ba18ef0c486bda)
-FetchContent_MakeAvailable(sodium)
+  licrypto
+  GIT_REPOSITORY https://github.com/litocpp/licrypto.git
+  GIT_TAG b7156942a4b85780a21bd11092c08cb6893b05d4)
+FetchContent_MakeAvailable(licrypto)
 
 add_subdirectory(third-party/zstd)
-add_subdirectory(third-party/libsodium)
 add_subdirectory(archive)
 add_subdirectory(frontend)
 add_subdirectory(core)
@@ -96,6 +95,6 @@ install(FILES LICENSE-MIT LICENSE-APACHE DESTINATION ${CMAKE_INSTALL_DATADIR}/li
 if(NOT LITO_USE_SYSTEM_ZSTD)
   install(FILES third-party/zstd/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/zstd)
 endif()
-install(FILES third-party/libsodium/LICENSE-ISC
-              third-party/libsodium/LICENSE-BSD-2-Clause
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/libsodium)
+install(FILES ${licrypto_SOURCE_DIR}/LICENSE-MIT
+              ${licrypto_SOURCE_DIR}/LICENSE-APACHE
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/licrypto)

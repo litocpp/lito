@@ -1,6 +1,6 @@
 [workspace]
 name = "lito"
-members = ["third-party/zstd", "third-party/libsodium", "archive", "frontend", "core", "cpp", "tools", "toolchain", "driver", "cli"]
+members = ["third-party/zstd", "archive", "frontend", "core", "cpp", "tools", "toolchain", "driver", "cli"]
 default-members = ["cli"]
 
 [workspace.package]
@@ -28,11 +28,11 @@ path = "driver"
 [workspace.dependencies.lito-zstd]
 path = "third-party/zstd"
 
-[workspace.dependencies.lito-sodium]
-path = "third-party/libsodium"
-
 [workspace.dependencies.lito-archive]
 path = "archive"
+
+[workspace.dependencies.licrypto]
+git = "https://github.com/litocpp/licrypto.git"
 
 [workspace.dependencies.luato]
 git = "https://github.com/litocpp/luato.git"
@@ -64,10 +64,6 @@ git = "https://github.com/litocpp/rstd.git"
 [workspace.external-sources.zstd]
 git = "https://github.com/facebook/zstd.git"
 rev = "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
-
-[workspace.external-sources.libsodium]
-git = "https://github.com/jedisct1/libsodium.git"
-rev = "77e1ce5d6dee871c49ef211222ba18ef0c486bda"
 
 [profile.base]
 exceptions = false

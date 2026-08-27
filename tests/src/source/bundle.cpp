@@ -64,7 +64,7 @@ TEST_F(SourceBundle, OfflineArchiveAcquisitionUsesVerifiedBundleWithoutDownloadT
     auto contents  = "source bundle archive bytes"_str;
     auto url       = lito::parse::FetchUrl::parse("https://example.invalid/source.tar.gz"_str);
     ASSERT_TRUE(url.is_ok());
-    auto digest   = lito::crypto::sha256_digest(contents);
+    auto digest   = licrypto::sha256_digest(contents);
     auto identity = lito::source::archive_fetch_identity(url->clone(), digest.clone());
     auto payload  = lito::source::SourceBundleLayout(directory.clone()).archive(identity);
     ASSERT_TRUE(rstd::fs::create_dir_all(payload.as_path().parent().unwrap()).is_ok());

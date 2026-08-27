@@ -1,7 +1,7 @@
 export module lito.core:manifest.build_tool;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.system;
 import :parse;
 
@@ -13,9 +13,9 @@ export namespace lito::manifest
 {
 
 struct BuildToolArchiveManifest {
-    HostInfo                   host;
-    lito::parse::HttpsUrl      url;
-    lito::crypto::Sha256Digest sha256;
+    HostInfo               host;
+    lito::parse::HttpsUrl  url;
+    licrypto::Sha256Digest sha256;
 };
 
 struct BuildToolRequirement {

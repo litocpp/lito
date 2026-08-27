@@ -250,13 +250,12 @@ auto reject_checksum(const Option<String>& checksum, rstd::serde::DataPath path)
 }
 
 auto parse_sha256_checksum(ref<str> value, rstd::serde::DataPath path)
-    -> LockResult<lito::crypto::Sha256Digest> {
+    -> LockResult<licrypto::Sha256Digest> {
     auto parsed = lito::parse::parse_sha256(value, lito::parse::Sha256TextMode::Canonical);
     if (parsed.is_err()) {
-        return lock_data_failure<lito::crypto::Sha256Digest>(
-            rstd::move(path),
-            "SHA-256 checksum is invalid"_str,
-            rstd::move(parsed).unwrap_err_unchecked());
+        return lock_data_failure<licrypto::Sha256Digest>(rstd::move(path),
+                                                         "SHA-256 checksum is invalid"_str,
+                                                         rstd::move(parsed).unwrap_err_unchecked());
     }
     return Ok(rstd::move(parsed).unwrap_unchecked());
 }

@@ -4,7 +4,7 @@ module;
 export module lito.core:dependency.source;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.system;
 import :source.git;
 import :parse;
@@ -17,16 +17,16 @@ export namespace lito::dependency
 {
 
 struct ExternalArchiveVariant {
-    Architecture               architecture { Architecture::Unknown };
-    lito::parse::FetchUrl      url;
-    lito::crypto::Sha256Digest sha256;
+    Architecture           architecture { Architecture::Unknown };
+    lito::parse::FetchUrl  url;
+    licrypto::Sha256Digest sha256;
 };
 
 class ExternalSourceRequirement {
     RSTD_ENUM(ExternalSourceRequirement,
               (Path, (PathBuf path;)),
               (Git, (String url; lito::source::GitReference reference;)),
-              (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
+              (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)),
               (ArchitectureArchives, (Vec<ExternalArchiveVariant> variants;)))
 
 public:
@@ -57,7 +57,7 @@ class ResolvedExternalSource {
               (Path, (PathBuf path;)),
               (Package, (PathBuf path;)),
               (Git, (String url; lito::source::GitReference reference; String commit;)),
-              (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)))
+              (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)))
 };
 
 struct ResolvedExternalSourceRecord {

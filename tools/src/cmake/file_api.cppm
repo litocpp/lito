@@ -4,7 +4,7 @@ module;
 export module lito.tools.cmake:file_api;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import lito.tools;
 import lito.system;
@@ -604,7 +604,7 @@ auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirem
             .name       = expected.name.clone(),
             .target     = expected.target.clone(),
             .executable = rstd::move(canonical).unwrap(),
-            .digest     = lito::crypto::sha256_hex(bytes->as_slice()),
+            .digest     = licrypto::sha256_hex(bytes->as_slice()),
         });
     }
     if (result.len() != requirement.host_tools.len()) {

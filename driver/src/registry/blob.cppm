@@ -4,7 +4,7 @@ module;
 export module lito.driver:registry.blob;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import lito.core;
 import lito.system;
@@ -165,7 +165,7 @@ auto digest_matches(ref<rstd::path::Path>    path,
                                                    rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
-    auto state  = lito::crypto::Sha256::make();
+    auto state  = licrypto::Sha256::make();
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
@@ -501,7 +501,7 @@ auto lito::registry::registry_package_archive_from_file(ref<rstd::path::Path>   
                 "cannot open Registry blob '{}': {}", path, rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
-    auto state  = lito::crypto::Sha256::make();
+    auto state  = licrypto::Sha256::make();
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());

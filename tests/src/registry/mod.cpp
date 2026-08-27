@@ -1,7 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import rstd.json;
 import rstd.test;
 import lito.core;
@@ -544,7 +544,7 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
     ASSERT_TRUE(changed.is_err());
     EXPECT_EQ(changed.unwrap_err().kind, lito::registry::RegistryIndexErrorKind::Integrity);
 
-    auto registry_key = lito::crypto::sha256_hex("https://registry.example/"_str);
+    auto registry_key = licrypto::sha256_hex("https://registry.example/"_str);
     auto record       = PathBuf::from(owner.path())
                             .join(PathBuf::from("indices"_str).as_path())
                             .join(PathBuf::from(registry_key).as_path())
@@ -567,7 +567,7 @@ TEST(RegistryBlobCache, VerifiesNewBytesAndSharesCompletedContent) {
     auto owner = rstd::move(temporary).unwrap();
     auto bytes = String::make("fixture tar zstd bytes"_str);
     auto checksum =
-        lito::registry::PackageChecksum(lito::crypto::sha256_digest(bytes.as_str().as_bytes()));
+        lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes()));
     auto fixture = BlobTransportFixture { .bytes = bytes.clone() };
     auto primary = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),

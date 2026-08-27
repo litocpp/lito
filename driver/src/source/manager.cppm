@@ -5,7 +5,7 @@ module;
 export module lito.driver:source.manager;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import lito.core;
 import lito.tools;
 import lito.system;
@@ -535,7 +535,7 @@ class SourceManager {
             prefix = String::make("repository"_str);
         }
         prefix.push('-');
-        prefix.push_str(lito::crypto::sha256_hex(url).as_str());
+        prefix.push_str(licrypto::sha256_hex(url).as_str());
         return prefix;
     }
 
@@ -584,7 +584,7 @@ class SourceManager {
     auto fetch(ref<rstd::path::Path> repository, ref<str> url, ref<str> revision)
         -> SourceResult<String> {
         auto local_reference =
-            rstd::format("refs/lito/fetch/{}", lito::crypto::sha256_hex(revision).as_str());
+            rstd::format("refs/lito/fetch/{}", licrypto::sha256_hex(revision).as_str());
         auto source = rstd::format("{}#{}", url, revision);
         auto git    = rstd_try(git_client(url));
         emit_fetch(source.as_str(), repository);

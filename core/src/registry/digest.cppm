@@ -1,7 +1,7 @@
 export module lito.core:registry.digest;
 
 import rstd;
-import lito.crypto;
+import licrypto;
 import :registry.error;
 
 using namespace rstd::prelude;
@@ -11,10 +11,10 @@ export namespace lito::registry
 {
 
 class PackageChecksum : public DefaultInClass<PackageChecksum, Clone> {
-    lito::crypto::Sha256Digest value_;
+    licrypto::Sha256Digest value_;
 
 public:
-    explicit PackageChecksum(lito::crypto::Sha256Digest value): value_(rstd::move(value)) {}
+    explicit PackageChecksum(licrypto::Sha256Digest value): value_(rstd::move(value)) {}
 
     static auto parse(ref<str> value) -> RegistryValueResult<PackageChecksum> {
         if (value.len() != usize(64)) {
@@ -28,7 +28,7 @@ public:
                     "checksum contains a non-canonical hexadecimal byte at {}", index));
             }
         }
-        auto parsed = lito::crypto::Sha256Digest::parse_hex(value);
+        auto parsed = licrypto::Sha256Digest::parse_hex(value);
         if (parsed.is_err()) {
             return registry_value_failure<PackageChecksum>(
                 "checksum must contain exactly 64 lowercase hexadecimal digits"_str);
@@ -36,7 +36,7 @@ public:
         return Ok(PackageChecksum(rstd::move(parsed).unwrap()));
     }
 
-    auto digest() const noexcept -> const lito::crypto::Sha256Digest& { return value_; }
+    auto digest() const noexcept -> const licrypto::Sha256Digest& { return value_; }
     auto text() const -> String { return value_.to_hex(); }
     auto clone() const -> PackageChecksum { return PackageChecksum(value_.clone()); }
 

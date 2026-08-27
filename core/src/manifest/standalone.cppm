@@ -234,7 +234,7 @@ auto portable_relative_path(const PackageManifest& manifest,
     return Ok(String::make(portable->as_str()));
 }
 
-auto sha256_text(const lito::crypto::Sha256Digest& digest) -> String {
+auto sha256_text(const licrypto::Sha256Digest& digest) -> String {
     return rstd::format("sha256:{}", digest.to_hex());
 }
 
