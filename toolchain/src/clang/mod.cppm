@@ -9,3 +9,4 @@ export import :toolchain;
 export import :sdk;
 export import :sdk_catalog;
 export import :standard_library_module;
+export import :target;

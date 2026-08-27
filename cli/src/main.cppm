@@ -90,9 +90,16 @@ auto render_build_setup(const lito::BuildSetupReport& report) -> String {
                                lito::linker_family_name(report.toolchain.linker_family),
                                linker_version,
                                tool_resolution_text(report.toolchain.ar).as_str());
-    result.push_str(rstd::format("  Target\n    host           {}\n    effective      {}\n",
+    result.push_str(rstd::format("  Target\n"
+                                 "    host           {}\n"
+                                 "    effective      {} ({})\n"
+                                 "    stdlib         {}\n"
+                                 "    backends       {}\n",
                                  report.target.host.as_str(),
-                                 report.target.effective.as_str())
+                                 report.target.effective.as_str(),
+                                 report.target.source.as_str(),
+                                 report.target.standard_library.as_str(),
+                                 report.target.supported_targets.as_str())
                         .as_str());
     if (report.target.android_abi.is_some()) {
         result.push_str(rstd::format("    Android ABI    {}\n    minimum API    {}\n",

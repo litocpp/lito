@@ -17,7 +17,7 @@ export namespace lito::dependency
 {
 
 struct ExternalArchiveVariant {
-    Architecture               architecture;
+    Architecture               architecture { Architecture::Unknown };
     lito::parse::FetchUrl      url;
     lito::crypto::Sha256Digest sha256;
 };
@@ -43,7 +43,7 @@ public:
             Vec<ExternalArchiveVariant>::with_capacity(as_ArchitectureArchives().variants.len());
         for (const auto& variant : as_ArchitectureArchives().variants) {
             variants.push(ExternalArchiveVariant {
-                .architecture = variant.architecture.clone(),
+                .architecture = variant.architecture,
                 .url          = variant.url.clone(),
                 .sha256       = variant.sha256.clone(),
             });

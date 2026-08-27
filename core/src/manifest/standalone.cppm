@@ -5,6 +5,7 @@ export module lito.core:manifest.standalone;
 
 import rstd;
 import rstd.toml;
+import lito.system;
 import :manifest.document;
 import :manifest.error;
 import :manifest.package;
@@ -274,7 +275,7 @@ auto external_source_table(const PackageManifest&                  manifest,
             entry.insert(String::make("archive"_str), string_value(variant.url.as_str()));
             entry.insert(String::make("sha256"_str),
                          string_value(sha256_text(variant.sha256).as_str()));
-            archives.insert(String::make(variant.architecture.as_str()),
+            archives.insert(String::make(architecture_name(variant.architecture)),
                             Toml::Table(rstd::move(entry)));
         }
         table.insert(String::make("archives"_str), Toml::Table(rstd::move(archives)));

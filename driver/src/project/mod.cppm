@@ -508,10 +508,21 @@ auto resolve_build_context(const lito::config::ProjectBuildOptions& options,
         platform = prepared_platform->clone();
     } else {
         auto host = rstd_try(detect_host_info());
-        platform  = rstd_try(resolve_build_platform(
+        if (cpp_target.target.is_some() && cpp_target.target->value != toolchain.target()) {
+            return Err(ProjectError::Message(rstd::format(
+                "C++ target '{}' from {} conflicts with the toolchain compile target '{}'; "
+                "configure toolchain.os and toolchain.arch instead",
+                cpp_target.target->value,
+                cpp_target.target->source,
+                toolchain.target())));
+        }
+        const auto explicit_target =
+            toolchain.compile_target().source != CompileTargetSource::CompilerDefault ||
+            cpp_target.target.is_some();
+        platform = rstd_try(resolve_build_platform(
             host,
             toolchain.target_info(),
-            cpp_target.target.is_some() ? Some(cpp_target.target->value) : Option<ref<str>> {},
+            explicit_target ? Some(toolchain.target()) : Option<ref<str>> {},
             cpp_target.sysroot.is_some() ? Some(cpp_target.sysroot->value) : Option<ref<str>> {}));
     }
     if (c_target.target.is_some() &&
@@ -911,8 +922,13 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     if (selected.android.is_some()) {
         target_stripper = Some(selected.android->distribution.paths().strip.clone());
     }
-    auto created =
-        ClangToolchain::create(selected.tools.clone(), configuration.standard_library, environment);
+    auto created = selected.android.is_some()
+                       ? ClangToolchain::create_for_target(selected.tools.clone(),
+                                                           configuration.standard_library,
+                                                           selected.android->target.target_info,
+                                                           environment)
+                       : ClangToolchain::create(
+                             selected.tools.clone(), configuration.standard_library, environment);
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
@@ -932,15 +948,10 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
                                          toolchain,
                                          platform.is_some() ? rstd::addressof(*platform) : nullptr);
     if (context.is_err()) return Err(rstd::move(context).unwrap_err());
-    auto standard_library = resolve_standard_library_selection(configuration.standard_library,
-                                                               context->platform.effective_target);
-    if (standard_library.is_err()) {
-        return Err(rstd::into<ProjectError>(rstd::move(standard_library).unwrap_err()));
-    }
     auto resolved_request       = configuration.clone();
     resolved_request.toolchain  = selected.tools.clone();
     auto resolved_configuration = config::resolve_build_configuration(
-        rstd::move(resolved_request), rstd::move(standard_library).unwrap());
+        rstd::move(resolved_request), toolchain.compile_target().standard_library);
     auto session = resolve_project_session(
         selection,
         sources,

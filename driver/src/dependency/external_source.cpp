@@ -130,7 +130,7 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
         for (const auto& tool : package.manifest.build_tools) {
             for (const auto& archive : tool.archives) {
                 auto architectures = Vec<Architecture>::make();
-                architectures.push(archive.host.architecture.clone());
+                architectures.push(Architecture(archive.host.architecture));
                 package.externals.push(lito::dependency::ResolvedExternalSourceRecord {
                     .name = rstd::format(
                         "build-tool:{}:{}", tool.alias.as_str(), archive.host.os.as_str()),
@@ -160,7 +160,7 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
             if (declaration.source.is_ArchitectureArchives()) {
                 for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
                     auto architectures = Vec<Architecture>::make();
-                    architectures.push(variant.architecture.clone());
+                    architectures.push(Architecture(variant.architecture));
                     make_record(lito::dependency::ResolvedExternalSource::Archive(
                                     variant.url.clone(), variant.sha256.clone()),
                                 rstd::move(architectures));

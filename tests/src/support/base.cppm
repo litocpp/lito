@@ -46,28 +46,24 @@ auto configuration() -> lito::cpp::BuildConfiguration {
     auto resolver = lito::tools::ToolResolver(environment);
     auto compiler =
         resolver.resolve(PathBuf::from("clang++"_str).as_path(), "clang++"_str).unwrap().executable;
-#if defined(_WIN32)
-    constexpr auto linker_name = "lld-link"_str;
-#else
-    constexpr auto linker_name = "ld.lld"_str;
-#endif
-    auto linker = resolver.resolve(PathBuf::from(linker_name).as_path(), "LLD linker"_str)
-                      .unwrap()
-                      .executable;
     auto archiver =
         resolver.resolve(PathBuf::from("llvm-ar"_str).as_path(), "llvm-ar"_str).unwrap().executable;
+    auto resolved = lito::ClangToolchain::create(
+                        lito::config::ToolchainSpec {
+                            .cxx = rstd::move(compiler),
+                            .ar  = rstd::move(archiver),
+                        },
+                        environment)
+                        .unwrap();
     return lito::cpp::BuildConfiguration {
         .toolchain =
             lito::config::ToolchainSpec {
-                .cxx = rstd::move(compiler),
-                .ld  = rstd::move(linker),
-                .ar  = rstd::move(archiver),
+                .cc  = PathBuf::from(resolved.cc_path()),
+                .cxx = PathBuf::from(resolved.cxx_path()),
+                .ld  = PathBuf::from(resolved.ld_path()),
+                .ar  = PathBuf::from(resolved.ar_path()),
             },
-#if defined(_WIN32)
-        .standard_library = lito::config::StandardLibrary::Msvc,
-#else
-        .standard_library = lito::config::StandardLibrary::Libcxx,
-#endif
+        .standard_library         = resolved.compile_target().standard_library,
         .standard_library_runtime = lito::config::StandardLibraryRuntime::Dynamic,
         .bmi_mode                 = lito::cpp::BmiMode::Reduced,
         .language_standard        = String::make("c++20"_str),

@@ -5,6 +5,7 @@ export module lito.core:lock.document;
 
 import rstd;
 import lito.crypto;
+import lito.system;
 import :source.git;
 import :parse;
 import :registry.archive;
@@ -29,9 +30,9 @@ class LockedSource {
 };
 
 struct LockedPackageExternalSource {
-    String       name;
-    Vec<String>  architectures;
-    LockedSource source;
+    String                          name;
+    Vec<lito::system::Architecture> architectures;
+    LockedSource                    source;
 };
 
 struct LockedPackage {

@@ -511,12 +511,14 @@ auto parse_platforms(ref<str> text, ref<rstd::path::Path> path)
 }
 
 auto host_tag(const lito::system::HostInfo& host) -> AndroidNdkResult<String> {
-    if (host.os.as_str() == "linux"_str && host.architecture.as_str() == "x86_64"_str) {
+    if (host.os.as_str() == "linux"_str &&
+        host.architecture == lito::system::Architecture::X86_64) {
         return Ok(String::make("linux-x86_64"_str));
     }
-    return android_failure<String>(rstd::format("Android NDK is not certified for host '{}-{}'",
-                                                host.os.as_str(),
-                                                host.architecture.as_str()));
+    return android_failure<String>(
+        rstd::format("Android NDK is not certified for host '{}-{}'",
+                     host.os.as_str(),
+                     lito::system::architecture_name(host.architecture)));
 }
 
 auto official_clang_prefix(ref<str> abi) -> Option<ref<str>> {

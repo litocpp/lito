@@ -61,7 +61,7 @@ auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         
                      owned.requirement.alias.as_str(),
                      owned.requirement.version.as_str(),
                      host.os.as_str(),
-                     host.architecture.name.as_str(),
+                     architecture_name(host.architecture),
                      archive.url.as_str(),
                      archive.sha256,
                      owned.requirement.executable.as_path(),
@@ -99,7 +99,7 @@ auto host_tool_receipt_matches(ref<rstd::path::Path>                           r
               matches("alias"_str, owned.requirement.alias.as_str()) &&
               matches("declared_version"_str, owned.requirement.version.as_str()) &&
               matches("host_os"_str, host.os.as_str()) &&
-              matches("host_architecture"_str, host.architecture.name.as_str()) &&
+              matches("host_architecture"_str, architecture_name(host.architecture)) &&
               matches("url"_str, archive.url.as_str()) &&
               matches("archive_sha256"_str, archive.sha256.to_hex().as_str()) &&
               matches("executable"_str,
@@ -127,7 +127,7 @@ auto write_host_tool_receipt(ref<rstd::path::Path>                           rec
                     Json::String(owned.requirement.version.clone()));
     document.insert(String::make("host_os"_str), Json::String(host.os.clone()));
     document.insert(String::make("host_architecture"_str),
-                    Json::String(host.architecture.name.clone()));
+                    Json::String(String::make(architecture_name(host.architecture))));
     document.insert(String::make("url"_str), Json::String(String::make(archive.url.as_str())));
     document.insert(String::make("archive_sha256"_str), Json::String(archive.sha256.to_hex()));
     document.insert(String::make("executable"_str),
@@ -172,8 +172,10 @@ auto select_host_build_tool_archive(const lito::manifest::BuildToolRequirement& 
                 rstd::addressof(archive)));
         }
     }
-    return Err(HostBuildToolError::UnsupportedHost(
-        requirement.alias.clone(), host.os.clone(), host.architecture.name.clone()));
+    return Err(
+        HostBuildToolError::UnsupportedHost(requirement.alias.clone(),
+                                            host.os.clone(),
+                                            String::make(architecture_name(host.architecture))));
 }
 
 struct ResolvedHostBuildTool {
@@ -295,7 +297,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                          requirement.alias.as_str(),
                          requirement.version.as_str(),
                          host.os.as_str(),
-                         host.architecture.name.as_str(),
+                         architecture_name(host.architecture),
                          archive.url.as_str(),
                          archive.sha256,
                          requirement.executable.as_path(),

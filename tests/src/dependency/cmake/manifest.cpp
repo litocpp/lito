@@ -467,9 +467,9 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     ASSERT_TRUE(source.is_ArchitectureArchives());
     const auto& variants = source.as_ArchitectureArchives().variants;
     ASSERT_EQ(variants.len(), usize(2));
-    EXPECT_EQ(variants[usize {}].architecture.as_str(), "aarch64"_str);
+    EXPECT_EQ(variants[usize {}].architecture, lito::system::Architecture::Aarch64);
     EXPECT_EQ(variants[usize {}].url.as_str(), "https://example.com/fixture-linuxarm64.tar.gz"_str);
-    EXPECT_EQ(variants[usize(1)].architecture.as_str(), "x86_64"_str);
+    EXPECT_EQ(variants[usize(1)].architecture, lito::system::Architecture::X86_64);
     EXPECT_EQ(variants[usize(1)].sha256.to_hex().as_str(),
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str);
 }
@@ -525,14 +525,14 @@ archives = { x86_64 = { archive = "https://example.com/fixture-linux64.tar.gz", 
 TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto variants = Vec<lito::dependency::ExternalArchiveVariant>::make();
     variants.push(lito::dependency::ExternalArchiveVariant {
-        .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
+        .architecture = lito::system::Architecture::Aarch64,
         .url    = lito::parse::FetchUrl::parse("https://example.com/arm64.tar.gz"_str).unwrap(),
         .sha256 = lito::crypto::Sha256Digest::parse_hex(
                       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str)
                       .unwrap(),
     });
     variants.push(lito::dependency::ExternalArchiveVariant {
-        .architecture = lito::system::Architecture { .name = String::make("x86_64"_str) },
+        .architecture = lito::system::Architecture::X86_64,
         .url          = lito::parse::FetchUrl::parse("https://example.com/x64.tar.gz"_str).unwrap(),
         .sha256       = lito::crypto::Sha256Digest::parse_hex(
                             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
@@ -668,14 +668,14 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
 TEST_F(CMakeManifest, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
     auto compiler_default = pkg_config_target();
     auto host             = lito::system::HostInfo {
-        .architecture = compiler_default.architecture.clone(),
+        .architecture = compiler_default.architecture,
         .os           = compiler_default.os.clone(),
     };
     auto native = lito::system::resolve_build_platform(host, compiler_default, None());
     ASSERT_TRUE(native.is_ok());
     EXPECT_EQ(native->intent, lito::system::BuildTargetIntent::Native);
     EXPECT_FALSE(native->cross);
-    EXPECT_EQ(native->effective_target.architecture.as_str(), "x86_64"_str);
+    EXPECT_EQ(native->effective_target.architecture, lito::system::Architecture::X86_64);
 
     auto arm_default = lito::system::parse_target_info("aarch64-unknown-linux-gnu"_str);
     ASSERT_TRUE(arm_default.is_ok());
@@ -691,7 +691,7 @@ TEST_F(CMakeManifest, BuildPlatformMakesNativeAndExplicitTargetIntentObservable)
     ASSERT_TRUE(explicit_cross.is_ok());
     EXPECT_EQ(explicit_cross->intent, lito::system::BuildTargetIntent::ExplicitTarget);
     EXPECT_TRUE(explicit_cross->cross);
-    EXPECT_EQ(explicit_cross->effective_target.architecture.as_str(), "aarch64"_str);
+    EXPECT_EQ(explicit_cross->effective_target.architecture, lito::system::Architecture::Aarch64);
 }
 
 TEST_F(CMakeManifest, CMakeManifestAcceptsUnnamespacedTargets) {

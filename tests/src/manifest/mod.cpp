@@ -1281,8 +1281,8 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
     auto has_aarch64 = false;
     for (const auto& archive : tool.archives) {
         EXPECT_EQ(archive.host.os.as_str(), "linux"_str);
-        if (archive.host.architecture.as_str() == "x86_64"_str) has_x86_64 = true;
-        if (archive.host.architecture.as_str() == "aarch64"_str) has_aarch64 = true;
+        if (archive.host.architecture == lito::system::Architecture::X86_64) has_x86_64 = true;
+        if (archive.host.architecture == lito::system::Architecture::Aarch64) has_aarch64 = true;
     }
     EXPECT_TRUE(has_x86_64);
     EXPECT_TRUE(has_aarch64);
@@ -1298,19 +1298,19 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
     auto selected = lito::select_host_build_tool_archive(
         tool,
         lito::system::HostInfo {
-            .architecture = lito::system::canonical_architecture("aarch64"_str).unwrap(),
+            .architecture = lito::system::Architecture::Aarch64,
             .os           = String::make("linux"_str),
         });
     ASSERT_TRUE(selected.is_ok());
     EXPECT_EQ((**selected).sha256.to_hex().as_str(),
               "1111111111111111111111111111111111111111111111111111111111111111"_str);
 
-    auto unsupported = lito::select_host_build_tool_archive(
-        tool,
-        lito::system::HostInfo {
-            .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
-            .os           = String::make("windows"_str),
-        });
+    auto unsupported =
+        lito::select_host_build_tool_archive(tool,
+                                             lito::system::HostInfo {
+                                                 .architecture = lito::system::Architecture::X86_64,
+                                                 .os           = String::make("windows"_str),
+                                             });
     ASSERT_TRUE(unsupported.is_err());
     EXPECT_TRUE(unsupported.unwrap_err().is_UnsupportedHost());
 }

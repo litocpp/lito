@@ -23,6 +23,8 @@ cc = "custom-cc"
 cxx = "custom-cxx"
 ld = "lld"
 ar = "custom-ar"
+os = "windows"
+arch = "x86_64"
 stdlib = "libstdc++"
 stdlib-runtime = "dynamic"
 
@@ -170,6 +172,10 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(loaded->tools.git.as_path(), PathBuf::from("custom-git"_str).as_path());
     EXPECT_EQ(loaded->tools.pkg_config.as_path(), PathBuf::from("custom-pkg-config"_str).as_path());
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
+    ASSERT_TRUE(loaded->toolchain.target.is_Config());
+    EXPECT_EQ(loaded->toolchain.target.as_Config().os, OperatingSystem::Windows);
+    EXPECT_EQ(loaded->toolchain.target.as_Config().architecture,
+              lito::system::Architecture::X86_64);
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Cargo));
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
@@ -211,6 +217,38 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_TRUE(error_chain_text(unsupported.unwrap_err())
                     .as_str()
                     .contains("must be 'lld' or an absolute path to LLD"_str));
+}
+
+TEST_F(Config, ToolchainOperatingSystemAndArchitectureAreConfiguredTogether) {
+    struct ConfigCase {
+        ref<str> name;
+        ref<str> contents;
+        ref<str> expected;
+    };
+    constexpr ConfigCase cases[] = {
+        { "missing-arch"_str,
+          "[toolchain]\nos = \"linux\"\n"_str,
+          "must be configured together with toolchain.os at $.toolchain.arch"_str },
+        { "missing-os"_str,
+          "[toolchain]\narch = \"x86_64\"\n"_str,
+          "must be configured together with toolchain.arch at $.toolchain.os"_str },
+        { "invalid-os"_str,
+          "[toolchain]\nos = \"plan9\"\narch = \"x86_64\"\n"_str,
+          "must be one of 'linux', 'android', 'macos', 'windows', 'freebsd', 'netbsd', 'openbsd' "
+          "at "
+          "$.toolchain.os"_str },
+        { "architecture-alias"_str,
+          "[toolchain]\nos = \"linux\"\narch = \"amd64\"\n"_str,
+          "is not a canonical Clang architecture name"_str },
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.name);
+        auto project = config(item.name, item.contents);
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::config::load_project_config(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        EXPECT_TRUE(error_chain_text(loaded.unwrap_err()).as_str().contains(item.expected));
+    }
 }
 
 TEST_F(Config, AndroidTargetAndSdkSelectionAreTyped) {
@@ -732,6 +770,8 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     auto overrides = Vec<String>::make();
     overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
     overrides.push(String::make("toolchain.cc=generic-cc"_str));
+    overrides.push(String::make("toolchain.os=linux"_str));
+    overrides.push(String::make("toolchain.arch=x86_64"_str));
     overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
     overrides.push(String::make("toolchain.stdlib-runtime=dynamic"_str));
     overrides.push(String::make("build.options=[\"-pthread\"]"_str));
@@ -749,6 +789,10 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("generic-cxx"_str).as_path());
+    ASSERT_TRUE(loaded->toolchain.target.is_Config());
+    EXPECT_EQ(loaded->toolchain.target.as_Config().os, OperatingSystem::Linux);
+    EXPECT_EQ(loaded->toolchain.target.as_Config().architecture,
+              lito::system::Architecture::X86_64);
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
     EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
     ASSERT_EQ(loaded->build_options.cpp.len(), usize(1));
@@ -791,6 +835,16 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
                                               .overrides = rstd::move(invalid_standard_library),
                                           });
     EXPECT_TRUE(invalid.is_err());
+
+    auto incomplete_target = Vec<String>::make();
+    incomplete_target.push(String::make("toolchain.os=linux"_str));
+    auto incomplete =
+        lito::config::load_project_config(directory.as_path(),
+                                          lito::config::ProjectConfigRequest {
+                                              .mode = lito::config::ConfigLoadMode::LocalDisabled,
+                                              .overrides = rstd::move(incomplete_target),
+                                          });
+    EXPECT_TRUE(incomplete.is_err());
 
     auto msvc_standard_library = Vec<String>::make();
     msvc_standard_library.push(String::make("toolchain.stdlib=msvc"_str));

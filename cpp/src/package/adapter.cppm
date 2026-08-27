@@ -37,10 +37,11 @@ auto make_package_condition_context(const lito::package::ResolvedPackage& packag
     context.set_string(String::make("target.environment"_str),
                        String::make(platform.effective_target.environment_name()));
     context.set_string(String::make("target.arch"_str),
-                       platform.effective_target.architecture.name.clone());
+                       String::make(architecture_name(platform.effective_target.architecture)));
     context.set_string(String::make("target.triple"_str), platform.effective_target.triple.clone());
     context.set_string(String::make("host.os"_str), platform.host.os.clone());
-    context.set_string(String::make("host.arch"_str), platform.host.architecture.name.clone());
+    context.set_string(String::make("host.arch"_str),
+                       String::make(architecture_name(platform.host.architecture)));
     context.set_bool(String::make("build.cross"_str), platform.cross);
     context.set_string(String::make("profile.name"_str), profile.name.clone());
     context.set_string(String::make("toolchain.compiler"_str), String::make("clang"_str));

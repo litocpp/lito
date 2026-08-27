@@ -5,6 +5,7 @@ export module lito.core:lock.flatpak;
 
 import rstd;
 import rstd.json;
+import lito.system;
 import :lock;
 import :lock.config;
 import :lock.document;
@@ -12,6 +13,7 @@ import :source.fetch;
 import :source.seed;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 using Json  = rstd::json::Value;
@@ -79,7 +81,7 @@ auto public_http_url(ref<str> value) -> bool {
 
 struct FlatpakCandidate {
     lito::source::FetchIdentity identity;
-    Vec<String>                 architectures;
+    Vec<Architecture>           architectures;
     Vec<String>                 owners;
     bool                        all_architectures { false };
 };
@@ -93,7 +95,7 @@ auto candidate_owners(const FlatpakCandidate& candidate) -> String {
     return result;
 }
 
-auto merge_architectures(FlatpakCandidate& candidate, const Vec<String>& architectures)
+auto merge_architectures(FlatpakCandidate& candidate, const Vec<Architecture>& architectures)
     -> LockResult<empty> {
     if (architectures.is_empty()) {
         candidate.all_architectures = true;
@@ -102,18 +104,18 @@ auto merge_architectures(FlatpakCandidate& candidate, const Vec<String>& archite
     }
     if (candidate.all_architectures) return Ok(empty {});
     for (const auto& architecture : architectures) {
-        if (architecture.as_str() != "x86_64"_str && architecture.as_str() != "aarch64"_str) {
+        if (architecture != Architecture::X86_64 && architecture != Architecture::Aarch64) {
             auto owners = candidate_owners(candidate);
             return flatpak_failure<empty>(
                 rstd::format("Flatpak source export does not support architecture '{}' for {}",
-                             architecture.as_str(),
+                             architecture_name(architecture),
                              owners.as_str()));
         }
         auto duplicate = false;
         for (const auto& current : candidate.architectures) {
             if (current == architecture) duplicate = true;
         }
-        if (! duplicate) candidate.architectures.push(architecture.clone());
+        if (! duplicate) candidate.architectures.push(Architecture(architecture));
     }
     rstd::slice_::sort_unstable(candidate.architectures.as_mut_slice().as_mut_ref());
     return Ok(empty {});
@@ -121,7 +123,7 @@ auto merge_architectures(FlatpakCandidate& candidate, const Vec<String>& archite
 
 auto add_candidate(rstd::collections::BTreeMap<String, FlatpakCandidate>& candidates,
                    lito::source::FetchIdentity                            identity,
-                   const Vec<String>&                                     architectures,
+                   const Vec<Architecture>&                               architectures,
                    String owner) -> LockResult<empty> {
     auto key      = lito::source::fetch_identity_text(identity);
     auto existing = candidates.get_mut(key.as_str());
@@ -147,7 +149,7 @@ auto architecture_json(const FlatpakCandidate& candidate) -> Option<Json> {
     if (candidate.all_architectures || candidate.architectures.is_empty()) return None();
     auto architectures = Array::make();
     for (const auto& architecture : candidate.architectures) {
-        architectures.push(flatpak_string(architecture.as_str()));
+        architectures.push(flatpak_string(architecture_name(architecture)));
     }
     return Some(Json::Array(rstd::move(architectures)));
 }
@@ -158,7 +160,7 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         const auto& package = project.packages[index];
         if (package.source.is_some() && package.source->is_Git()) {
             const auto& source        = package.source->as_Git();
-            auto        architectures = Vec<String>::make();
+            auto        architectures = Vec<Architecture>::make();
             rstd_try(add_candidate(
                 candidates,
                 lito::source::git_fetch_identity(source.url.as_str(), source.commit.as_str()),

@@ -30,7 +30,7 @@ auto installed_descriptor_with_files(ref<str>                      version,
     auto host_value = JsonMap::make();
     host_value.insert(String::make("os"_str), store_json_string(host.os.as_str()));
     host_value.insert(String::make("architecture"_str),
-                      store_json_string(host.architecture.as_str()));
+                      store_json_string(lito::system::architecture_name(host.architecture)));
 
     auto archive = JsonMap::make();
     archive.insert(String::make("url"_str),

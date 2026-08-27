@@ -37,15 +37,15 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
         .source       = None(),
         .dependencies = Vec<String>::make(),
     });
-    auto x86_architectures = Vec<String>::make();
-    x86_architectures.push(String::make("x86_64"_str));
+    auto x86_architectures = Vec<Architecture>::make();
+    x86_architectures.push(Architecture::X86_64);
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
         .name          = String::make("shared-x86"_str),
         .architectures = rstd::move(x86_architectures),
         .source        = lito::lock::LockedSource::Git(String::make(git_url), String::make(commit)),
     });
-    auto arm_architectures = Vec<String>::make();
-    arm_architectures.push(String::make("aarch64"_str));
+    auto arm_architectures = Vec<Architecture>::make();
+    arm_architectures.push(Architecture::Aarch64);
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
         .name          = String::make("shared-arm"_str),
         .architectures = rstd::move(arm_architectures),
@@ -53,7 +53,7 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     });
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
         .name          = String::make("archive"_str),
-        .architectures = Vec<String>::make(),
+        .architectures = Vec<Architecture>::make(),
         .source        = lito::lock::LockedSource::Archive(
             lito::parse::FetchUrl::parse("https://example.invalid/archive.tar.gz"_str).unwrap(),
             lito::crypto::Sha256Digest::parse_hex(

@@ -86,7 +86,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
                 source_declaration.as_ArchitectureArchives().variants.len());
             for (const auto& variant : source_declaration.as_ArchitectureArchives().variants) {
                 variants.push(lito::dependency::ExternalArchiveVariant {
-                    .architecture = variant.architecture.clone(),
+                    .architecture = variant.architecture,
                     .url          = variant.url.clone(),
                     .sha256       = variant.sha256.clone(),
                 });
@@ -368,7 +368,7 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         auto                                            available = String::make();
         for (const auto& variant : requirement.source.as_ArchitectureArchives().variants) {
             if (! available.is_empty()) available.push_str(", "_str);
-            available.push_str(variant.architecture.as_str());
+            available.push_str(architecture_name(variant.architecture));
             if (variant.architecture == platform.effective_target.architecture) {
                 selected = rstd::addressof(variant);
             }
@@ -380,7 +380,7 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
                     "available architectures: {}",
                     requirement.alias.as_str(),
                     platform.effective_target.triple.as_str(),
-                    platform.effective_target.architecture.as_str(),
+                    architecture_name(platform.effective_target.architecture),
                     available.as_str()));
         }
         source =

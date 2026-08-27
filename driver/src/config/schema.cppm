@@ -419,6 +419,33 @@ auto default_toolchain() -> ToolchainSpec {
     };
 }
 
+auto configured_toolchain_target(const lito::config::wire::Toolchain& value,
+                                 const rstd::serde::DataPath&         root)
+    -> ConfigResult<Option<ToolchainTargetSelection>> {
+    if (value.os.is_none() && value.arch.is_none()) return Ok(None());
+    if (value.os.is_none()) {
+        return config_data_failure<Option<ToolchainTargetSelection>>(
+            root.with_field("os"_str), "must be configured together with toolchain.arch"_str);
+    }
+    if (value.arch.is_none()) {
+        return config_data_failure<Option<ToolchainTargetSelection>>(
+            root.with_field("arch"_str), "must be configured together with toolchain.os"_str);
+    }
+    auto os = parse_operating_system(value.os->as_str());
+    if (os.is_none()) {
+        return config_data_failure<Option<ToolchainTargetSelection>>(
+            root.with_field("os"_str),
+            rstd::format("must be one of {}", operating_system_choices().as_str()));
+    }
+    auto architecture = require_architecture(value.arch->as_str());
+    if (architecture.is_err()) {
+        auto error = rstd::move(architecture).unwrap_err();
+        return config_data_failure<Option<ToolchainTargetSelection>>(root.with_field("arch"_str),
+                                                                     error.message());
+    }
+    return Ok(Some(ToolchainTargetSelection::Config(*os, rstd::move(architecture).unwrap())));
+}
+
 auto configured_toolchain(const Option<lito::config::wire::Toolchain>& value,
                           ToolchainSpec toolchain) -> ConfigResult<ToolchainSpec> {
     if (value.is_none()) return Ok(rstd::move(toolchain));
@@ -426,11 +453,12 @@ auto configured_toolchain(const Option<lito::config::wire::Toolchain>& value,
     return Ok(apply_toolchain_override(
         rstd::move(toolchain),
         ToolchainOverride {
-            .cc  = rstd_try(configured_tool_override(value->cc, root.with_field("cc"_str))),
-            .cxx = rstd_try(configured_tool_override(value->cxx, root.with_field("cxx"_str))),
-            .ld  = rstd_try(configured_linker_override(value->ld, root.with_field("ld"_str))),
-            .ar  = rstd_try(configured_tool_override(value->ar, root.with_field("ar"_str))),
-            .sdk = rstd_try(configured_toolchain_sdk(value->sdk)),
+            .cc     = rstd_try(configured_tool_override(value->cc, root.with_field("cc"_str))),
+            .cxx    = rstd_try(configured_tool_override(value->cxx, root.with_field("cxx"_str))),
+            .ld     = rstd_try(configured_linker_override(value->ld, root.with_field("ld"_str))),
+            .ar     = rstd_try(configured_tool_override(value->ar, root.with_field("ar"_str))),
+            .sdk    = rstd_try(configured_toolchain_sdk(value->sdk)),
+            .target = rstd_try(configured_toolchain_target(*value, root)),
         }));
 }
 

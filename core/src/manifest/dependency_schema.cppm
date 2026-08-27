@@ -254,17 +254,10 @@ auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
             rstd_try(lito::parse::toml::required_fetch_url(**entry, "archive"_str, entry_path));
         auto parsed_sha   = rstd_try(lito::parse::toml::required_sha256(
             **entry, "sha256"_str, entry_path, lito::parse::Sha256TextMode::Flexible));
-        auto architecture = canonical_architecture(name.as_str());
+        auto architecture = require_architecture(name.as_str());
         if (architecture.is_err()) {
             return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str()));
-        }
-        if (architecture->as_str() != name.as_str()) {
-            return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
-                rstd::format("{}.archives architecture '{}' is not canonical; use '{}'",
-                             context,
-                             name.as_str(),
-                             architecture->as_str()));
         }
         variants.push(lito::dependency::ExternalArchiveVariant {
             .architecture = rstd::move(architecture).unwrap(),
@@ -275,7 +268,7 @@ auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
     rstd::slice_::sort_unstable_by(variants.as_mut_slice().as_mut_ref(),
                                    [](const lito::dependency::ExternalArchiveVariant& left,
                                       const lito::dependency::ExternalArchiveVariant& right) {
-                                       return left.architecture.name < right.architecture.name;
+                                       return left.architecture < right.architecture;
                                    });
     return Ok(Some(rstd::move(variants)));
 }

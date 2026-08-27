@@ -146,9 +146,7 @@ auto append_typed_options(Vec<String>&                  command,
                           const cpp::CppCompileOptions& options,
                           const TargetInfo&             target,
                           bool                          semantic_only) -> void {
-    if (options.common.target.target.is_some()) {
-        command.push(rstd::format("--target={}", options.common.target.target->as_str()));
-    }
+    command.push(rstd::format("--target={}", target.triple.as_str()));
     if (options.common.target.sysroot.is_some()) {
         command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
     }
@@ -227,9 +225,7 @@ auto append_c_typed_options(Vec<String>&                    command,
                             const lito::c::CCompileOptions& options,
                             const TargetInfo&               target,
                             bool                            semantic_only) -> void {
-    if (options.common.target.target.is_some()) {
-        command.push(rstd::format("--target={}", options.common.target.target->as_str()));
-    }
+    command.push(rstd::format("--target={}", target.triple.as_str()));
     if (options.common.target.sysroot.is_some()) {
         command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
     }

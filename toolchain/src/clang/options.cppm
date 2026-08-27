@@ -15,6 +15,7 @@ inline constexpr auto VERSION             = "--version"_str;
 inline constexpr auto HELP                = "--help"_str;
 inline constexpr auto PRINT_COMPILER_PATH = "-print-prog-name=clang++"_str;
 inline constexpr auto PRINT_TARGET_TRIPLE = "-print-target-triple"_str;
+inline constexpr auto PRINT_TARGETS       = "--print-targets"_str;
 inline constexpr auto PRINT_RESOURCE_DIR  = "-print-resource-dir"_str;
 
 inline constexpr auto RESOURCE_DIR  = "-resource-dir"_str;

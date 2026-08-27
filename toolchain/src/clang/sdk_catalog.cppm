@@ -292,7 +292,7 @@ auto parse_host(llvm_catalog_wire::Host value, rstd::serde::DataPath path)
         return llvm_catalog_failure<lito::system::HostInfo>(
             path.with_field("os"_str), "host operating system is not canonical"_str);
     }
-    auto canonical = lito::system::canonical_architecture(value.architecture.as_str());
+    auto canonical = lito::system::require_architecture(value.architecture.as_str());
     if (canonical.is_err()) {
         return llvm_catalog_failure<lito::system::HostInfo>(
             path.with_field("architecture"_str),
@@ -300,10 +300,6 @@ auto parse_host(llvm_catalog_wire::Host value, rstd::serde::DataPath path)
             rstd::move(canonical).unwrap_err_unchecked());
     }
     auto parsed_architecture = rstd::move(canonical).unwrap_unchecked();
-    if (parsed_architecture.as_str() != value.architecture.as_str()) {
-        return llvm_catalog_failure<lito::system::HostInfo>(
-            path.with_field("architecture"_str), "host architecture is not canonical"_str);
-    }
     return Ok(lito::system::HostInfo {
         .architecture = rstd::move(parsed_architecture),
         .os           = rstd::move(value.os),
@@ -566,8 +562,7 @@ auto parse_release(llvm_catalog_wire::Release          value,
                                    [](const LlvmSdkArtifact& left, const LlvmSdkArtifact& right) {
                                        if (left.host.os != right.host.os.as_str())
                                            return left.host.os < right.host.os;
-                                       return left.host.architecture.name <
-                                              right.host.architecture.name;
+                                       return left.host.architecture < right.host.architecture;
                                    });
     return Ok(LlvmSdkRelease {
         .version      = rstd::move(version),

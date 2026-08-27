@@ -32,13 +32,10 @@ auto has_external_macro(const lito::cpp::CompileContext& context) -> bool {
 
 auto pkg_config_target() -> lito::system::TargetInfo {
     return lito::system::TargetInfo {
-        .triple = String::make("x86_64-unknown-linux-gnu"_str),
-        .architecture =
-            lito::system::Architecture {
-                .name = String::make("x86_64"_str),
-            },
-        .os     = String::make("linux"_str),
-        .family = lito::system::TargetFamily::Unix,
+        .triple       = String::make("x86_64-unknown-linux-gnu"_str),
+        .architecture = lito::system::Architecture::X86_64,
+        .os           = String::make("linux"_str),
+        .family       = lito::system::TargetFamily::Unix,
     };
 }
 
@@ -46,7 +43,7 @@ auto native_platform() -> lito::system::BuildPlatform {
     auto target   = pkg_config_target();
     auto resolved = lito::system::resolve_build_platform(
         lito::system::HostInfo {
-            .architecture = target.architecture.clone(),
+            .architecture = target.architecture,
             .os           = target.os.clone(),
         },
         target,
@@ -58,7 +55,7 @@ auto explicit_platform(ref<str> target_triple) -> lito::system::BuildPlatform {
     auto target   = pkg_config_target();
     auto resolved = lito::system::resolve_build_platform(
         lito::system::HostInfo {
-            .architecture = target.architecture.clone(),
+            .architecture = target.architecture,
             .os           = target.os.clone(),
         },
         target,

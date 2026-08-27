@@ -25,19 +25,24 @@ Compiler and archiver fields accept a searchable name or an absolute path:
 - `cxx`, default `clang++`;
 - `ar`, default `llvm-ar`.
 
+`os` and `arch` select the compile target and must be configured together. `arch` uses the
+canonical names returned by LLVM's target triple API, such as `x86_64`, `i386`, and `aarch64`;
+aliases such as `amd64`, `x64`, and `arm64` are rejected. If both fields are omitted, Lito obtains
+the default target from the C++ compiler. Lito always queries the compiler's registered targets and
+rejects a selected architecture without a corresponding backend.
+
 `ld` accepts only `"lld"` (the default) or an absolute path to an LLD executable. Lito resolves
-`"lld"` to `lld-link` for MSVC STL and to `ld.lld` for libc++ or libstdc++, searching the effective
+`"lld"` from the materialized target to `lld-link`, `ld64.lld`, or `ld.lld`, searching the effective
 PATH followed by the C++ and C compiler directories. Every resolved or explicitly configured
 linker is verified with `--version` before use.
 
 `stdlib` accepts `"auto"`, `"libc++"`, `"libstdc++"`, or `"msvc"` and defaults to `"auto"`.
-Automatic selection uses the effective build target after typed target and sysroot options have
-been resolved:
+Automatic selection uses the resolved toolchain operating system before the compile target is
+materialized:
 
 - Android and macOS select libc++;
 - Linux selects libstdc++;
-- Windows with the MSVC environment selects MSVC STL;
-- MinGW and targets without a defined policy require an explicit value.
+- Windows selects MSVC STL.
 
 The build setup reports the resolved library. `auto` is only a configuration selection; compiler,
 BMI, link, and cache identities use the resolved concrete library.
@@ -45,6 +50,8 @@ BMI, link, and cache identities use the resolved concrete library.
 ```toml
 [toolchain]
 cxx = "clang++"
+os = "linux"
+arch = "x86_64"
 stdlib = "auto"
 ```
 

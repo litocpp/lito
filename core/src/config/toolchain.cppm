@@ -4,6 +4,7 @@ module;
 export module lito.core:config.toolchain;
 
 import rstd;
+import lito.system;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -199,30 +200,46 @@ public:
     }
 };
 
+class ToolchainTargetSelection : public DefaultInClass<ToolchainTargetSelection, Clone> {
+    RSTD_ENUM(ToolchainTargetSelection,
+              (CompilerDefault),
+              (Config,
+               (lito::system::OperatingSystem os; lito::system::Architecture architecture;)))
+
+public:
+    auto clone() const -> ToolchainTargetSelection {
+        if (is_CompilerDefault()) return CompilerDefault();
+        return Config(as_Config().os, as_Config().architecture);
+    }
+};
+
 struct ToolchainSpec {
     PathBuf                       cc { PathBuf::from("clang"_str) };
     PathBuf                       cxx;
     PathBuf                       ld { PathBuf::from("lld"_str) };
     PathBuf                       ar;
     Option<ToolchainSdkSelection> sdk;
+    ToolchainTargetSelection      target { ToolchainTargetSelection::CompilerDefault() };
 
     auto clone() const -> ToolchainSpec {
         return ToolchainSpec {
-            .cc  = cc.clone(),
-            .cxx = cxx.clone(),
-            .ld  = ld.clone(),
-            .ar  = ar.clone(),
-            .sdk = as<Clone>(sdk).clone(),
+            .cc     = cc.clone(),
+            .cxx    = cxx.clone(),
+            .ld     = ld.clone(),
+            .ar     = ar.clone(),
+            .sdk    = as<Clone>(sdk).clone(),
+            .target = target.clone(),
         };
     }
 };
 
 struct ToolchainOverride {
-    Option<PathBuf>               cc;
-    Option<PathBuf>               cxx;
-    Option<PathBuf>               ld;
-    Option<PathBuf>               ar;
-    Option<ToolchainSdkSelection> sdk;
+    Option<PathBuf>                  cc;
+    Option<PathBuf>                  cxx;
+    Option<PathBuf>                  ld;
+    Option<PathBuf>                  ar;
+    Option<ToolchainSdkSelection>    sdk;
+    Option<ToolchainTargetSelection> target;
 };
 
 auto apply_toolchain_override(ToolchainSpec specification, ToolchainOverride values)
@@ -232,6 +249,7 @@ auto apply_toolchain_override(ToolchainSpec specification, ToolchainOverride val
     if (values.ld.is_some()) specification.ld = rstd::move(values.ld).unwrap();
     if (values.ar.is_some()) specification.ar = rstd::move(values.ar).unwrap();
     if (values.sdk.is_some()) specification.sdk = Some(rstd::move(values.sdk).unwrap());
+    if (values.target.is_some()) specification.target = rstd::move(values.target).unwrap();
     return specification;
 }
 

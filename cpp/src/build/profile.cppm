@@ -122,10 +122,8 @@ struct ParsedGlobalBuildOptions {
 
 auto apply_build_platform(ProfileSpec& profile, const lito::system::BuildPlatform& platform)
     -> lito::manifest::BuildProfileResult<empty> {
-    auto target = lito::compiler::TargetOptions {};
-    if (platform.intent == lito::system::BuildTargetIntent::ExplicitTarget) {
-        target.target = Some(platform.effective_target.triple.clone());
-    }
+    auto target   = lito::compiler::TargetOptions {};
+    target.target = Some(platform.effective_target.triple.clone());
     if (platform.sysroot.is_some()) {
         auto text = platform.sysroot->as_path().to_str();
         if (text.is_none()) {

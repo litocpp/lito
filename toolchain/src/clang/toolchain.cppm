@@ -17,6 +17,7 @@ import :support;
 import :compile_executor;
 import :strip;
 import :standard_library_module;
+import :target;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -46,6 +47,22 @@ public:
                        lito::config::StandardLibrarySelection standard_library,
                        const ResolvedProcessEnvironment&      environment)
         -> ToolchainResult<ClangToolchain> {
+        return create_impl(specification, standard_library, environment, nullptr);
+    }
+
+    static auto create_for_target(const lito::config::ToolchainSpec&     specification,
+                                  lito::config::StandardLibrarySelection standard_library,
+                                  const TargetInfo&                      target,
+                                  const ResolvedProcessEnvironment&      environment)
+        -> ToolchainResult<ClangToolchain> {
+        return create_impl(specification, standard_library, environment, rstd::addressof(target));
+    }
+
+private:
+    static auto create_impl(const lito::config::ToolchainSpec&     specification,
+                            lito::config::StandardLibrarySelection standard_library,
+                            const ResolvedProcessEnvironment&      environment,
+                            const TargetInfo* requested_target) -> ToolchainResult<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
             return Err(ToolchainError::Cpp(rstd::move(argument_parser).unwrap_err()));
@@ -81,6 +98,7 @@ public:
         auto compiler_command   = Vec<String>::make();
         auto c_compiler_command = Vec<String>::make();
         auto target_command     = Vec<String>::make();
+        auto targets_command    = Vec<String>::make();
         auto resource_command   = Vec<String>::make();
         auto help_command       = Vec<String>::make();
         auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
@@ -89,10 +107,17 @@ public:
         pushed = toolchain::command::push_path(c_compiler_command, c_compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(c_compiler_command, toolchain::clang_options::VERSION);
-        pushed = toolchain::command::push_path(target_command, compiler_path.as_path());
+        const auto query_default_target =
+            requested_target == nullptr && specification.target.is_CompilerDefault();
+        if (query_default_target) {
+            pushed = toolchain::command::push_path(target_command, compiler_path.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            toolchain::command::push_option(target_command,
+                                            toolchain::clang_options::PRINT_TARGET_TRIPLE);
+        }
+        pushed = toolchain::command::push_path(targets_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(target_command,
-                                        toolchain::clang_options::PRINT_TARGET_TRIPLE);
+        toolchain::command::push_option(targets_command, toolchain::clang_options::PRINT_TARGETS);
         pushed = toolchain::command::push_path(resource_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(resource_command,
@@ -106,8 +131,15 @@ public:
         auto c_compiler_version = toolchain::command::tool_output(
             rstd::move(c_compiler_command), "clang --version"_str, environment);
         auto archiver_identity = probe_archiver(archiver_path.as_path(), environment);
-        auto target            = toolchain::command::tool_output(
-            rstd::move(target_command), "clang++ target query"_str, environment);
+        auto supported_output  = toolchain::command::tool_output(
+            rstd::move(targets_command), "clang++ supported target query"_str, environment);
+        auto default_target_output = Option<String> {};
+        if (query_default_target) {
+            auto output = toolchain::command::tool_output(
+                rstd::move(target_command), "clang++ default target query"_str, environment);
+            if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+            default_target_output = Some(rstd::move(output).unwrap());
+        }
         auto resource = toolchain::command::tool_output(
             rstd::move(resource_command), "clang++ resource query"_str, environment);
         auto help = toolchain::command::tool_output(
@@ -117,7 +149,7 @@ public:
             return Err(rstd::move(c_compiler_version).unwrap_err());
         }
         if (archiver_identity.is_err()) return Err(rstd::move(archiver_identity).unwrap_err());
-        if (target.is_err()) return Err(rstd::move(target).unwrap_err());
+        if (supported_output.is_err()) return Err(rstd::move(supported_output).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
@@ -126,9 +158,70 @@ public:
         if (! c_compiler_version->as_str().contains("clang version"_str)) {
             return failure<ClangToolchain>("configured C compiler is not clang"_str);
         }
-        auto target_info = parse_target_info(target->as_str());
-        if (target_info.is_err()) {
-            return Err(ToolchainError::Platform(rstd::move(target_info).unwrap_err()));
+        auto supported_targets = ClangSupportedTargets::parse(supported_output->as_str());
+        if (supported_targets.is_err()) {
+            return Err(rstd::move(supported_targets).unwrap_err());
+        }
+        auto compiler_default = Option<TargetInfo> {};
+        if (default_target_output.is_some()) {
+            auto parsed = parse_target_info(default_target_output->as_str());
+            if (parsed.is_err()) {
+                return Err(ToolchainError::Platform(rstd::move(parsed).unwrap_err()));
+            }
+            compiler_default = Some(rstd::move(parsed).unwrap());
+        }
+        auto compile_target = Option<CompileTarget> {};
+        if (requested_target != nullptr) {
+            if (specification.target.is_Config()) {
+                auto requested_os = target_operating_system(*requested_target);
+                if (requested_os.is_err()) {
+                    return Err(ToolchainError::Platform(rstd::move(requested_os).unwrap_err()));
+                }
+                if (*requested_os != specification.target.as_Config().os ||
+                    requested_target->architecture !=
+                        specification.target.as_Config().architecture) {
+                    return failure<ClangToolchain>(rstd::format(
+                        "configured toolchain target '{}-{}' conflicts with SDK target '{}'",
+                        architecture_name(specification.target.as_Config().architecture),
+                        operating_system_name(specification.target.as_Config().os),
+                        requested_target->triple.as_str()));
+                }
+            }
+            auto os = target_operating_system(*requested_target);
+            if (os.is_err()) {
+                return Err(ToolchainError::Platform(rstd::move(os).unwrap_err()));
+            }
+            auto selected_standard_library =
+                resolve_standard_library_selection(standard_library, *os);
+            if (selected_standard_library.is_err()) {
+                return Err(rstd::move(selected_standard_library).unwrap_err());
+            }
+            auto resolved_target =
+                resolve_sdk_compile_target(*requested_target, *selected_standard_library);
+            if (resolved_target.is_err()) {
+                return Err(rstd::move(resolved_target).unwrap_err());
+            }
+            compile_target = Some(rstd::move(resolved_target).unwrap());
+        } else {
+            auto input = resolve_toolchain_target_input(
+                specification.target,
+                compiler_default.is_some() ? rstd::addressof(*compiler_default) : nullptr);
+            if (input.is_err()) return Err(rstd::move(input).unwrap_err());
+            auto selected_standard_library =
+                resolve_standard_library_selection(standard_library, input->os);
+            if (selected_standard_library.is_err()) {
+                return Err(rstd::move(selected_standard_library).unwrap_err());
+            }
+            auto resolved_target = resolve_compile_target(*input, *selected_standard_library);
+            if (resolved_target.is_err()) {
+                return Err(rstd::move(resolved_target).unwrap_err());
+            }
+            compile_target = Some(rstd::move(resolved_target).unwrap());
+        }
+        auto target_validation = supported_targets->validate(compile_target->info.architecture,
+                                                             compile_target->info.triple.as_str());
+        if (target_validation.is_err()) {
+            return Err(rstd::move(target_validation).unwrap_err());
         }
 
         auto linker_path = Option<PathBuf> {};
@@ -144,31 +237,21 @@ public:
                 return failure<ClangToolchain>(
                     "configured linker must be 'lld' or an absolute path to LLD"_str);
             }
-            auto selected_standard_library =
-                resolve_standard_library_selection(standard_library, *target_info);
-            if (selected_standard_library.is_err()) {
-                return Err(rstd::move(selected_standard_library).unwrap_err());
-            }
-            auto linker_name = lld_executable_name(*selected_standard_library);
-            auto requested   = PathBuf::from(linker_name);
-            auto located     = environment.locate_executable(requested.as_path(), "LLD linker"_str);
+            auto                        linker_name = lld_executable_name(compile_target->info);
+            auto                        requested   = PathBuf::from(linker_name);
+            const ref<rstd::path::Path> compilers[] = { compiler_path.as_path(),
+                                                        c_compiler_path.as_path() };
+            auto located = environment.locate_executable(requested.as_path(), "LLD linker"_str);
             if (located.is_err()) {
                 return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
             }
             linker_path = rstd::move(located).unwrap();
             if (linker_path.is_none()) {
-#if RSTD_OS_WINDOWS
-                auto adjacent_name = PathBuf::from(rstd::format("{}.exe", linker_name).as_str());
-#else
-                auto adjacent_name = requested.clone();
-#endif
-                const ref<rstd::path::Path> compilers[] = { compiler_path.as_path(),
-                                                            c_compiler_path.as_path() };
                 for (auto compiler : compilers) {
                     auto parent = compiler.parent();
                     if (parent.is_none()) continue;
-                    auto candidate = PathBuf::from(*parent).join(adjacent_name.as_path());
-                    located = environment.locate_executable(candidate.as_path(), "LLD linker"_str);
+                    located = environment.locate_executable_in_directory(
+                        *parent, requested.as_path(), "LLD linker"_str);
                     if (located.is_err()) {
                         return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
                     }
@@ -179,10 +262,26 @@ public:
                 }
             }
             if (linker_path.is_none()) {
+                auto       searched         = String::make();
+                const auto append_directory = [&](ref<rstd::path::Path> directory) {
+                    if (! searched.is_empty()) searched.push_str(", "_str);
+                    searched.push_str(rstd::format("'{}'", directory).as_str());
+                };
+                for (const auto& directory : environment.search_directories()) {
+                    append_directory(directory.as_path());
+                }
+                for (auto compiler : compilers) {
+                    auto parent = compiler.parent();
+                    if (parent.is_some()) append_directory(*parent);
+                }
                 return failure<ClangToolchain>(rstd::format(
-                    "cannot resolve LLD linker '{}' from effective PATH or the Clang compiler "
-                    "directories",
-                    linker_name));
+                    "cannot resolve LLD frontend '{}' for target '{}' (architecture '{}', standard "
+                    "library '{}'); searched {}",
+                    linker_name,
+                    compile_target->info.triple.as_str(),
+                    architecture_name(compile_target->info.architecture),
+                    lito::config::standard_library_name(compile_target->standard_library),
+                    searched.is_empty() ? "<no directories>"_str : searched.as_str()));
             }
         }
         auto linker_identity = probe_linker(linker_path->as_path(), environment);
@@ -235,28 +334,33 @@ public:
             return failure<ClangToolchain>(
                 "Clang compiler or resource path is not valid UTF-8"_str);
         }
-        auto build_identity = rstd::format("lito-clang-build-v2\n"
-                                           "cxx:{}\n{}\n{}:{}:{}\n"
-                                           "cc:{}\n{}\n{}:{}:{}\n"
-                                           "target:{}\nresource:{}",
-                                           *compiler_text,
-                                           compiler_version->as_str(),
-                                           compiler_metadata->size(),
-                                           timestamp.seconds,
-                                           timestamp.nanoseconds,
-                                           *c_compiler_text,
-                                           c_compiler_version->as_str(),
-                                           c_compiler_metadata->size(),
-                                           c_timestamp.seconds,
-                                           c_timestamp.nanoseconds,
-                                           target->as_str(),
-                                           *resource_text);
-        auto identity       = CompilerIdentity {
+        auto build_identity =
+            rstd::format("lito-clang-build-v4\n"
+                         "cxx:{}\n{}\n{}:{}:{}\n"
+                         "cc:{}\n{}\n{}:{}:{}\n"
+                         "supported-targets:{}\n"
+                         "target:{}\ntarget-source:{}\nstdlib:{}\nresource:{}",
+                         *compiler_text,
+                         compiler_version->as_str(),
+                         compiler_metadata->size(),
+                         timestamp.seconds,
+                         timestamp.nanoseconds,
+                         *c_compiler_text,
+                         c_compiler_version->as_str(),
+                         c_compiler_metadata->size(),
+                         c_timestamp.seconds,
+                         c_timestamp.nanoseconds,
+                         supported_targets->identity(),
+                         compile_target->info.triple.as_str(),
+                         compile_target_source_name(compile_target->source),
+                         lito::config::standard_library_name(compile_target->standard_library),
+                         *resource_text);
+        auto identity = CompilerIdentity {
             .path                   = compiler_path.clone(),
             .version                = rstd::move(compiler_version).unwrap(),
             .c_path                 = c_compiler_path.clone(),
             .c_version              = rstd::move(c_compiler_version).unwrap(),
-            .target                 = rstd::move(target).unwrap(),
+            .target                 = compile_target->info.triple.clone(),
             .resource_directory     = resolved_resource.clone(),
             .build_identity         = build_identity.clone(),
             .size                   = compiler_metadata->size(),
@@ -293,13 +397,15 @@ public:
                                    rstd::move(archiver_identity).unwrap(),
                                    rstd::move(resolved_resource),
                                    rstd::move(identity),
-                                   rstd::move(target_info).unwrap(),
+                                   rstd::move(compile_target).unwrap(),
+                                   rstd::move(supported_targets).unwrap(),
                                    rstd::move(format),
                                    capabilities,
                                    rstd::move(argument_parser).unwrap(),
                                    environment.clone() });
     }
 
+public:
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
     auto linker_identity() const -> const LinkerIdentity& { return linker_identity_; }
     auto cxx_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
@@ -309,7 +415,9 @@ public:
         return archiver_identity_.executable.as_path();
     }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
-    auto target_info() const -> const TargetInfo& { return target_info_; }
+    auto target_info() const -> const TargetInfo& { return compile_target_.info; }
+    auto compile_target() const -> const CompileTarget& { return compile_target_; }
+    auto supported_targets() const -> const ClangSupportedTargets& { return supported_targets_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
     auto bmi_format() const -> const cpp::BmiFormatIdentity& { return bmi_format_; }
     auto bmi_format(const BuildPlatform& platform) const -> cpp::BmiFormatIdentity {
@@ -428,10 +536,7 @@ public:
         if (! library_stdlib_option.is_empty()) {
             toolchain::command::push_option(library_command, library_stdlib_option);
         }
-        if (options.common.target.target.is_some()) {
-            library_command.push(
-                rstd::format("--target={}", options.common.target.target->as_str()));
-        }
+        library_command.push(rstd::format("--target={}", target.triple.as_str()));
         if (options.common.target.sysroot.is_some()) {
             library_command.push(
                 rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
@@ -1165,9 +1270,7 @@ public:
                                                          ? c_compiler_.as_path()
                                                          : compiler_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        if (context.platform.intent == BuildTargetIntent::ExplicitTarget) {
-            command.push(rstd::format("--target={}", target.triple.as_str()));
-        }
+        command.push(rstd::format("--target={}", target.triple.as_str()));
         if (context.platform.sysroot.is_some()) {
             pushed = toolchain::command::push_path_option(
                 command, "--sysroot="_str, context.platform.sysroot->as_path());
@@ -1277,7 +1380,7 @@ public:
         }
         if (target.family == TargetFamily::Windows) {
             auto runtime_name =
-                rstd::format("clang_rt.builtins-{}.lib", target.architecture.as_str());
+                rstd::format("clang_rt.builtins-{}.lib", architecture_name(target.architecture));
             auto runtime_directory = resource_dir_.join(PathBuf::from("lib/windows"_str).as_path());
             auto runtime = runtime_directory.join(PathBuf::from(runtime_name.as_str()).as_path());
             pushed       = toolchain::command::push_path(command, runtime.as_path());
@@ -1348,10 +1451,11 @@ public:
                 rstd::format("configured {} cannot link ELF shared libraries",
                              linker_family_name(linker_identity_.family)));
         }
-        if (target_info_.family != TargetFamily::Unix || target_info_.os.as_str() == "macos"_str) {
+        if (compile_target_.info.family != TargetFamily::Unix ||
+            compile_target_.info.os.as_str() == "macos"_str) {
             return failure<ElfSharedLibraryArtifact>(rstd::format(
                 "ELF shared-library linking requires a host ELF target; compiler target is '{}'",
-                target_info_.triple.as_str()));
+                compile_target_.info.triple.as_str()));
         }
         if (request.soname.is_empty() || request.soname.as_str().contains("/"_str) ||
             request.soname.as_str().contains("\\"_str)) {
@@ -1385,7 +1489,7 @@ public:
         if (host.is_err()) {
             return Err(ToolchainError::Platform(rstd::move(host).unwrap_err()));
         }
-        auto platform = resolve_build_platform(*host, target_info_, None());
+        auto platform = resolve_build_platform(*host, compile_target_.info, None());
         if (platform.is_err()) {
             return Err(ToolchainError::Platform(rstd::move(platform).unwrap_err()));
         }
@@ -1463,7 +1567,8 @@ private:
                    ArchiverIdentity              archiver_identity,
                    PathBuf                       resource_dir,
                    CompilerIdentity              identity,
-                   TargetInfo                    target_info,
+                   CompileTarget                 compile_target,
+                   ClangSupportedTargets         supported_targets,
                    cpp::BmiFormatIdentity        format,
                    cpp::CppToolchainCapabilities capabilities,
                    cpp::CppArgumentParser        argument_parser,
@@ -1474,7 +1579,8 @@ private:
           archiver_identity_(rstd::move(archiver_identity)),
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
-          target_info_(rstd::move(target_info)),
+          compile_target_(rstd::move(compile_target)),
+          supported_targets_(rstd::move(supported_targets)),
           bmi_format_(rstd::move(format)),
           capabilities_(capabilities),
           argument_parser_(rstd::move(argument_parser)),
@@ -1585,7 +1691,7 @@ private:
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
                                       lito::manifest::c_standard_name(c.standard)));
-            append_c_typed_options(command, c, target_info_, true);
+            append_c_typed_options(command, c, compile_target_.info, true);
             auto key = argument_identity("lito-clang-c-builtin-context-v1"_str, command);
             key.push_ascii('\n');
             key.push_str(compiler_identity_.c_version.as_str());
@@ -1626,9 +1732,9 @@ private:
         command.push(rstd::format(
             "{}{}", toolchain::clang_options::STANDARD, cpp_options.language.standard.as_str()));
         auto stdlib_option = toolchain::clang_options::standard_library(
-            cpp_options.abi.standard_library, target_info_);
+            cpp_options.abi.standard_library, compile_target_.info);
         if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
-        append_typed_options(command, cpp_options, target_info_, true);
+        append_typed_options(command, cpp_options, compile_target_.info, true);
         auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
@@ -1668,7 +1774,7 @@ private:
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
                                       lito::manifest::c_standard_name(c.standard)));
-            append_c_typed_options(command, c, target_info_, semantic_only);
+            append_c_typed_options(command, c, compile_target_.info, semantic_only);
             for (const auto& macro : c.macros) {
                 command.push(rstd::format("{}{}",
                                           macro.action == lito::c::CMacroAction::Define ? "-D"_str
@@ -1696,11 +1802,11 @@ private:
         command.push(rstd::format(
             "{}{}", toolchain::clang_options::STANDARD, cpp_options.language.standard.as_str()));
         auto stdlib_option = toolchain::clang_options::standard_library(
-            cpp_options.abi.standard_library, target_info_);
+            cpp_options.abi.standard_library, compile_target_.info);
         if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
         toolchain::command::push_option(
             command, toolchain::clang_options::bmi(cpp_context.bmi.representation));
-        append_typed_options(command, cpp_options, target_info_, semantic_only);
+        append_typed_options(command, cpp_options, compile_target_.info, semantic_only);
         for (const auto& macro : cpp_options.preprocessor.macros) {
             command.push(
                 rstd::format("{}{}",
@@ -1724,7 +1830,8 @@ private:
     ArchiverIdentity                                              archiver_identity_;
     PathBuf                                                       resource_dir_;
     CompilerIdentity                                              compiler_identity_;
-    TargetInfo                                                    target_info_;
+    CompileTarget                                                 compile_target_;
+    ClangSupportedTargets                                         supported_targets_;
     cpp::BmiFormatIdentity                                        bmi_format_;
     cpp::CppToolchainCapabilities                                 capabilities_;
     cpp::CppArgumentParser                                        argument_parser_;

@@ -167,8 +167,10 @@ struct SdkStoreLayout {
 
     auto staging_area(ref<str> version, const lito::system::HostInfo& host) const -> PathBuf {
         return staging.join(
-            PathBuf::from(
-                rstd::format("{}-{}-{}", version, host.os.as_str(), host.architecture.as_str()))
+            PathBuf::from(rstd::format("{}-{}-{}",
+                                       version,
+                                       host.os.as_str(),
+                                       lito::system::architecture_name(host.architecture)))
                 .as_path());
     }
 };
@@ -191,7 +193,8 @@ auto sdk_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::er
 }
 
 auto host_text(const lito::system::HostInfo& host) -> String {
-    return rstd::format("{}-{}", host.os.as_str(), host.architecture.as_str());
+    return rstd::format(
+        "{}-{}", host.os.as_str(), lito::system::architecture_name(host.architecture));
 }
 
 auto canonical_sdk_version(ref<str> value) -> lito::SdkResult<lito::LlvmVersion> {
@@ -377,7 +380,7 @@ auto descriptor_json(const InstalledSdkDescriptor& descriptor) -> Json {
     auto host = JsonMap::make();
     host.insert(String::make("os"_str), json_string(descriptor.host.os.as_str()));
     host.insert(String::make("architecture"_str),
-                json_string(descriptor.host.architecture.as_str()));
+                json_string(lito::system::architecture_name(descriptor.host.architecture)));
 
     auto archive = JsonMap::make();
     archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
@@ -553,9 +556,8 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
     }
     auto architecture_text = rstd_try(
         sdk_required_string(*host_value, "architecture"_str, "LLVM SDK descriptor host"_str));
-    auto architecture = lito::system::canonical_architecture(architecture_text.as_str());
-    if (architecture.is_err() ||
-        (architecture.is_ok() && architecture->as_str() != architecture_text.as_str())) {
+    auto architecture = lito::system::require_architecture(architecture_text.as_str());
+    if (architecture.is_err()) {
         return sdk_failure<InstalledSdkDescriptor>(rstd::format(
             "LLVM SDK descriptor architecture '{}' is not canonical", architecture_text));
     }
@@ -867,7 +869,8 @@ struct ActiveStateInspection {
 auto active_state_json(const ActiveSdkState& state) -> Json {
     auto host = JsonMap::make();
     host.insert(String::make("os"_str), json_string(state.host.os.as_str()));
-    host.insert(String::make("architecture"_str), json_string(state.host.architecture.as_str()));
+    host.insert(String::make("architecture"_str),
+                json_string(lito::system::architecture_name(state.host.architecture)));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
     root.insert(String::make("kind"_str), json_string("lito-llvm-sdk-active"_str));
@@ -922,8 +925,8 @@ auto parse_active_state(const Json& value) -> lito::SdkResult<ActiveSdkState> {
     }
     auto architecture_text = rstd_try(
         sdk_required_string(*host_value, "architecture"_str, "LLVM SDK activation state host"_str));
-    auto architecture = lito::system::canonical_architecture(architecture_text.as_str());
-    if (architecture.is_err() || architecture->as_str() != architecture_text.as_str()) {
+    auto architecture = lito::system::require_architecture(architecture_text.as_str());
+    if (architecture.is_err()) {
         return sdk_failure<ActiveSdkState>(rstd::format(
             "LLVM SDK activation state architecture '{}' is not canonical", architecture_text));
     }
@@ -2242,7 +2245,7 @@ auto android_descriptor_payload(const AndroidInstalledDescriptor& descriptor) ->
                         "license={}@{}\ndistribution={}\ncertification={}\n",
                         descriptor.revision.as_str(),
                         descriptor.host.os.as_str(),
-                        descriptor.host.architecture.as_str(),
+                        lito::system::architecture_name(descriptor.host.architecture),
                         descriptor.url.as_str(),
                         descriptor.sha256,
                         descriptor.size,
@@ -2257,7 +2260,7 @@ auto android_descriptor_json(const AndroidInstalledDescriptor& descriptor) -> Js
     auto host = JsonMap::make();
     host.insert(String::make("os"_str), json_string(descriptor.host.os.as_str()));
     host.insert(String::make("architecture"_str),
-                json_string(descriptor.host.architecture.as_str()));
+                json_string(lito::system::architecture_name(descriptor.host.architecture)));
     auto archive = JsonMap::make();
     archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
     archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.to_hex().as_str()));
@@ -2306,10 +2309,11 @@ auto parse_android_host(const Json& value, ref<str> context)
     rstd_try(sdk_known_fields(value, context, { "os"_str, "architecture"_str }));
     auto os        = rstd_try(sdk_required_string(value, "os"_str, context));
     auto arch      = rstd_try(sdk_required_string(value, "architecture"_str, context));
-    auto canonical = lito::system::canonical_architecture(arch.as_str());
+    auto canonical = lito::system::require_architecture(arch.as_str());
     if (canonical.is_err())
         return Err(lito::SdkError::Platform(rstd::move(canonical).unwrap_err()));
-    if (os != "linux"_str || canonical->as_str() != "x86_64"_str || arch != "x86_64"_str) {
+    if (os != "linux"_str || *canonical != lito::system::Architecture::X86_64 ||
+        arch != "x86_64"_str) {
         return sdk_failure<lito::system::HostInfo>(
             rstd::format("{} identifies unsupported host {}-{}", context, os, arch));
     }
@@ -2504,7 +2508,8 @@ auto resolve_android_installation(const SdkStoreLayout&         layout,
 auto android_active_json(const AndroidActiveState& state) -> Json {
     auto host = JsonMap::make();
     host.insert(String::make("os"_str), json_string(state.host.os.as_str()));
-    host.insert(String::make("architecture"_str), json_string(state.host.architecture.as_str()));
+    host.insert(String::make("architecture"_str),
+                json_string(lito::system::architecture_name(state.host.architecture)));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
     root.insert(String::make("kind"_str), json_string("lito-android-ndk-active"_str));

@@ -28,6 +28,7 @@ target_sources(
          src/clang/support.cppm
          src/clang/strip.cppm
          src/clang/standard_library_module.cppm
+         src/clang/target.cppm
          src/clang/toolchain.cppm
          src/common/archive.cppm
          src/common/command.cppm
@@ -36,8 +37,8 @@ target_sources(
          src/common/invocation.cppm
          src/common/link.cppm
          src/common/mod.cppm
-         src/common/standard_library.cppm
          src/common/statistics.cppm
+         src/common/target.cppm
          src/lib.cppm)
 target_link_libraries(
   lito.toolchain

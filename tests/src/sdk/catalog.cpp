@@ -51,7 +51,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
     EXPECT_EQ(catalog->releases[usize {}].version.text.as_str(), "22.1.8"_str);
 
     auto host = lito::system::HostInfo {
-        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
         .os           = String::make("linux"_str),
     };
     auto artifact = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
@@ -71,7 +71,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
               rstd::path::PathBuf::from("lib/libxml2.so.2.13.8"_str).as_path());
     EXPECT_EQ((**libxml2).soname.as_str(), "libxml2.so.2"_str);
 
-    host.architecture = lito::system::canonical_architecture("aarch64"_str).unwrap();
+    host.architecture = lito::system::require_architecture("aarch64"_str).unwrap();
     EXPECT_TRUE(lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host).is_none());
 }
 
@@ -79,7 +79,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsWindowsDevelopmentArchives) {
     auto catalog = lito::load_embedded_llvm_sdk_catalog();
     ASSERT_TRUE(catalog.is_ok());
     auto host = lito::system::HostInfo {
-        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
         .os           = String::make("windows"_str),
     };
     auto x64 = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
@@ -94,7 +94,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsWindowsDevelopmentArchives) {
               rstd::path::PathBuf::from("bin/clang-cpp.dll"_str).as_path());
     EXPECT_TRUE((**x64).runtime_components.is_empty());
 
-    host.architecture = lito::system::canonical_architecture("aarch64"_str).unwrap();
+    host.architecture = lito::system::require_architecture("aarch64"_str).unwrap();
     auto arm64        = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(arm64.is_some());
     EXPECT_EQ((**arm64).archive.root.as_str().unwrap(),
@@ -238,7 +238,7 @@ TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
     EXPECT_EQ(catalog->releases[usize {}].release_name.as_str(), "r29"_str);
 
     auto host = lito::system::HostInfo {
-        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
         .os           = String::make("linux"_str),
     };
     auto artifact = lito::find_android_ndk_artifact(catalog->releases[usize {}], host);

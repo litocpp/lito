@@ -14,36 +14,230 @@ using namespace lito;
 using namespace lito_test;
 
 TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
-    const auto resolve = [](ref<str> triple) {
-        auto target = lito::system::parse_target_info(triple).unwrap();
-        return resolve_standard_library_selection(lito::config::StandardLibrarySelection::Auto,
-                                                  target);
+    const auto resolve = [](lito::system::OperatingSystem os) {
+        return resolve_standard_library_selection(lito::config::StandardLibrarySelection::Auto, os);
     };
-    auto linux = resolve("x86_64-pc-linux-gnu"_str);
+    auto linux = resolve(lito::system::OperatingSystem::Linux);
     ASSERT_TRUE(linux.is_ok());
     EXPECT_EQ(*linux, lito::config::StandardLibrary::Libstdcxx);
-    auto android = resolve("aarch64-linux-android"_str);
+    auto android = resolve(lito::system::OperatingSystem::Android);
     ASSERT_TRUE(android.is_ok());
     EXPECT_EQ(*android, lito::config::StandardLibrary::Libcxx);
-    auto macos = resolve("aarch64-apple-darwin"_str);
+    auto macos = resolve(lito::system::OperatingSystem::Macos);
     ASSERT_TRUE(macos.is_ok());
     EXPECT_EQ(*macos, lito::config::StandardLibrary::Libcxx);
-    auto windows = resolve("x86_64-pc-windows-msvc"_str);
+    auto windows = resolve(lito::system::OperatingSystem::Windows);
     ASSERT_TRUE(windows.is_ok());
     EXPECT_EQ(*windows, lito::config::StandardLibrary::Msvc);
-    EXPECT_TRUE(resolve("x86_64-w64-mingw32"_str).is_err());
 
-    auto target = lito::system::parse_target_info("x86_64-pc-linux-gnu"_str).unwrap();
-    auto explicit_selection =
-        resolve_standard_library_selection(lito::config::StandardLibrarySelection::Libcxx, target);
+    auto explicit_selection = resolve_standard_library_selection(
+        lito::config::StandardLibrarySelection::Libcxx, lito::system::OperatingSystem::Linux);
     ASSERT_TRUE(explicit_selection.is_ok());
     EXPECT_EQ(*explicit_selection, lito::config::StandardLibrary::Libcxx);
 }
 
-TEST(ClangToolchain, SelectsLldFrontendFromStandardLibrary) {
-    EXPECT_EQ(lld_executable_name(lito::config::StandardLibrary::Msvc), "lld-link"_str);
-    EXPECT_EQ(lld_executable_name(lito::config::StandardLibrary::Libcxx), "ld.lld"_str);
-    EXPECT_EQ(lld_executable_name(lito::config::StandardLibrary::Libstdcxx), "ld.lld"_str);
+TEST(ToolchainTarget, UsesClangCanonicalArchitectureNamesWithUnknownFallback) {
+    using lito::system::Architecture;
+    EXPECT_EQ(lito::system::parse_architecture("x86_64"_str), Architecture::X86_64);
+    EXPECT_EQ(lito::system::parse_architecture("i386"_str), Architecture::X86);
+    EXPECT_EQ(lito::system::parse_architecture("s390x"_str), Architecture::Systemz);
+    EXPECT_EQ(lito::system::parse_architecture("amd64"_str), Architecture::Unknown);
+    EXPECT_EQ(lito::system::parse_target_architecture("amd64"_str), Architecture::X86_64);
+    EXPECT_EQ(lito::system::parse_target_architecture("arm64"_str), Architecture::Aarch64);
+
+    auto unknown = lito::system::parse_target_info("future64-linux-gnu"_str);
+    ASSERT_TRUE(unknown.is_ok());
+    EXPECT_EQ(unknown->architecture, Architecture::Unknown);
+    auto encoded = lito::system::encode_target_info(lito::system::OperatingSystem::Linux,
+                                                    Architecture::Unknown,
+                                                    lito::system::TargetEnvironment::Gnu);
+    EXPECT_TRUE(encoded.is_err());
+}
+
+TEST(ToolchainTarget, MaterializesOperatingSystemArchitectureAndStandardLibrary) {
+    auto architecture = lito::system::Architecture::X86_64;
+    auto target       = resolve_compile_target(
+        ToolchainTargetInput {
+            .os           = lito::system::OperatingSystem::Windows,
+            .architecture = architecture,
+            .source       = CompileTargetSource::Config,
+        },
+        lito::config::StandardLibrary::Msvc);
+    ASSERT_TRUE(target.is_ok());
+    EXPECT_EQ(target->info.triple.as_str(), "x86_64-windows-msvc"_str);
+    EXPECT_EQ(target->info.environment, lito::system::TargetEnvironment::Msvc);
+    EXPECT_EQ(target->standard_library, lito::config::StandardLibrary::Msvc);
+    EXPECT_EQ(target->source, CompileTargetSource::Config);
+
+    struct TargetCase {
+        lito::system::OperatingSystem os;
+        ref<str>                      architecture;
+        lito::config::StandardLibrary standard_library;
+        ref<str>                      triple;
+    };
+    constexpr TargetCase cases[] = {
+        { lito::system::OperatingSystem::Linux,
+          "x86_64"_str,
+          lito::config::StandardLibrary::Libstdcxx,
+          "x86_64-linux-gnu"_str },
+        { lito::system::OperatingSystem::Linux,
+          "aarch64"_str,
+          lito::config::StandardLibrary::Libcxx,
+          "aarch64-linux-gnu"_str },
+        { lito::system::OperatingSystem::Windows,
+          "x86_64"_str,
+          lito::config::StandardLibrary::Libstdcxx,
+          "x86_64-windows-gnu"_str },
+        { lito::system::OperatingSystem::Macos,
+          "aarch64"_str,
+          lito::config::StandardLibrary::Libcxx,
+          "aarch64-apple-darwin"_str },
+    };
+    for (const auto& item : cases) {
+        auto parsed_architecture = lito::system::require_architecture(item.architecture).unwrap();
+        auto resolved            = resolve_compile_target(
+            ToolchainTargetInput {
+                .os           = item.os,
+                .architecture = rstd::move(parsed_architecture),
+                .source       = CompileTargetSource::Config,
+            },
+            item.standard_library);
+        ASSERT_TRUE(resolved.is_ok());
+        EXPECT_EQ(resolved->info.triple.as_str(), item.triple);
+    }
+
+    auto invalid = resolve_compile_target(
+        ToolchainTargetInput {
+            .os           = lito::system::OperatingSystem::Linux,
+            .architecture = target->info.architecture,
+            .source       = CompileTargetSource::Config,
+        },
+        lito::config::StandardLibrary::Msvc);
+    ASSERT_TRUE(invalid.is_err());
+    auto error = invalid.unwrap_err();
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("unsupported"_str));
+}
+
+TEST(ClangToolchain, SelectsLldFrontendFromCompileTarget) {
+    struct TargetCase {
+        ref<str> triple;
+        ref<str> executable;
+    };
+    constexpr TargetCase cases[] = {
+        { "x86_64-windows-msvc"_str, "lld-link"_str },
+        { "aarch64-windows-msvc"_str, "lld-link"_str },
+        { "x86_64-windows-gnu"_str, "ld.lld"_str },
+        { "x86_64-linux-gnu"_str, "ld.lld"_str },
+        { "aarch64-linux-gnu"_str, "ld.lld"_str },
+        { "aarch64-linux-android"_str, "ld.lld"_str },
+        { "x86_64-unknown-freebsd"_str, "ld.lld"_str },
+        { "aarch64-apple-darwin"_str, "ld64.lld"_str },
+    };
+    for (const auto& item : cases) {
+        auto target = lito::system::parse_target_info(item.triple).unwrap();
+        EXPECT_EQ(lld_executable_name(target), item.executable);
+    }
+}
+
+TEST(ClangToolchain, ParsesAndValidatesSupportedTargets) {
+    auto targets = ClangSupportedTargets::parse(
+        "Registered Targets:\n  aarch64 - AArch64\n  x86-64 - X86-64\n"_str);
+    ASSERT_TRUE(targets.is_ok());
+    auto x86  = lito::system::require_architecture("x86_64"_str).unwrap();
+    auto arm  = lito::system::require_architecture("aarch64"_str).unwrap();
+    auto wasm = lito::system::require_architecture("wasm32"_str).unwrap();
+    EXPECT_TRUE(targets->validate(x86, "x86_64-linux-gnu"_str).is_ok());
+    EXPECT_TRUE(targets->validate(arm, "aarch64-linux-gnu"_str).is_ok());
+    EXPECT_TRUE(targets->validate(wasm, "wasm32-unknown-unknown"_str).is_err());
+}
+
+TEST(ClangToolchain, QueriesDefaultTargetOnlyForCompilerDefaultSelection) {
+#if RSTD_OS_UNIX
+    auto directory = rstd::fs::TempDir::make("lito-clang-target-probe-test"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto root          = PathBuf::from(directory->path());
+    auto resource      = root.join(PathBuf::from("resource"_str).as_path());
+    auto log           = root.join(PathBuf::from("compiler.log"_str).as_path());
+    auto compiler      = root.join(PathBuf::from("clang"_str).as_path());
+    auto archiver      = root.join(PathBuf::from("llvm-ar"_str).as_path());
+    auto linker        = root.join(PathBuf::from("custom-linker"_str).as_path());
+    auto log_text      = log.as_path().to_str().unwrap();
+    auto resource_text = resource.as_path().to_str().unwrap();
+    ASSERT_TRUE(rstd::fs::create_dir_all(resource.as_path()).is_ok());
+    auto compiler_script =
+        rstd::format("#!/bin/sh\n"
+                     "printf '%s\\n' \"$1\" >> '{}'\n"
+                     "case \"$1\" in\n"
+                     "  --version) printf '%s\\n' 'clang version 22.1.8' ;;\n"
+                     "  --print-targets) printf '%s\\n' 'Registered Targets:' '  x86-64 - X86' ;;\n"
+                     "  -print-target-triple) printf '%s\\n' 'x86_64-linux-gnu' ;;\n"
+                     "  -print-resource-dir) printf '%s\\n' '{}' ;;\n"
+                     "  --help) printf '%s\\n' '-fmodule-output' '-fmodule-file' "
+                     "'-fmodules-reduced-bmi' '--precompile ' '--precompile-reduced-bmi' "
+                     "'-fmodules-embed-all-files' ;;\n"
+                     "  *) exit 91 ;;\n"
+                     "esac\n",
+                     log_text,
+                     resource_text);
+    auto write_script = [](ref<rstd::path::Path> path, ref<str> contents) {
+        if (rstd::fs::write(path, contents.as_bytes()).is_err()) return false;
+        return rstd::fs::set_permissions(path, rstd::fs::Permissions::from_mode(u32(0755))).is_ok();
+    };
+    ASSERT_TRUE(write_script(compiler.as_path(), compiler_script.as_str()));
+    ASSERT_TRUE(
+        write_script(archiver.as_path(), "#!/bin/sh\nprintf '%s\\n' 'LLVM version 22.1.8'\n"_str));
+    ASSERT_TRUE(write_script(linker.as_path(), "#!/bin/sh\nprintf '%s\\n' 'LLD 22.1.8'\n"_str));
+
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto architecture       = lito::system::require_architecture("x86_64"_str).unwrap();
+    auto explicit_toolchain = ClangToolchain::create(
+        lito::config::ToolchainSpec {
+            .cc     = compiler.clone(),
+            .cxx    = compiler.clone(),
+            .ld     = linker.clone(),
+            .ar     = archiver.clone(),
+            .target = lito::config::ToolchainTargetSelection::Config(
+                lito::system::OperatingSystem::Windows, rstd::move(architecture)),
+        },
+        lito::config::StandardLibrarySelection::Msvc,
+        *environment);
+    ASSERT_TRUE(explicit_toolchain.is_ok());
+    EXPECT_EQ(explicit_toolchain->target(), "x86_64-windows-msvc"_str);
+    EXPECT_EQ(explicit_toolchain->ld_path(), linker.as_path());
+    auto explicit_log = rstd::fs::read_to_string(log.as_path());
+    ASSERT_TRUE(explicit_log.is_ok());
+    EXPECT_TRUE(explicit_log->as_str().contains("--print-targets"_str));
+    auto explicit_supported = explicit_log->as_str().split_once("--print-targets"_str);
+    ASSERT_TRUE(explicit_supported.is_some());
+    EXPECT_FALSE(explicit_supported->get<1>().contains("--print-targets"_str));
+    EXPECT_FALSE(explicit_log->as_str().contains("-print-target-triple"_str));
+
+    ASSERT_TRUE(rstd::fs::write(log.as_path(), ""_str.as_bytes()).is_ok());
+    auto compiler_default = ClangToolchain::create(
+        lito::config::ToolchainSpec {
+            .cc  = compiler.clone(),
+            .cxx = compiler.clone(),
+            .ld  = linker.clone(),
+            .ar  = archiver.clone(),
+        },
+        lito::config::StandardLibrarySelection::Auto,
+        *environment);
+    ASSERT_TRUE(compiler_default.is_ok());
+    EXPECT_EQ(compiler_default->target(), "x86_64-linux-gnu"_str);
+    auto default_log = rstd::fs::read_to_string(log.as_path());
+    ASSERT_TRUE(default_log.is_ok());
+    EXPECT_TRUE(default_log->as_str().contains("--print-targets"_str));
+    EXPECT_TRUE(default_log->as_str().contains("-print-target-triple"_str));
+    auto default_supported = default_log->as_str().split_once("--print-targets"_str);
+    ASSERT_TRUE(default_supported.is_some());
+    EXPECT_FALSE(default_supported->get<1>().contains("--print-targets"_str));
+    auto default_target = default_log->as_str().split_once("-print-target-triple"_str);
+    ASSERT_TRUE(default_target.is_some());
+    EXPECT_FALSE(default_target->get<1>().contains("-print-target-triple"_str));
+#endif
 }
 
 TEST(ClangToolchain, FindsLldBesideCompilerWithoutPath) {
@@ -62,13 +256,17 @@ TEST(ClangToolchain, FindsLldBesideCompilerWithoutPath) {
     auto compiler = rstd::move(cxx).unwrap().unwrap();
     auto parent   = compiler.as_path().parent();
     ASSERT_TRUE(parent.is_some());
-#if RSTD_OS_WINDOWS
-    auto linker_name = PathBuf::from("lld-link.exe"_str);
-#else
-    auto linker_name = PathBuf::from("ld.lld"_str);
-#endif
-    auto expected = PathBuf::from(*parent).join(linker_name.as_path());
-    if (! rstd::fs::exists(expected.as_path()).unwrap()) return;
+    auto probe = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cc  = cc->as_ref().unwrap().clone(),
+        .cxx = compiler.clone(),
+        .ar  = ar->as_ref().unwrap().clone(),
+    });
+    ASSERT_TRUE(probe.is_ok());
+    auto linker_name = PathBuf::from(lld_executable_name(probe->target_info()));
+    auto expected =
+        inherited->locate_executable_in_directory(*parent, linker_name.as_path(), "LLD linker"_str);
+    ASSERT_TRUE(expected.is_ok());
+    if (expected->is_none()) return;
     auto isolated = lito::system::ResolvedProcessEnvironment::resolve(
         lito::system::ProcessEnvironmentSpec {}, None(), *parent);
     ASSERT_TRUE(isolated.is_ok());
@@ -81,7 +279,7 @@ TEST(ClangToolchain, FindsLldBesideCompilerWithoutPath) {
         },
         *isolated);
     ASSERT_TRUE(created.is_ok());
-    EXPECT_EQ(created->ld_path(), expected.as_path());
+    EXPECT_EQ(created->ld_path(), expected->as_ref().unwrap().as_path());
 }
 
 TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
@@ -160,11 +358,8 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     ASSERT_TRUE(invocation.is_ok());
     EXPECT_TRUE(has_argument(invocation->arguments, "-std=c23"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-pthread"_str));
-#if defined(_WIN32)
-    EXPECT_FALSE(has_argument(invocation->arguments, "-fno-PIC"_str));
-#else
-    EXPECT_TRUE(has_argument(invocation->arguments, "-fno-PIC"_str));
-#endif
+    EXPECT_EQ(has_argument(invocation->arguments, "-fno-PIC"_str),
+              toolchain.target_info().family != lito::system::TargetFamily::Windows);
     EXPECT_TRUE(has_argument(invocation->arguments, "-fno-builtin"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-pedantic"_str));
@@ -207,11 +402,10 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     });
     auto invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
-#if defined(_WIN32)
-    EXPECT_FALSE(has_argument(invocation->arguments, "-fPIC"_str));
-#else
-    EXPECT_TRUE(has_argument(invocation->arguments, "-fPIC"_str));
-#endif
+    EXPECT_TRUE(has_argument(invocation->arguments,
+                             rstd::format("--target={}", toolchain.target()).as_str()));
+    EXPECT_EQ(has_argument(invocation->arguments, "-fPIC"_str),
+              toolchain.target_info().family != lito::system::TargetFamily::Windows);
     EXPECT_TRUE(has_argument(invocation->arguments, "-fvisibility=hidden"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-ftype-visibility="_str));
     EXPECT_FALSE(has_argument(invocation->arguments, "-fvisibility-inlines-hidden"_str));

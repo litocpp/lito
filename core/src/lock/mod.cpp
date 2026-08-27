@@ -85,7 +85,7 @@ auto locked_external_source(const lito::dependency::ResolvedExternalSource& sour
 auto external_order_key(const lito::dependency::ResolvedExternalSourceRecord& external) -> String {
     auto architectures = Vec<String>::with_capacity(external.architectures.len());
     for (const auto& architecture : external.architectures) {
-        architectures.push(architecture.name.clone());
+        architectures.push(String::make(architecture_name(architecture)));
     }
     rstd::slice_::sort_unstable(architectures.as_mut_slice().as_mut_ref());
     auto key = external.name.clone();
@@ -169,7 +169,7 @@ auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_ver
             if (locked_source.is_none()) continue;
             auto architectures = Vec<String>::with_capacity(external.architectures.len());
             for (const auto& architecture : external.architectures) {
-                architectures.push(architecture.name.clone());
+                architectures.push(String::make(architecture_name(architecture)));
             }
             rstd::slice_::sort_unstable(architectures.as_mut_slice().as_mut_ref());
             auto optional_architectures = Option<Vec<String>> {};
@@ -424,7 +424,7 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
                                                         "external name must not be empty"_str);
             }
             auto architecture_key     = String::make();
-            auto locked_architectures = Vec<String>::make();
+            auto locked_architectures = Vec<Architecture>::make();
             if (external.architectures.is_some()) {
                 auto architectures = rstd::move(external.architectures).unwrap_unchecked();
                 if (architectures.is_empty()) {
@@ -432,15 +432,15 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
                         external_path.with_field("architectures"_str),
                         "external architectures must not be empty when present"_str);
                 }
-                locked_architectures = Vec<String>::with_capacity(architectures.len());
+                locked_architectures = Vec<Architecture>::with_capacity(architectures.len());
                 auto seen            = StringSet::make();
                 auto previous        = Option<String> {};
                 for (usize index {}; index < architectures.len(); ++index) {
                     auto architecture_path =
                         external_path.with_field("architectures"_str).with_index(index);
                     auto architecture = rstd::move(architectures[index]);
-                    auto canonical    = canonical_architecture(architecture.as_str());
-                    if (canonical.is_err() || canonical->as_str() != architecture.as_str()) {
+                    auto parsed       = require_architecture(architecture.as_str());
+                    if (parsed.is_err()) {
                         return lock_data_failure<LockedProject>(
                             rstd::move(architecture_path),
                             "external architecture is not canonical"_str);
@@ -458,7 +458,7 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
                     previous = Some(architecture.clone());
                     if (! architecture_key.is_empty()) architecture_key.push_ascii(u8(','));
                     architecture_key.push_str(architecture.as_str());
-                    locked_architectures.push(rstd::move(architecture));
+                    locked_architectures.push(rstd::move(parsed).unwrap());
                 }
             }
             auto identity = rstd::format("{}\n{}", external.name, architecture_key.as_str());

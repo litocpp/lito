@@ -75,8 +75,10 @@ auto linker_family_name(LinkerFamily family) noexcept -> ref<str> {
     return "unknown"_str;
 }
 
-auto lld_executable_name(lito::config::StandardLibrary standard_library) noexcept -> ref<str> {
-    return standard_library == lito::config::StandardLibrary::Msvc ? "lld-link"_str : "ld.lld"_str;
+auto lld_executable_name(const lito::system::TargetInfo& target) noexcept -> ref<str> {
+    if (target.environment == lito::system::TargetEnvironment::Msvc) return "lld-link"_str;
+    if (target.os.as_str() == "macos"_str) return "ld64.lld"_str;
+    return "ld.lld"_str;
 }
 
 struct LinkerCapabilities {

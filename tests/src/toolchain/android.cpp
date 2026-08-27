@@ -78,7 +78,7 @@ protected:
 
 auto linux_x86_64_host() -> lito::system::HostInfo {
     return lito::system::HostInfo {
-        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
         .os           = String::make("linux"_str),
     };
 }

@@ -61,7 +61,7 @@ auto parse_host_key(ref<str> value, rstd::serde::DataPath path) -> ManifestSchem
                                                    "host contains an invalid OS"_str);
         }
     }
-    auto architecture = canonical_architecture(arch);
+    auto architecture = require_architecture(arch);
     if (architecture.is_err()) {
         return manifest_data_failure<HostInfo>(rstd::move(path),
                                                "host architecture is unsupported"_str);

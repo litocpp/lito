@@ -173,7 +173,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                     rstd::format("external source '{}:{}' has no archive for architecture '{}'",
                                  graph.packages[source.package].manifest.name.as_str(),
                                  source.name.as_str(),
-                                 platform.effective_target.architecture.as_str()));
+                                 architecture_name(platform.effective_target.architecture)));
             }
             url    = Some(selected_variant->url.clone());
             sha256 = Some(selected_variant->sha256.clone());

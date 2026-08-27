@@ -27,6 +27,8 @@ struct Toolchain {
     Option<String> cxx;
     Option<String> ld;
     Option<String> ar;
+    Option<String> os;
+    Option<String> arch;
     Option<String> standard_library;
     Option<String> standard_library_runtime;
     Option<Sdk>    sdk;
@@ -166,6 +168,8 @@ struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
         auto cxx     = serde::OptionalField<String>("cxx"_str);
         auto ld      = serde::OptionalField<String>("ld"_str);
         auto ar      = serde::OptionalField<String>("ar"_str);
+        auto os      = serde::OptionalField<String>("os"_str);
+        auto arch    = serde::OptionalField<String>("arch"_str);
         auto stdlib  = serde::OptionalField<String>("stdlib"_str);
         auto runtime = serde::OptionalField<String>("stdlib-runtime"_str);
         auto sdk     = serde::OptionalField<lito::config::wire::Sdk>("sdk"_str);
@@ -175,6 +179,8 @@ struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
                                            cxx,
                                            ld,
                                            ar,
+                                           os,
+                                           arch,
                                            stdlib,
                                            runtime,
                                            sdk));
@@ -183,6 +189,8 @@ struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
             .cxx                      = cxx.take(),
             .ld                       = ld.take(),
             .ar                       = ar.take(),
+            .os                       = os.take(),
+            .arch                     = arch.take(),
             .standard_library         = stdlib.take(),
             .standard_library_runtime = runtime.take(),
             .sdk                      = sdk.take(),

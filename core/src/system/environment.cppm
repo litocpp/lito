@@ -215,6 +215,36 @@ public:
         }
         return Ok(rstd::move(selected));
     }
+    auto locate_executable_in_directory(ref<rstd::path::Path> directory,
+                                        ref<rstd::path::Path> requested,
+                                        ref<str>              description) const
+        -> SystemResult<Option<PathBuf>> {
+        if (! single_component(requested)) {
+            return environment_failure<Option<PathBuf>>(
+                rstd::format("cannot resolve {} '{}' in '{}': expected an executable name",
+                             description,
+                             requested,
+                             directory));
+        }
+        auto candidate  = PathBuf::from(directory).join(requested);
+        auto executable = executable_candidate(candidate.as_path());
+        if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
+        if (*executable) return Ok(Some(rstd::move(candidate)));
+#if RSTD_OS_WINDOWS
+        if (requested.extension().is_none()) {
+            for (const auto& extension : executable_extensions()) {
+                auto name = rstd::ffi::OsString::from(requested.as_os_str());
+                name.push(extension.as_os_str());
+                auto extended_name = PathBuf::from(rstd::move(name));
+                candidate          = PathBuf::from(directory).join(extended_name.as_path());
+                executable         = executable_candidate(candidate.as_path());
+                if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
+                if (*executable) return Ok(Some(rstd::move(candidate)));
+            }
+        }
+#endif
+        return Ok(None());
+    }
     auto without_variable(ref<str> key) const -> ResolvedProcessEnvironment {
         auto result = clone();
         for (const auto& existing : result.removed_variables_) {

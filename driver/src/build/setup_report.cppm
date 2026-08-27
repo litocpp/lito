@@ -52,6 +52,9 @@ struct BuildProfileValueReport {
 struct BuildTargetReport {
     String          host;
     String          effective;
+    String          source;
+    String          standard_library;
+    String          supported_targets;
     Option<String>  android_abi;
     Option<u32>     android_minimum_api;
     Option<String>  sdk_kind;
@@ -124,9 +127,16 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
             },
         .target =
             BuildTargetReport {
-                .host = rstd::format(
-                    "{}-{}", platform.host.architecture.as_str(), platform.host.os.as_str()),
-                .effective           = platform.effective_target.triple.clone(),
+                .host      = rstd::format("{}-{}",
+                                          architecture_name(platform.host.architecture),
+                                          platform.host.os.as_str()),
+                .effective = platform.effective_target.triple.clone(),
+                .source =
+                    String::make(compile_target_source_name(resolved.compile_target().source)),
+                .standard_library  = String::make(lito::config::standard_library_name(
+                    resolved.compile_target().standard_library)),
+                .supported_targets = resolved.supported_targets().selection_summary(
+                    resolved.compile_target().info.architecture),
                 .android_abi         = as<Clone>(platform.android_abi).clone(),
                 .android_minimum_api = platform.android_minimum_api,
                 .sdk_kind            = as<Clone>(platform.sdk_kind).clone(),

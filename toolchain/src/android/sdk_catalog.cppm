@@ -175,7 +175,7 @@ auto parse_catalog_host(android_catalog_wire::Host value, rstd::serde::DataPath 
         return android_catalog_failure<lito::system::HostInfo>(
             path.with_field("os"_str), "host operating system is not certified"_str);
     }
-    auto canonical = lito::system::canonical_architecture(value.architecture.as_str());
+    auto canonical = lito::system::require_architecture(value.architecture.as_str());
     if (canonical.is_err()) {
         return android_catalog_failure<lito::system::HostInfo>(
             path.with_field("architecture"_str),
@@ -183,7 +183,7 @@ auto parse_catalog_host(android_catalog_wire::Host value, rstd::serde::DataPath 
             rstd::move(canonical).unwrap_err_unchecked());
     }
     auto architecture = rstd::move(canonical).unwrap_unchecked();
-    if (architecture.as_str() != "x86_64"_str || value.architecture != "x86_64"_str) {
+    if (architecture != lito::system::Architecture::X86_64 || value.architecture != "x86_64"_str) {
         return android_catalog_failure<lito::system::HostInfo>(
             path.with_field("architecture"_str), "host architecture is not certified"_str);
     }

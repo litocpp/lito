@@ -62,13 +62,13 @@ auto resolve_install_recipes(const lito::package::ResolvedPackageSelection& sele
                 "--bin cannot filter install recipe package '{}'", owner.name.as_str()));
         }
         if (owner.script.is_some()) {
-            recipes.push(
-                rstd_try(execute_install_script(owner,
-                                                InstallScriptContext {
-                                                    .profile     = String::make(profile),
-                                                    .target      = target.triple.clone(),
-                                                    .target_arch = target.architecture.name.clone(),
-                                                })));
+            recipes.push(rstd_try(execute_install_script(
+                owner,
+                InstallScriptContext {
+                    .profile     = String::make(profile),
+                    .target      = target.triple.clone(),
+                    .target_arch = String::make(architecture_name(target.architecture)),
+                })));
             continue;
         }
         auto recipe = InstallRecipe {

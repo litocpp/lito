@@ -29,10 +29,10 @@ enum class FetchSeedKind
 };
 
 struct FetchSeedEntry {
-    String        identity;
-    FetchSeedKind kind { FetchSeedKind::Git };
-    PathBuf       path;
-    Vec<String>   architectures;
+    String            identity;
+    FetchSeedKind     kind { FetchSeedKind::Git };
+    PathBuf           path;
+    Vec<Architecture> architectures;
 };
 
 struct FetchSeedCatalog {
@@ -200,7 +200,7 @@ auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSe
             return source_failure<FetchSeedCatalog>(
                 "fetch seed source path must be a non-empty safe relative path"_str);
         }
-        auto architectures      = Vec<String>::make();
+        auto architectures      = Vec<Architecture>::make();
         auto architecture_value = value.get("architectures"_str);
         if (architecture_value.is_some()) {
             auto architecture_values = (**architecture_value).as_array();
@@ -216,8 +216,8 @@ auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSe
                     return source_failure<FetchSeedCatalog>(
                         "fetch seed source architecture must be a non-empty string"_str);
                 }
-                auto canonical = canonical_architecture(*name);
-                if (canonical.is_err() || canonical->as_str() != *name) {
+                auto parsed = require_architecture(*name);
+                if (parsed.is_err()) {
                     return source_failure<FetchSeedCatalog>(
                         "fetch seed source architecture must use a canonical Lito name"_str);
                 }
@@ -232,7 +232,7 @@ auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSe
                 }
                 architecture_seen.insert(canonical_name.clone(), empty {});
                 previous = Some(canonical_name.clone());
-                architectures.push(rstd::move(canonical_name));
+                architectures.push(rstd::move(parsed).unwrap());
             }
         }
         seen.insert(String::make(identity), empty {});

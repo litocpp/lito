@@ -77,8 +77,81 @@
         "ar": {
           "$ref": "#/definitions/tool"
         },
+        "os": {
+          "description": "Operating system used with arch and the resolved standard library to materialize the compile target.",
+          "type": "string",
+          "enum": ["linux", "android", "macos", "windows", "freebsd", "netbsd", "openbsd"]
+        },
+        "arch": {
+          "description": "Canonical Clang architecture name used with os and the resolved standard library to materialize the compile target. Aliases are not accepted.",
+          "type": "string",
+          "enum": [
+            "arm",
+            "armeb",
+            "aarch64",
+            "aarch64_be",
+            "aarch64_32",
+            "arc",
+            "avr",
+            "bpfel",
+            "bpfeb",
+            "csky",
+            "dxil",
+            "hexagon",
+            "loongarch32",
+            "loongarch64",
+            "m68k",
+            "mips",
+            "mipsel",
+            "mips64",
+            "mips64el",
+            "msp430",
+            "powerpc",
+            "powerpcle",
+            "powerpc64",
+            "powerpc64le",
+            "r600",
+            "amdgpu",
+            "riscv32",
+            "riscv64",
+            "riscv32be",
+            "riscv64be",
+            "sparc",
+            "sparcv9",
+            "sparcel",
+            "s390x",
+            "tce",
+            "tcele",
+            "tcele64",
+            "thumb",
+            "thumbeb",
+            "i386",
+            "x86_64",
+            "xcore",
+            "xtensa",
+            "nvptx",
+            "nvptx64",
+            "amdil",
+            "amdil64",
+            "hsail",
+            "hsail64",
+            "spir",
+            "spir64",
+            "spirv",
+            "spirv32",
+            "spirv64",
+            "kalimba",
+            "shave",
+            "lanai",
+            "wasm32",
+            "wasm64",
+            "renderscript32",
+            "renderscript64",
+            "ve"
+          ]
+        },
         "stdlib": {
-          "description": "C++ standard library selection. Auto resolves from the effective build target.",
+          "description": "C++ standard library selection. Auto resolves from toolchain os and arch before the compile target is materialized.",
           "type": "string",
           "enum": [
             "auto",
@@ -88,6 +161,16 @@
           ]
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["os"] },
+          "then": { "required": ["arch"] }
+        },
+        {
+          "if": { "required": ["arch"] },
+          "then": { "required": ["os"] }
+        }
+      ],
       "additionalProperties": false
     },
     "tools": {
