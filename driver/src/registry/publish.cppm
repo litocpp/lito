@@ -78,13 +78,13 @@ struct RegistryPublishHttpTransport {
 };
 
 struct RegistryPublishSession {
-    String                 id;
-    RegistryPublishState   state { RegistryPublishState::Prepared };
-    RegistryPackageId      package;
-    SemanticVersion        version;
-    RegistryBlobProjection blob;
-    Option<String>         rejection;
-    Option<ReleaseDigest>  release;
+    String                  id;
+    RegistryPublishState    state { RegistryPublishState::Prepared };
+    RegistryPackageId       package;
+    SemanticVersion         version;
+    RegistryPackageArchive  archive;
+    Option<String>          rejection;
+    Option<PackageChecksum> checksum;
 };
 
 struct RegistryPublishRequest {
@@ -92,7 +92,7 @@ struct RegistryPublishRequest {
     const lito::config::RegistryBearerToken* token {};
     RegistryPackageId                        package;
     SemanticVersion                          version;
-    RegistryBlobProjection                   blob;
+    RegistryPackageArchive                   artifact;
     PathBuf                                  archive;
     usize                                    maximum_status_polls { usize(120) };
     rstd::time::Duration poll_interval { rstd::time::Duration::from_secs(u64(1)) };
@@ -164,15 +164,16 @@ auto json_string(ref<str> value) -> Json {
 }
 
 auto request_body(const RegistryPublishRequest& request) -> String {
-    auto blob = JsonMap::make();
-    blob.insert(String::make("digest"_str), json_string(request.blob.digest.text().as_str()));
-    blob.insert(String::make("size"_str), json_string(request.blob.size.text().as_str()));
-    blob.insert(String::make("format"_str), json_string(request.blob.format.as_str()));
+    auto archive = JsonMap::make();
+    archive.insert(String::make("checksum"_str),
+                   json_string(request.artifact.checksum.text().as_str()));
+    archive.insert(String::make("size"_str), json_string(request.artifact.size.text().as_str()));
+    archive.insert(String::make("format"_str), json_string(request.artifact.format.as_str()));
     auto root = JsonMap::make();
     root.insert(String::make("registry"_str), json_string(request.package.registry.as_str()));
     root.insert(String::make("package"_str), json_string(request.package.name.as_str()));
     root.insert(String::make("version"_str), json_string(request.version.text()));
-    root.insert(String::make("blob"_str), Json::Object(rstd::move(blob)));
+    root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
@@ -331,7 +332,7 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
                          rstd::move(parsed).unwrap_err()));
     }
     auto allowed = { "id"_str,      "state"_str,   "registry"_str,  "package"_str,
-                     "version"_str, "blob"_str,    "rejection"_str, "commit"_str,
+                     "version"_str, "archive"_str, "rejection"_str, "commit"_str,
                      "schema"_str,  "outcome"_str, "upload"_str };
     rstd_try(reject_unknown(*parsed, "publish response"_str, allowed, expected.package));
     if (prepare) {
@@ -381,23 +382,25 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
             expected.package,
             "Registry publish response context does not match the request"_str);
     }
-    auto blob = rstd_try(member(*parsed, "blob"_str, "publish response"_str, expected.package));
-    rstd_try(reject_unknown(*blob,
-                            "publish response.blob"_str,
-                            { "digest"_str, "size"_str, "format"_str },
+    auto archive =
+        rstd_try(member(*parsed, "archive"_str, "publish response"_str, expected.package));
+    rstd_try(reject_unknown(*archive,
+                            "publish response.archive"_str,
+                            { "checksum"_str, "size"_str, "format"_str },
                             expected.package));
-    if (rstd_try(
-            string_member(*blob, "digest"_str, "publish response.blob"_str, expected.package)) !=
-            expected.blob.digest.text() ||
-        rstd_try(string_member(*blob, "size"_str, "publish response.blob"_str, expected.package)) !=
-            expected.blob.size.text() ||
-        rstd_try(
-            string_member(*blob, "format"_str, "publish response.blob"_str, expected.package)) !=
-            expected.blob.format.as_str()) {
+    if (rstd_try(string_member(
+            *archive, "checksum"_str, "publish response.archive"_str, expected.package)) !=
+            expected.artifact.checksum.text() ||
+        rstd_try(string_member(
+            *archive, "size"_str, "publish response.archive"_str, expected.package)) !=
+            expected.artifact.size.text() ||
+        rstd_try(string_member(
+            *archive, "format"_str, "publish response.archive"_str, expected.package)) !=
+            expected.artifact.format.as_str()) {
         return publish_failure<ParsedPublishResponse>(
             RegistryPublishErrorKind::Protocol,
             expected.package,
-            "Registry publish response blob does not match the request"_str);
+            "Registry publish response archive does not match the request"_str);
     }
 
     auto state     = rstd_try(parse_publish_state(
@@ -411,13 +414,13 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
             expected.package,
             "Registry publish response rejection does not match its state"_str);
     }
-    auto release = Option<ReleaseDigest> {};
-    auto root    = rstd_try(object(*parsed, "publish response"_str, expected.package));
-    auto commit  = root->get("commit"_str);
+    auto checksum = Option<PackageChecksum> {};
+    auto root     = rstd_try(object(*parsed, "publish response"_str, expected.package));
+    auto commit   = root->get("commit"_str);
     if (commit.is_some()) {
         rstd_try(reject_unknown(**commit,
                                 "publish response.commit"_str,
-                                { "sequence"_str, "package_revision"_str, "release"_str },
+                                { "sequence"_str, "package_revision"_str, "checksum"_str },
                                 expected.package));
         auto sequence = rstd_try(string_member(
             **commit, "sequence"_str, "publish response.commit"_str, expected.package));
@@ -430,19 +433,19 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
                 expected.package,
                 "publish commit counters are invalid"_str);
         }
-        auto parsed_release = ReleaseDigest::parse(rstd_try(string_member(
-            **commit, "release"_str, "publish response.commit"_str, expected.package)));
-        if (parsed_release.is_err()) {
+        auto parsed_checksum = PackageChecksum::parse(rstd_try(string_member(
+            **commit, "checksum"_str, "publish response.commit"_str, expected.package)));
+        if (parsed_checksum.is_err() || ! (*parsed_checksum == expected.artifact.checksum)) {
             return publish_failure<ParsedPublishResponse>(RegistryPublishErrorKind::Protocol,
                                                           expected.package,
-                                                          "publish commit digest is invalid"_str);
+                                                          "publish commit checksum is invalid"_str);
         }
-        release = Some(rstd::move(parsed_release).unwrap());
+        checksum = Some(rstd::move(parsed_checksum).unwrap());
     }
     const auto committed =
         state == RegistryPublishState::Committed || state == RegistryPublishState::Projecting ||
         state == RegistryPublishState::ProjectionRetry || state == RegistryPublishState::Visible;
-    if (committed != release.is_some()) {
+    if (committed != checksum.is_some()) {
         return publish_failure<ParsedPublishResponse>(
             RegistryPublishErrorKind::Protocol,
             expected.package,
@@ -510,9 +513,9 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
                 .state     = state,
                 .package   = expected.package.clone(),
                 .version   = expected.version.clone(),
-                .blob      = expected.blob.clone(),
+                .archive   = expected.artifact.clone(),
                 .rejection = rstd::move(rejection),
-                .release   = rstd::move(release),
+                .checksum  = rstd::move(checksum),
             },
         .upload_url     = rstd::move(upload_url),
         .upload_headers = rstd::move(upload_headers),

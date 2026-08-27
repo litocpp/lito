@@ -22,13 +22,13 @@ enum class SourceMaterializationPolicy
 struct RegistrySourcePin {
     lito::registry::RegistryPackageId package;
     lito::registry::SemanticVersion   version;
-    lito::registry::ReleaseDigest     release;
+    lito::registry::PackageChecksum   checksum;
 
     auto clone() const -> RegistrySourcePin {
         return RegistrySourcePin {
-            .package = package.clone(),
-            .version = version.clone(),
-            .release = release.clone(),
+            .package  = package.clone(),
+            .version  = version.clone(),
+            .checksum = checksum.clone(),
         };
     }
 };

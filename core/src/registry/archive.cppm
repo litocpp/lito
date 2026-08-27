@@ -2,6 +2,7 @@ export module lito.core:registry.archive;
 
 import rstd;
 import :parse.value;
+import :registry.digest;
 import :registry.error;
 
 using namespace rstd::prelude;
@@ -54,6 +55,20 @@ public:
     friend auto operator==(const RegistryArchiveFormat&, const RegistryArchiveFormat&) noexcept
         -> bool {
         return true;
+    }
+};
+
+struct RegistryPackageArchive {
+    PackageChecksum       checksum;
+    RegistryBlobSize      size;
+    RegistryArchiveFormat format;
+
+    auto clone() const -> RegistryPackageArchive {
+        return RegistryPackageArchive {
+            .checksum = checksum.clone(),
+            .size     = size.clone(),
+            .format   = format.clone(),
+        };
     }
 };
 

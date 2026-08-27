@@ -25,8 +25,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON CACHE BOOL "Enable link-time optimization")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 
-set(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY "" CACHE STRING
-    "Base64url Ed25519 public key embedded for the official Registry")
 option(LITO_USE_SYSTEM_ZSTD "Use the system zstd package" OFF)
 
 add_compile_options(

@@ -83,8 +83,6 @@ target_sources(
         src/registry/digest.cppm
         src/registry/archive.cppm
         src/registry/config.cppm
-        src/registry/canonical.cppm
-        src/registry/crypto.cppm
         src/registry/inspection.cppm
         src/registry/metadata.cppm
          src/registry/solver.cppm

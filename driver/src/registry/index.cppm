@@ -4,9 +4,9 @@ module;
 export module lito.driver:registry.index;
 
 import rstd;
-import lito.crypto;
 import rstd.json;
 import lito.core;
+import lito.crypto;
 import lito.system;
 import :config.registry;
 
@@ -46,7 +46,6 @@ class RegistryIndexClient {
     PathBuf                  cache_root_;
     RegistryId               registry_;
     RegistryEndpointTemplate endpoint_;
-    Ed25519PublicKey         trusted_key_;
     RegistryNetworkPolicy    network_ { RegistryNetworkPolicy::Online };
     RegistryHttpTransport    transport_;
 
@@ -61,7 +60,6 @@ public:
         : cache_root_(rstd::move(cache_root)),
           registry_(config.identity.clone()),
           endpoint_(config.effective_endpoints()->index.clone()),
-          trusted_key_(config.trusted_public_key.clone()),
           network_(network),
           transport_(transport) {}
 
@@ -135,7 +133,6 @@ auto cache_fields_are_known(const JsonMap& object) -> bool {
     for (auto key : keys) {
         auto value = (*key).as_str();
         if (value == "schema"_str || value == "registry"_str || value == "package"_str ||
-            value == "revision"_str || value == "sequence"_str || value == "key-id"_str ||
             value == "etag"_str || value == "fetched-at-unix-seconds"_str || value == "body"_str) {
             continue;
         }
@@ -145,7 +142,7 @@ auto cache_fields_are_known(const JsonMap& object) -> bool {
 }
 
 struct CachedPackageIndex {
-    VerifiedPackageIndex index;
+    RegistryPackageIndex index;
     String               body;
     Option<String>       etag;
 };
@@ -158,9 +155,7 @@ auto corrupt_cache(const RegistryPackageId& package, ref<rstd::path::Path> recor
         rstd::format("Registry index cache record '{}': {}", record, reason));
 }
 
-auto read_cached_index(ref<rstd::path::Path>    record,
-                       const RegistryPackageId& package,
-                       const Ed25519PublicKey&  trusted_key)
+auto read_cached_index(ref<rstd::path::Path> record, const RegistryPackageId& package)
     -> Result<Option<CachedPackageIndex>, RegistryIndexError> {
     auto contents = rstd::fs::read_to_string(record);
     if (contents.is_err()) {
@@ -186,23 +181,13 @@ auto read_cached_index(ref<rstd::path::Path>    record,
     auto schema   = required_string(*parsed, "schema"_str);
     auto registry = required_string(*parsed, "registry"_str);
     auto name     = required_string(*parsed, "package"_str);
-    auto revision = required_string(*parsed, "revision"_str);
-    auto sequence = required_string(*parsed, "sequence"_str);
-    auto key_id   = required_string(*parsed, "key-id"_str);
     auto fetched  = required_string(*parsed, "fetched-at-unix-seconds"_str);
     auto body     = required_string(*parsed, "body"_str);
-    if (schema.is_none() || registry.is_none() || name.is_none() || revision.is_none() ||
-        sequence.is_none() || key_id.is_none() || fetched.is_none() || body.is_none() ||
-        *schema != INDEX_CACHE_SCHEMA || *registry != package.registry.as_str() ||
+    if (schema.is_none() || registry.is_none() || name.is_none() || fetched.is_none() ||
+        body.is_none() || *schema != INDEX_CACHE_SCHEMA || *registry != package.registry.as_str() ||
         *name != package.name.as_str() || body->len() > MAX_INDEX_BYTES ||
-        lito::parse::parse_canonical_u64_decimal(*revision).is_err() ||
-        lito::parse::parse_canonical_u64_decimal(*sequence).is_err() ||
         lito::parse::parse_canonical_u64_decimal(*fetched).is_err()) {
         return corrupt_cache(package, record, "record fields are invalid"_str);
-    }
-    auto expected_key = signing_key_id(trusted_key);
-    if (expected_key.is_err() || expected_key->text().as_str() != *key_id) {
-        return corrupt_cache(package, record, "record is bound to another signing key"_str);
     }
     auto etag       = Option<String> {};
     auto etag_value = parsed->get("etag"_str);
@@ -214,18 +199,12 @@ auto read_cached_index(ref<rstd::path::Path>    record,
         }
         etag = Some(String::make(*text));
     }
-    auto verified = parse_verified_package_index(body->as_bytes(), package, trusted_key);
-    if (verified.is_err()) {
-        return corrupt_cache(package, record, "cached envelope no longer verifies"_str);
-    }
-    auto parsed_revision = lito::parse::parse_canonical_u64_decimal(*revision).unwrap();
-    auto parsed_sequence = lito::parse::parse_canonical_u64_decimal(*sequence).unwrap();
-    if (verified->revision() != parsed_revision || verified->sequence() != parsed_sequence ||
-        verified->verified_key().text().as_str() != *key_id) {
-        return corrupt_cache(package, record, "receipt does not match the verified envelope"_str);
+    auto index = parse_package_index(body->as_bytes(), package);
+    if (index.is_err()) {
+        return corrupt_cache(package, record, "cached package index is invalid"_str);
     }
     return Ok(Some(CachedPackageIndex {
-        .index = rstd::move(verified).unwrap(),
+        .index = rstd::move(index).unwrap(),
         .body  = String::make(*body),
         .etag  = rstd::move(etag),
     }));
@@ -235,11 +214,10 @@ auto json_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
 
-auto write_cached_index(ref<rstd::path::Path>       record,
-                        const RegistryPackageId&    package,
-                        const VerifiedPackageIndex& index,
-                        ref<str>                    body,
-                        const Option<String>&       etag) -> Result<empty, RegistryIndexError> {
+auto write_cached_index(ref<rstd::path::Path>    record,
+                        const RegistryPackageId& package,
+                        ref<str>                 body,
+                        const Option<String>&    etag) -> Result<empty, RegistryIndexError> {
     auto parent = record.parent();
     if (parent.is_none()) {
         return index_failure<empty>(RegistryIndexErrorKind::CorruptCache,
@@ -259,11 +237,6 @@ auto write_cached_index(ref<rstd::path::Path>       record,
     document.insert(String::make("schema"_str), json_string(INDEX_CACHE_SCHEMA));
     document.insert(String::make("registry"_str), json_string(package.registry.as_str()));
     document.insert(String::make("package"_str), json_string(package.name.as_str()));
-    document.insert(String::make("revision"_str),
-                    json_string(rstd::format("{}", index.revision()).as_str()));
-    document.insert(String::make("sequence"_str),
-                    json_string(rstd::format("{}", index.sequence()).as_str()));
-    document.insert(String::make("key-id"_str), json_string(index.verified_key().text().as_str()));
     document.insert(String::make("etag"_str),
                     etag.is_some() ? json_string(etag->as_str()) : Json::Null());
     auto now = rstd::time::SystemTime::now().as_unix_time();
@@ -325,43 +298,37 @@ auto acquire_cache_lock(ref<rstd::path::Path> record, const RegistryPackageId& p
     return Ok(rstd::move(locked).unwrap());
 }
 
-auto reject_rollback(const VerifiedPackageIndex& incoming, const VerifiedPackageIndex& current)
+auto reject_checksum_changes(const RegistryPackageIndex& incoming,
+                             const RegistryPackageIndex& current)
     -> Result<empty, RegistryIndexError> {
-    const auto& package = incoming.package();
-    if (incoming.revision() < current.revision() || incoming.sequence() < current.sequence() ||
-        (incoming.revision() > current.revision() && incoming.sequence() <= current.sequence())) {
-        return index_failure<empty>(
-            RegistryIndexErrorKind::Rollback,
-            package,
-            rstd::format("Registry index revision/sequence {}/{} rolls back cached {}/{}",
-                         incoming.revision(),
-                         incoming.sequence(),
-                         current.revision(),
-                         current.sequence()));
-    }
-    if (incoming.revision() == current.revision() &&
-        incoming.canonical_signed() != current.canonical_signed()) {
-        return index_failure<empty>(
-            RegistryIndexErrorKind::Integrity,
-            package,
-            rstd::format("Registry index revision {} changed its signed payload",
-                         incoming.revision()));
+    for (const auto& release : incoming.releases()) {
+        for (const auto& existing : current.releases()) {
+            if (! (release.version == existing.version)) continue;
+            if (! (release.checksum == existing.checksum)) {
+                return index_failure<empty>(
+                    RegistryIndexErrorKind::Integrity,
+                    incoming.package(),
+                    rstd::format("Registry package '{}@{}' changed its archive checksum",
+                                 incoming.package().name.as_str(),
+                                 release.version.text().as_str()));
+            }
+            break;
+        }
     }
     return Ok(empty {});
 }
 
 auto commit_cached_index(ref<rstd::path::Path>       record,
                          const RegistryPackageId&    package,
-                         const Ed25519PublicKey&     trusted_key,
-                         const VerifiedPackageIndex& incoming,
+                         const RegistryPackageIndex& incoming,
                          ref<str>                    body,
                          const Option<String>&       etag) -> Result<empty, RegistryIndexError> {
     auto lock    = rstd_try(acquire_cache_lock(record, package));
-    auto current = read_cached_index(record, package, trusted_key);
+    auto current = read_cached_index(record, package);
     if (current.is_ok() && current->is_some()) {
-        rstd_try(reject_rollback(incoming, current->as_ref().unwrap().index));
+        rstd_try(reject_checksum_changes(incoming, current->as_ref().unwrap().index));
     }
-    return write_cached_index(record, package, incoming, body, etag);
+    return write_cached_index(record, package, body, etag);
 }
 
 auto http_status_failure(const RegistryHttpResponse& response, const RegistryPackageId& package)
@@ -370,7 +337,7 @@ auto http_status_failure(const RegistryHttpResponse& response, const RegistryPac
     if (response.status == u16(404)) kind = RegistryIndexErrorKind::NotFound;
     if (response.status == u16(410)) kind = RegistryIndexErrorKind::Gone;
     if (response.status == u16(451)) kind = RegistryIndexErrorKind::LegalUnavailable;
-    return index_failure<VerifiedPackageIndex>(
+    return index_failure<RegistryPackageIndex>(
         kind, package, rstd::format("Registry index request returned HTTP {}", response.status));
 }
 
@@ -385,20 +352,20 @@ auto lito::registry::RegistryIndexClient::load_provider(void*                   
 auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     -> RegistryIndexLoadResult {
     if (! (package.registry == registry_)) {
-        return index_failure<VerifiedPackageIndex>(
+        return index_failure<RegistryPackageIndex>(
             RegistryIndexErrorKind::ContextMismatch,
             package,
             "Registry index client cannot serve another registry identity"_str);
     }
     auto record = cache_record_path(cache_root_.as_path(), package);
-    auto cached = read_cached_index(record.as_path(), package, trusted_key_);
+    auto cached = read_cached_index(record.as_path(), package);
     if (network_ == RegistryNetworkPolicy::Offline) {
         if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
         if (cached->is_none()) {
-            return index_failure<VerifiedPackageIndex>(
+            return index_failure<RegistryPackageIndex>(
                 RegistryIndexErrorKind::OfflineCacheMiss,
                 package,
-                "offline Registry resolve has no verified package index cache entry"_str);
+                "offline Registry resolve has no package index cache entry"_str);
         }
         return Ok(cached->as_ref().unwrap().index.clone());
     }
@@ -411,7 +378,7 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
         request.if_none_match = Some(cached->as_ref().unwrap().etag->clone());
     }
     if (transport_.get == nullptr) {
-        return index_failure<VerifiedPackageIndex>(
+        return index_failure<RegistryPackageIndex>(
             RegistryIndexErrorKind::Network,
             package,
             "online Registry resolve has no HTTP transport"_str);
@@ -420,42 +387,40 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     if (response.is_err()) return Err(rstd::move(response).unwrap_err());
     auto received = rstd::move(response).unwrap();
     if (received.etag.is_some() && ! valid_etag(received.etag->as_str())) {
-        return index_failure<VerifiedPackageIndex>(
+        return index_failure<RegistryPackageIndex>(
             RegistryIndexErrorKind::Schema,
             package,
             "Registry index response has an invalid ETag"_str);
     }
     if (received.status == u16(304)) {
         if (cached.is_err() || cached->is_none()) {
-            return index_failure<VerifiedPackageIndex>(
+            return index_failure<RegistryPackageIndex>(
                 RegistryIndexErrorKind::CorruptCache,
                 package,
-                "Registry returned 304 without a verified matching cache entry"_str);
+                "Registry returned 304 without a matching cache entry"_str);
         }
         auto& current = cached->as_ref().unwrap();
         auto  etag    = received.etag.is_some() ? received.etag.clone() : current.etag.clone();
         rstd_try(commit_cached_index(
-            record.as_path(), package, trusted_key_, current.index, current.body.as_str(), etag));
+            record.as_path(), package, current.index, current.body.as_str(), etag));
         return Ok(current.index.clone());
     }
     if (received.status != u16(200)) return http_status_failure(received, package);
     if (received.body.len() > MAX_INDEX_BYTES) {
-        return index_failure<VerifiedPackageIndex>(
+        return index_failure<RegistryPackageIndex>(
             RegistryIndexErrorKind::Schema, package, "Registry index response exceeds 16 MiB"_str);
     }
-    auto verified =
-        parse_verified_package_index(received.body.as_str().as_bytes(), package, trusted_key_);
-    if (verified.is_err()) {
-        return index_failure<VerifiedPackageIndex>(
+    auto index = parse_package_index(received.body.as_str().as_bytes(), package);
+    if (index.is_err()) {
+        return index_failure<RegistryPackageIndex>(
             RegistryIndexErrorKind::Schema,
             package,
-            rstd::format("Registry index response does not verify: {}",
-                         rstd::move(verified).unwrap_err()));
+            rstd::format("Registry index response is invalid: {}", rstd::move(index).unwrap_err()));
     }
     if (cached.is_ok() && cached->is_some()) {
-        rstd_try(reject_rollback(*verified, cached->as_ref().unwrap().index));
+        rstd_try(reject_checksum_changes(*index, cached->as_ref().unwrap().index));
     }
     rstd_try(commit_cached_index(
-        record.as_path(), package, trusted_key_, *verified, received.body.as_str(), received.etag));
-    return Ok(rstd::move(verified).unwrap());
+        record.as_path(), package, *index, received.body.as_str(), received.etag));
+    return Ok(rstd::move(index).unwrap());
 }

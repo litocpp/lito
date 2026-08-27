@@ -30,7 +30,7 @@ using RegistryInspectionProtocolResult = Result<T, RegistryInspectionProtocolErr
 struct RegistryInspectionRequest {
     RegistryPackageId      package;
     SemanticVersion        version;
-    RegistryBlobProjection blob;
+    RegistryPackageArchive archive;
     RegistryArchiveLimits  limits;
     u64                    maximum_blob_size {};
 };
@@ -194,7 +194,7 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
                               "registry"_str,
                               "package"_str,
                               "version"_str,
-                              "blob"_str,
+                              "archive"_str,
                               "limits"_str }));
     if (rstd_try(string_member(root, "schema"_str, "request"_str)) !=
         REGISTRY_INSPECTION_REQUEST_SCHEMA) {
@@ -216,18 +216,21 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
         SemanticVersion::parse(rstd_try(string_member(root, "version"_str, "request"_str))),
         "request.version"_str));
 
-    auto blob = rstd_try(member(root, "blob"_str, "request"_str));
-    rstd_try(reject_unknown(*blob, "request.blob"_str, { "digest"_str, "size"_str, "format"_str }));
-    auto blob_digest = rstd_try(parse_registry_value(
-        BlobDigest::parse(rstd_try(string_member(*blob, "digest"_str, "request.blob"_str))),
-        "request.blob.digest"_str));
-    auto blob_size   = rstd_try(parse_registry_value(
-        RegistryBlobSize::parse(rstd_try(string_member(*blob, "size"_str, "request.blob"_str))),
-        "request.blob.size"_str));
+    auto archive = rstd_try(member(root, "archive"_str, "request"_str));
+    rstd_try(reject_unknown(
+        *archive, "request.archive"_str, { "checksum"_str, "size"_str, "format"_str }));
+    auto checksum =
+        rstd_try(parse_registry_value(PackageChecksum::parse(rstd_try(string_member(
+                                          *archive, "checksum"_str, "request.archive"_str))),
+                                      "request.archive.checksum"_str));
+    auto archive_size =
+        rstd_try(parse_registry_value(RegistryBlobSize::parse(rstd_try(string_member(
+                                          *archive, "size"_str, "request.archive"_str))),
+                                      "request.archive.size"_str));
     auto archive_format =
-        rstd_try(parse_registry_value(RegistryArchiveFormat::parse(rstd_try(
-                                          string_member(*blob, "format"_str, "request.blob"_str))),
-                                      "request.blob.format"_str));
+        rstd_try(parse_registry_value(RegistryArchiveFormat::parse(rstd_try(string_member(
+                                          *archive, "format"_str, "request.archive"_str))),
+                                      "request.archive.format"_str));
 
     auto limits = rstd_try(member(root, "limits"_str, "request"_str));
     rstd_try(reject_unknown(*limits,
@@ -244,7 +247,7 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
         return protocol_failure<RegistryInspectionRequest>(
             "request.limits.maximum_entries exceeds this inspector's range"_str);
     }
-    if (blob_size.value() > maximum_blob_size) {
+    if (archive_size.value() > maximum_blob_size) {
         return protocol_failure<RegistryInspectionRequest>(
             "request blob exceeds the configured compressed size limit"_str);
     }
@@ -255,11 +258,11 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
                 .name     = rstd::move(package_name),
             },
         .version = rstd::move(version),
-        .blob =
-            RegistryBlobProjection {
-                .digest = rstd::move(blob_digest),
-                .size   = rstd::move(blob_size),
-                .format = rstd::move(archive_format),
+        .archive =
+            RegistryPackageArchive {
+                .checksum = rstd::move(checksum),
+                .size     = rstd::move(archive_size),
+                .format   = rstd::move(archive_format),
             },
         .limits =
             RegistryArchiveLimits {
@@ -278,10 +281,11 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
     for (const auto& dependency : candidate.dependencies) {
         dependencies.push(dependency_json(dependency));
     }
-    auto blob = JsonMap::make();
-    blob.insert(String::make("digest"_str), string_json(inspected.blob.digest.text().as_str()));
-    blob.insert(String::make("size"_str), string_json(inspected.blob.size.text().as_str()));
-    blob.insert(String::make("format"_str), string_json(inspected.blob.format.as_str()));
+    auto archive = JsonMap::make();
+    archive.insert(String::make("checksum"_str),
+                   string_json(inspected.archive.checksum.text().as_str()));
+    archive.insert(String::make("size"_str), string_json(inspected.archive.size.text().as_str()));
+    archive.insert(String::make("format"_str), string_json(inspected.archive.format.as_str()));
 
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str), string_json(REGISTRY_INSPECTION_CANDIDATE_SCHEMA));
@@ -289,10 +293,7 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
     root.insert(String::make("registry"_str), string_json(candidate.package.registry.as_str()));
     root.insert(String::make("package"_str), string_json(candidate.package.name.as_str()));
     root.insert(String::make("version"_str), string_json(candidate.version.text().as_str()));
-    root.insert(String::make("blob"_str), Json::Object(rstd::move(blob)));
-    root.insert(String::make("source"_str), string_json(candidate.source_digest.text().as_str()));
-    root.insert(String::make("manifest"_str),
-                string_json(candidate.manifest_digest.text().as_str()));
+    root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
     root.insert(String::make("dependencies"_str), Json::Array(rstd::move(dependencies)));
     root.insert(String::make("file_count"_str),
                 string_json(rstd::format("{}", candidate.file_count).as_str()));

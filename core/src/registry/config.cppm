@@ -14,8 +14,6 @@ enum class RegistryEndpointKind
 {
     Index,
     Blob,
-    Release,
-    Event,
 };
 
 class RegistryEndpointTemplate : public DefaultInClass<RegistryEndpointTemplate, Clone> {
@@ -59,39 +57,14 @@ public:
     }
 };
 
-class Ed25519PublicKey : public DefaultInClass<Ed25519PublicKey, Clone> {
-    String value_;
-
-    explicit Ed25519PublicKey(String value): value_(rstd::move(value)) {}
-
-public:
-    static auto parse(ref<str> value) -> RegistryValueResult<Ed25519PublicKey>;
-
-    auto base64url() const noexcept -> ref<str> { return value_.as_str(); }
-    auto clone() const -> Ed25519PublicKey { return Ed25519PublicKey(value_.clone()); }
-
-    friend auto operator==(const Ed25519PublicKey& left, const Ed25519PublicKey& right) noexcept
-        -> bool {
-        return left.value_ == right.value_;
-    }
-};
-
 struct RegistryDataEndpoints {
-    RegistryFixedEndpoint    config;
     RegistryEndpointTemplate index;
     RegistryEndpointTemplate blob;
-    RegistryEndpointTemplate release;
-    RegistryEndpointTemplate event;
-    RegistryFixedEndpoint    checkpoint;
 
     auto clone() const -> RegistryDataEndpoints {
         return RegistryDataEndpoints {
-            .config     = config.clone(),
-            .index      = index.clone(),
-            .blob       = blob.clone(),
-            .release    = release.clone(),
-            .event      = event.clone(),
-            .checkpoint = checkpoint.clone(),
+            .index = index.clone(),
+            .blob  = blob.clone(),
         };
     }
 };
@@ -102,9 +75,7 @@ auto registry_endpoint_placeholder(lito::registry::RegistryEndpointKind kind) ->
     using lito::registry::RegistryEndpointKind;
     switch (kind) {
     case RegistryEndpointKind::Index: return "{package}"_str;
-    case RegistryEndpointKind::Blob: return "{sha256}"_str;
-    case RegistryEndpointKind::Release: return "{sha256}"_str;
-    case RegistryEndpointKind::Event: return "{sequence}"_str;
+    case RegistryEndpointKind::Blob: return "{checksum}"_str;
     }
     return ""_str;
 }
@@ -165,31 +136,4 @@ auto lito::registry::RegistryFixedEndpoint::parse(ref<str> value)
             "registry endpoint must be an absolute HTTPS URL without a fragment"_str);
     }
     return Ok(RegistryFixedEndpoint(rstd::move(parsed).unwrap()));
-}
-
-auto lito::registry::Ed25519PublicKey::parse(ref<str> value)
-    -> RegistryValueResult<Ed25519PublicKey> {
-    if (value.len() != usize(43)) {
-        return registry_value_failure<Ed25519PublicKey>(
-            "Ed25519 public key must be 32 bytes encoded as base64url without padding"_str);
-    }
-    for (usize index {}; index < value.len(); ++index) {
-        auto byte    = value[index].to_primitive();
-        auto allowed = (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
-                       (byte >= '0' && byte <= '9') || byte == '-' || byte == '_';
-        if (! allowed) {
-            return registry_value_failure<Ed25519PublicKey>(
-                rstd::format("Ed25519 public key contains a non-base64url byte at {}", index));
-        }
-    }
-    auto tail           = value[value.len() - usize(1)].to_primitive();
-    auto canonical_tail = tail == 'A' || tail == 'E' || tail == 'I' || tail == 'M' || tail == 'Q' ||
-                          tail == 'U' || tail == 'Y' || tail == 'c' || tail == 'g' || tail == 'k' ||
-                          tail == 'o' || tail == 's' || tail == 'w' || tail == '0' || tail == '4' ||
-                          tail == '8';
-    if (! canonical_tail) {
-        return registry_value_failure<Ed25519PublicKey>(
-            "Ed25519 public key is not a canonical base64url encoding"_str);
-    }
-    return Ok(Ed25519PublicKey(String::make(value)));
 }

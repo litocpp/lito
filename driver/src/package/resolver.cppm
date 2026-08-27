@@ -448,7 +448,7 @@ class PackageGraphResolver {
                     "Registry package '{}' catalog root does not match its materialized source",
                     name.as_str()));
             }
-            auto version = selected.release.version.clone();
+            auto version = selected.version.clone();
             auto package = selected.package.clone();
             auto source  = sources_.acquire_resolved(rstd::move(selected.source));
             if (source.is_err()) {

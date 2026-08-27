@@ -172,7 +172,7 @@ version = "1.0.0"
 name = "fixture-lock"
 version = "1.0.0"
 source = "registry+https://registry.example/fixture-lock@1.0.0"
-checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+checksum = "0000000000000000000000000000000000000000000000000000000000000000"
 )toml"_str;
     auto           registry      = project("registry-source"_str, registry_lock);
     ASSERT_TRUE(registry.is_ok());
@@ -205,16 +205,16 @@ name = "fixture-lock"
 [[packages.externals]]
 name = "archive"
 source = "archive+https://example.invalid/archive.tar.gz"
-checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+checksum = "0000000000000000000000000000000000000000000000000000000000000000"
 [[packages.externals]]
 name = "archive"
 source = "archive+https://example.invalid/other.tar.gz"
-checksum = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
 )toml"_str },
         { "archive-without-checksum"_str,
           "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\n"_str },
-        { "archive-checksum-without-prefix"_str,
-          "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\nchecksum = \"0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
+        { "archive-checksum-with-prefix"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\nchecksum = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
         { "registry-without-checksum"_str,
           "version = 1\n[[packages]]\nname = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/fixture-lock@1.0.0\"\n"_str },
         { "git-with-checksum"_str,

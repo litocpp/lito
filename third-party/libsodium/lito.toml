@@ -10,12 +10,8 @@ workspace = true
 [source-groups.runtime]
 external-source = "libsodium"
 sources = [
-  "src/libsodium/crypto_core/ed25519/ref10/ed25519_ref10.c",
   "src/libsodium/crypto_hash/sha256/cp/hash_sha256_cp.c",
-  "src/libsodium/crypto_hash/sha512/cp/hash_sha512_cp.c",
-  "src/libsodium/crypto_sign/ed25519/ref10/open.c",
   "src/libsodium/crypto_verify/verify.c",
-  "src/libsodium/sodium/codecs.c",
 ]
 
 [source-groups.support]

@@ -22,18 +22,16 @@ struct NamedRegistryConfig {
     lito::registry::RegistryId                    identity;
     lito::registry::RegistryDataEndpoints         endpoints;
     lito::registry::RegistryFixedEndpoint         api;
-    lito::registry::Ed25519PublicKey              trusted_public_key;
     Option<lito::registry::RegistryDataEndpoints> mirror;
 
     auto clone() const -> NamedRegistryConfig {
         return NamedRegistryConfig {
-            .name               = name.clone(),
-            .identity           = identity.clone(),
-            .endpoints          = endpoints.clone(),
-            .api                = api.clone(),
-            .trusted_public_key = trusted_public_key.clone(),
-            .mirror = mirror.is_some() ? Some(mirror->clone())
-                                       : Option<lito::registry::RegistryDataEndpoints> {},
+            .name      = name.clone(),
+            .identity  = identity.clone(),
+            .endpoints = endpoints.clone(),
+            .api       = api.clone(),
+            .mirror    = mirror.is_some() ? Some(mirror->clone())
+                                          : Option<lito::registry::RegistryDataEndpoints> {},
         };
     }
 
@@ -230,16 +228,10 @@ auto parse_endpoint_template(const Toml&                          value,
 auto parse_data_endpoints(const Toml& value, ref<str> context)
     -> lito::config::ConfigResult<lito::registry::RegistryDataEndpoints> {
     return Ok(lito::registry::RegistryDataEndpoints {
-        .config     = rstd_try(parse_fixed_endpoint(value, "config"_str, context)),
-        .index      = rstd_try(parse_endpoint_template(
+        .index = rstd_try(parse_endpoint_template(
             value, "index"_str, context, lito::registry::RegistryEndpointKind::Index)),
-        .blob       = rstd_try(parse_endpoint_template(
+        .blob  = rstd_try(parse_endpoint_template(
             value, "blob"_str, context, lito::registry::RegistryEndpointKind::Blob)),
-        .release    = rstd_try(parse_endpoint_template(
-            value, "release"_str, context, lito::registry::RegistryEndpointKind::Release)),
-        .event      = rstd_try(parse_endpoint_template(
-            value, "event"_str, context, lito::registry::RegistryEndpointKind::Event)),
-        .checkpoint = rstd_try(parse_fixed_endpoint(value, "checkpoint"_str, context)),
     });
 }
 
@@ -255,16 +247,7 @@ auto parse_named_registry(ref<str> name, const Toml& value)
     auto value_table = rstd_try(table(value, context.as_str()));
     rstd_try(reject_unknown(*value_table,
                             context.as_str(),
-                            { "identity"_str,
-                              "config"_str,
-                              "index"_str,
-                              "blob"_str,
-                              "release"_str,
-                              "event"_str,
-                              "checkpoint"_str,
-                              "api"_str,
-                              "trusted-public-key"_str,
-                              "mirror"_str }));
+                            { "identity"_str, "index"_str, "blob"_str, "api"_str, "mirror"_str }));
     auto identity_field = rstd::format("{}.identity", context);
     auto identity       = parse_registry_value<lito::registry::RegistryId>(
         rstd_try(required_string(value, "identity"_str, context.as_str())),
@@ -272,35 +255,21 @@ auto parse_named_registry(ref<str> name, const Toml& value)
         [](ref<str> text) {
             return lito::registry::RegistryId::parse(text);
         });
-    auto key_field = rstd::format("{}.trusted-public-key", context);
-    auto key       = parse_registry_value<lito::registry::Ed25519PublicKey>(
-        rstd_try(required_string(value, "trusted-public-key"_str, context.as_str())),
-        key_field.as_str(),
-        [](ref<str> text) {
-            return lito::registry::Ed25519PublicKey::parse(text);
-        });
     auto mirror       = Option<lito::registry::RegistryDataEndpoints> {};
     auto mirror_value = value.get("mirror"_str);
     if (mirror_value.is_some()) {
         auto mirror_context = rstd::format("{}.mirror", context);
         auto mirror_table   = rstd_try(table(**mirror_value, mirror_context.as_str()));
-        rstd_try(reject_unknown(*mirror_table,
-                                mirror_context.as_str(),
-                                { "config"_str,
-                                  "index"_str,
-                                  "blob"_str,
-                                  "release"_str,
-                                  "event"_str,
-                                  "checkpoint"_str }));
+        rstd_try(
+            reject_unknown(*mirror_table, mirror_context.as_str(), { "index"_str, "blob"_str }));
         mirror = Some(rstd_try(parse_data_endpoints(**mirror_value, mirror_context.as_str())));
     }
     return Ok(lito::config::NamedRegistryConfig {
-        .name               = String::make(name),
-        .identity           = rstd_try(rstd::move(identity)),
-        .endpoints          = rstd_try(parse_data_endpoints(value, context.as_str())),
-        .api                = rstd_try(parse_fixed_endpoint(value, "api"_str, context.as_str())),
-        .trusted_public_key = rstd_try(rstd::move(key)),
-        .mirror             = rstd::move(mirror),
+        .name      = String::make(name),
+        .identity  = rstd_try(rstd::move(identity)),
+        .endpoints = rstd_try(parse_data_endpoints(value, context.as_str())),
+        .api       = rstd_try(parse_fixed_endpoint(value, "api"_str, context.as_str())),
+        .mirror    = rstd::move(mirror),
     });
 }
 
@@ -395,29 +364,19 @@ auto validate_bootstrap_default(const lito::config::LitoBootstrapConfig& config)
 }
 
 auto compiled_bootstrap_config() -> lito::config::ConfigResult<lito::config::LitoBootstrapConfig> {
-    auto registries       = Vec<lito::config::NamedRegistryConfig>::make();
-    auto default_registry = Option<String> {};
-#if defined(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY)
     constexpr auto official = R"toml(default = "official"
 [registries.official]
 identity = "https://registry.litocpp.org/"
-config = "https://registry.litocpp.org/v1/config.json"
 index = "https://registry.litocpp.org/v1/index/{package}.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{sha256}.tar.zst"
-release = "https://registry.litocpp.org/v1/releases/sha256/{sha256}.json"
-event = "https://registry.litocpp.org/v1/events/{sequence}.json"
-checkpoint = "https://registry.litocpp.org/v1/checkpoint.json"
+blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
 api = "https://registry.litocpp.org/"
-trusted-public-key = ")toml" LITO_OFFICIAL_REGISTRY_PUBLIC_KEY "\"\n";
-    auto           parsed   = rstd::toml::from_str(ref<str>::from_c_str(official));
+)toml"_str;
+    auto           parsed   = rstd::toml::from_str(official);
     if (parsed.is_err()) {
         return registry_config_failure<lito::config::LitoBootstrapConfig>(
             "compiled official registry config is invalid"_str);
     }
     return parse_bootstrap_document(*parsed);
-#endif
-    return Ok(
-        lito::config::LitoBootstrapConfig(rstd::move(registries), rstd::move(default_registry)));
 }
 
 } // namespace

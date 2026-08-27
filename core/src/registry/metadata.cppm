@@ -1,18 +1,11 @@
 module;
 #include <rstd/enum.hpp>
-#include <rstd/macro.hpp>
 
 export module lito.core:registry.metadata;
 
 import rstd;
-import lito.crypto;
 import rstd.json;
 import :dependency.visibility;
-import :parse.value;
-import :registry.archive;
-import :registry.canonical;
-import :registry.config;
-import :registry.crypto;
 import :registry.digest;
 import :registry.error;
 import :registry.identity;
@@ -57,127 +50,36 @@ struct RegistryDependencyProjection {
     auto clone() const -> RegistryDependencyProjection;
 };
 
-struct RegistryBlobProjection {
-    BlobDigest            digest;
-    RegistryBlobSize      size;
-    RegistryArchiveFormat format;
-
-    auto clone() const -> RegistryBlobProjection {
-        return RegistryBlobProjection {
-            .digest = digest.clone(),
-            .size   = size.clone(),
-            .format = format.clone(),
-        };
-    }
-};
-
 struct RegistryReleaseProjection {
     SemanticVersion                   version;
-    ReleaseDigest                     release;
-    SourceDigest                      source;
-    ManifestDigest                    manifest;
-    RegistryBlobProjection            blob;
+    PackageChecksum                   checksum;
     Vec<RegistryDependencyProjection> dependencies;
     bool                              yanked {};
-    Option<String>                    deprecated;
     RegistryTimestamp                 published_at;
 
     auto clone() const -> RegistryReleaseProjection;
 };
 
-class VerifiedRegistryRelease : public DefaultInClass<VerifiedRegistryRelease, Clone> {
-    RegistryPackageId         package_;
-    RegistryReleaseProjection release_;
-    SigningKeyId              verified_key_;
-    String                    canonical_signed_;
-
-    VerifiedRegistryRelease(RegistryPackageId         package,
-                            RegistryReleaseProjection release,
-                            SigningKeyId              verified_key,
-                            String                    canonical_signed)
-        : package_(rstd::move(package)),
-          release_(rstd::move(release)),
-          verified_key_(rstd::move(verified_key)),
-          canonical_signed_(rstd::move(canonical_signed)) {}
-
-    friend auto parse_verified_registry_release(slice<u8>,
-                                                const RegistryPackageId&,
-                                                const ReleaseDigest&,
-                                                const Ed25519PublicKey&)
-        -> RegistryValueResult<VerifiedRegistryRelease>;
-
-public:
-    auto package() const noexcept -> const RegistryPackageId& { return package_; }
-    auto release() const noexcept -> const RegistryReleaseProjection& { return release_; }
-    auto verified_key() const noexcept -> const SigningKeyId& { return verified_key_; }
-    auto canonical_signed() const noexcept -> ref<str> { return canonical_signed_.as_str(); }
-    auto clone() const -> VerifiedRegistryRelease {
-        return VerifiedRegistryRelease(
-            package_.clone(), release_.clone(), verified_key_.clone(), canonical_signed_.clone());
-    }
-};
-
-struct RegistryTagProjection {
-    String          name;
-    SemanticVersion version;
-
-    auto clone() const -> RegistryTagProjection {
-        return RegistryTagProjection { .name = name.clone(), .version = version.clone() };
-    }
-};
-
-class VerifiedPackageIndex : public DefaultInClass<VerifiedPackageIndex, Clone> {
+class RegistryPackageIndex : public DefaultInClass<RegistryPackageIndex, Clone> {
     RegistryPackageId              package_;
-    u64                            revision_ {};
-    u64                            sequence_ {};
     Vec<RegistryReleaseProjection> releases_;
-    Vec<RegistryTagProjection>     tags_;
-    SigningKeyId                   verified_key_;
-    String                         canonical_signed_;
 
-    VerifiedPackageIndex(RegistryPackageId              package,
-                         u64                            revision,
-                         u64                            sequence,
-                         Vec<RegistryReleaseProjection> releases,
-                         Vec<RegistryTagProjection>     tags,
-                         SigningKeyId                   verified_key,
-                         String                         canonical_signed)
-        : package_(rstd::move(package)),
-          revision_(revision),
-          sequence_(sequence),
-          releases_(rstd::move(releases)),
-          tags_(rstd::move(tags)),
-          verified_key_(rstd::move(verified_key)),
-          canonical_signed_(rstd::move(canonical_signed)) {}
+    RegistryPackageIndex(RegistryPackageId package, Vec<RegistryReleaseProjection> releases)
+        : package_(rstd::move(package)), releases_(rstd::move(releases)) {}
 
-    friend auto
-    parse_verified_package_index(slice<u8>, const RegistryPackageId&, const Ed25519PublicKey&)
-        -> RegistryValueResult<VerifiedPackageIndex>;
+    friend auto parse_package_index(slice<u8>, const RegistryPackageId&)
+        -> RegistryValueResult<RegistryPackageIndex>;
 
 public:
     auto package() const noexcept -> const RegistryPackageId& { return package_; }
-    auto revision() const noexcept -> u64 { return revision_; }
-    auto sequence() const noexcept -> u64 { return sequence_; }
     auto releases() const noexcept -> slice<RegistryReleaseProjection> {
         return releases_.as_slice();
     }
-    auto tags() const noexcept -> slice<RegistryTagProjection> { return tags_.as_slice(); }
-    auto verified_key() const noexcept -> const SigningKeyId& { return verified_key_; }
-    auto canonical_signed() const noexcept -> ref<str> { return canonical_signed_.as_str(); }
-    auto clone() const -> VerifiedPackageIndex;
+    auto clone() const -> RegistryPackageIndex;
 };
 
-auto parse_verified_package_index(slice<u8>                input,
-                                  const RegistryPackageId& expected,
-                                  const Ed25519PublicKey&  trusted_key)
-    -> RegistryValueResult<VerifiedPackageIndex>;
-auto parse_verified_registry_release(slice<u8>                input,
-                                     const RegistryPackageId& expected_package,
-                                     const ReleaseDigest&     expected_release,
-                                     const Ed25519PublicKey&  trusted_key)
-    -> RegistryValueResult<VerifiedRegistryRelease>;
-auto registry_immutable_release_matches(const RegistryReleaseProjection& left,
-                                        const RegistryReleaseProjection& right) noexcept -> bool;
+auto parse_package_index(slice<u8> input, const RegistryPackageId& expected)
+    -> RegistryValueResult<RegistryPackageIndex>;
 
 } // namespace lito::registry
 
@@ -374,74 +276,16 @@ auto parse_dependency(const Json& value, ref<str> context)
     });
 }
 
-auto parse_blob(const Json& value, ref<str> context)
-    -> RegistryValueResult<lito::registry::RegistryBlobProjection> {
-    rstd_try(reject_unknown(value, context, { "digest"_str, "size"_str, "format"_str }));
-    auto digest =
-        lito::registry::BlobDigest::parse(rstd_try(required_string(value, "digest"_str, context)));
-    auto size = lito::registry::RegistryBlobSize::parse(
-        rstd_try(required_string(value, "size"_str, context)));
-    auto format = lito::registry::RegistryArchiveFormat::parse(
-        rstd_try(required_string(value, "format"_str, context)));
-    if (digest.is_err())
-        return metadata_failure<lito::registry::RegistryBlobProjection>(
-            context, rstd::format("has invalid digest: {}", rstd::move(digest).unwrap_err()));
-    if (size.is_err())
-        return metadata_failure<lito::registry::RegistryBlobProjection>(
-            context, rstd::format("has invalid size: {}", rstd::move(size).unwrap_err()));
-    if (format.is_err())
-        return metadata_failure<lito::registry::RegistryBlobProjection>(
-            context, rstd::format("has invalid format: {}", rstd::move(format).unwrap_err()));
-    return Ok(lito::registry::RegistryBlobProjection {
-        .digest = rstd::move(digest).unwrap(),
-        .size   = rstd::move(size).unwrap(),
-        .format = rstd::move(format).unwrap(),
-    });
-}
-
-auto immutable_release_payload(const Json&                              release,
-                               const lito::registry::RegistryPackageId& package)
-    -> RegistryValueResult<Json> {
-    auto result = JsonMap::make();
-    result.insert(String::make("schema"_str),
-                  Json::String(String::make("lito.registry.release.v1"_str)));
-    result.insert(String::make("registry"_str),
-                  Json::String(String::make(package.registry.as_str())));
-    result.insert(String::make("package"_str), Json::String(String::make(package.name.as_str())));
-    constexpr ref<str> fields[] = { "version"_str, "source"_str,       "manifest"_str,
-                                    "blob"_str,    "dependencies"_str, "published_at"_str };
-    for (auto field : fields) {
-        auto member = rstd_try(required_member(release, field, "Registry release"_str));
-        result.insert(String::make(field), member->clone());
-    }
-    return Ok(Json::Object(rstd::move(result)));
-}
-
-auto parse_release(const Json&                              value,
-                   const lito::registry::RegistryPackageId& package,
-                   ref<str>                                 context)
+auto parse_release(const Json& value, ref<str> context)
     -> RegistryValueResult<lito::registry::RegistryReleaseProjection> {
-    rstd_try(reject_unknown(value,
-                            context,
-                            { "version"_str,
-                              "release"_str,
-                              "source"_str,
-                              "manifest"_str,
-                              "blob"_str,
-                              "dependencies"_str,
-                              "yanked"_str,
-                              "deprecated"_str,
-                              "published_at"_str }));
+    rstd_try(reject_unknown(
+        value,
+        context,
+        { "version"_str, "checksum"_str, "dependencies"_str, "yanked"_str, "published_at"_str }));
     auto version = lito::registry::SemanticVersion::parse(
         rstd_try(required_string(value, "version"_str, context)));
-    auto release = lito::registry::ReleaseDigest::parse(
-        rstd_try(required_string(value, "release"_str, context)));
-    auto source = lito::registry::SourceDigest::parse(
-        rstd_try(required_string(value, "source"_str, context)));
-    auto manifest = lito::registry::ManifestDigest::parse(
-        rstd_try(required_string(value, "manifest"_str, context)));
-    auto blob_member         = rstd_try(required_member(value, "blob"_str, context));
-    auto blob                = parse_blob(*blob_member, rstd::format("{}.blob", context).as_str());
+    auto checksum = lito::registry::PackageChecksum::parse(
+        rstd_try(required_string(value, "checksum"_str, context)));
     auto dependencies_member = rstd_try(required_member(value, "dependencies"_str, context));
     auto dependency_values   = rstd_try(
         json_array(*dependencies_member, rstd::format("{}.dependencies", context).as_str()));
@@ -459,122 +303,27 @@ auto parse_release(const Json&                              value,
         aliases.insert(dependency->alias.clone(), empty {});
         dependencies.push(rstd::move(dependency).unwrap());
     }
-    auto yanked            = required_bool(value, "yanked"_str, context);
-    auto deprecated_member = rstd_try(required_member(value, "deprecated"_str, context));
-    auto deprecated        = Option<String> {};
-    if (! deprecated_member->is_null()) {
-        auto message = deprecated_member->as_str();
-        if (message.is_none()) {
-            return metadata_failure<lito::registry::RegistryReleaseProjection>(
-                context, "field 'deprecated' must be a string or null"_str);
-        }
-        deprecated = Some(String::make(*message));
-    }
+    auto yanked       = required_bool(value, "yanked"_str, context);
     auto published_at = lito::registry::RegistryTimestamp::parse(
         rstd_try(required_string(value, "published_at"_str, context)));
     if (version.is_err())
         return metadata_failure<lito::registry::RegistryReleaseProjection>(
             context, rstd::format("has invalid version: {}", rstd::move(version).unwrap_err()));
-    if (release.is_err())
+    if (checksum.is_err())
         return metadata_failure<lito::registry::RegistryReleaseProjection>(
-            context,
-            rstd::format("has invalid release digest: {}", rstd::move(release).unwrap_err()));
-    if (source.is_err())
-        return metadata_failure<lito::registry::RegistryReleaseProjection>(
-            context,
-            rstd::format("has invalid source digest: {}", rstd::move(source).unwrap_err()));
-    if (manifest.is_err())
-        return metadata_failure<lito::registry::RegistryReleaseProjection>(
-            context,
-            rstd::format("has invalid manifest digest: {}", rstd::move(manifest).unwrap_err()));
-    if (blob.is_err()) return Err(rstd::move(blob).unwrap_err());
+            context, rstd::format("has invalid checksum: {}", rstd::move(checksum).unwrap_err()));
     if (yanked.is_err()) return Err(rstd::move(yanked).unwrap_err());
     if (published_at.is_err())
         return metadata_failure<lito::registry::RegistryReleaseProjection>(
             context,
             rstd::format("has invalid published_at: {}", rstd::move(published_at).unwrap_err()));
-
-    auto payload   = rstd_try(immutable_release_payload(value, package));
-    auto canonical = rstd_try(lito::registry::canonical_signed_json(payload));
-    auto computed =
-        lito::registry::ReleaseDigest(lito::crypto::sha256_digest(canonical.as_str().as_bytes()));
-    if (! (computed == *release)) {
-        return metadata_failure<lito::registry::RegistryReleaseProjection>(
-            context, "release digest does not match its immutable projection"_str);
-    }
     return Ok(lito::registry::RegistryReleaseProjection {
         .version      = rstd::move(version).unwrap(),
-        .release      = rstd::move(release).unwrap(),
-        .source       = rstd::move(source).unwrap(),
-        .manifest     = rstd::move(manifest).unwrap(),
-        .blob         = rstd::move(blob).unwrap(),
+        .checksum     = rstd::move(checksum).unwrap(),
         .dependencies = rstd::move(dependencies),
         .yanked       = *yanked,
-        .deprecated   = rstd::move(deprecated),
         .published_at = rstd::move(published_at).unwrap(),
     });
-}
-
-auto valid_tag_name(ref<str> value) -> bool {
-    if (value.is_empty() || value[usize()] == u8('v') ||
-        (value[usize()] >= u8('0') && value[usize()] <= u8('9'))) {
-        return false;
-    }
-    for (auto byte : value.as_bytes()) {
-        if ((byte >= u8('a') && byte <= u8('z')) || (byte >= u8('0') && byte <= u8('9')) ||
-            byte == u8('-') || byte == u8('_')) {
-            continue;
-        }
-        return false;
-    }
-    return lito::registry::SemanticVersion::parse(value).is_err();
-}
-
-auto parse_signatures(const Json&                             envelope,
-                      const Json&                             signed_value,
-                      const lito::registry::Ed25519PublicKey& trusted_key)
-    -> RegistryValueResult<lito::registry::SigningKeyId> {
-    auto canonical  = rstd_try(lito::registry::canonical_signed_json(signed_value));
-    auto trusted_id = rstd_try(lito::registry::signing_key_id(trusted_key));
-    auto signatures_value =
-        rstd_try(required_member(envelope, "signatures"_str, "Registry envelope"_str));
-    auto signatures = rstd_try(json_array(*signatures_value, "Registry envelope.signatures"_str));
-    if (signatures->is_empty()) {
-        return metadata_failure<lito::registry::SigningKeyId>("Registry envelope.signatures"_str,
-                                                              "must not be empty"_str);
-    }
-    auto matched = false;
-    for (usize index {}; index < signatures->len(); ++index) {
-        auto        context = rstd::format("Registry envelope.signatures[{}]", index);
-        const auto& item    = (*signatures)[index];
-        rstd_try(reject_unknown(
-            item, context.as_str(), { "algorithm"_str, "key_id"_str, "signature"_str }));
-        auto algorithm = rstd_try(required_string(item, "algorithm"_str, context.as_str()));
-        auto key_id    = lito::registry::SigningKeyId::parse(
-            rstd_try(required_string(item, "key_id"_str, context.as_str())));
-        if (key_id.is_err()) {
-            return metadata_failure<lito::registry::SigningKeyId>(
-                context.as_str(),
-                rstd::format("has invalid key_id: {}", rstd::move(key_id).unwrap_err()));
-        }
-        auto signature_text = rstd_try(required_string(item, "signature"_str, context.as_str()));
-        if (algorithm != "ed25519"_str || ! (*key_id == trusted_id)) continue;
-        auto signature = lito::registry::Ed25519Signature::parse(signature_text);
-        if (signature.is_err()) {
-            return metadata_failure<lito::registry::SigningKeyId>(
-                context.as_str(),
-                rstd::format("has invalid signature: {}", rstd::move(signature).unwrap_err()));
-        }
-        auto verified =
-            lito::registry::verify_ed25519(trusted_key, *signature, canonical.as_str().as_bytes());
-        if (verified.is_err()) return Err(rstd::move(verified).unwrap_err());
-        matched = true;
-    }
-    if (! matched) {
-        return metadata_failure<lito::registry::SigningKeyId>(
-            "Registry envelope"_str, "has no valid signature from the trusted key"_str);
-    }
-    return Ok(rstd::move(trusted_id));
 }
 
 auto release_exists(slice<lito::registry::RegistryReleaseProjection> releases,
@@ -583,17 +332,6 @@ auto release_exists(slice<lito::registry::RegistryReleaseProjection> releases,
         if (release.version == version) return true;
     }
     return false;
-}
-
-auto decimal_field(const Json& value, ref<str> field, ref<str> context)
-    -> RegistryValueResult<u64> {
-    auto text   = rstd_try(required_string(value, field, context));
-    auto parsed = lito::parse::parse_canonical_u64_decimal(text);
-    if (parsed.is_err()) {
-        return metadata_failure<u64>(
-            context, rstd::format("field '{}' must be a canonical unsigned decimal string", field));
-    }
-    return Ok(*parsed);
 }
 
 } // namespace
@@ -662,91 +400,62 @@ auto lito::registry::RegistryReleaseProjection::clone() const -> RegistryRelease
     for (const auto& dependency : dependencies) {
         cloned_dependencies.push(dependency.clone());
     }
-    auto result = RegistryReleaseProjection {
+    return RegistryReleaseProjection {
         .version      = version.clone(),
-        .release      = release.clone(),
-        .source       = source.clone(),
-        .manifest     = manifest.clone(),
-        .blob         = blob.clone(),
+        .checksum     = checksum.clone(),
         .dependencies = rstd::move(cloned_dependencies),
         .yanked       = yanked,
         .published_at = published_at.clone(),
     };
-    if (deprecated.is_some()) result.deprecated = Some(deprecated->clone());
-    return result;
 }
 
-auto lito::registry::VerifiedPackageIndex::clone() const -> VerifiedPackageIndex {
+auto lito::registry::RegistryPackageIndex::clone() const -> RegistryPackageIndex {
     auto releases = Vec<RegistryReleaseProjection>::with_capacity(releases_.len());
     for (const auto& release : releases_) releases.push(release.clone());
-    auto tags = Vec<RegistryTagProjection>::with_capacity(tags_.len());
-    for (const auto& tag : tags_) tags.push(tag.clone());
-    return VerifiedPackageIndex(package_.clone(),
-                                revision_,
-                                sequence_,
-                                rstd::move(releases),
-                                rstd::move(tags),
-                                verified_key_.clone(),
-                                canonical_signed_.clone());
+    return RegistryPackageIndex(package_.clone(), rstd::move(releases));
 }
 
-auto lito::registry::parse_verified_package_index(slice<u8>                input,
-                                                  const RegistryPackageId& expected,
-                                                  const Ed25519PublicKey&  trusted_key)
-    -> RegistryValueResult<VerifiedPackageIndex> {
+auto lito::registry::parse_package_index(slice<u8> input, const RegistryPackageId& expected)
+    -> RegistryValueResult<RegistryPackageIndex> {
     auto parsed =
         rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
     if (parsed.is_err()) {
-        return registry_value_failure<VerifiedPackageIndex>(rstd::format(
+        return registry_value_failure<RegistryPackageIndex>(rstd::format(
             "Registry package index is invalid JSON: {}", rstd::move(parsed).unwrap_err()));
     }
-    auto envelope = rstd::move(parsed).unwrap();
-    rstd_try(reject_unknown(envelope, "Registry envelope"_str, { "signed"_str, "signatures"_str }));
-    auto signed_value = rstd_try(required_member(envelope, "signed"_str, "Registry envelope"_str));
-    auto verified_key = rstd_try(parse_signatures(envelope, *signed_value, trusted_key));
-    rstd_try(reject_unknown(*signed_value,
+    auto document = rstd::move(parsed).unwrap();
+    rstd_try(reject_unknown(document,
                             "Registry package index"_str,
-                            { "schema"_str,
-                              "registry"_str,
-                              "package"_str,
-                              "revision"_str,
-                              "sequence"_str,
-                              "releases"_str,
-                              "tags"_str }));
-    auto schema =
-        rstd_try(required_string(*signed_value, "schema"_str, "Registry package index"_str));
+                            { "schema"_str, "registry"_str, "package"_str, "releases"_str }));
+    auto schema = rstd_try(required_string(document, "schema"_str, "Registry package index"_str));
     if (schema != "lito.registry.package-index.v1"_str) {
-        return metadata_failure<VerifiedPackageIndex>("Registry package index"_str,
+        return metadata_failure<RegistryPackageIndex>("Registry package index"_str,
                                                       "uses an unsupported schema"_str);
     }
     auto registry = RegistryId::parse(
-        rstd_try(required_string(*signed_value, "registry"_str, "Registry package index"_str)));
+        rstd_try(required_string(document, "registry"_str, "Registry package index"_str)));
     auto package = RegistryPackageName::parse(
-        rstd_try(required_string(*signed_value, "package"_str, "Registry package index"_str)));
+        rstd_try(required_string(document, "package"_str, "Registry package index"_str)));
     if (registry.is_err() || package.is_err() || ! (*registry == expected.registry) ||
         ! (*package == expected.name)) {
-        return metadata_failure<VerifiedPackageIndex>(
+        return metadata_failure<RegistryPackageIndex>(
             "Registry package index"_str, "does not match the requested registry and package"_str);
     }
     auto package_id = RegistryPackageId {
         .registry = rstd::move(registry).unwrap(),
         .name     = rstd::move(package).unwrap(),
     };
-    auto revision =
-        rstd_try(decimal_field(*signed_value, "revision"_str, "Registry package index"_str));
-    auto sequence =
-        rstd_try(decimal_field(*signed_value, "sequence"_str, "Registry package index"_str));
     auto releases_value =
-        rstd_try(required_member(*signed_value, "releases"_str, "Registry package index"_str));
+        rstd_try(required_member(document, "releases"_str, "Registry package index"_str));
     auto release_values =
         rstd_try(json_array(*releases_value, "Registry package index.releases"_str));
     auto releases = Vec<RegistryReleaseProjection>::with_capacity(release_values->len());
     for (usize index {}; index < release_values->len(); ++index) {
         auto context = rstd::format("Registry package index.releases[{}]", index);
-        auto release = parse_release((*release_values)[index], package_id, context.as_str());
+        auto release = parse_release((*release_values)[index], context.as_str());
         if (release.is_err()) return Err(rstd::move(release).unwrap_err());
         if (release_exists(releases.as_slice(), release->version)) {
-            return metadata_failure<VerifiedPackageIndex>(
+            return metadata_failure<RegistryPackageIndex>(
                 "Registry package index"_str,
                 rstd::format("repeats version '{}'", release->version.text().as_str()));
         }
@@ -757,132 +466,5 @@ auto lito::registry::parse_verified_package_index(slice<u8>                input
         [](const RegistryReleaseProjection& left, const RegistryReleaseProjection& right) {
             return right.version < left.version;
         });
-
-    auto tags_value =
-        rstd_try(required_member(*signed_value, "tags"_str, "Registry package index"_str));
-    auto tag_values = rstd_try(json_object(*tags_value, "Registry package index.tags"_str));
-    auto tags       = Vec<RegistryTagProjection>::with_capacity(tag_values->len());
-    auto tag_iter   = tag_values->iter();
-    for (auto item : tag_iter) {
-        auto name   = item.template get<0>();
-        auto target = item.template get<1>()->as_str();
-        if (! valid_tag_name(name->as_str()) || target.is_none()) {
-            return metadata_failure<VerifiedPackageIndex>(
-                "Registry package index.tags"_str,
-                rstd::format("contains invalid tag '{}'", name->as_str()));
-        }
-        auto version = SemanticVersion::parse(*target);
-        if (version.is_err() || ! release_exists(releases.as_slice(), *version)) {
-            return metadata_failure<VerifiedPackageIndex>(
-                "Registry package index.tags"_str,
-                rstd::format("tag '{}' targets an unknown version", name->as_str()));
-        }
-        tags.push(RegistryTagProjection {
-            .name    = name->clone(),
-            .version = rstd::move(version).unwrap(),
-        });
-    }
-    auto canonical = rstd_try(canonical_signed_json(*signed_value));
-    return Ok(VerifiedPackageIndex(rstd::move(package_id),
-                                   revision,
-                                   sequence,
-                                   rstd::move(releases),
-                                   rstd::move(tags),
-                                   rstd::move(verified_key),
-                                   rstd::move(canonical)));
-}
-
-auto lito::registry::parse_verified_registry_release(slice<u8>                input,
-                                                     const RegistryPackageId& expected_package,
-                                                     const ReleaseDigest&     expected_release,
-                                                     const Ed25519PublicKey&  trusted_key)
-    -> RegistryValueResult<VerifiedRegistryRelease> {
-    auto parsed =
-        rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
-    if (parsed.is_err()) {
-        return registry_value_failure<VerifiedRegistryRelease>(
-            rstd::format("Registry release is invalid JSON: {}", rstd::move(parsed).unwrap_err()));
-    }
-    auto envelope = rstd::move(parsed).unwrap();
-    rstd_try(reject_unknown(envelope, "Registry envelope"_str, { "signed"_str, "signatures"_str }));
-    auto signed_value = rstd_try(required_member(envelope, "signed"_str, "Registry envelope"_str));
-    auto verified_key = rstd_try(parse_signatures(envelope, *signed_value, trusted_key));
-    rstd_try(reject_unknown(*signed_value,
-                            "Registry release"_str,
-                            { "schema"_str,
-                              "registry"_str,
-                              "package"_str,
-                              "version"_str,
-                              "source"_str,
-                              "manifest"_str,
-                              "blob"_str,
-                              "dependencies"_str,
-                              "published_at"_str }));
-    auto schema = rstd_try(required_string(*signed_value, "schema"_str, "Registry release"_str));
-    if (schema != "lito.registry.release.v1"_str) {
-        return metadata_failure<VerifiedRegistryRelease>("Registry release"_str,
-                                                         "uses an unsupported schema"_str);
-    }
-    auto registry = RegistryId::parse(
-        rstd_try(required_string(*signed_value, "registry"_str, "Registry release"_str)));
-    auto package = RegistryPackageName::parse(
-        rstd_try(required_string(*signed_value, "package"_str, "Registry release"_str)));
-    if (registry.is_err() || package.is_err() || ! (*registry == expected_package.registry) ||
-        ! (*package == expected_package.name)) {
-        return metadata_failure<VerifiedRegistryRelease>(
-            "Registry release"_str, "does not match the requested registry and package"_str);
-    }
-    auto canonical = rstd_try(canonical_signed_json(*signed_value));
-    auto computed  = ReleaseDigest(lito::crypto::sha256_digest(canonical.as_str().as_bytes()));
-    if (! (computed == expected_release)) {
-        return metadata_failure<VerifiedRegistryRelease>(
-            "Registry release"_str, "does not match the requested release digest"_str);
-    }
-
-    auto               release_value = JsonMap::make();
-    constexpr ref<str> fields[]      = { "version"_str, "source"_str,       "manifest"_str,
-                                         "blob"_str,    "dependencies"_str, "published_at"_str };
-    for (auto field : fields) {
-        auto member = rstd_try(required_member(*signed_value, field, "Registry release"_str));
-        release_value.insert(String::make(field), member->clone());
-    }
-    release_value.insert(String::make("release"_str),
-                         Json::String(String::make(expected_release.text().as_str())));
-    release_value.insert(String::make("yanked"_str), Json::Bool(false));
-    release_value.insert(String::make("deprecated"_str), Json {});
-    auto release = rstd_try(parse_release(
-        Json::Object(rstd::move(release_value)), expected_package, "Registry release"_str));
-    return Ok(VerifiedRegistryRelease(expected_package.clone(),
-                                      rstd::move(release),
-                                      rstd::move(verified_key),
-                                      rstd::move(canonical)));
-}
-
-auto lito::registry::registry_immutable_release_matches(
-    const RegistryReleaseProjection& left,
-    const RegistryReleaseProjection& right) noexcept -> bool {
-    if (! (left.version == right.version) || ! (left.release == right.release) ||
-        ! (left.source == right.source) || ! (left.manifest == right.manifest) ||
-        ! (left.blob.digest == right.blob.digest) ||
-        left.blob.size.value() != right.blob.size.value() ||
-        left.blob.format.as_str() != right.blob.format.as_str() ||
-        left.published_at.as_str() != right.published_at.as_str() ||
-        left.dependencies.len() != right.dependencies.len()) {
-        return false;
-    }
-    for (usize index {}; index < left.dependencies.len(); ++index) {
-        const auto& first  = left.dependencies[index];
-        const auto& second = right.dependencies[index];
-        if (first.alias != second.alias || ! (first.package == second.package) ||
-            first.requirement.text() != second.requirement.text() || first.kind != second.kind ||
-            first.visibility != second.visibility ||
-            first.default_features != second.default_features ||
-            first.features.len() != second.features.len()) {
-            return false;
-        }
-        for (usize feature {}; feature < first.features.len(); ++feature) {
-            if (first.features[feature] != second.features[feature]) return false;
-        }
-    }
-    return true;
+    return Ok(RegistryPackageIndex(rstd::move(package_id), rstd::move(releases)));
 }

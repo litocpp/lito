@@ -14,7 +14,6 @@ import :dependency.external_source;
 import :dependency.cargo;
 import :build.host_tool;
 import :build.event;
-import :registry.release;
 import :registry.blob;
 
 using namespace rstd::prelude;
@@ -209,17 +208,11 @@ auto fetch_entry_count(const lito::package::ResolvedPackageGraph&          graph
             }
             if (source.kind != lito::source::PackageSourceKind::Registry ||
                 source.registry_package.is_none() || source.registry_version.is_none() ||
-                source.release_digest.is_none() || source.blob_digest.is_none())
+                source.package_checksum.is_none())
                 return;
-            entries.insert(bundle
-                               .registry_release(*source.registry_package,
-                                                 *source.registry_version,
-                                                 *source.release_digest)
-                               .as_path()
-                               .to_string_lossy(),
-                           empty {});
-            entries.insert(bundle.registry_blob(*source.blob_digest).as_path().to_string_lossy(),
-                           empty {});
+            entries.insert(
+                bundle.registry_package(*source.package_checksum).as_path().to_string_lossy(),
+                empty {});
         };
     for (const auto& source : graph.sources) append_package_source(source);
     for (const auto& package : graph.packages) append_package_source(package.source);
@@ -442,25 +435,17 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
         ++entries;
     }
 
-    auto registry_releases = rstd::collections::BTreeMap<String, empty>::make();
-    auto registry_blobs    = rstd::collections::BTreeMap<String, empty>::make();
+    auto registry_packages = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& source : graph.sources) {
         if (source.kind != lito::source::PackageSourceKind::Registry) continue;
         if (registries.is_none() || source.registry_package.is_none() ||
-            source.registry_version.is_none() || source.release_digest.is_none() ||
-            source.blob_digest.is_none() || source.blob_size.is_none() ||
-            source.archive_format.is_none()) {
+            source.registry_version.is_none() || source.package_checksum.is_none()) {
             cleanup();
             return fetch_failure<usize>("Registry source bundle metadata is incomplete"_str);
         }
-        auto release_destination = layout.registry_release(
-            *source.registry_package, *source.registry_version, *source.release_digest);
-        auto blob_destination = layout.registry_blob(*source.blob_digest);
-        auto release_key      = release_destination.as_path().to_string_lossy();
-        auto blob_key         = blob_destination.as_path().to_string_lossy();
-        auto need_release     = ! registry_releases.contains_key(release_key.as_str());
-        auto need_blob        = ! registry_blobs.contains_key(blob_key.as_str());
-        if (! need_release && ! need_blob) continue;
+        auto destination = layout.registry_package(*source.package_checksum);
+        auto key         = destination.as_path().to_string_lossy();
+        if (registry_packages.contains_key(key.as_str())) continue;
 
         auto configured = registry_configuration(*registries, source.registry_package->registry);
         if (configured.is_none()) {
@@ -473,52 +458,24 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             cleanup();
             return Err(rstd::into<CommandError>(rstd::move(data).unwrap_err()));
         }
-        if (need_release) {
-            auto releases = lito::registry::RegistryReleaseClient(
-                PathBuf::from(data->root()),
-                **configured,
-                lito::registry::RegistryNetworkPolicy::Offline,
-                {});
-            auto release = releases.load_record(*source.registry_package, *source.release_digest);
-            if (release.is_err()) {
-                cleanup();
-                return fetch_failure<usize>(rstd::format(
-                    "cannot read verified Registry release: {}", release.unwrap_err().message));
-            }
-            auto release_copy =
-                copy_bundle_file(release->path.as_path(), release_destination.as_path());
-            if (release_copy.is_err()) {
-                cleanup();
-                return Err(rstd::move(release_copy).unwrap_err());
-            }
-            registry_releases.insert(rstd::move(release_key), empty {});
-            ++entries;
+        auto blobs =
+            lito::registry::RegistryBlobCache(PathBuf::from(data->root()),
+                                              (**configured).effective_endpoints()->blob.clone(),
+                                              lito::registry::RegistryNetworkPolicy::Offline,
+                                              {});
+        auto blob = blobs.acquire(*source.registry_package, *source.package_checksum);
+        if (blob.is_err()) {
+            cleanup();
+            return fetch_failure<usize>(rstd::format(
+                "cannot read verified Registry package archive: {}", blob.unwrap_err().message));
         }
-        if (need_blob) {
-            auto blobs = lito::registry::RegistryBlobCache(
-                PathBuf::from(data->root()),
-                (**configured).effective_endpoints()->blob.clone(),
-                lito::registry::RegistryNetworkPolicy::Offline,
-                {});
-            auto blob = blobs.acquire(*source.registry_package,
-                                      lito::registry::RegistryBlobProjection {
-                                          .digest = source.blob_digest->clone(),
-                                          .size   = source.blob_size->clone(),
-                                          .format = source.archive_format->clone(),
-                                      });
-            if (blob.is_err()) {
-                cleanup();
-                return fetch_failure<usize>(rstd::format("cannot read verified Registry blob: {}",
-                                                         blob.unwrap_err().message));
-            }
-            auto blob_copy = copy_bundle_file(blob->path.as_path(), blob_destination.as_path());
-            if (blob_copy.is_err()) {
-                cleanup();
-                return Err(rstd::move(blob_copy).unwrap_err());
-            }
-            registry_blobs.insert(rstd::move(blob_key), empty {});
-            ++entries;
+        auto copied = copy_bundle_file(blob->path.as_path(), destination.as_path());
+        if (copied.is_err()) {
+            cleanup();
+            return Err(rstd::move(copied).unwrap_err());
         }
+        registry_packages.insert(rstd::move(key), empty {});
+        ++entries;
     }
 
     auto published = rstd::fs::rename(staging.as_path(), destination);

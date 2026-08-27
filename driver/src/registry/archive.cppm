@@ -21,7 +21,7 @@ struct RegistryArchiveLimits {
 };
 
 struct InspectedRegistryArchive {
-    RegistryBlobProjection          blob;
+    RegistryPackageArchive          archive;
     lito::source::SourceTree        tree;
     VerifiedRegistrySourceCandidate candidate;
 };
@@ -34,16 +34,11 @@ public:
                                   RegistryArchiveLimits       limits = {})
         -> RegistryArtifactResult<InspectedRegistryArchive>;
 
-    static auto inspect(const VerifiedRegistryBlob&      blob,
-                        const RegistryPackageId&         package,
-                        const RegistryReleaseProjection& release,
-                        RegistryArchiveLimits            limits = {})
-        -> RegistryArtifactResult<InspectedRegistryArchive>;
-    static auto inspect_at_root(const VerifiedRegistryBlob&      blob,
-                                const RegistryPackageId&         package,
-                                const RegistryReleaseProjection& release,
-                                ref<rstd::path::Path>            manifest_root,
-                                RegistryArchiveLimits            limits = {})
+    static auto inspect_at_root(const VerifiedRegistryBlob& blob,
+                                const RegistryPackageId&    package,
+                                const SemanticVersion&      version,
+                                ref<rstd::path::Path>       manifest_root,
+                                RegistryArchiveLimits       limits = {})
         -> RegistryArtifactResult<InspectedRegistryArchive>;
 };
 
@@ -316,52 +311,15 @@ auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
                          : inspect_registry_source_tree(tree, package, version);
     if (candidate.is_err()) return Err(rstd::move(candidate).unwrap_err());
     return Ok(InspectedRegistryArchive {
-        .blob =
-            RegistryBlobProjection {
-                .digest = blob.digest.clone(),
-                .size   = RegistryBlobSize(blob.size),
+        .archive =
+            RegistryPackageArchive {
+                .checksum = blob.checksum.clone(),
+                .size     = RegistryBlobSize(blob.size),
                 .format = RegistryArchiveFormat::parse(RegistryArchiveFormat::TAR_ZSTD_V1).unwrap(),
             },
         .tree      = rstd::move(tree),
         .candidate = rstd::move(candidate).unwrap(),
     });
-}
-
-auto inspect_release_with_root(const VerifiedRegistryBlob&      blob,
-                               const RegistryPackageId&         package,
-                               const RegistryReleaseProjection& release,
-                               Option<ref<rstd::path::Path>>    manifest_root,
-                               RegistryArchiveLimits            limits)
-    -> RegistryArtifactResult<InspectedRegistryArchive> {
-    if (! (blob.digest == release.blob.digest) || blob.size != release.blob.size.value()) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Digest,
-            package,
-            String::make("verified blob does not match the selected Registry release"_str));
-    }
-    auto inspected = rstd_try(
-        inspect_candidate_with_root(blob, package, release.version, manifest_root, limits));
-    auto& candidate = inspected.candidate;
-    if (! (candidate.source_digest == release.source)) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Source,
-            package,
-            String::make("archive source digest does not match Registry metadata"_str));
-    }
-    if (! (candidate.manifest_digest == release.manifest)) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Manifest,
-            package,
-            String::make("archive manifest digest does not match Registry metadata"_str));
-    }
-    if (! registry_dependencies_match(candidate.dependencies.as_slice(),
-                                      release.dependencies.as_slice())) {
-        return archive_failure<InspectedRegistryArchive>(
-            RegistryArtifactErrorKind::Projection,
-            package,
-            String::make("archive dependency projection does not match Registry metadata"_str));
-    }
-    return Ok(rstd::move(inspected));
 }
 
 } // namespace
@@ -385,21 +343,13 @@ auto lito::registry::PackageArchiveBuilder::build(
     return build(tree, package, version, rstd::move(destination), limits);
 }
 
-auto lito::registry::PackageArchiveInspector::inspect(const VerifiedRegistryBlob&      blob,
-                                                      const RegistryPackageId&         package,
-                                                      const RegistryReleaseProjection& release,
-                                                      RegistryArchiveLimits            limits)
+auto lito::registry::PackageArchiveInspector::inspect_at_root(const VerifiedRegistryBlob& blob,
+                                                              const RegistryPackageId&    package,
+                                                              const SemanticVersion&      version,
+                                                              ref<rstd::path::Path> manifest_root,
+                                                              RegistryArchiveLimits limits)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
-    return inspect_release_with_root(blob, package, release, None(), limits);
-}
-
-auto lito::registry::PackageArchiveInspector::inspect_at_root(
-    const VerifiedRegistryBlob&      blob,
-    const RegistryPackageId&         package,
-    const RegistryReleaseProjection& release,
-    ref<rstd::path::Path>            manifest_root,
-    RegistryArchiveLimits            limits) -> RegistryArtifactResult<InspectedRegistryArchive> {
-    return inspect_release_with_root(blob, package, release, Some(manifest_root), limits);
+    return inspect_candidate_with_root(blob, package, version, Some(manifest_root), limits);
 }
 
 auto lito::registry::PackageArchiveInspector::inspect_candidate(const VerifiedRegistryBlob& blob,
@@ -465,7 +415,8 @@ auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree
         return archive_library_failure<InspectedRegistryArchive>(package,
                                                                  rstd::move(finished).unwrap_err());
     }
-    auto blob     = rstd_try(registry_blob_projection_from_file(destination.as_path(), package));
-    auto verified = rstd_try(verify_registry_blob_file(destination.clone(), package, blob));
+    auto archive = rstd_try(registry_package_archive_from_file(destination.as_path(), package));
+    auto verified =
+        rstd_try(verify_registry_blob_file(destination.clone(), package, archive.checksum));
     return PackageArchiveInspector::inspect_candidate(verified, package, version, limits);
 }

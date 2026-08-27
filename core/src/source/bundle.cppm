@@ -45,26 +45,11 @@ public:
             .join(PathBuf::from("source.archive"_str).as_path());
     }
 
-    auto registry_release(const lito::registry::RegistryPackageId& package,
-                          const lito::registry::SemanticVersion&   version,
-                          const lito::registry::ReleaseDigest&     release) const -> PathBuf {
-        auto identity = rstd::format("lito-source-bundle-registry-release-v1\n{}\n{}\n{}",
-                                     lito::registry::registry_package_id_text(package).as_str(),
-                                     version.text().as_str(),
-                                     release.text().as_str());
-        auto key      = lito::crypto::sha256_hex(identity.as_str());
+    auto registry_package(const lito::registry::PackageChecksum& checksum) const -> PathBuf {
         return version_root()
             .join(PathBuf::from("registry"_str).as_path())
-            .join(PathBuf::from("releases"_str).as_path())
-            .join(PathBuf::from(key.as_str()).as_path())
-            .join(PathBuf::from("release.json"_str).as_path());
-    }
-
-    auto registry_blob(const lito::registry::BlobDigest& digest) const -> PathBuf {
-        return version_root()
-            .join(PathBuf::from("registry"_str).as_path())
-            .join(PathBuf::from("blobs"_str).as_path())
-            .join(PathBuf::from(digest.digest().to_hex().as_str()).as_path())
+            .join(PathBuf::from("packages"_str).as_path())
+            .join(PathBuf::from(checksum.text().as_str()).as_path())
             .join(PathBuf::from("source.archive"_str).as_path());
     }
 
@@ -88,7 +73,7 @@ public:
     auto fetch(const FetchIdentity& identity) const -> PathBuf {
         if (identity.is_Git()) return git(identity);
         if (identity.is_Archive()) return archive(identity);
-        return registry_blob(identity.as_RegistryBlob().digest);
+        return registry_package(identity.as_RegistryPackage().checksum);
     }
 };
 

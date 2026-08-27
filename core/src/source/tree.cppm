@@ -4,8 +4,6 @@ module;
 export module lito.core:source.tree;
 
 import rstd;
-import lito.crypto;
-import :registry.digest;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -110,9 +108,6 @@ struct SourceMaterialization {
 
 auto materialize_source_tree(const SourceTree& tree, ref<rstd::path::Path> destination)
     -> SourceTreeResult<SourceMaterialization>;
-
-auto canonical_source_digest(const SourceTree& tree)
-    -> SourceTreeResult<lito::registry::SourceDigest>;
 
 } // namespace lito::source
 
@@ -279,33 +274,6 @@ auto lito::source::SourceTree::add_bytes(ref<str> path, slice<u8> contents, Sour
 auto lito::source::SourceTree::add_text(ref<str> path, ref<str> contents, SourceFileMode mode)
     -> SourceTreeResult<empty> {
     return add_bytes(path, contents.as_bytes(), mode);
-}
-
-auto lito::source::canonical_source_digest(const SourceTree& tree)
-    -> SourceTreeResult<lito::registry::SourceDigest> {
-    auto state = lito::crypto::Sha256::make();
-    state.update("lito-source-tree-v1\0"_str.as_bytes());
-    for (const auto& entry : tree.entries()) {
-        if (entry.kind() == SourceEntryKind::Directory) continue;
-        const auto path = entry.path().as_str();
-        if (path.len() > usize(u32::MAX.to_primitive())) {
-            return Err(SourceTreeError::Protocol(
-                String::make("source path is too large for canonical framing"_str)));
-        }
-        const auto marker = array<u8, 1> { u8(0x01) };
-        state.update(marker.as_slice());
-        const auto path_length = u32(path.len().to_primitive()).to_be_bytes();
-        state.update(path_length.as_slice());
-        state.update(path.as_bytes());
-        const auto mode = array<u8, 1> {
-            entry.mode() == SourceFileMode::Executable ? u8(0x01) : u8(0x00),
-        };
-        state.update(mode.as_slice());
-        const auto content_length = u64(entry.contents().len().to_primitive()).to_be_bytes();
-        state.update(content_length.as_slice());
-        state.update(entry.contents());
-    }
-    return Ok(lito::registry::SourceDigest(rstd::move(state).finalize_digest()));
 }
 
 auto lito::source::SourceTree::replace_bytes(ref<str> path, slice<u8> contents, SourceFileMode mode)

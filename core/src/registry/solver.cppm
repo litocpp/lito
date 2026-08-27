@@ -24,11 +24,9 @@ enum class RegistryIndexErrorKind
     LegalUnavailable,
     Network,
     OfflineCacheMiss,
-    Signature,
     Schema,
     ContextMismatch,
     CorruptCache,
-    Rollback,
     Integrity,
 };
 
@@ -38,7 +36,7 @@ struct RegistryIndexError {
     String                 message;
 };
 
-using RegistryIndexLoadResult = Result<VerifiedPackageIndex, RegistryIndexError>;
+using RegistryIndexLoadResult = Result<RegistryPackageIndex, RegistryIndexError>;
 
 struct RegistryIndexProvider {
     void* context {};
@@ -62,13 +60,13 @@ struct RegistrySolverRequirement {
 struct RegistryLockedPreference {
     RegistryPackageId package;
     SemanticVersion   version;
-    ReleaseDigest     release;
+    PackageChecksum   checksum;
 
     auto clone() const -> RegistryLockedPreference {
         return RegistryLockedPreference {
-            .package = package.clone(),
-            .version = version.clone(),
-            .release = release.clone(),
+            .package  = package.clone(),
+            .version  = version.clone(),
+            .checksum = checksum.clone(),
         };
     }
 };
@@ -113,9 +111,6 @@ public:
     static auto solve(const RegistrySolverInput& input, RegistryIndexProvider provider)
         -> RegistrySolverResult<ResolvedRegistryGraph>;
 };
-
-auto resolve_registry_tag(const VerifiedPackageIndex& index, ref<str> tag)
-    -> RegistryValueResult<SemanticVersion>;
 
 } // namespace lito::registry
 
@@ -179,7 +174,7 @@ struct PackageState {
 
 struct CachedIndex {
     String               key;
-    VerifiedPackageIndex index;
+    RegistryPackageIndex index;
 };
 
 auto package_key(const RegistryPackageId& package) -> String {
@@ -274,13 +269,12 @@ class Solver {
             for (usize position {}; position < index.releases().len(); ++position) {
                 const auto& release = index.releases()[position];
                 if (! (release.version == (*locked)->version)) continue;
-                if (! (release.release == (*locked)->release)) {
+                if (! (release.checksum == (*locked)->checksum)) {
                     return Err(RegistrySolverError::Provider(RegistryIndexError {
                         .kind    = RegistryIndexErrorKind::Integrity,
                         .package = state.package.clone(),
-                        .message =
-                            rstd::format("locked version '{}' is bound to another release digest",
-                                         release.version.text().as_str()),
+                        .message = rstd::format("locked version '{}' is bound to another checksum",
+                                                release.version.text().as_str()),
                     }));
                 }
                 locked_position = Some(position);
@@ -488,15 +482,6 @@ auto lito::registry::RegistryVersionSolver::solve(const RegistrySolverInput& inp
                                                   RegistryIndexProvider      provider)
     -> RegistrySolverResult<ResolvedRegistryGraph> {
     return Solver(input, provider).solve();
-}
-
-auto lito::registry::resolve_registry_tag(const VerifiedPackageIndex& index, ref<str> tag)
-    -> RegistryValueResult<SemanticVersion> {
-    for (const auto& candidate : index.tags()) {
-        if (candidate.name.as_str() == tag) return Ok(candidate.version.clone());
-    }
-    return registry_value_failure<SemanticVersion>(
-        rstd::format("Registry package has no tag '{}'", tag));
 }
 
 auto rstd::Impl<rstd::fmt::Display, lito::registry::RegistrySolverError>::fmt(

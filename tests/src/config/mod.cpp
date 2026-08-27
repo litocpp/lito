@@ -293,7 +293,7 @@ version = "29.0.14206865"
     }
 }
 
-TEST_F(Config, RegistryBootstrapOwnsIdentityEndpointsTrustAndMirror) {
+TEST_F(Config, RegistryBootstrapOwnsIdentityDataEndpointsApiAndMirror) {
     auto project = empty_project("registry-bootstrap"_str);
     ASSERT_TRUE(project.is_ok());
     auto           path     = project->root.join(PathBuf::from("registries.toml"_str).as_path());
@@ -301,22 +301,13 @@ TEST_F(Config, RegistryBootstrapOwnsIdentityEndpointsTrustAndMirror) {
 
 [registries.official]
 identity = "https://registry.litocpp.org/"
-config = "https://registry.litocpp.org/v1/config.json"
 index = "https://registry.litocpp.org/v1/index/{package}.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{sha256}.tar.zst"
-release = "https://registry.litocpp.org/v1/releases/sha256/{sha256}.json"
-event = "https://registry.litocpp.org/v1/events/{sequence}.json"
-checkpoint = "https://registry.litocpp.org/v1/checkpoint.json"
+blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
 api = "https://registry.litocpp.org/"
-trusted-public-key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 [registries.official.mirror]
-config = "https://mirror.example/v1/config.json"
 index = "https://mirror.example/v1/index/{package}.json"
-blob = "https://mirror.example/v1/blobs/sha256/{sha256}.tar.zst"
-release = "https://mirror.example/v1/releases/sha256/{sha256}.json"
-event = "https://mirror.example/v1/events/{sequence}.json"
-checkpoint = "https://mirror.example/v1/checkpoint.json"
+blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
 )toml"_str;
     ASSERT_TRUE(rstd::fs::write(path.as_path(), contents.as_bytes()).is_ok());
 
@@ -328,15 +319,13 @@ checkpoint = "https://mirror.example/v1/checkpoint.json"
     EXPECT_EQ(registry.name.as_str(), "official"_str);
     EXPECT_EQ(registry.identity.as_str(), "https://registry.litocpp.org/"_str);
     EXPECT_EQ(registry.api.as_str(), "https://registry.litocpp.org/"_str);
-    EXPECT_EQ(registry.trusted_public_key.base64url(),
-              "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"_str);
     EXPECT_EQ(registry.endpoints.index.render("luato"_str).as_str(),
               "https://registry.litocpp.org/v1/index/luato.json"_str);
     EXPECT_EQ(registry.effective_endpoints()->index.render("luato"_str).as_str(),
               "https://mirror.example/v1/index/luato.json"_str);
 }
 
-TEST_F(Config, RegistryBootstrapNoConfigSkipsTheUserDocument) {
+TEST_F(Config, RegistryBootstrapNoConfigSkipsTheUserDocumentButKeepsOfficialDefaults) {
     auto project = empty_project("registry-bootstrap-disabled"_str);
     ASSERT_TRUE(project.is_ok());
     auto path = project->root.join(PathBuf::from("registries.toml"_str).as_path());
@@ -347,7 +336,8 @@ TEST_F(Config, RegistryBootstrapNoConfigSkipsTheUserDocument) {
             .path = Some(rstd::move(path)),
         });
     ASSERT_TRUE(loaded.is_ok());
-    EXPECT_TRUE(loaded->default_registry().is_none());
+    ASSERT_TRUE(loaded->default_registry().is_some());
+    EXPECT_EQ((**loaded->default_registry()).name.as_str(), "official"_str);
 }
 
 TEST_F(Config, RegistryBootstrapRejectsUnknownFieldsAndInvalidTemplates) {
@@ -355,25 +345,15 @@ TEST_F(Config, RegistryBootstrapRejectsUnknownFieldsAndInvalidTemplates) {
         R"toml(default = "official"
 [registries.official]
 identity = "https://registry.litocpp.org/"
-config = "https://registry.litocpp.org/v1/config.json"
 index = "https://registry.litocpp.org/v1/index/fixed.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{sha256}.tar.zst"
-release = "https://registry.litocpp.org/v1/releases/sha256/{sha256}.json"
-event = "https://registry.litocpp.org/v1/events/{sequence}.json"
-checkpoint = "https://registry.litocpp.org/v1/checkpoint.json"
+blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
 api = "https://registry.litocpp.org/"
-trusted-public-key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 )toml"_str,
         R"toml([registries.official]
 identity = "https://registry.litocpp.org/"
-config = "https://registry.litocpp.org/v1/config.json"
 index = "https://registry.litocpp.org/v1/index/{package}.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{sha256}.tar.zst"
-release = "https://registry.litocpp.org/v1/releases/sha256/{sha256}.json"
-event = "https://registry.litocpp.org/v1/events/{sequence}.json"
-checkpoint = "https://registry.litocpp.org/v1/checkpoint.json"
+blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
 api = "https://registry.litocpp.org/"
-trusted-public-key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 token = "must-not-live-here"
 )toml"_str,
     };

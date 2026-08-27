@@ -95,32 +95,16 @@ TEST_F(InstallSource, RegistryProvenanceRoundTripsExactContentIdentity) {
         .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .name     = lito::registry::RegistryPackageName::parse("fixture-tool"_str).unwrap(),
     };
-    auto version = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
-    auto source  = lito::source::ResolvedPackageSource {
+    auto version  = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
+    auto checksum = lito::registry::PackageChecksum::parse(
+                        "1111111111111111111111111111111111111111111111111111111111111111"_str)
+                        .unwrap();
+    auto source   = lito::source::ResolvedPackageSource {
         .identity         = lito::source::registry_source_identity(package, version),
         .kind             = lito::source::PackageSourceKind::Registry,
         .registry_package = Some(package.clone()),
         .registry_version = Some(version.clone()),
-        .release_digest =
-            Some(lito::registry::ReleaseDigest::parse(
-                     "sha256:1111111111111111111111111111111111111111111111111111111111111111"_str)
-                     .unwrap()),
-        .source_digest =
-            Some(lito::registry::SourceDigest::parse(
-                     "sha256:2222222222222222222222222222222222222222222222222222222222222222"_str)
-                     .unwrap()),
-        .manifest_digest =
-            Some(lito::registry::ManifestDigest::parse(
-                     "sha256:3333333333333333333333333333333333333333333333333333333333333333"_str)
-                     .unwrap()),
-        .blob_digest =
-            Some(lito::registry::BlobDigest::parse(
-                     "sha256:4444444444444444444444444444444444444444444444444444444444444444"_str)
-                     .unwrap()),
-        .blob_size      = Some(lito::registry::RegistryBlobSize(u64(42))),
-        .archive_format = Some(lito::registry::RegistryArchiveFormat::parse(
-                                   lito::registry::RegistryArchiveFormat::TAR_ZSTD_V1)
-                                   .unwrap()),
+        .package_checksum = Some(checksum.clone()),
     };
     auto provenance = lito::install_source_provenance(source);
     ASSERT_TRUE(provenance.is_ok());
@@ -132,7 +116,7 @@ TEST_F(InstallSource, RegistryProvenanceRoundTripsExactContentIdentity) {
     ASSERT_TRUE(parsed->is_Registry());
     EXPECT_EQ(parsed->as_Registry().package, package);
     EXPECT_EQ(parsed->as_Registry().version, version);
-    EXPECT_EQ(parsed->as_Registry().release.text(), provenance->as_Registry().release.text());
+    EXPECT_EQ(parsed->as_Registry().checksum.text(), provenance->as_Registry().checksum.text());
     EXPECT_EQ(lito::install_source_identity(*parsed).unwrap().as_str(), source.identity.as_str());
 }
 
@@ -162,40 +146,15 @@ sources = ["main.cpp"]
         .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .name = lito::registry::RegistryPackageName::parse("fixture-registry-tool"_str).unwrap(),
     };
-    auto version = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
-    auto release = lito::registry::RegistryReleaseProjection {
-        .version = version.clone(),
-        .release =
-            lito::registry::ReleaseDigest::parse(
-                "sha256:1111111111111111111111111111111111111111111111111111111111111111"_str)
-                .unwrap(),
-        .source = lito::registry::SourceDigest::parse(
-                      "sha256:2222222222222222222222222222222222222222222222222222222222222222"_str)
-                      .unwrap(),
-        .manifest =
-            lito::registry::ManifestDigest::parse(
-                "sha256:3333333333333333333333333333333333333333333333333333333333333333"_str)
-                .unwrap(),
-        .blob =
-            lito::registry::RegistryBlobProjection {
-                .digest =
-                    lito::registry::BlobDigest::parse(
-                        "sha256:4444444444444444444444444444444444444444444444444444444444444444"_str)
-                        .unwrap(),
-                .size   = lito::registry::RegistryBlobSize(u64(42)),
-                .format = lito::registry::RegistryArchiveFormat::parse(
-                              lito::registry::RegistryArchiveFormat::TAR_ZSTD_V1)
-                              .unwrap(),
-            },
-        .dependencies = {},
-        .published_at =
-            lito::registry::RegistryTimestamp::parse("2026-08-23T12:34:56Z"_str).unwrap(),
-    };
+    auto version       = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
+    auto checksum      = lito::registry::PackageChecksum::parse(
+                             "4444444444444444444444444444444444444444444444444444444444444444"_str)
+                             .unwrap();
     auto identity      = lito::source::registry_source_identity(package, version);
     auto graph_sources = Vec<lito::registry::ResolvedRegistryGraphSource>::make();
     graph_sources.push(lito::registry::ResolvedRegistryGraphSource {
         .package = package.clone(),
-        .release = release.clone(),
+        .version = version.clone(),
         .source =
             lito::source::ResolvedPackageSource {
                 .identity         = identity.clone(),
@@ -203,12 +162,7 @@ sources = ["main.cpp"]
                 .root_directory   = materialized->root.clone(),
                 .registry_package = Some(package.clone()),
                 .registry_version = Some(version.clone()),
-                .release_digest   = Some(release.release.clone()),
-                .source_digest    = Some(release.source.clone()),
-                .manifest_digest  = Some(release.manifest.clone()),
-                .blob_digest      = Some(release.blob.digest.clone()),
-                .blob_size        = Some(release.blob.size.clone()),
-                .archive_format   = Some(release.blob.format.clone()),
+                .package_checksum = Some(checksum.clone()),
             },
         .catalog = rstd::move(catalog).unwrap(),
     });

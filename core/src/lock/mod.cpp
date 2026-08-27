@@ -63,13 +63,13 @@ auto locked_package_source(const lito::source::ResolvedPackageSource& source)
         return Ok(Some(LockedSource::Git(source.git.clone(), source.commit.clone())));
     }
     if (source.registry_package.is_none() || source.registry_version.is_none() ||
-        source.release_digest.is_none()) {
+        source.package_checksum.is_none()) {
         return lock_failure<Option<LockedSource>>(
             "resolved Registry source is missing exact lock identity"_str);
     }
     return Ok(Some(LockedSource::Registry(source.registry_package->clone(),
                                           source.registry_version->clone(),
-                                          source.release_digest->clone())));
+                                          source.package_checksum->clone())));
 }
 
 auto locked_external_source(const lito::dependency::ResolvedExternalSource& source)
@@ -112,7 +112,7 @@ auto locked_source_wire(const LockedSource& source) -> LockedSourceWire {
     if (source.is_Archive()) {
         return LockedSourceWire {
             .source   = rstd::format("archive+{}", source.as_Archive().url.as_str()),
-            .checksum = Some(rstd::format("sha256:{}", source.as_Archive().sha256.to_hex())),
+            .checksum = Some(source.as_Archive().sha256.to_hex()),
         };
     }
     return LockedSourceWire {
@@ -120,7 +120,7 @@ auto locked_source_wire(const LockedSource& source) -> LockedSourceWire {
                                  source.as_Registry().package.registry.as_str(),
                                  source.as_Registry().package.name.as_str(),
                                  source.as_Registry().version.text().as_str()),
-        .checksum = Some(source.as_Registry().release.text()),
+        .checksum = Some(source.as_Registry().checksum.text()),
     };
 }
 
@@ -251,12 +251,7 @@ auto reject_checksum(const Option<String>& checksum, rstd::serde::DataPath path)
 
 auto parse_sha256_checksum(ref<str> value, rstd::serde::DataPath path)
     -> LockResult<lito::crypto::Sha256Digest> {
-    auto digest = value.strip_prefix("sha256:"_str);
-    if (digest.is_none()) {
-        return lock_data_failure<lito::crypto::Sha256Digest>(
-            rstd::move(path), "checksum must start with 'sha256:'"_str);
-    }
-    auto parsed = lito::parse::parse_sha256(*digest, lito::parse::Sha256TextMode::Canonical);
+    auto parsed = lito::parse::parse_sha256(value, lito::parse::Sha256TextMode::Canonical);
     if (parsed.is_err()) {
         return lock_data_failure<lito::crypto::Sha256Digest>(
             rstd::move(path),
@@ -328,12 +323,12 @@ auto parse_locked_source(String                value,
             return lock_data_failure<LockedSource>(path.with_field("source"_str),
                                                    "Registry source coordinate is invalid"_str);
         }
-        auto release_digest = lito::registry::ReleaseDigest::parse(checksum->as_str());
-        if (release_digest.is_err()) {
+        auto package_checksum = lito::registry::PackageChecksum::parse(checksum->as_str());
+        if (package_checksum.is_err()) {
             return lock_data_failure<LockedSource>(
                 path.with_field("checksum"_str),
                 "Registry checksum is invalid"_str,
-                rstd::move(release_digest).unwrap_err_unchecked());
+                rstd::move(package_checksum).unwrap_err_unchecked());
         }
         return Ok(LockedSource::Registry(
             lito::registry::RegistryPackageId {
@@ -341,7 +336,7 @@ auto parse_locked_source(String                value,
                 .name     = rstd::move(package_name).unwrap_unchecked(),
             },
             rstd::move(semantic_version).unwrap_unchecked(),
-            rstd::move(release_digest).unwrap_unchecked()));
+            rstd::move(package_checksum).unwrap_unchecked()));
     }
 
     return lock_data_failure<LockedSource>(path.with_field("source"_str),
@@ -592,7 +587,7 @@ auto append_registry_pin(lito::source::SourceResolutionOptions& options,
                          const RegistrySource&                  source) -> LockResult<empty> {
     for (const auto& existing : options.registry_sources) {
         if (! (existing.package == source.package)) continue;
-        if (! (existing.version == source.version) || ! (existing.release == source.release)) {
+        if (! (existing.version == source.version) || ! (existing.checksum == source.checksum)) {
             return lock_failure<empty>(
                 rstd::format("lock contains conflicting exact Registry releases for package '{}'",
                              source.package.name.as_str()));
@@ -600,9 +595,9 @@ auto append_registry_pin(lito::source::SourceResolutionOptions& options,
         return Ok(empty {});
     }
     options.registry_sources.push(lito::source::RegistrySourcePin {
-        .package = source.package.clone(),
-        .version = source.version.clone(),
-        .release = source.release.clone(),
+        .package  = source.package.clone(),
+        .version  = source.version.clone(),
+        .checksum = source.checksum.clone(),
     });
     return Ok(empty {});
 }

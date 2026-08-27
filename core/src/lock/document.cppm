@@ -26,7 +26,7 @@ class LockedSource {
               (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
               (Registry,
                (lito::registry::RegistryPackageId package; lito::registry::SemanticVersion version;
-                lito::registry::ReleaseDigest release;)))
+                lito::registry::PackageChecksum checksum;)))
 };
 
 struct LockedPackageExternalSource {

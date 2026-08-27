@@ -609,7 +609,7 @@ extern "C++" int main() {
             archive = invocation.working_directory.join(archive.as_path());
         }
         auto verified = lito::registry::verify_registry_blob_file(
-            rstd::move(archive), request->package, request->blob);
+            rstd::move(archive), request->package, request->archive.checksum);
         if (verified.is_err()) {
             rstd::io::eprintln("lito: {}", rstd::move(verified).unwrap_err().message);
             return 1;
@@ -935,11 +935,8 @@ extern "C++" int main() {
                           summary.package.name.as_str(),
                           summary.version.text(),
                           summary.output.as_path());
-        rstd::io::println("blob={} source={} manifest={} files={}",
-                          artifact.blob.digest.text(),
-                          artifact.candidate.source_digest.text(),
-                          artifact.candidate.manifest_digest.text(),
-                          summary.files.len());
+        rstd::io::println(
+            "checksum={} files={}", artifact.archive.checksum.text(), summary.files.len());
         return 0;
     }
     if (invocation.command.is_Publish()) {
@@ -1040,12 +1037,12 @@ extern "C++" int main() {
             lito::registry::CurlRegistryPublishTransport(curl->executable.clone(), *environment);
         auto client    = lito::registry::RegistryPublishClient(transport.transport());
         auto published = client.publish(lito::registry::RegistryPublishRequest {
-            .api     = (**selected).api.clone(),
-            .token   = rstd::addressof(**token),
-            .package = package.package.clone(),
-            .version = package.version.clone(),
-            .blob    = package.artifact->blob.clone(),
-            .archive = package.output.clone(),
+            .api      = (**selected).api.clone(),
+            .token    = rstd::addressof(**token),
+            .package  = package.package.clone(),
+            .version  = package.version.clone(),
+            .artifact = package.artifact->archive.clone(),
+            .archive  = package.output.clone(),
         });
         if (published.is_err()) {
             auto error = rstd::move(published).unwrap_err();
@@ -1056,7 +1053,7 @@ extern "C++" int main() {
         rstd::io::println("published {} {} as {}",
                           session.package.name.as_str(),
                           session.version.text(),
-                          session.release->text());
+                          session.checksum->text());
         return 0;
     }
     auto       registry_bootstrap = Option<lito::config::LitoBootstrapConfig> {};

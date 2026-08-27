@@ -17,7 +17,7 @@ class FetchIdentity {
     RSTD_ENUM(FetchIdentity,
               (Git, (String url; String commit;)),
               (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
-              (RegistryBlob, (lito::registry::BlobDigest digest;)))
+              (RegistryPackage, (lito::registry::PackageChecksum checksum;)))
 };
 
 auto git_fetch_identity(ref<str> url, ref<str> commit) -> FetchIdentity {
@@ -29,8 +29,8 @@ auto archive_fetch_identity(lito::parse::FetchUrl url, lito::crypto::Sha256Diges
     return FetchIdentity::Archive(rstd::move(url), rstd::move(sha256));
 }
 
-auto registry_blob_fetch_identity(lito::registry::BlobDigest digest) -> FetchIdentity {
-    return FetchIdentity::RegistryBlob(rstd::move(digest));
+auto registry_package_fetch_identity(lito::registry::PackageChecksum checksum) -> FetchIdentity {
+    return FetchIdentity::RegistryPackage(rstd::move(checksum));
 }
 
 auto fetch_identity_text(const FetchIdentity& identity) -> String {
@@ -44,8 +44,8 @@ auto fetch_identity_text(const FetchIdentity& identity) -> String {
                             identity.as_Archive().url.as_str(),
                             identity.as_Archive().sha256);
     }
-    return rstd::format("lito-fetch-v1\nregistry-blob\n{}",
-                        identity.as_RegistryBlob().digest.text());
+    return rstd::format("lito-fetch-v1\nregistry-package\n{}",
+                        identity.as_RegistryPackage().checksum.text());
 }
 
 auto fetch_identity_stable_key(const FetchIdentity& identity) -> String {

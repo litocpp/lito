@@ -7,5 +7,4 @@ export import :registry.http;
 export import :registry.index;
 export import :registry.inspection_protocol;
 export import :registry.publish;
-export import :registry.release;
 export import :registry.source;

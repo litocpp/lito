@@ -7,8 +7,6 @@ export import :registry.digest;
 export import :registry.version;
 export import :registry.archive;
 export import :registry.config;
-export import :registry.canonical;
-export import :registry.crypto;
 export import :registry.inspection;
 export import :registry.metadata;
 export import :registry.solver;

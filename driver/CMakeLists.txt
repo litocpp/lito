@@ -112,7 +112,6 @@ target_sources(
          src/registry/index.cppm
          src/registry/inspection_protocol.cppm
          src/registry/publish.cppm
-         src/registry/release.cppm
          src/registry/source.cppm
          src/registry/mod.cppm
          src/build/compile_test.cppm
@@ -143,9 +142,3 @@ target_link_libraries(
   lito.driver
   PUBLIC lito.core lito.cpp lito.tools lito.toolchain lito.frontend rstd.std
   PRIVATE luato::luato rstd.bench rstd.json rstd.serde rstd.toml lito.archive)
-
-if(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY)
-  target_compile_definitions(
-    lito.driver
-    PRIVATE LITO_OFFICIAL_REGISTRY_PUBLIC_KEY="${LITO_OFFICIAL_REGISTRY_PUBLIC_KEY}")
-endif()

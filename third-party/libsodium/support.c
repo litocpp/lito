@@ -1,5 +1,4 @@
 #include <sodium/core.h>
-#include <sodium/crypto_hash_sha512.h>
 #include <sodium/utils.h>
 
 #include <stdlib.h>
@@ -35,18 +34,6 @@ int sodium_memcmp(const void* const left_pointer,
         difference |= left[index] ^ right[index];
     }
     return (1 & ((difference - 1) >> 8)) - 1;
-}
-
-void _crypto_sign_ed25519_ref10_hinit(crypto_hash_sha512_state* state, int prehashed) {
-    static const unsigned char domain[] = {
-        'S', 'i', 'g', 'E', 'd', '2', '5', '5', '1', '9', ' ', 'n', 'o', ' ', 'E', 'd', '2',
-        '5', '5', '1', '9', ' ', 'c', 'o', 'l', 'l', 'i', 's', 'i', 'o', 'n', 's', 1,   0,
-    };
-
-    crypto_hash_sha512_init(state);
-    if (prehashed != 0) {
-        crypto_hash_sha512_update(state, domain, sizeof domain);
-    }
 }
 
 void sodium_misuse(void) {

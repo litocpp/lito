@@ -4,10 +4,8 @@ module;
 export module lito.core:registry.inspection;
 
 import rstd;
-import lito.crypto;
 import :manifest.document;
 import :registry.artifact;
-import :registry.digest;
 import :registry.identity;
 import :registry.metadata;
 import :registry.version;
@@ -23,8 +21,6 @@ export namespace lito::registry
 struct VerifiedRegistrySourceCandidate {
     RegistryPackageId                 package;
     SemanticVersion                   version;
-    ManifestDigest                    manifest_digest;
-    SourceDigest                      source_digest;
     Vec<RegistryDependencyProjection> dependencies;
     lito::manifest::PackageManifest   manifest;
     usize                             file_count {};
@@ -195,15 +191,6 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
             expected_package,
             String::make("Registry source has no standalone lito.toml"_str));
     }
-    auto source_digest = lito::source::canonical_source_digest(tree);
-    if (source_digest.is_err()) {
-        return inspection_failure<VerifiedRegistrySourceCandidate>(
-            RegistryArtifactErrorKind::Source,
-            expected_package,
-            rstd::format("cannot compute Registry source digest: {}",
-                         rstd::move(source_digest).unwrap_err()));
-    }
-    auto manifest_digest = ManifestDigest(lito::crypto::sha256_digest(manifest_entry->contents()));
     auto source_identity = rstd::format("registry:{}:{}:{}",
                                         expected_package.registry.as_str(),
                                         expected_package.name.as_str(),
@@ -268,14 +255,12 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
         }
     }
     return Ok(VerifiedRegistrySourceCandidate {
-        .package         = expected_package.clone(),
-        .version         = expected_version.clone(),
-        .manifest_digest = rstd::move(manifest_digest),
-        .source_digest   = rstd::move(source_digest).unwrap(),
-        .dependencies    = rstd::move(dependencies),
-        .manifest        = rstd::move(manifest),
-        .file_count      = file_count,
-        .unpacked_size   = unpacked_size,
+        .package       = expected_package.clone(),
+        .version       = expected_version.clone(),
+        .dependencies  = rstd::move(dependencies),
+        .manifest      = rstd::move(manifest),
+        .file_count    = file_count,
+        .unpacked_size = unpacked_size,
     });
 }
 
