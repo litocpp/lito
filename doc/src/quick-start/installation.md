@@ -4,7 +4,7 @@
 
 Install these tools before building Lito or a Lito project:
 
-- LLVM/Clang 22: `clang`, `clang++`, `ld.lld`, `llvm-ar`, and `llvm-strip`;
+- LLVM/Clang 22: `clang`, `clang++`, LLD (`ld.lld` or `lld-link`), `llvm-ar`, and `llvm-strip`;
 - `clang-format` for `lito format`;
 - libc++ or libstdc++ for C++ targets that link the standard library;
 - CMake and Ninja when bootstrapping Lito or consuming CMake external dependencies;

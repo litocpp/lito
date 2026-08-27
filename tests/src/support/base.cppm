@@ -46,7 +46,12 @@ auto configuration() -> lito::cpp::BuildConfiguration {
     auto resolver = lito::tools::ToolResolver(environment);
     auto compiler =
         resolver.resolve(PathBuf::from("clang++"_str).as_path(), "clang++"_str).unwrap().executable;
-    auto linker = resolver.resolve(PathBuf::from("ld.lld"_str).as_path(), "LLD linker"_str)
+#if defined(_WIN32)
+    constexpr auto linker_name = "lld-link"_str;
+#else
+    constexpr auto linker_name = "ld.lld"_str;
+#endif
+    auto linker = resolver.resolve(PathBuf::from(linker_name).as_path(), "LLD linker"_str)
                       .unwrap()
                       .executable;
     auto archiver =

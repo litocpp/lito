@@ -2111,7 +2111,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
         auto bootstrap_toolchain =
             lito::config::apply_toolchain_override(request.toolchain.clone(),
                                                    lito::config::ToolchainOverride {
-                                                       .ld = Some(PathBuf::from("/usr/bin/ld"_str)),
+                                                       .ld = Some(PathBuf::from("lld"_str)),
                                                    });
         for (const auto& reference : (**artifact).runtime_components) {
             auto component = lito::find_llvm_sdk_runtime_component(*catalog, reference.as_str());

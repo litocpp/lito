@@ -21,7 +21,7 @@ constexpr auto removed_scanner_config        = "[toolchain]\nscanner = \"clang-s
 constexpr auto toolchain_config              = R"toml([toolchain]
 cc = "custom-cc"
 cxx = "custom-cxx"
-ld = "custom-ld"
+ld = "lld"
 ar = "custom-ar"
 stdlib = "libstdc++"
 stdlib-runtime = "dynamic"
@@ -159,7 +159,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("custom-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("custom-cxx"_str).as_path());
-    EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("custom-ld"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("lld"_str).as_path());
     EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("custom-ar"_str).as_path());
     EXPECT_EQ(loaded->tools.cargo.as_path(), PathBuf::from("custom-cargo"_str).as_path());
     EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("custom-cmake"_str).as_path());
@@ -187,6 +187,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     ASSERT_TRUE(defaults.is_ok());
     EXPECT_EQ(defaults->standard_library, lito::config::StandardLibrarySelection::Auto);
     EXPECT_EQ(defaults->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
+    EXPECT_EQ(defaults->toolchain.ld.as_path(), PathBuf::from("lld"_str).as_path());
     EXPECT_EQ(defaults->tools.cargo.as_path(), PathBuf::from("cargo"_str).as_path());
     EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
     EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
@@ -201,6 +202,15 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     auto automatic = lito::config::load_project_config(automatic_project->root.as_path());
     ASSERT_TRUE(automatic.is_ok());
     EXPECT_EQ(automatic->standard_library, lito::config::StandardLibrarySelection::Auto);
+
+    auto unsupported_linker =
+        config("unsupported-linker"_str, "[toolchain]\nld = \"ld.lld\"\n"_str);
+    ASSERT_TRUE(unsupported_linker.is_ok());
+    auto unsupported = lito::config::load_project_config(unsupported_linker->root.as_path());
+    ASSERT_TRUE(unsupported.is_err());
+    EXPECT_TRUE(error_chain_text(unsupported.unwrap_err())
+                    .as_str()
+                    .contains("must be 'lld' or an absolute path to LLD"_str));
 }
 
 TEST_F(Config, AndroidTargetAndSdkSelectionAreTyped) {
@@ -387,7 +397,7 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
                 lito::config::ToolchainSpec {
                     .cc  = PathBuf::from("sdk-cc"_str),
                     .cxx = PathBuf::from("sdk-cxx"_str),
-                    .ld  = PathBuf::from("sdk-ld"_str),
+                    .ld  = PathBuf::from("lld"_str),
                     .ar  = PathBuf::from("sdk-ar"_str),
                 },
         };
@@ -400,7 +410,7 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("sdk-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("project-cxx"_str).as_path());
-    EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("sdk-ld"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("lld"_str).as_path());
     EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("sdk-ar"_str).as_path());
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("sdk-strip"_str).as_path());
     EXPECT_EQ(loaded->tools.clang_format.as_path(), PathBuf::from("sdk-format"_str).as_path());
@@ -408,7 +418,7 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Strip));
 
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("toolchain.ld=runtime-ld"_str));
+    overrides.push(String::make("toolchain.ld=lld"_str));
     overrides.push(String::make("tools.strip=runtime-strip"_str));
     auto overridden = lito::config::load_project_config(project->root.as_path(),
                                                         lito::config::ProjectConfigRequest {
@@ -416,7 +426,7 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
                                                             .defaults  = Some(defaults()),
                                                         });
     ASSERT_TRUE(overridden.is_ok());
-    EXPECT_EQ(overridden->toolchain.ld.as_path(), PathBuf::from("runtime-ld"_str).as_path());
+    EXPECT_EQ(overridden->toolchain.ld.as_path(), PathBuf::from("lld"_str).as_path());
     EXPECT_EQ(overridden->tools.strip.as_path(), PathBuf::from("runtime-strip"_str).as_path());
 
     auto local_disabled =
@@ -435,7 +445,7 @@ TEST_F(Config, HostToolCommandConfigDoesNotDecodeProjectOnlyDomains) {
                           "[tools]\n"
                           "curl = \"sdk-curl\"\n"
                           "[toolchain]\n"
-                          "ld = \"project-linker\"\n"
+                          "ld = \"lld\"\n"
                           "[lock]\n"
                           "path = 7\n"_str);
     ASSERT_TRUE(project.is_ok());
@@ -443,17 +453,17 @@ TEST_F(Config, HostToolCommandConfigDoesNotDecodeProjectOnlyDomains) {
         project->root.as_path(), lito::config::ProjectConfigRequest {});
     ASSERT_TRUE(command.is_ok());
     EXPECT_EQ(command->tools.curl.as_path(), PathBuf::from("sdk-curl"_str).as_path());
-    EXPECT_EQ(command->toolchain.ld.as_path(), PathBuf::from("project-linker"_str).as_path());
+    EXPECT_EQ(command->toolchain.ld.as_path(), PathBuf::from("lld"_str).as_path());
     EXPECT_TRUE(command->tools.explicitly_configured(lito::tools::Tool::Curl));
     EXPECT_TRUE(lito::config::load_project_config(project->root.as_path()).is_err());
 
     auto overridden = lito::config::load_host_tool_command_config(
         project->root.as_path(),
         lito::config::ProjectConfigRequest {
-            .overrides = strings("toolchain.ld=/usr/bin/ld"_str),
+            .overrides = strings("toolchain.ld=lld"_str),
         });
     ASSERT_TRUE(overridden.is_ok());
-    EXPECT_EQ(overridden->toolchain.ld.as_path(), PathBuf::from("/usr/bin/ld"_str).as_path());
+    EXPECT_EQ(overridden->toolchain.ld.as_path(), PathBuf::from("lld"_str).as_path());
 }
 
 TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {

@@ -67,7 +67,7 @@ auto push_android_driver_prefix(Vec<String>&                 arguments,
     arguments.push(rstd::format("--target={}", target.clang_target.as_str()));
     rstd_try(toolchain::command::push_path_option(
         arguments, "--sysroot="_str, target.sysroot.as_path()));
-    rstd_try(toolchain::command::push_path_option(arguments, "-fuse-ld="_str, linker));
+    rstd_try(push_clang_lld_selection(arguments, linker));
     return Ok(empty {});
 }
 

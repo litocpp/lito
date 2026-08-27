@@ -40,6 +40,50 @@ TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
     EXPECT_EQ(*explicit_selection, lito::config::StandardLibrary::Libcxx);
 }
 
+TEST(ClangToolchain, SelectsLldFrontendFromStandardLibrary) {
+    EXPECT_EQ(lld_executable_name(lito::config::StandardLibrary::Msvc), "lld-link"_str);
+    EXPECT_EQ(lld_executable_name(lito::config::StandardLibrary::Libcxx), "ld.lld"_str);
+    EXPECT_EQ(lld_executable_name(lito::config::StandardLibrary::Libstdcxx), "ld.lld"_str);
+}
+
+TEST(ClangToolchain, FindsLldBesideCompilerWithoutPath) {
+    auto inherited =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(inherited.is_ok());
+    auto cxx = inherited->locate_executable(PathBuf::from("clang++"_str).as_path(), "clang++"_str);
+    auto cc  = inherited->locate_executable(PathBuf::from("clang"_str).as_path(), "clang"_str);
+    auto ar  = inherited->locate_executable(PathBuf::from("llvm-ar"_str).as_path(), "llvm-ar"_str);
+    ASSERT_TRUE(cxx.is_ok());
+    ASSERT_TRUE(cc.is_ok());
+    ASSERT_TRUE(ar.is_ok());
+    ASSERT_TRUE(cxx->is_some());
+    ASSERT_TRUE(cc->is_some());
+    ASSERT_TRUE(ar->is_some());
+    auto compiler = rstd::move(cxx).unwrap().unwrap();
+    auto parent   = compiler.as_path().parent();
+    ASSERT_TRUE(parent.is_some());
+#if RSTD_OS_WINDOWS
+    auto linker_name = PathBuf::from("lld-link.exe"_str);
+#else
+    auto linker_name = PathBuf::from("ld.lld"_str);
+#endif
+    auto expected = PathBuf::from(*parent).join(linker_name.as_path());
+    if (! rstd::fs::exists(expected.as_path()).unwrap()) return;
+    auto isolated = lito::system::ResolvedProcessEnvironment::resolve(
+        lito::system::ProcessEnvironmentSpec {}, None(), *parent);
+    ASSERT_TRUE(isolated.is_ok());
+    auto created = ClangToolchain::create(
+        lito::config::ToolchainSpec {
+            .cc  = rstd::move(cc).unwrap().unwrap(),
+            .cxx = rstd::move(compiler),
+            .ld  = PathBuf::from("lld"_str),
+            .ar  = rstd::move(ar).unwrap().unwrap(),
+        },
+        *isolated);
+    ASSERT_TRUE(created.is_ok());
+    EXPECT_EQ(created->ld_path(), expected.as_path());
+}
+
 TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
     auto facts = frontend::FrontendResult {};
     facts.header_inputs.push(PathBuf::from("/tmp/c-header.h"_str));
@@ -517,11 +561,20 @@ TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {
 }
 
 TEST(ClangToolchain, RejectsNonLldLinkers) {
-    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
-        .cxx = PathBuf::from("clang++"_str),
-        .ld  = PathBuf::from("clang++"_str),
-        .ar  = PathBuf::from("llvm-ar"_str),
-    });
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto clang =
+        environment->locate_executable(PathBuf::from("clang++"_str).as_path(), "clang++"_str);
+    ASSERT_TRUE(clang.is_ok());
+    ASSERT_TRUE(clang->is_some());
+    auto created = ClangToolchain::create(
+        lito::config::ToolchainSpec {
+            .cxx = PathBuf::from("clang++"_str),
+            .ld  = rstd::move(clang).unwrap().unwrap(),
+            .ar  = PathBuf::from("llvm-ar"_str),
+        },
+        *environment);
     ASSERT_TRUE(created.is_err());
     auto error = rstd::move(created).unwrap_err();
     ASSERT_TRUE(error.is_Message());
@@ -565,45 +618,14 @@ TEST(LinkerIdentity, StrictlyClassifiesLldAndGnuLdVersionSignatures) {
 #endif
 }
 
-TEST(ClangToolchain, LinksTypedElfSharedLibraryWithGnuLd) {
+TEST(ClangToolchain, RejectsAbsoluteGnuLd) {
 #if RSTD_OS_UNIX
     if (! rstd::fs::exists(PathBuf::from("/usr/bin/ld"_str).as_path()).unwrap()) return;
     auto build_configuration         = configuration();
     build_configuration.toolchain.ld = PathBuf::from("/usr/bin/ld"_str);
     auto created                     = ClangToolchain::create(build_configuration.toolchain);
-    ASSERT_TRUE(created.is_ok());
-    EXPECT_EQ(created->linker_identity().family, lito::LinkerFamily::GnuLd);
-    auto directory = rstd::fs::TempDir::make("lito-elf-shared-link-test"_str);
-    ASSERT_TRUE(directory.is_ok());
-    auto archive =
-        PathBuf::from(directory->path()).join(PathBuf::from("libfixture.a"_str).as_path());
-    auto archive_invocation =
-        created->prepare_archive(archive.as_path(), Vec<PathBuf>::make(), directory->path());
-    ASSERT_TRUE(archive_invocation.is_ok());
-    auto archived = created->execute_archive(*archive_invocation);
-    ASSERT_TRUE(archived.is_ok());
-    auto version_script =
-        PathBuf::from(directory->path()).join(PathBuf::from("fixture.map"_str).as_path());
-    ASSERT_TRUE(rstd::fs::write(version_script.as_path(), "LITO_1 { global: *; };\n"_str.as_bytes())
-                    .is_ok());
-    auto output =
-        PathBuf::from(directory->path()).join(PathBuf::from("libfixture.so.1"_str).as_path());
-    auto linked = created->link_elf_shared_library(lito::ElfSharedLibraryLinkRequest {
-        .output = output.clone(),
-        .archive =
-            lito::LinkArchive {
-                .path = archive.clone(),
-                .mode = lito::LinkArchiveMode::Whole,
-            },
-        .soname            = String::make("libfixture.so.1"_str),
-        .version_script    = version_script.clone(),
-        .working_directory = PathBuf::from(directory->path()),
-    });
-    ASSERT_TRUE(linked.is_ok());
-    EXPECT_EQ(linked->file.as_path(), output.as_path());
-    EXPECT_EQ(linked->soname.as_str(), "libfixture.so.1"_str);
-    EXPECT_TRUE(linked->link_identity.as_str().contains("GNU ld"_str));
-    EXPECT_TRUE(rstd::fs::exists(output.as_path()).unwrap());
+    ASSERT_TRUE(created.is_err());
+    EXPECT_TRUE(rstd::format("{}", created.unwrap_err()).as_str().contains("expected LLD"_str));
 #endif
 }
 

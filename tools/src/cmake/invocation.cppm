@@ -91,14 +91,16 @@ auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& 
         arguments, "-DCMAKE_C_COMPILER="_str, toolchain.cc.as_path(), "C compiler"_str));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_CXX_COMPILER="_str, toolchain.cxx.as_path(), "C++ compiler"_str));
-    rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_C_USING_LINKER_lito_configured=-fuse-ld="_str,
-                                toolchain.linker.as_path(),
-                                "linker"_str));
-    rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_CXX_USING_LINKER_lito_configured=-fuse-ld="_str,
-                                toolchain.linker.as_path(),
-                                "linker"_str));
+    rstd_try(
+        push_path_argument(arguments,
+                           "-DCMAKE_C_USING_LINKER_lito_configured=-fuse-ld=lld;--ld-path="_str,
+                           toolchain.linker.as_path(),
+                           "linker"_str));
+    rstd_try(
+        push_path_argument(arguments,
+                           "-DCMAKE_CXX_USING_LINKER_lito_configured=-fuse-ld=lld;--ld-path="_str,
+                           toolchain.linker.as_path(),
+                           "linker"_str));
     arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_configured"_str));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, toolchain.archiver.as_path(), "archiver"_str));

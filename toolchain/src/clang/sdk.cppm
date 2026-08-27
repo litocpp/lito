@@ -298,12 +298,8 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         PathBuf::from(probe_directory->path()).join(PathBuf::from(probe_name).as_path());
     auto probe_command = Vec<String>::make();
     rstd_try(lito::toolchain::command::push_path(probe_command, toolchain->cc_path()));
-    if (toolchain->target_info().family == TargetFamily::Windows) {
-        lito::toolchain::command::push_option(probe_command, "-fuse-ld=lld"_str);
-    } else {
-        rstd_try(lito::toolchain::command::push_path_option(
-            probe_command, "-fuse-ld="_str, toolchain->linker_identity().executable.as_path()));
-    }
+    rstd_try(
+        push_clang_lld_selection(probe_command, toolchain->linker_identity().executable.as_path()));
     lito::toolchain::command::push_option(probe_command, "-x"_str);
     lito::toolchain::command::push_option(probe_command, "c"_str);
     lito::toolchain::command::push_option(probe_command, "-"_str);

@@ -140,7 +140,7 @@ TEST_F(BuildProfileExecution, COnlyBuildReportsOnlyApplicableProfileSettings) {
     EXPECT_TRUE(reported_c_optimization);
 }
 
-TEST_F(BuildProfileExecution, GnuLdRejectsLlvmLtoBeforeCompilation) {
+TEST_F(BuildProfileExecution, ConfiguredGnuLdIsRejectedBeforeCompilation) {
 #if RSTD_OS_UNIX
     if (! rstd::fs::exists(PathBuf::from("/usr/bin/ld"_str).as_path()).unwrap()) return;
     const ProjectFile files[] = {
@@ -166,8 +166,6 @@ TEST_F(BuildProfileExecution, GnuLdRejectsLlvmLtoBeforeCompilation) {
     auto built = lito::build(request);
     ASSERT_TRUE(built.is_err());
     auto error = error_chain_text(built.unwrap_err());
-    EXPECT_TRUE(error.as_str().contains("GNU ld"_str));
-    EXPECT_TRUE(error.as_str().contains("-flto=thin"_str));
-    EXPECT_TRUE(error.as_str().contains("internal SDK override"_str));
+    EXPECT_TRUE(error.as_str().contains("expected LLD"_str));
 #endif
 }

@@ -102,6 +102,17 @@ auto configured_tool_override(const Option<String>& value, rstd::serde::DataPath
     return Ok(Some(rstd_try(configured_executable(value->as_str(), rstd::move(path)))));
 }
 
+auto configured_linker_override(const Option<String>& value, rstd::serde::DataPath path)
+    -> ConfigResult<Option<PathBuf>> {
+    if (value.is_none()) return Ok(Option<PathBuf> {});
+    auto linker = rstd_try(configured_executable(value->as_str(), path.clone()));
+    if (linker.as_path().is_absolute() || linker.as_path().to_str() == Some("lld"_str)) {
+        return Ok(Some(rstd::move(linker)));
+    }
+    return config_data_failure<Option<PathBuf>>(rstd::move(path),
+                                                "must be 'lld' or an absolute path to LLD"_str);
+}
+
 auto configured_toolchain_sdk(const Option<lito::config::wire::Sdk>& value)
     -> ConfigResult<Option<ToolchainSdkSelection>> {
     if (value.is_none()) return Ok(Option<ToolchainSdkSelection> {});
@@ -403,7 +414,7 @@ auto default_toolchain() -> ToolchainSpec {
     return ToolchainSpec {
         .cc  = PathBuf::from("clang"_str),
         .cxx = PathBuf::from("clang++"_str),
-        .ld  = PathBuf::from("ld.lld"_str),
+        .ld  = PathBuf::from("lld"_str),
         .ar  = PathBuf::from("llvm-ar"_str),
     };
 }
@@ -417,7 +428,7 @@ auto configured_toolchain(const Option<lito::config::wire::Toolchain>& value,
         ToolchainOverride {
             .cc  = rstd_try(configured_tool_override(value->cc, root.with_field("cc"_str))),
             .cxx = rstd_try(configured_tool_override(value->cxx, root.with_field("cxx"_str))),
-            .ld  = rstd_try(configured_tool_override(value->ld, root.with_field("ld"_str))),
+            .ld  = rstd_try(configured_linker_override(value->ld, root.with_field("ld"_str))),
             .ar  = rstd_try(configured_tool_override(value->ar, root.with_field("ar"_str))),
             .sdk = rstd_try(configured_toolchain_sdk(value->sdk)),
         }));

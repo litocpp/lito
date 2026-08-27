@@ -75,6 +75,10 @@ auto linker_family_name(LinkerFamily family) noexcept -> ref<str> {
     return "unknown"_str;
 }
 
+auto lld_executable_name(lito::config::StandardLibrary standard_library) noexcept -> ref<str> {
+    return standard_library == lito::config::StandardLibrary::Msvc ? "lld-link"_str : "ld.lld"_str;
+}
+
 struct LinkerCapabilities {
     bool llvm_lto {};
     bool elf_shared_library {};
@@ -98,6 +102,12 @@ struct LinkerIdentity {
         };
     }
 };
+
+auto push_clang_lld_selection(Vec<String>& arguments, ref<rstd::path::Path> executable)
+    -> ToolchainResult<empty> {
+    toolchain::command::push_option(arguments, "-fuse-ld=lld"_str);
+    return toolchain::command::push_path_option(arguments, "--ld-path="_str, executable);
+}
 
 class ResolvedLinkInput {
     RSTD_ENUM(ResolvedLinkInput,

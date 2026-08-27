@@ -8,7 +8,7 @@ Lito discovers named module sources and drives Clang, LLD, and LLVM tools.
 
 ## Requirements
 
-- LLVM/Clang 22: `clang`, `clang++`, `ld.lld`, `llvm-ar`, and `llvm-strip`.
+- LLVM/Clang 22: `clang`, `clang++`, LLD (`ld.lld` or `lld-link`), `llvm-ar`, and `llvm-strip`.
 - A supported C++ standard library: libc++ or libstdc++ on Unix-like targets, and MSVC STL or a
   separately supplied shared libc++ on Windows MSVC targets.
 - `clang-format` for `lito format`.

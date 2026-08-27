@@ -911,7 +911,8 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     if (selected.android.is_some()) {
         target_stripper = Some(selected.android->distribution.paths().strip.clone());
     }
-    auto created = ClangToolchain::create(selected.tools.clone(), environment);
+    auto created =
+        ClangToolchain::create(selected.tools.clone(), configuration.standard_library, environment);
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }

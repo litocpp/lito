@@ -202,7 +202,7 @@ public:
 struct ToolchainSpec {
     PathBuf                       cc { PathBuf::from("clang"_str) };
     PathBuf                       cxx;
-    PathBuf                       ld { PathBuf::from("ld.lld"_str) };
+    PathBuf                       ld { PathBuf::from("lld"_str) };
     PathBuf                       ar;
     Option<ToolchainSdkSelection> sdk;
 

@@ -19,12 +19,16 @@ append-path = ["tools/bin"]
 
 ## `[toolchain]`
 
-Executable fields accept a searchable name or an absolute path:
+Compiler and archiver fields accept a searchable name or an absolute path:
 
 - `cc`, default `clang`;
 - `cxx`, default `clang++`;
-- `ld`, default `ld.lld`;
 - `ar`, default `llvm-ar`.
+
+`ld` accepts only `"lld"` (the default) or an absolute path to an LLD executable. Lito resolves
+`"lld"` to `lld-link` for MSVC STL and to `ld.lld` for libc++ or libstdc++, searching the effective
+PATH followed by the C++ and C compiler directories. Every resolved or explicitly configured
+linker is verified with `--version` before use.
 
 `stdlib` accepts `"auto"`, `"libc++"`, `"libstdc++"`, or `"msvc"` and defaults to `"auto"`.
 Automatic selection uses the effective build target after typed target and sysroot options have

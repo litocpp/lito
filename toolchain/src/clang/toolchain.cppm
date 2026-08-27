@@ -33,11 +33,18 @@ public:
         if (environment.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(environment).unwrap_err()));
         }
-        return create(specification, *environment);
+        return create(specification, lito::config::StandardLibrarySelection::Auto, *environment);
     }
 
     static auto create(const lito::config::ToolchainSpec& specification,
                        const ResolvedProcessEnvironment&  environment)
+        -> ToolchainResult<ClangToolchain> {
+        return create(specification, lito::config::StandardLibrarySelection::Auto, environment);
+    }
+
+    static auto create(const lito::config::ToolchainSpec&     specification,
+                       lito::config::StandardLibrarySelection standard_library,
+                       const ResolvedProcessEnvironment&      environment)
         -> ToolchainResult<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
@@ -57,7 +64,6 @@ public:
         };
         auto configured_compiler   = resolve(specification.cxx.as_path(), "clang++"_str);
         auto configured_c_compiler = resolve(specification.cc.as_path(), "clang"_str);
-        auto configured_linker     = resolve(specification.ld.as_path(), "linker"_str);
         auto configured_archiver   = resolve(specification.ar.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
             return Err(rstd::move(configured_compiler).unwrap_err());
@@ -65,15 +71,11 @@ public:
         if (configured_c_compiler.is_err()) {
             return Err(rstd::move(configured_c_compiler).unwrap_err());
         }
-        if (configured_linker.is_err()) {
-            return Err(rstd::move(configured_linker).unwrap_err());
-        }
         if (configured_archiver.is_err()) {
             return Err(rstd::move(configured_archiver).unwrap_err());
         }
         auto compiler_path   = rstd::move(configured_compiler).unwrap();
         auto c_compiler_path = rstd::move(configured_c_compiler).unwrap();
-        auto linker_path     = rstd::move(configured_linker).unwrap();
         auto archiver_path   = rstd::move(configured_archiver).unwrap();
 
         auto compiler_command   = Vec<String>::make();
@@ -103,7 +105,6 @@ public:
             rstd::move(compiler_command), "clang++ --version"_str, environment);
         auto c_compiler_version = toolchain::command::tool_output(
             rstd::move(c_compiler_command), "clang --version"_str, environment);
-        auto linker_identity   = probe_linker(linker_path.as_path(), environment);
         auto archiver_identity = probe_archiver(archiver_path.as_path(), environment);
         auto target            = toolchain::command::tool_output(
             rstd::move(target_command), "clang++ target query"_str, environment);
@@ -115,7 +116,6 @@ public:
         if (c_compiler_version.is_err()) {
             return Err(rstd::move(c_compiler_version).unwrap_err());
         }
-        if (linker_identity.is_err()) return Err(rstd::move(linker_identity).unwrap_err());
         if (archiver_identity.is_err()) return Err(rstd::move(archiver_identity).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
@@ -129,6 +129,69 @@ public:
         auto target_info = parse_target_info(target->as_str());
         if (target_info.is_err()) {
             return Err(ToolchainError::Platform(rstd::move(target_info).unwrap_err()));
+        }
+
+        auto linker_path = Option<PathBuf> {};
+        if (specification.ld.as_path().is_absolute()) {
+            auto configured_linker = resolve(specification.ld.as_path(), "linker"_str);
+            if (configured_linker.is_err()) {
+                return Err(rstd::move(configured_linker).unwrap_err());
+            }
+            linker_path = Some(rstd::move(configured_linker).unwrap());
+        } else {
+            auto configured_name = specification.ld.as_path().to_str();
+            if (configured_name.is_none() || *configured_name != "lld"_str) {
+                return failure<ClangToolchain>(
+                    "configured linker must be 'lld' or an absolute path to LLD"_str);
+            }
+            auto selected_standard_library =
+                resolve_standard_library_selection(standard_library, *target_info);
+            if (selected_standard_library.is_err()) {
+                return Err(rstd::move(selected_standard_library).unwrap_err());
+            }
+            auto linker_name = lld_executable_name(*selected_standard_library);
+            auto requested   = PathBuf::from(linker_name);
+            auto located     = environment.locate_executable(requested.as_path(), "LLD linker"_str);
+            if (located.is_err()) {
+                return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
+            }
+            linker_path = rstd::move(located).unwrap();
+            if (linker_path.is_none()) {
+#if RSTD_OS_WINDOWS
+                auto adjacent_name = PathBuf::from(rstd::format("{}.exe", linker_name).as_str());
+#else
+                auto adjacent_name = requested.clone();
+#endif
+                const ref<rstd::path::Path> compilers[] = { compiler_path.as_path(),
+                                                            c_compiler_path.as_path() };
+                for (auto compiler : compilers) {
+                    auto parent = compiler.parent();
+                    if (parent.is_none()) continue;
+                    auto candidate = PathBuf::from(*parent).join(adjacent_name.as_path());
+                    located = environment.locate_executable(candidate.as_path(), "LLD linker"_str);
+                    if (located.is_err()) {
+                        return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
+                    }
+                    if (located->is_some()) {
+                        linker_path = rstd::move(located).unwrap();
+                        break;
+                    }
+                }
+            }
+            if (linker_path.is_none()) {
+                return failure<ClangToolchain>(rstd::format(
+                    "cannot resolve LLD linker '{}' from effective PATH or the Clang compiler "
+                    "directories",
+                    linker_name));
+            }
+        }
+        auto linker_identity = probe_linker(linker_path->as_path(), environment);
+        if (linker_identity.is_err()) return Err(rstd::move(linker_identity).unwrap_err());
+        if (linker_identity->family != LinkerFamily::Lld) {
+            return failure<ClangToolchain>(
+                rstd::format("configured linker '{}' is unsupported; expected LLD, got {}",
+                             linker_identity->executable.as_path(),
+                             linker_family_name(linker_identity->family)));
         }
 
         auto resource_path      = PathBuf::from(resource->as_str());
@@ -412,7 +475,8 @@ public:
                 pushed = toolchain::command::push_path(probe_command, include.path.as_path());
                 if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             }
-            toolchain::command::push_option(probe_command, "-fuse-ld=lld"_str);
+            pushed = push_clang_lld_selection(probe_command, linker_identity_.executable.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             toolchain::command::push_option(probe_command,
                                             toolchain::clang_options::LINKER_ARGUMENT);
             toolchain::command::push_option(probe_command, "/nodefaultlib:libcmt"_str);
@@ -1109,13 +1173,8 @@ public:
                 command, "--sysroot="_str, context.platform.sysroot->as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
-        if (target.family == TargetFamily::Windows) {
-            toolchain::command::push_option(command, "-fuse-ld=lld"_str);
-        } else {
-            pushed = toolchain::command::push_path_option(
-                command, "-fuse-ld="_str, linker_identity_.executable.as_path());
-            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        }
+        pushed = push_clang_lld_selection(command, linker_identity_.executable.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         if (context.output == LinkOutputKind::SharedLibrary) {
             if (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str) {
                 return failure<rstd::time::Duration>(
