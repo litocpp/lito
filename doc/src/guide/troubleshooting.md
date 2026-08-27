@@ -77,7 +77,7 @@ produce a mixed C/C++ graph.
 - remove `--locked` only when you intend to update `lito.lock`;
 - use `lito update` to separate resolution from compilation;
 - use `--offline` to verify that all required sources are already available;
-- use repeated `--fetch-seed` for read-only CI or Flatpak inputs;
+- use repeated `--source-bundle` for read-only CI or Flatpak inputs;
 - keep machine-local Git patches in `.lito/config.toml`.
 
 Do not hand-edit a high-version or incompatible lock into acceptance. Lito validates the lock

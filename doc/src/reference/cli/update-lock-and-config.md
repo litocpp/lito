@@ -1,5 +1,32 @@
 # `update`, `lock`, and `config`
 
+## `lito fetch`
+
+```text
+lito fetch [--locked] [--offline] [--frozen]
+           [--output DIRECTORY] [-j N]
+           [--features FEATURES] [--all-features] [--no-default-features]
+```
+
+Resolve the complete workspace dependency graph and acquire its active remote inputs without
+scanning, compiling, linking, running build scripts, or preparing CMake packages. With no output
+directory, verified inputs remain in Lito's global source cache. `--output` writes the same closure
+to a new, portable source-bundle directory; the destination must not already exist.
+
+For Cargo external dependencies, an output bundle contains Cargo's versioned vendor projection and
+a validated relative source configuration. Offline builds pass that configuration to Cargo without
+changing the external project's manifest or lock file.
+
+`--locked`, `--offline`, and `--frozen` have the same lock and network semantics as build. Fetch
+reuses locked Git commits and Registry releases; dependency upgrades remain the responsibility of
+`lito update`.
+
+```sh
+lito fetch --locked
+lito fetch --locked --output packaging/source-bundle
+lito build --locked --offline --source-bundle packaging/source-bundle
+```
+
 ## `lito update`
 
 ```text
@@ -9,11 +36,11 @@ lito update [OPTIONS]
 Resolve the current manifests and update `lito.lock` without building selected artifacts.
 
 - `--offline` forbids network acquisition;
-- repeated `--fetch-seed DIRECTORY` supplies read-only source seeds.
+- repeated `--source-bundle DIRECTORY` supplies read-only source bundles.
 
 ```sh
 lito update
-lito update --offline --fetch-seed packaging/fetch-seed
+lito update --offline --source-bundle packaging/source-bundle
 ```
 
 ## `lito lock export`
@@ -23,8 +50,8 @@ lito lock export --format FORMAT --output FILE
 ```
 
 Both options are required. The current format is `flatpak-sources`. It writes Flatpak source entries
-for locked Git/archive inputs and an inline `.lito/fetch-seed/entries.json` document. Existing
-exports using `.lito/fetch-seed/catalog.json` remain accepted.
+for locked Git/archive inputs into Lito's versioned source-bundle layout. The project lock remains
+the source identity index.
 
 ```sh
 lito lock export \

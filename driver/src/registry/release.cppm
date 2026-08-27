@@ -17,6 +17,11 @@ export namespace lito::registry
 
 using RegistryReleaseLoadResult = Result<VerifiedRegistryRelease, RegistryIndexError>;
 
+struct VerifiedRegistryReleaseRecord {
+    VerifiedRegistryRelease release;
+    PathBuf                 path;
+};
+
 class RegistryReleaseClient {
     PathBuf                  cache_root_;
     RegistryId               registry_;
@@ -24,21 +29,27 @@ class RegistryReleaseClient {
     Ed25519PublicKey         trusted_key_;
     RegistryNetworkPolicy    network_ { RegistryNetworkPolicy::Online };
     RegistryHttpTransport    transport_;
+    const Vec<PathBuf>*      source_bundles_ {};
 
 public:
     RegistryReleaseClient(PathBuf                                  cache_root,
                           const lito::config::NamedRegistryConfig& config,
                           RegistryNetworkPolicy                    network,
-                          RegistryHttpTransport                    transport)
+                          RegistryHttpTransport                    transport,
+                          const Vec<PathBuf>*                      source_bundles = nullptr)
         : cache_root_(rstd::move(cache_root)),
           registry_(config.identity.clone()),
           endpoint_(config.effective_endpoints()->release.clone()),
           trusted_key_(config.trusted_public_key.clone()),
           network_(network),
-          transport_(transport) {}
+          transport_(transport),
+          source_bundles_(source_bundles) {}
 
-    auto load(const RegistryPackageId& package, const ReleaseDigest& release)
-        -> RegistryReleaseLoadResult;
+    auto load(const RegistryPackageId& package,
+              const ReleaseDigest&     release,
+              const SemanticVersion*   version = nullptr) -> RegistryReleaseLoadResult;
+    auto load_record(const RegistryPackageId& package, const ReleaseDigest& release)
+        -> Result<VerifiedRegistryReleaseRecord, RegistryIndexError>;
 };
 
 } // namespace lito::registry
@@ -194,7 +205,8 @@ auto release_http_failure(const RegistryHttpResponse& response, const RegistryPa
 } // namespace
 
 auto lito::registry::RegistryReleaseClient::load(const RegistryPackageId& package,
-                                                 const ReleaseDigest&     release)
+                                                 const ReleaseDigest&     release,
+                                                 const SemanticVersion*   version)
     -> RegistryReleaseLoadResult {
     if (! (package.registry == registry_)) {
         return release_failure<VerifiedRegistryRelease>(
@@ -206,6 +218,15 @@ auto lito::registry::RegistryReleaseClient::load(const RegistryPackageId& packag
     auto cached = read_cached_release(record.as_path(), package, release, trusted_key_);
     if (cached.is_ok() && cached->is_some()) {
         return Ok(rstd::move(cached).unwrap().unwrap());
+    }
+    if (version != nullptr && source_bundles_ != nullptr) {
+        for (const auto& root : *source_bundles_) {
+            auto bundled = lito::source::SourceBundleLayout(root.clone())
+                               .registry_release(package, *version, release);
+            auto loaded  = read_cached_release(bundled.as_path(), package, release, trusted_key_);
+            if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
+            if (loaded->is_some()) return Ok(rstd::move(loaded).unwrap().unwrap());
+        }
     }
     if (network_ == RegistryNetworkPolicy::Offline) {
         if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
@@ -242,4 +263,14 @@ auto lito::registry::RegistryReleaseClient::load(const RegistryPackageId& packag
                          rstd::move(verified).unwrap_err()));
     }
     return store_release(record.as_path(), package, release, trusted_key_, received.body.as_str());
+}
+
+auto lito::registry::RegistryReleaseClient::load_record(const RegistryPackageId& package,
+                                                        const ReleaseDigest&     release)
+    -> Result<VerifiedRegistryReleaseRecord, RegistryIndexError> {
+    auto verified = rstd_try(load(package, release));
+    return Ok(VerifiedRegistryReleaseRecord {
+        .release = rstd::move(verified),
+        .path    = release_path(cache_root_.as_path(), release),
+    });
 }

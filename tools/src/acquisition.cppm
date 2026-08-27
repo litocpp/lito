@@ -57,7 +57,7 @@ struct VerifiedArchiveRequest {
     lito::parse::FetchUrl            url;
     lito::crypto::Sha256Digest       sha256;
     Option<u64>                      expected_size;
-    Option<PathBuf>                  seed;
+    Option<PathBuf>                  provided_source;
     lito::tools::HostToolRequirement download_requirement;
     lito::tools::HostToolRequirement extraction_requirement;
 };
@@ -466,17 +466,18 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
     auto files   = Vec<Option<VerifiedFile>>::with_capacity(requests.len());
     auto pending = Vec<usize>::make();
     for (usize index {}; index < requests.len(); ++index) {
-        if (requests[index].seed.is_some()) {
-            auto seed = rstd_try(verified_file(requests[index].seed->as_path(), requests[index]));
-            if (seed.is_none()) {
+        if (requests[index].provided_source.is_some()) {
+            auto provided = rstd_try(
+                verified_file(requests[index].provided_source->as_path(), requests[index]));
+            if (provided.is_none()) {
                 return failure<Vec<VerifiedFile>>(
-                    rstd::format("acquisition seed '{}' does not match '{}'",
-                                 requests[index].seed->as_path(),
+                    rstd::format("provided source '{}' does not match '{}'",
+                                 requests[index].provided_source->as_path(),
                                  requests[index].label));
             }
             resolver.report_not_required(requests[index].download_requirement,
-                                         "verified fetch seed is available"_str);
-            files.push(Some(rstd::move(seed).unwrap()));
+                                         "verified source bundle entry is available"_str);
+            files.push(Some(rstd::move(provided).unwrap()));
         } else {
             files.push(None());
             pending.push(usize(index));

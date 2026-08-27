@@ -80,6 +80,7 @@ auto cmake_observer(const Option<BuildEventSink>& observer) noexcept
 auto build_event_kind(lito::tools::cargo::EventKind kind) noexcept -> BuildEventKind {
     switch (kind) {
     case lito::tools::cargo::EventKind::Metadata: return BuildEventKind::CargoMetadata;
+    case lito::tools::cargo::EventKind::Fetch: return BuildEventKind::Fetch;
     case lito::tools::cargo::EventKind::Build: return BuildEventKind::CargoBuild;
     case lito::tools::cargo::EventKind::Reuse: return BuildEventKind::CargoReuse;
     }

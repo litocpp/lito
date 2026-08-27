@@ -1,4 +1,5 @@
 module;
+#include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
 export module lito.driver:dependency.external_source;
@@ -17,7 +18,7 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 
-namespace lito
+export namespace lito
 {
 
 struct AcquiredExternalDependencySource {
@@ -70,6 +71,25 @@ struct PreparedExternalSourceTask {
     bool                               installed_override { false };
     PreparedCMakeDependencyRequirement requirement;
 };
+
+class ExternalArchiveOwner {
+    RSTD_ENUM(ExternalArchiveOwner,
+              (PackageExternal, (usize index;)),
+              (CMakeExternal, (usize index;)))
+};
+
+struct ExternalArchiveAcquisition {
+    ExternalArchiveOwner                    owner;
+    lito::source::ArchiveSourceFetchRequest request;
+};
+
+struct ExternalAcquisitionPlan {
+    Vec<ExternalArchiveAcquisition> archives;
+};
+
+auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequirement& requirement,
+                                            const BuildPlatform&                      platform)
+    -> lito::dependency::DependencyResult<SelectedCMakeDependencyRequirement>;
 
 auto prepare_external_source_task(ExternalSourceTask task)
     -> lito::dependency::DependencyResult<PreparedExternalSourceTask> {
@@ -299,6 +319,69 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             return left.requirement.package < right.requirement.package;
         });
     return Ok(rstd::move(result));
+}
+
+auto resolve_external_acquisition_plan(const lito::package::ResolvedPackageGraph& graph,
+                                       const PreparedExternalDependencySources&   sources,
+                                       const BuildPlatform&                       platform)
+    -> lito::dependency::DependencyResult<ExternalAcquisitionPlan> {
+    auto plan = ExternalAcquisitionPlan {};
+    for (usize index {}; index < sources.sources.len(); ++index) {
+        const auto& source = sources.sources[index];
+        if (source.acquired.is_some()) continue;
+        auto url    = Option<lito::parse::FetchUrl> {};
+        auto sha256 = Option<lito::crypto::Sha256Digest> {};
+        if (source.source.is_Archive()) {
+            url    = Some(source.source.as_Archive().url.clone());
+            sha256 = Some(source.source.as_Archive().sha256.clone());
+        } else if (source.source.is_ArchitectureArchives()) {
+            for (const auto& variant : source.source.as_ArchitectureArchives().variants) {
+                if (variant.architecture != platform.effective_target.architecture) continue;
+                url    = Some(variant.url.clone());
+                sha256 = Some(variant.sha256.clone());
+                break;
+            }
+            if (url.is_none()) {
+                return lito::dependency::dependency_failure<ExternalAcquisitionPlan>(
+                    rstd::format("external source '{}:{}' has no archive for architecture '{}'",
+                                 graph.packages[source.package].manifest.name.as_str(),
+                                 source.name.as_str(),
+                                 architecture_name(platform.effective_target.architecture)));
+            }
+        } else {
+            return lito::dependency::dependency_failure<ExternalAcquisitionPlan>(
+                rstd::format("external source '{}:{}' was not acquired",
+                             graph.packages[source.package].manifest.name.as_str(),
+                             source.name.as_str()));
+        }
+        plan.archives.push(ExternalArchiveAcquisition {
+            .owner = ExternalArchiveOwner::PackageExternal(index),
+            .request =
+                lito::source::ArchiveSourceFetchRequest {
+                    .owner  = graph.packages[source.package].manifest.name.clone(),
+                    .name   = source.name.clone(),
+                    .url    = rstd::move(url).unwrap(),
+                    .sha256 = rstd::move(sha256).unwrap(),
+                },
+        });
+    }
+    for (usize index {}; index < sources.cmake_dependencies.len(); ++index) {
+        const auto& dependency = sources.cmake_dependencies[index];
+        auto        selected =
+            rstd_try(resolve_cmake_requirement_for_platform(dependency.requirement, platform));
+        if (! selected.source.is_Archive()) continue;
+        plan.archives.push(ExternalArchiveAcquisition {
+            .owner = ExternalArchiveOwner::CMakeExternal(index),
+            .request =
+                lito::source::ArchiveSourceFetchRequest {
+                    .owner  = graph.packages[dependency.package].manifest.name.clone(),
+                    .name   = dependency.requirement.alias.clone(),
+                    .url    = selected.source.as_Archive().url.clone(),
+                    .sha256 = selected.source.as_Archive().sha256.clone(),
+                },
+        });
+    }
+    return Ok(rstd::move(plan));
 }
 
 auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,

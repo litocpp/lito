@@ -55,6 +55,97 @@ TEST(CargoProviderProtocol, NativeLinkTokensPreserveOrderAndRejectCommandInjecti
             .is_err());
 }
 
+TEST_F(CargoProvider, FetchUsesTypedManifestTargetAndPolicyArguments) {
+#if RSTD_OS_UNIX
+    constexpr ProjectFile files[] = {
+        { "Cargo.toml"_str, "[package]\nname = \"fetch-fixture\"\nversion = \"0.1.0\"\n"_str },
+        { "cargo"_str,
+          "#!/bin/sh\nprintf '%s\\n' \"$@\" > cargo-fetch.args\n"_str,
+          lito::source::SourceFileMode::Executable },
+    };
+    auto project = materialize("cargo-fetch-provider"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto manifest = project->root.join(PathBuf::from("Cargo.toml"_str).as_path());
+    auto result   = lito::tools::cargo::fetch_dependencies(
+        lito::tools::cargo::Provider {
+            .executable  = project->root.join(PathBuf::from("cargo"_str).as_path()),
+            .identity    = String::make("fixture Cargo provider"_str),
+            .host_target = String::make("x86_64-unknown-linux-gnu"_str),
+        },
+        lito::tools::cargo::FetchRequest {
+            .alias       = String::make("fixture"_str),
+            .source_root = project->root.clone(),
+            .manifest    = manifest.clone(),
+            .target      = String::make("aarch64-unknown-linux-gnu"_str),
+            .locked      = true,
+            .offline     = true,
+        },
+        *environment);
+    ASSERT_TRUE(result.is_ok());
+    auto arguments = rstd::fs::read_to_string(
+        project->root.join(PathBuf::from("cargo-fetch.args"_str).as_path()).as_path());
+    ASSERT_TRUE(arguments.is_ok());
+    auto expected = rstd::format("fetch\n--manifest-path\n{}\n--target\n"
+                                 "aarch64-unknown-linux-gnu\n--locked\n--offline\n",
+                                 manifest.as_path());
+    EXPECT_EQ(arguments->as_str(), expected.as_str());
+#endif
+}
+
+TEST_F(CargoProvider, VendorWritesValidatedRelocatableSourceConfiguration) {
+#if RSTD_OS_UNIX
+    constexpr ProjectFile files[] = {
+        { "Cargo.toml"_str, "[package]\nname = \"vendor-fixture\"\nversion = \"0.1.0\"\n"_str },
+        { "cargo"_str,
+          R"sh(#!/bin/sh
+printf '%s\n' "$@" > vendor.args
+mkdir vendor
+printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' '' '[source.vendored-sources]' 'directory = "vendor"'
+)sh"_str,
+          lito::source::SourceFileMode::Executable },
+    };
+    auto project = materialize("cargo-vendor-provider"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto manifest    = project->root.join(PathBuf::from("Cargo.toml"_str).as_path());
+    auto destination = build_root("cargo-vendor-output"_str);
+    auto result      = lito::tools::cargo::vendor_dependencies(
+        lito::tools::cargo::Provider {
+            .executable  = project->root.join(PathBuf::from("cargo"_str).as_path()),
+            .identity    = String::make("fixture Cargo provider"_str),
+            .host_target = String::make("x86_64-unknown-linux-gnu"_str),
+        },
+        lito::tools::cargo::VendorRequest {
+            .alias       = String::make("fixture"_str),
+            .source_root = project->root.clone(),
+            .manifest    = manifest.clone(),
+            .destination = destination.clone(),
+            .locked      = true,
+            .offline     = true,
+        },
+        *environment);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(lito::tools::cargo::validate_vendor_config(result->config.as_path()).is_ok());
+    auto arguments = rstd::fs::read_to_string(
+        destination.join(PathBuf::from("vendor.args"_str).as_path()).as_path());
+    ASSERT_TRUE(arguments.is_ok());
+    auto expected = rstd::format("vendor\n--versioned-dirs\n--manifest-path\n{}\n"
+                                 "--locked\n--offline\nvendor\n",
+                                 manifest.as_path());
+    EXPECT_EQ(arguments->as_str(), expected.as_str());
+
+    auto invalid = destination.join(PathBuf::from("invalid.toml"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(invalid.as_path(),
+                               "[source.escape]\ndirectory = \"../escape\"\n"_str.as_bytes())
+            .is_ok());
+    EXPECT_TRUE(lito::tools::cargo::validate_vendor_config(invalid.as_path()).is_err());
+#endif
+}
+
 TEST_F(CargoProvider, EffectivePlainProfileProjectsTypedCargoConfigurationByLanguage) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

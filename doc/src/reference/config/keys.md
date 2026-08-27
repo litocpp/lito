@@ -115,7 +115,7 @@ Cargo; Lito has no Cargo argument or environment escape table.
 
 Archive extraction selects the first available provider. An explicitly configured `bsdtar` or
 `tar` is considered first, followed by the other archive tool and `cmake -E tar`. A valid
-materialization needs none of them, and a fetch-seed or verified file-cache hit does not require
+materialization needs none of them, and a source-bundle or verified file-cache hit does not require
 `curl`.
 
 ### `[tools.pkg-config]`

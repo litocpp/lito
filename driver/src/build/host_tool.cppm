@@ -178,6 +178,26 @@ auto select_host_build_tool_archive(const lito::manifest::BuildToolRequirement& 
                                             String::make(architecture_name(host.architecture))));
 }
 
+auto resolve_host_build_tool_archives(const lito::package::ResolvedPackageGraph& graph,
+                                      const Vec<String>&                         packages,
+                                      const HostInfo&                            host)
+    -> HostBuildToolResult<Vec<lito::source::ArchiveSourceFetchRequest>> {
+    auto requests = Vec<lito::source::ArchiveSourceFetchRequest>::make();
+    for (const auto& package : graph.packages) {
+        if (! requested_package(packages, package.manifest.name.as_str())) continue;
+        for (const auto& tool : package.manifest.build_tools) {
+            auto archive = rstd_try(select_host_build_tool_archive(tool, host));
+            requests.push(lito::source::ArchiveSourceFetchRequest {
+                .owner  = package.manifest.name.clone(),
+                .name   = tool.alias.clone(),
+                .url    = archive->url.fetch_url()->clone(),
+                .sha256 = archive->sha256.clone(),
+            });
+        }
+    }
+    return Ok(rstd::move(requests));
+}
+
 struct ResolvedHostBuildTool {
     String   package;
     String   alias;

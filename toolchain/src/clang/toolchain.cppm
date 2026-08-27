@@ -79,26 +79,28 @@ private:
             }
             return Ok(rstd::move(located).unwrap().unwrap());
         };
-        auto configured_compiler   = resolve(specification.cxx.as_path(), "clang++"_str);
+        auto target_resolution =
+            resolve_clang_target(specification, standard_library, requested_target, environment);
+        if (target_resolution.is_err()) {
+            return Err(rstd::move(target_resolution).unwrap_err());
+        }
+        auto target_facts          = rstd::move(target_resolution).unwrap();
         auto configured_c_compiler = resolve(specification.cc.as_path(), "clang"_str);
         auto configured_archiver   = resolve(specification.ar.as_path(), "llvm-ar"_str);
-        if (configured_compiler.is_err()) {
-            return Err(rstd::move(configured_compiler).unwrap_err());
-        }
         if (configured_c_compiler.is_err()) {
             return Err(rstd::move(configured_c_compiler).unwrap_err());
         }
         if (configured_archiver.is_err()) {
             return Err(rstd::move(configured_archiver).unwrap_err());
         }
-        auto compiler_path   = rstd::move(configured_compiler).unwrap();
-        auto c_compiler_path = rstd::move(configured_c_compiler).unwrap();
-        auto archiver_path   = rstd::move(configured_archiver).unwrap();
+        auto compiler_path     = rstd::move(target_facts.compiler);
+        auto c_compiler_path   = rstd::move(configured_c_compiler).unwrap();
+        auto archiver_path     = rstd::move(configured_archiver).unwrap();
+        auto compile_target    = Some(rstd::move(target_facts.target));
+        auto supported_targets = Some(rstd::move(target_facts.supported_targets));
 
         auto compiler_command   = Vec<String>::make();
         auto c_compiler_command = Vec<String>::make();
-        auto target_command     = Vec<String>::make();
-        auto targets_command    = Vec<String>::make();
         auto resource_command   = Vec<String>::make();
         auto help_command       = Vec<String>::make();
         auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
@@ -107,17 +109,6 @@ private:
         pushed = toolchain::command::push_path(c_compiler_command, c_compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(c_compiler_command, toolchain::clang_options::VERSION);
-        const auto query_default_target =
-            requested_target == nullptr && specification.target.is_CompilerDefault();
-        if (query_default_target) {
-            pushed = toolchain::command::push_path(target_command, compiler_path.as_path());
-            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-            toolchain::command::push_option(target_command,
-                                            toolchain::clang_options::PRINT_TARGET_TRIPLE);
-        }
-        pushed = toolchain::command::push_path(targets_command, compiler_path.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(targets_command, toolchain::clang_options::PRINT_TARGETS);
         pushed = toolchain::command::push_path(resource_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(resource_command,
@@ -131,16 +122,7 @@ private:
         auto c_compiler_version = toolchain::command::tool_output(
             rstd::move(c_compiler_command), "clang --version"_str, environment);
         auto archiver_identity = probe_archiver(archiver_path.as_path(), environment);
-        auto supported_output  = toolchain::command::tool_output(
-            rstd::move(targets_command), "clang++ supported target query"_str, environment);
-        auto default_target_output = Option<String> {};
-        if (query_default_target) {
-            auto output = toolchain::command::tool_output(
-                rstd::move(target_command), "clang++ default target query"_str, environment);
-            if (output.is_err()) return Err(rstd::move(output).unwrap_err());
-            default_target_output = Some(rstd::move(output).unwrap());
-        }
-        auto resource = toolchain::command::tool_output(
+        auto resource          = toolchain::command::tool_output(
             rstd::move(resource_command), "clang++ resource query"_str, environment);
         auto help = toolchain::command::tool_output(
             rstd::move(help_command), "clang++ help query"_str, environment);
@@ -149,7 +131,6 @@ private:
             return Err(rstd::move(c_compiler_version).unwrap_err());
         }
         if (archiver_identity.is_err()) return Err(rstd::move(archiver_identity).unwrap_err());
-        if (supported_output.is_err()) return Err(rstd::move(supported_output).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
@@ -157,71 +138,6 @@ private:
         }
         if (! c_compiler_version->as_str().contains("clang version"_str)) {
             return failure<ClangToolchain>("configured C compiler is not clang"_str);
-        }
-        auto supported_targets = ClangSupportedTargets::parse(supported_output->as_str());
-        if (supported_targets.is_err()) {
-            return Err(rstd::move(supported_targets).unwrap_err());
-        }
-        auto compiler_default = Option<TargetInfo> {};
-        if (default_target_output.is_some()) {
-            auto parsed = parse_target_info(default_target_output->as_str());
-            if (parsed.is_err()) {
-                return Err(ToolchainError::Platform(rstd::move(parsed).unwrap_err()));
-            }
-            compiler_default = Some(rstd::move(parsed).unwrap());
-        }
-        auto compile_target = Option<CompileTarget> {};
-        if (requested_target != nullptr) {
-            if (specification.target.is_Config()) {
-                auto requested_os = target_operating_system(*requested_target);
-                if (requested_os.is_err()) {
-                    return Err(ToolchainError::Platform(rstd::move(requested_os).unwrap_err()));
-                }
-                if (*requested_os != specification.target.as_Config().os ||
-                    requested_target->architecture !=
-                        specification.target.as_Config().architecture) {
-                    return failure<ClangToolchain>(rstd::format(
-                        "configured toolchain target '{}-{}' conflicts with SDK target '{}'",
-                        architecture_name(specification.target.as_Config().architecture),
-                        operating_system_name(specification.target.as_Config().os),
-                        requested_target->triple.as_str()));
-                }
-            }
-            auto os = target_operating_system(*requested_target);
-            if (os.is_err()) {
-                return Err(ToolchainError::Platform(rstd::move(os).unwrap_err()));
-            }
-            auto selected_standard_library =
-                resolve_standard_library_selection(standard_library, *os);
-            if (selected_standard_library.is_err()) {
-                return Err(rstd::move(selected_standard_library).unwrap_err());
-            }
-            auto resolved_target =
-                resolve_sdk_compile_target(*requested_target, *selected_standard_library);
-            if (resolved_target.is_err()) {
-                return Err(rstd::move(resolved_target).unwrap_err());
-            }
-            compile_target = Some(rstd::move(resolved_target).unwrap());
-        } else {
-            auto input = resolve_toolchain_target_input(
-                specification.target,
-                compiler_default.is_some() ? rstd::addressof(*compiler_default) : nullptr);
-            if (input.is_err()) return Err(rstd::move(input).unwrap_err());
-            auto selected_standard_library =
-                resolve_standard_library_selection(standard_library, input->os);
-            if (selected_standard_library.is_err()) {
-                return Err(rstd::move(selected_standard_library).unwrap_err());
-            }
-            auto resolved_target = resolve_compile_target(*input, *selected_standard_library);
-            if (resolved_target.is_err()) {
-                return Err(rstd::move(resolved_target).unwrap_err());
-            }
-            compile_target = Some(rstd::move(resolved_target).unwrap());
-        }
-        auto target_validation = supported_targets->validate(compile_target->info.architecture,
-                                                             compile_target->info.triple.as_str());
-        if (target_validation.is_err()) {
-            return Err(rstd::move(target_validation).unwrap_err());
         }
 
         auto linker_path = Option<PathBuf> {};

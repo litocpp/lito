@@ -14,7 +14,7 @@ Both accept source acquisition policy:
 - `--locked` requires an unchanged lock;
 - `--offline` forbids network acquisition;
 - `--frozen` combines locked and offline;
-- repeated `--fetch-seed DIRECTORY` adds read-only seeded sources.
+- repeated `--source-bundle DIRECTORY` adds read-only seeded sources.
 
 Both accept execution/reporting options:
 

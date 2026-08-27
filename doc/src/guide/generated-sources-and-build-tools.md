@@ -44,7 +44,7 @@ sha256 = "29ebc2b57803df70c2dfe80936336ec1e15bead3adea50e1c4a2a22c745b77a0"
 ```
 
 The alias is used by `build.lua`; the script does not discover an arbitrary executable from a
-download directory. Host tool downloads participate in source acquisition and offline/fetch-seed
+download directory. Host tool downloads participate in source acquisition and offline/source-bundle
 policy.
 
 ## Generated versus external roots

@@ -8,6 +8,7 @@ target_sources(
           src/command/clean.cpp
           src/command/doc.cpp
           src/command/format.cpp
+          src/command/fetch.cpp
           src/command/install.cpp
           src/command/scan.cpp
           src/command/update.cpp
@@ -53,6 +54,7 @@ target_sources(
          src/command/error.cppm
          src/command/clean.cppm
          src/command/format.cppm
+         src/command/fetch.cppm
          src/command/install.cppm
          src/command/package.cppm
          src/command/reporting.cppm

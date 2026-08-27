@@ -24,7 +24,7 @@ struct BuildOptions {
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
-    Vec<PathBuf>                             fetch_seeds;
+    Vec<PathBuf>                             source_bundles;
     bool                                     verbose {};
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
@@ -46,7 +46,7 @@ struct ScanOptions {
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
-    Vec<PathBuf>                             fetch_seeds;
+    Vec<PathBuf>                             source_bundles;
     lito::package::FeatureSelection          features;
 };
 
@@ -62,7 +62,7 @@ struct DocOptions {
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
-    Vec<PathBuf>                             fetch_seeds;
+    Vec<PathBuf>                             source_bundles;
     bool                                     verbose {};
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
@@ -83,7 +83,7 @@ struct InstallOptions {
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
-    Vec<PathBuf>                             fetch_seeds;
+    Vec<PathBuf>                             source_bundles;
     bool                                     verbose {};
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
@@ -100,7 +100,7 @@ struct TestOptions {
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
-    Vec<PathBuf>                             fetch_seeds;
+    Vec<PathBuf>                             source_bundles;
     bool                                     no_run {};
     bool                                     verbose {};
     Option<PathBuf>                          timing_file;
@@ -118,7 +118,7 @@ struct BenchOptions {
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
-    Vec<PathBuf>                             fetch_seeds;
+    Vec<PathBuf>                             source_bundles;
     bool                                     no_run {};
     bool                                     verbose {};
     Option<PathBuf>                          timing_file;
@@ -134,7 +134,16 @@ struct FormatOptions {
 
 struct UpdateOptions {
     bool         offline {};
-    Vec<PathBuf> fetch_seeds;
+    Vec<PathBuf> source_bundles;
+};
+
+struct FetchOptions {
+    bool                            locked {};
+    bool                            offline {};
+    bool                            frozen {};
+    Option<PathBuf>                 output;
+    Option<usize>                   jobs;
+    lito::package::FeatureSelection features;
 };
 
 struct AddOptions {
@@ -238,6 +247,7 @@ class CliCommand {
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
+              (Fetch, (FetchOptions options;)),
               (Add, (AddOptions options;)),
               (Pack, (PackOptions options;)),
               (Publish, (PublishOptions options;)),
@@ -330,7 +340,7 @@ struct SourceAcquisitionArgs {
     ArgKey<bool>   locked;
     ArgKey<bool>   offline;
     ArgKey<bool>   frozen;
-    ArgKey<String> fetch_seed;
+    ArgKey<String> source_bundle;
 };
 
 struct BuildExecutionArgs {
@@ -446,9 +456,23 @@ struct FormatSchema {
 struct UpdateSchema {
     CommandKey     command;
     ArgKey<bool>   offline;
-    ArgKey<String> fetch_seed;
+    ArgKey<String> source_bundle;
 
     auto decode(const Matches& matches) const -> Result<UpdateOptions, CliDecodeError>;
+};
+
+struct FetchSchema {
+    CommandKey     command;
+    ArgKey<bool>   locked;
+    ArgKey<bool>   offline;
+    ArgKey<bool>   frozen;
+    ArgKey<String> output;
+    ArgKey<usize>  jobs;
+    ArgKey<String> features;
+    ArgKey<bool>   all_features;
+    ArgKey<bool>   no_default_features;
+
+    auto decode(const Matches& matches) const -> Result<FetchOptions, CliDecodeError>;
 };
 
 struct AddSchema {
@@ -606,6 +630,7 @@ struct CliSchema {
     ScanSchema     scan;
     FormatSchema   format;
     UpdateSchema   update;
+    FetchSchema    fetch;
     AddSchema      add;
     PackSchema     pack;
     PublishSchema  publish;
@@ -654,6 +679,12 @@ auto no_default_features_arg() -> Arg<bool> {
         .help("Disable default package features"_str);
 }
 
+auto all_features_arg() -> Arg<bool> {
+    return Arg<bool>::flag("all-features"_str)
+        .long_name("all-features"_str)
+        .help("Enable all package features"_str);
+}
+
 auto target_arg() -> Arg<String> {
     return Arg<String>::value("target"_str, string_parser())
         .long_name("target"_str)
@@ -687,11 +718,11 @@ auto frozen_arg() -> Arg<bool> {
         .help("Require an unchanged lock file and forbid network access"_str);
 }
 
-auto fetch_seed_arg() -> Arg<String> {
-    return Arg<String>::value("fetch-seed"_str, string_parser())
-        .long_name("fetch-seed"_str)
+auto source_bundle_arg() -> Arg<String> {
+    return Arg<String>::value("source-bundle"_str, string_parser())
+        .long_name("source-bundle"_str)
         .value_name("DIRECTORY"_str)
-        .help("Use a read-only fetch seed directory"_str)
+        .help("Use a read-only source bundle directory"_str)
         .append();
 }
 
@@ -737,7 +768,7 @@ auto jobs_arg() -> Arg<usize> {
         .short_name(u8('j'))
         .long_name("jobs"_str)
         .value_name("N"_str)
-        .help("Set the scan and compile worker count"_str);
+        .help("Set the worker count"_str);
 }
 
 auto add_package_profile_args(Command& command) -> PackageProfileArgs {
@@ -751,10 +782,10 @@ auto add_package_profile_args(Command& command) -> PackageProfileArgs {
 
 auto add_source_acquisition_args(Command& command) -> SourceAcquisitionArgs {
     return SourceAcquisitionArgs {
-        .locked     = command.add_arg(locked_arg()),
-        .offline    = command.add_arg(offline_arg()),
-        .frozen     = command.add_arg(frozen_arg()),
-        .fetch_seed = command.add_arg(fetch_seed_arg()),
+        .locked        = command.add_arg(locked_arg()),
+        .offline       = command.add_arg(offline_arg()),
+        .frozen        = command.add_arg(frozen_arg()),
+        .source_bundle = command.add_arg(source_bundle_arg()),
     };
 }
 
@@ -841,7 +872,7 @@ auto make_install_definition() -> CommandDefinition<InstallSchema> {
                                         .help("Install a completed build without building"_str));
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
-    command.conflicts(no_build, source_acquisition.fetch_seed);
+    command.conflicts(no_build, source_acquisition.source_bundle);
     command.conflicts(source, no_build);
     command.conflicts(source, source_acquisition.locked);
     command.conflicts(source, source_acquisition.frozen);
@@ -1021,11 +1052,44 @@ auto make_format_definition() -> CommandDefinition<FormatSchema> {
 auto make_update_definition() -> CommandDefinition<UpdateSchema> {
     auto command = Command::make("update"_str);
     command.about("Update lock file"_str);
-    auto key        = command.key();
-    auto offline    = command.add_arg(offline_arg());
-    auto fetch_seed = command.add_arg(fetch_seed_arg());
+    auto key           = command.key();
+    auto offline       = command.add_arg(offline_arg());
+    auto source_bundle = command.add_arg(source_bundle_arg());
     return {
-        UpdateSchema { .command = key, .offline = offline, .fetch_seed = fetch_seed },
+        UpdateSchema { .command = key, .offline = offline, .source_bundle = source_bundle },
+        rstd::move(command),
+    };
+}
+
+auto make_fetch_definition() -> CommandDefinition<FetchSchema> {
+    auto command = Command::make("fetch"_str);
+    command.about("Fetch project dependencies"_str);
+    auto key                 = command.key();
+    auto locked              = command.add_arg(locked_arg());
+    auto offline             = command.add_arg(offline_arg());
+    auto frozen              = command.add_arg(frozen_arg());
+    auto output              = command.add_arg(Arg<String>::value("output"_str, string_parser())
+                                                   .long_name("output"_str)
+                                                   .value_name("DIRECTORY"_str)
+                                                   .help("Write a portable source bundle"_str));
+    auto jobs                = command.add_arg(jobs_arg());
+    auto features            = command.add_arg(features_arg());
+    auto all_features        = command.add_arg(all_features_arg());
+    auto no_default_features = command.add_arg(no_default_features_arg());
+    command.conflicts(all_features, features);
+    command.conflicts(all_features, no_default_features);
+    return {
+        FetchSchema {
+            .command             = key,
+            .locked              = locked,
+            .offline             = offline,
+            .frozen              = frozen,
+            .output              = output,
+            .jobs                = jobs,
+            .features            = features,
+            .all_features        = all_features,
+            .no_default_features = no_default_features,
+        },
         rstd::move(command),
     };
 }
@@ -1351,6 +1415,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto scan     = make_scan_definition();
     auto format   = make_format_definition();
     auto update   = make_update_definition();
+    auto fetch    = make_fetch_definition();
     auto add      = make_add_definition();
     auto pack     = make_pack_definition();
     auto publish  = make_publish_definition();
@@ -1382,6 +1447,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(scan.command));
     root.add_subcommand(rstd::move(format.command));
     root.add_subcommand(rstd::move(update.command));
+    root.add_subcommand(rstd::move(fetch.command));
     root.add_subcommand(rstd::move(add.command));
     root.add_subcommand(rstd::move(pack.command));
     root.add_subcommand(rstd::move(publish.command));
@@ -1403,6 +1469,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .scan     = rstd::move(scan.schema),
         .format   = rstd::move(format.schema),
         .update   = rstd::move(update.schema),
+        .fetch    = rstd::move(fetch.schema),
         .add      = rstd::move(add.schema),
         .pack     = rstd::move(pack.schema),
         .publish  = rstd::move(publish.schema),
@@ -1493,9 +1560,12 @@ struct PackageProfileValues {
     lito::package::FeatureSelection          features;
 };
 
-auto decode_features(const Matches& matches, const PackageProfileArgs& args)
+auto decode_features(const Matches&        matches,
+                     const ArgKey<String>& features,
+                     const ArgKey<bool>&   no_default_features,
+                     bool                  all_features = false)
     -> Result<lito::package::FeatureSelection, CliDecodeError> {
-    auto declared = rstd_try(string_values(matches, args.features));
+    auto declared = rstd_try(string_values(matches, features));
     auto enabled  = Vec<String>::make();
     for (const auto& value : declared) {
         auto begin = usize {};
@@ -1519,8 +1589,14 @@ auto decode_features(const Matches& matches, const PackageProfileArgs& args)
     }
     return Ok(lito::package::FeatureSelection {
         .enabled          = rstd::move(enabled),
-        .default_features = ! rstd_try(flag_value(matches, args.no_default_features)),
+        .default_features = ! rstd_try(flag_value(matches, no_default_features)),
+        .all_features     = all_features,
     });
+}
+
+auto decode_features(const Matches& matches, const PackageProfileArgs& args)
+    -> Result<lito::package::FeatureSelection, CliDecodeError> {
+    return decode_features(matches, args.features, args.no_default_features);
 }
 
 auto decode_package_profile(const Matches& matches, const PackageProfileArgs& args)
@@ -1536,16 +1612,16 @@ struct SourceAcquisitionValues {
     bool         locked {};
     bool         offline {};
     bool         frozen {};
-    Vec<PathBuf> fetch_seeds;
+    Vec<PathBuf> source_bundles;
 };
 
 auto decode_source_acquisition(const Matches& matches, const SourceAcquisitionArgs& args)
     -> Result<SourceAcquisitionValues, CliDecodeError> {
     return Ok(SourceAcquisitionValues {
-        .locked      = rstd_try(flag_value(matches, args.locked)),
-        .offline     = rstd_try(flag_value(matches, args.offline)),
-        .frozen      = rstd_try(flag_value(matches, args.frozen)),
-        .fetch_seeds = rstd_try(path_values(matches, args.fetch_seed)),
+        .locked         = rstd_try(flag_value(matches, args.locked)),
+        .offline        = rstd_try(flag_value(matches, args.offline)),
+        .frozen         = rstd_try(flag_value(matches, args.frozen)),
+        .source_bundles = rstd_try(path_values(matches, args.source_bundle)),
     });
 }
 
@@ -1578,7 +1654,7 @@ auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, C
         .locked          = source.locked,
         .offline         = source.offline,
         .frozen          = source.frozen,
-        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .source_bundles  = rstd::move(source.source_bundles),
         .verbose         = execution.verbose,
         .timing_file     = rstd::move(execution.timing_file),
         .no_timing       = execution.no_timing,
@@ -1622,7 +1698,7 @@ auto InstallSchema::decode(const Matches& matches) const -> Result<InstallOption
         .locked          = source.locked,
         .offline         = source.offline,
         .frozen          = source.frozen,
-        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .source_bundles  = rstd::move(source.source_bundles),
         .verbose         = execution.verbose,
         .timing_file     = rstd::move(execution.timing_file),
         .no_timing       = execution.no_timing,
@@ -1644,7 +1720,7 @@ auto TestSchema::decode(const Matches& matches) const -> Result<TestOptions, Cli
         .locked          = source.locked,
         .offline         = source.offline,
         .frozen          = source.frozen,
-        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .source_bundles  = rstd::move(source.source_bundles),
         .no_run          = rstd_try(flag_value(matches, no_run)),
         .verbose         = execution.verbose,
         .timing_file     = rstd::move(execution.timing_file),
@@ -1667,7 +1743,7 @@ auto BenchSchema::decode(const Matches& matches) const -> Result<BenchOptions, C
         .locked          = source.locked,
         .offline         = source.offline,
         .frozen          = source.frozen,
-        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .source_bundles  = rstd::move(source.source_bundles),
         .no_run          = rstd_try(flag_value(matches, no_run)),
         .verbose         = execution.verbose,
         .timing_file     = rstd::move(execution.timing_file),
@@ -1683,16 +1759,16 @@ auto ScanSchema::decode(const Matches& matches) const -> Result<ScanOptions, Cli
     auto input         = rstd_try(required_string(matches, this->source, "source"_str));
     auto format_value  = rstd_try(optional_value(matches, format));
     return Ok(ScanOptions {
-        .source      = PathBuf::from(rstd::move(input)),
-        .packages    = rstd::move(package.packages),
-        .profile     = rstd::move(package.profile),
-        .targets     = rstd_try(string_values(matches, target)),
-        .format      = format_value.is_some() ? **format_value : ScanOutputFormat::Lito,
-        .locked      = source_values.locked,
-        .offline     = source_values.offline,
-        .frozen      = source_values.frozen,
-        .fetch_seeds = rstd::move(source_values.fetch_seeds),
-        .features    = rstd::move(package.features),
+        .source         = PathBuf::from(rstd::move(input)),
+        .packages       = rstd::move(package.packages),
+        .profile        = rstd::move(package.profile),
+        .targets        = rstd_try(string_values(matches, target)),
+        .format         = format_value.is_some() ? **format_value : ScanOutputFormat::Lito,
+        .locked         = source_values.locked,
+        .offline        = source_values.offline,
+        .frozen         = source_values.frozen,
+        .source_bundles = rstd::move(source_values.source_bundles),
+        .features       = rstd::move(package.features),
     });
 }
 
@@ -1712,7 +1788,7 @@ auto DocSchema::decode(const Matches& matches) const -> Result<DocOptions, CliDe
         .locked          = source.locked,
         .offline         = source.offline,
         .frozen          = source.frozen,
-        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .source_bundles  = rstd::move(source.source_bundles),
         .verbose         = execution.verbose,
         .timing_file     = rstd::move(execution.timing_file),
         .no_timing       = execution.no_timing,
@@ -1730,8 +1806,20 @@ auto FormatSchema::decode(const Matches& matches) const -> Result<FormatOptions,
 
 auto UpdateSchema::decode(const Matches& matches) const -> Result<UpdateOptions, CliDecodeError> {
     return Ok(UpdateOptions {
-        .offline     = rstd_try(flag_value(matches, offline)),
-        .fetch_seeds = rstd_try(path_values(matches, fetch_seed)),
+        .offline        = rstd_try(flag_value(matches, offline)),
+        .source_bundles = rstd_try(path_values(matches, source_bundle)),
+    });
+}
+
+auto FetchSchema::decode(const Matches& matches) const -> Result<FetchOptions, CliDecodeError> {
+    auto all = rstd_try(flag_value(matches, all_features));
+    return Ok(FetchOptions {
+        .locked   = rstd_try(flag_value(matches, locked)),
+        .offline  = rstd_try(flag_value(matches, offline)),
+        .frozen   = rstd_try(flag_value(matches, frozen)),
+        .output   = rstd_try(optional_path(matches, output)),
+        .jobs     = rstd_try(optional_jobs(matches, jobs)),
+        .features = rstd_try(decode_features(matches, features, no_default_features, all)),
     });
 }
 
@@ -1954,6 +2042,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         auto options = rstd_try(schema.update.decode(**child));
         return Ok(CliCommand::Update(rstd::move(options)));
     }
+    if (auto child = matches.subcommand_matches(schema.fetch.command); child.is_some()) {
+        auto options = rstd_try(schema.fetch.decode(**child));
+        return Ok(CliCommand::Fetch(rstd::move(options)));
+    }
     if (auto child = matches.subcommand_matches(schema.add.command); child.is_some()) {
         auto options = rstd_try(schema.add.decode(**child));
         return Ok(CliCommand::Add(rstd::move(options)));
@@ -2002,10 +2094,10 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     auto command       = rstd_try(decode_command(schema, matches));
     const auto consumes_build_options = command.is_Build() || command.is_Install() ||
                                         command.is_Test() || command.is_Bench() ||
-                                        command.is_Doc() || command.is_Scan();
+                                        command.is_Doc() || command.is_Scan() || command.is_Fetch();
     if (use_env_flags && ! consumes_build_options) {
         return Err(CliDecodeError::InvalidUsage(String::make(
-            "--use-env-flags is only valid for build, install, test, bench, doc, and scan"_str)));
+            "--use-env-flags is only valid for build, install, test, bench, doc, scan, and fetch"_str)));
     }
     if (use_env_flags && command.is_Install() && command.as_Install().options.no_build) {
         return Err(CliDecodeError::InvalidUsage(

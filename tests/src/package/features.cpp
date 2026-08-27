@@ -130,6 +130,12 @@ TEST(PackageFeatures, ResolvesRootDefaultsAndCommandLineRequests) {
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_FALSE(feature_enabled(graph.packages[usize {}], "default-on"_str));
     EXPECT_FALSE(feature_enabled(graph.packages[usize {}], "explicit"_str));
+
+    selection.all_features = true;
+    resolved = lito::package::resolve_features(graph, roots, roots, targets, selection);
+    ASSERT_TRUE(resolved.is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "default-on"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "explicit"_str));
 }
 
 TEST(PackageFeatures, UnifiesDependencyRequestsAndIgnoresInactiveDevEdges) {

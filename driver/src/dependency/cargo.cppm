@@ -199,6 +199,31 @@ auto cargo_source(const cpp::ExternalSourceRootCatalog& catalog,
     return Ok(result);
 }
 
+auto cargo_bundle_config(const lito::source::PackageSourceConfig& source_config,
+                         const cpp::ExternalSourceRoot&           source,
+                         ref<rstd::path::Path>                    manifest,
+                         ref<str> target) -> lito::dependency::DependencyResult<Option<PathBuf>> {
+    for (const auto& root : source_config.source_bundles) {
+        auto candidate = lito::source::SourceBundleLayout(root.clone())
+                             .cargo_config(source.identity.as_str(), manifest, target);
+        auto exists    = rstd::fs::exists(candidate.as_path());
+        if (exists.is_err()) {
+            return Err(lito::dependency::DependencyError::Io(
+                String::make("inspect Cargo source bundle config"_str),
+                candidate.clone(),
+                rstd::move(exists).unwrap_err()));
+        }
+        if (! *exists) continue;
+        auto validated = lito::tools::cargo::validate_vendor_config(candidate.as_path());
+        if (validated.is_err()) {
+            return Err(cargo_error("validate Cargo source bundle config"_str,
+                                   rstd::move(validated).unwrap_err()));
+        }
+        return Ok(Some(rstd::move(candidate)));
+    }
+    return Ok(None());
+}
+
 auto cargo_request_identity(const lito::tools::cargo::Provider&                 provider,
                             const cpp::ExternalSourceRoot&                      source,
                             const lito::dependency::CargoDependencyRequirement& declaration,
@@ -254,6 +279,7 @@ auto resolve_cargo_dependencies(
     const BuildPlatform&                                     platform,
     const BuildLayout&                                       layout,
     const lito::tools::cargo::Configuration&                 configuration,
+    const lito::source::PackageSourceConfig&                 source_config,
     lito::tools::ToolResolver&                               tool_resolver,
     const ResolvedProcessEnvironment&                        environment,
     usize                                                    jobs,
@@ -282,21 +308,24 @@ auto resolve_cargo_dependencies(
     }
     auto target = rstd_try(cargo_target(*provider_cache, platform));
     for (const auto& declaration : declarations) {
-        auto source   = rstd_try(cargo_source(sources,
-                                              package_index,
-                                              declaration.recipe.source.as_str(),
-                                              declaration.alias.as_str()));
-        auto manifest = source->root.join(declaration.recipe.manifest_path.as_path());
-        auto metadata =
-            lito::tools::cargo::query_metadata(*provider_cache,
-                                               lito::tools::cargo::MetadataRequest {
-                                                   .source_root = source->root.clone(),
-                                                   .manifest    = rstd::move(manifest),
-                                                   .package = declaration.recipe.package.clone(),
-                                                   .offline = configuration.offline,
-                                               },
-                                               environment,
-                                               cargo_observer(observer));
+        auto source        = rstd_try(cargo_source(sources,
+                                                   package_index,
+                                                   declaration.recipe.source.as_str(),
+                                                   declaration.alias.as_str()));
+        auto manifest      = source->root.join(declaration.recipe.manifest_path.as_path());
+        auto bundle_config = rstd_try(cargo_bundle_config(
+            source_config, *source, declaration.recipe.manifest_path.as_path(), target.as_str()));
+        auto metadata      = lito::tools::cargo::query_metadata(
+            *provider_cache,
+            lito::tools::cargo::MetadataRequest {
+                .source_root   = source->root.clone(),
+                .manifest      = rstd::move(manifest),
+                .package       = declaration.recipe.package.clone(),
+                .source_config = as<Clone>(bundle_config).clone(),
+                .offline       = configuration.offline,
+            },
+            environment,
+            cargo_observer(observer));
         if (metadata.is_err()) {
             return Err(cargo_error(rstd::format("query Cargo dependency '{}:{}' metadata",
                                                 owner,
@@ -327,6 +356,7 @@ auto resolve_cargo_dependencies(
             .request_identity = request_identity.clone(),
             .work_root        = rstd::move(work_root),
             .target_directory = rstd::move(target_directory),
+            .source_config    = rstd::move(bundle_config),
             .jobs             = jobs,
             .offline          = configuration.offline,
         };

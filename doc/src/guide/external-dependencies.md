@@ -158,7 +158,7 @@ An external source has exactly one recipe:
 The same prepared source can back a CMake dependency, Cargo dependency, source group, or include
 directory. The package owner resolves it once and passes typed roots to each consumer.
 
-Archive acquisition checks an existing materialization, read-only fetch seeds, and the global file
+Archive acquisition checks an existing materialization, read-only source bundles, and the global file
 cache before resolving download or extraction tools. Fresh downloads use `tools.curl`; extraction
 tries `tools.bsdtar`, `tools.tar`, then the public `cmake -E tar` interface. An archive used only as
 a source group does not require a CMake package query.

@@ -47,16 +47,16 @@ for reproducible applications and workspaces.
 - `--locked` requires the existing lock to match and refuses an update.
 - `--offline` forbids network source acquisition but may update the lock from available inputs.
 - `--frozen` combines `--locked` and `--offline`.
-- repeated `--fetch-seed DIRECTORY` adds read-only pre-populated sources for offline acquisition.
+- repeated `--source-bundle DIRECTORY` adds read-only pre-populated sources for offline acquisition.
 
 Offline resolution evaluates source availability before resolving network tools. A verified
 archive file-cache entry can be extracted without `curl`, and a valid archive materialization
 needs neither a downloader nor an extractor. Locked Git checkouts carry a Lito-owned receipt, so a
 reusable checkout does not require Git merely to reinterpret Git's internal repository format.
 
-`lito lock export --format flatpak-sources --output FILE` exports locked network inputs as Flatpak
-source entries and an inline `.lito/fetch-seed/entries.json` document. Lito also reads the legacy
-`.lito/fetch-seed/catalog.json` name for existing exported sources.
+`lito lock export --format flatpak-sources --output FILE` exports locked Git and archive inputs as
+Flatpak source entries. Their destinations use the same versioned source-bundle layout consumed by
+Lito, while `lito.lock` remains the only source identity index.
 
 ## Local Git patches
 

@@ -56,6 +56,7 @@ struct ProjectRegistryResolver {
     lito::registry::RegistryNetworkPolicy network { lito::registry::RegistryNetworkPolicy::Online };
     bool                                  locked_mode {};
     Vec<lito::source::RegistrySourcePin>  locked;
+    const Vec<PathBuf>*                   source_bundles {};
     lito::tools::ToolResolver*            tools {};
     const ResolvedProcessEnvironment*     environment {};
 
@@ -110,7 +111,8 @@ struct ProjectRegistryResolver {
                                                           http,
                                                           blobs,
                                                           self.locked_mode,
-                                                          rstd::move(pins));
+                                                          rstd::move(pins),
+                                                          self.source_bundles);
         return client.resolve(requirements);
     }
 
@@ -162,10 +164,11 @@ auto start_project_resolution(
                                sources.network == lito::source::NetworkPolicy::Offline
                            ? lito::registry::RegistryNetworkPolicy::Offline
                            : lito::registry::RegistryNetworkPolicy::Online,
-            .locked_mode = resolution.locked,
-            .locked      = rstd::move(pins),
-            .tools       = tool_resolver,
-            .environment = rstd::addressof(environment),
+            .locked_mode    = resolution.locked,
+            .locked         = rstd::move(pins),
+            .source_bundles = rstd::addressof(sources.source_bundles),
+            .tools          = tool_resolver,
+            .environment    = rstd::addressof(environment),
         });
         registry_provider = registry_resolver->provider();
     }
@@ -361,6 +364,12 @@ struct ConfiguredToolchainSelection {
     Option<AndroidNdkLease>          android_sdk;
 };
 
+struct AcquisitionPlatform {
+    BuildPlatform               platform;
+    lito::config::ToolchainSpec toolchain;
+    Option<AndroidNdkLease>     android_sdk;
+};
+
 auto resolve_configured_toolchain(const config::BuildConfigurationRequest& configuration,
                                   const ResolvedProcessEnvironment&        environment)
     -> ProjectResult<ConfiguredToolchainSelection> {
@@ -426,6 +435,45 @@ auto resolve_configured_toolchain(const config::BuildConfigurationRequest& confi
         .android     = Some(rstd::move(resolved)),
         .host        = Some(rstd::move(host)),
         .android_sdk = rstd::move(lease),
+    });
+}
+
+auto resolve_acquisition_platform(const config::BuildConfigurationRequest& configuration,
+                                  const ResolvedProcessEnvironment&        environment)
+    -> ProjectResult<AcquisitionPlatform> {
+    auto selected = rstd_try(resolve_configured_toolchain(configuration, environment));
+    auto target =
+        selected.android.is_some()
+            ? lito::resolve_clang_target(selected.tools,
+                                         configuration.standard_library,
+                                         rstd::addressof(selected.android->target.target_info),
+                                         environment)
+            : lito::resolve_clang_target(
+                  selected.tools, configuration.standard_library, environment);
+    if (target.is_err()) return Err(rstd::into<ProjectError>(rstd::move(target).unwrap_err()));
+    auto resolved = rstd::move(target).unwrap();
+    auto platform = Option<BuildPlatform> {};
+    if (selected.android.is_some()) {
+        platform               = Some(resolve_android_build_platform(
+            *selected.host, resolved.target.info, selected.android->target));
+        platform->sdk_version  = Some(selected.android->distribution.revision().text.clone());
+        platform->sdk_identity = Some(String::make(selected.android->distribution.identity()));
+    } else {
+        auto host            = rstd_try(detect_host_info());
+        auto explicit_target = resolved.target.source == CompileTargetSource::CompilerDefault
+                                   ? Option<ref<str>> {}
+                                   : Some(resolved.target.info.triple.as_str());
+        auto selected_platform =
+            resolve_build_platform(host, resolved.target.info, explicit_target, None());
+        if (selected_platform.is_err()) {
+            return Err(ProjectError::Platform(rstd::move(selected_platform).unwrap_err()));
+        }
+        platform = Some(rstd::move(selected_platform).unwrap());
+    }
+    return Ok(AcquisitionPlatform {
+        .platform    = rstd::move(platform).unwrap(),
+        .toolchain   = rstd::move(selected.tools),
+        .android_sdk = rstd::move(selected.android_sdk),
     });
 }
 

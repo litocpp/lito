@@ -228,7 +228,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         }
         auto sources    = request.build.sources.clone();
         sources.network = lito::source::NetworkPolicy::Offline;
-        sources.fetch_seeds.clear();
+        sources.source_bundles.clear();
         auto registry  = request.source.registry_graph.is_some()
                              ? request.source.registry_graph->provider()
                              : lito::registry::RegistryGraphProvider {};

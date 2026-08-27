@@ -10,7 +10,7 @@ Selection and build options:
 
 - repeated `-p/--package NAME` and `--target NAME`;
 - `--profile PROFILE`, repeated `--features`, and `--no-default-features`;
-- `--locked`, `--offline`, `--frozen`, and repeated `--fetch-seed DIRECTORY`;
+- `--locked`, `--offline`, `--frozen`, and repeated `--source-bundle DIRECTORY`;
 - `--verbose`, `--timing-file FILE`, `--no-timing`, and `-j/--jobs N`.
 
 Documentation options:
@@ -36,7 +36,7 @@ lito scan [OPTIONS] SOURCE
 
 `SOURCE` is required. Selection options are repeated `--package`, `--target`, `--features`,
 `--no-default-features`, and `--profile`. Source acquisition accepts `--locked`, `--offline`,
-`--frozen`, and repeated `--fetch-seed`.
+`--frozen`, and repeated `--source-bundle`.
 
 `--format FORMAT` selects JSON output:
 

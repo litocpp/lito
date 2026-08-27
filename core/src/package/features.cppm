@@ -27,6 +27,7 @@ export namespace lito::package
 struct FeatureSelection {
     Vec<String> enabled;
     bool        default_features { true };
+    bool        all_features { false };
 };
 
 auto resolve_features(ResolvedPackageGraph&       graph,
@@ -149,9 +150,13 @@ auto resolve_features(ResolvedPackageGraph&       graph,
         }
         package.features.clear();
         for (const auto& declaration : package.manifest.features) {
-            auto enabled            = defaults[index] && declaration.default_enabled;
+            auto enabled = (selection.all_features && selected(package.manifest.name.as_str())) ||
+                           (defaults[index] && declaration.default_enabled);
             auto activation_sources = Vec<String>::make();
             if (enabled) {
+                if (selection.all_features) {
+                    append_unique(activation_sources, "command line --all-features"_str);
+                }
                 for (const auto& source : default_sources[index]) {
                     append_unique(activation_sources, source.as_str());
                 }

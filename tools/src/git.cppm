@@ -179,6 +179,19 @@ public:
         return git_status(rstd::move(arguments), "Git source checkout creation"_str, *environment_);
     }
 
+    auto export_checkout(ref<rstd::path::Path> source,
+                         ref<rstd::path::Path> destination,
+                         ref<str>              commit) const -> ToolResult<empty> {
+        auto arguments = rstd_try(git_command(executable_.as_path()));
+        arguments.push(String::make("clone"_str));
+        arguments.push(String::make("--no-checkout"_str));
+        arguments.push(String::make("--no-hardlinks"_str));
+        rstd_try(command::push_path(arguments, source));
+        rstd_try(command::push_path(arguments, destination));
+        rstd_try(git_status(rstd::move(arguments), "Git source bundle export"_str, *environment_));
+        return checkout_detached(destination, commit);
+    }
+
     auto set_worktree_remote_origin(ref<rstd::path::Path> worktree, ref<str> url) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));

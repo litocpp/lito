@@ -70,8 +70,10 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     EXPECT_FALSE(git_source->get<1>().contains("\"type\": \"git\""_str));
     EXPECT_TRUE(first->as_str().contains("\"type\": \"file\""_str));
     EXPECT_TRUE(first->as_str().contains("\"only-arches\""_str));
-    EXPECT_TRUE(first->as_str().contains("\"type\": \"inline\""_str));
-    EXPECT_TRUE(first->as_str().contains("\"dest-filename\": \"entries.json\""_str));
+    EXPECT_FALSE(first->as_str().contains("\"type\": \"inline\""_str));
+    EXPECT_TRUE(first->as_str().contains("v1/git/"_str));
+    EXPECT_TRUE(first->as_str().contains("v1/archives/"_str));
+    EXPECT_TRUE(first->as_str().contains("\"dest-filename\": \"source.archive\""_str));
 }
 
 TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {

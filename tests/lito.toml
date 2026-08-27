@@ -68,7 +68,7 @@ sources = [
   "src/source/cache.cpp",
   "src/source/discovery.cpp",
   "src/source/git.cpp",
-  "src/source/seed.cpp",
+  "src/source/bundle.cpp",
   "src/source/tree.cpp",
   "src/sdk/catalog.cpp",
   "src/sdk/store.cpp",

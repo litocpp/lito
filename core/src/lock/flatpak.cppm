@@ -10,7 +10,7 @@ import :lock;
 import :lock.config;
 import :lock.document;
 import :source.fetch;
-import :source.seed;
+import :source.bundle;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -187,17 +187,13 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         }
     }
 
-    auto sources         = Array::make();
-    auto catalog_sources = Array::make();
-    auto values          = candidates.values();
+    auto sources = Array::make();
+    auto values  = candidates.values();
+    auto layout  = lito::source::SourceBundleLayout(PathBuf::from(".lito/source-bundle"_str));
     for (auto value : values) {
         const auto& candidate    = *value;
-        auto        stable_key   = lito::source::fetch_identity_stable_key(candidate.identity);
         auto        flatpak      = Map::make();
-        auto        catalog      = Map::make();
-        auto        identity     = lito::source::fetch_identity_text(candidate.identity);
         auto        architecture = architecture_json(candidate);
-        catalog.insert(String::make("identity"_str), flatpak_string(identity.as_str()));
         if (candidate.identity.is_Git()) {
             const auto& source = candidate.identity.as_Git();
             if (! public_http_url(source.url.as_str())) {
@@ -206,14 +202,12 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
                     rstd::format("Flatpak source export requires a public HTTP(S) Git URL for {}",
                                  owners.as_str()));
             }
-            auto destination = rstd::format(".lito/fetch-seed/git/{}", stable_key.as_str());
+            auto destination = layout.git(candidate.identity);
             flatpak.insert(String::make("commit"_str), flatpak_string(source.commit.as_str()));
-            flatpak.insert(String::make("dest"_str), flatpak_string(destination.as_str()));
+            flatpak.insert(String::make("dest"_str),
+                           flatpak_string(destination.as_path().to_str().unwrap()));
             flatpak.insert(String::make("type"_str), flatpak_string("git"_str));
             flatpak.insert(String::make("url"_str), flatpak_string(source.url.as_str()));
-            catalog.insert(String::make("kind"_str), flatpak_string("git"_str));
-            auto path = rstd::format("git/{}", stable_key.as_str());
-            catalog.insert(String::make("path"_str), flatpak_string(path.as_str()));
         } else {
             const auto& source = candidate.identity.as_Archive();
             if (! public_http_url(source.url.as_str())) {
@@ -222,41 +216,21 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
                     "Flatpak source export requires a public HTTP(S) archive URL for {}",
                     owners.as_str()));
             }
-            auto destination = rstd::format(".lito/fetch-seed/archives/{}", stable_key.as_str());
-            flatpak.insert(String::make("dest"_str), flatpak_string(destination.as_str()));
+            auto destination = layout.archive(candidate.identity);
+            flatpak.insert(
+                String::make("dest"_str),
+                flatpak_string(destination.as_path().parent().unwrap().to_str().unwrap()));
             flatpak.insert(String::make("dest-filename"_str), flatpak_string("source.archive"_str));
             auto sha256 = source.sha256.to_hex();
             flatpak.insert(String::make("sha256"_str), flatpak_string(sha256.as_str()));
             flatpak.insert(String::make("type"_str), flatpak_string("file"_str));
             flatpak.insert(String::make("url"_str), flatpak_string(source.url.as_str()));
-            catalog.insert(String::make("kind"_str), flatpak_string("archive"_str));
-            auto path = rstd::format("archives/{}/source.archive", stable_key.as_str());
-            catalog.insert(String::make("path"_str), flatpak_string(path.as_str()));
         }
         if (architecture.is_some()) {
-            auto catalog_architecture = architecture_json(candidate);
-            catalog.insert(String::make("architectures"_str),
-                           rstd::move(catalog_architecture).unwrap());
             flatpak.insert(String::make("only-arches"_str), rstd::move(architecture).unwrap());
         }
         sources.push(Json::Object(rstd::move(flatpak)));
-        catalog_sources.push(Json::Object(rstd::move(catalog)));
     }
-
-    auto catalog = Map::make();
-    catalog.insert(String::make("sources"_str), Json::Array(rstd::move(catalog_sources)));
-    catalog.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    auto catalog_document = Json::Object(rstd::move(catalog));
-    auto catalog_text     = rstd::json::to_string(
-        catalog_document, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
-
-    auto inline_source = Map::make();
-    inline_source.insert(String::make("contents"_str), flatpak_string(catalog_text.as_str()));
-    inline_source.insert(String::make("dest"_str), flatpak_string(".lito/fetch-seed"_str));
-    inline_source.insert(String::make("dest-filename"_str),
-                         flatpak_string(lito::source::FETCH_SEED_DOCUMENT_NAME));
-    inline_source.insert(String::make("type"_str), flatpak_string("inline"_str));
-    sources.push(Json::Object(rstd::move(inline_source)));
     return Ok(Json::Array(rstd::move(sources)));
 }
 

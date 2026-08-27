@@ -151,8 +151,8 @@ auto acquire_doc_tool_source(const BuildRequest&               request,
         .git    = lito::source::GitResolutionMode::ReuseLocked,
         .sources =
             lito::source::PackageSourceConfig {
-                .fetch_seeds = as<Clone>(request.sources.fetch_seeds).clone(),
-                .network     = request.sources.network,
+                .source_bundles = as<Clone>(request.sources.source_bundles).clone(),
+                .network        = request.sources.network,
             },
     };
     auto manager  = lito::source::SourceManager(request.selection.root.as_path(),
@@ -470,12 +470,12 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.configuration.toolchain.cxx = project.compiler.path.clone();
     tool_request.configuration.standard_library =
         lito::config::standard_library_selection(sdk->standard_library);
-    tool_request.lock.path           = tool_root->join(PathBuf::from("lito.lock"_str).as_path());
-    tool_request.sources.network     = request.sources.network;
-    tool_request.sources.fetch_seeds = as<Clone>(request.sources.fetch_seeds).clone();
-    tool_request.cargo               = request.cargo;
-    tool_request.pkg_config          = request.pkg_config.clone();
-    tool_request.cmake               = request.cmake.clone();
+    tool_request.lock.path              = tool_root->join(PathBuf::from("lito.lock"_str).as_path());
+    tool_request.sources.network        = request.sources.network;
+    tool_request.sources.source_bundles = as<Clone>(request.sources.source_bundles).clone();
+    tool_request.cargo                  = request.cargo;
+    tool_request.pkg_config             = request.pkg_config.clone();
+    tool_request.cmake                  = request.cmake.clone();
     append_unique_path(tool_request.cmake.search_paths, sdk->cmake_search_path.as_path());
     tool_request.profile =
         Some(lito::manifest::BuildProfileName { .value = String::make("release"_str) });

@@ -102,8 +102,8 @@ struct Impl<fmt::Display, lito::CommandError> : ImplBase<lito::CommandError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Project()) {
-            return formatter.write_raw("scan project preparation failed",
-                                       sizeof("scan project preparation failed") - 1);
+            return formatter.write_raw("project preparation failed",
+                                       sizeof("project preparation failed") - 1);
         }
         if (error.is_Package()) {
             return formatter.write_raw("command package resolution failed",

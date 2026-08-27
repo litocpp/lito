@@ -115,14 +115,14 @@ class SourceManager {
         ExternalSourceFetchOutcome outcome;
     };
 
-    struct ResolvedGitSeed {
+    struct ResolvedGitInput {
         enum class Kind
         {
-            FetchSeed,
+            SourceBundle,
             Cache,
         };
 
-        Kind    kind { Kind::FetchSeed };
+        Kind    kind { Kind::SourceBundle };
         String  commit;
         PathBuf path;
     };
@@ -130,7 +130,7 @@ class SourceManager {
     struct SourceWork {
         usize                       request {};
         EffectiveSourceFetchRequest source;
-        Option<ResolvedGitSeed>     seed;
+        Option<ResolvedGitInput>    input;
     };
 
     auto source_request_key(const EffectivePackageSource& source) -> String {
@@ -234,25 +234,25 @@ class SourceManager {
                          });
     }
 
-    auto seed_checkout(ref<str> url, ref<str> commit, ref<str> owner, ref<str> source)
+    auto bundle_checkout(ref<str> url, ref<str> commit, ref<str> owner, ref<str> source)
         -> SourceResult<Option<PathBuf>> {
         auto identity = git_fetch_identity(url, commit);
-        auto located  = rstd_try(locate_fetch_seed(options_.sources.fetch_seeds, identity));
+        auto located  = rstd_try(locate_source_bundle(options_.sources.source_bundles, identity));
         if (located.is_none()) return Ok(None());
         auto canonical = rstd::fs::canonicalize(located->as_path());
         if (canonical.is_err()) {
-            return source_io_failure<Option<PathBuf>>("resolve Git fetch seed"_str,
+            return source_io_failure<Option<PathBuf>>("resolve Git source bundle entry"_str,
                                                       located->as_path(),
                                                       rstd::move(canonical).unwrap_err());
         }
         auto git = rstd_try(
             git_client(source.is_empty() ? url : source, owner.is_empty() ? "Git"_str : owner));
         auto current = rstd_try(
-            source_tool_result("inspect Git fetch seed"_str,
-                               git.head(canonical->as_path(), "Git fetch seed inspection"_str)));
+            source_tool_result("inspect Git source bundle entry"_str,
+                               git.head(canonical->as_path(), "Git source bundle inspection"_str)));
         if (current.as_str() != commit) {
             return source_failure<Option<PathBuf>>(
-                rstd::format("Git fetch seed HEAD '{}' does not match locked commit '{}'",
+                rstd::format("Git source bundle HEAD '{}' does not match locked commit '{}'",
                              current.as_str(),
                              commit));
         }
@@ -404,27 +404,27 @@ class SourceManager {
                                   Option<ref<str>> commit,
                                   ref<str>         owner  = "Git"_str,
                                   ref<str>         source = ""_str)
-        -> SourceResult<Option<ResolvedGitSeed>> {
+        -> SourceResult<Option<ResolvedGitInput>> {
         if (commit.is_none()) return Ok(None());
-        auto seed = rstd_try(seed_checkout(url, *commit, owner, source));
-        if (seed.is_some()) {
-            return Ok(Some(ResolvedGitSeed {
-                .kind   = ResolvedGitSeed::Kind::FetchSeed,
+        auto bundled = rstd_try(bundle_checkout(url, *commit, owner, source));
+        if (bundled.is_some()) {
+            return Ok(Some(ResolvedGitInput {
+                .kind   = ResolvedGitInput::Kind::SourceBundle,
                 .commit = String::make(*commit),
-                .path   = rstd::move(seed).unwrap(),
+                .path   = rstd::move(bundled).unwrap(),
             }));
         }
         auto cached = rstd_try(cached_git_checkout(url, *commit));
         if (cached.is_none()) return Ok(None());
-        return Ok(Some(ResolvedGitSeed {
-            .kind   = ResolvedGitSeed::Kind::Cache,
+        return Ok(Some(ResolvedGitInput {
+            .kind   = ResolvedGitInput::Kind::Cache,
             .commit = String::make(*commit),
             .path   = rstd::move(cached).unwrap(),
         }));
     }
 
-    auto prepared_git_seed(const EffectiveSourceFetchRequest& request)
-        -> SourceResult<Option<ResolvedGitSeed>> {
+    auto prepared_git_input(const EffectiveSourceFetchRequest& request)
+        -> SourceResult<Option<ResolvedGitInput>> {
         if (! request.source.is_Git()) return Ok(None());
         const auto& git = request.source.as_Git();
         auto selection  = rstd_try(select_git_source(options_, git.url.as_str(), git.reference));
@@ -435,13 +435,13 @@ class SourceManager {
     }
 
     auto prepare_frontier_inputs(const Vec<EffectiveSourceFetchRequest>& requests)
-        -> SourceResult<Vec<Option<ResolvedGitSeed>>> {
-        auto seeds       = Vec<Option<ResolvedGitSeed>>::with_capacity(requests.len());
+        -> SourceResult<Vec<Option<ResolvedGitInput>>> {
+        auto inputs      = Vec<Option<ResolvedGitInput>>::with_capacity(requests.len());
         auto needs_cache = false;
         for (const auto& request : requests) {
-            auto seed = rstd_try(prepared_git_seed(request));
-            if (request.source.is_Git() && seed.is_none()) needs_cache = true;
-            seeds.push(rstd::move(seed));
+            auto input = rstd_try(prepared_git_input(request));
+            if (request.source.is_Git() && input.is_none()) needs_cache = true;
+            inputs.push(rstd::move(input));
         }
         if (needs_cache) (void)rstd_try(source_cache_session());
 
@@ -449,11 +449,11 @@ class SourceManager {
         for (usize index {}; index < requests.len(); ++index) {
             const auto& request = requests[index];
             if (! request.source.is_Git()) continue;
-            if (seeds[index].is_none()) {
+            if (inputs[index].is_none()) {
                 if (git_request.is_none()) git_request = Some(usize(index));
                 continue;
             }
-            if (seeds[index]->kind != ResolvedGitSeed::Kind::Cache) continue;
+            if (inputs[index]->kind != ResolvedGitInput::Kind::Cache) continue;
             const auto requirement = lito::tools::external_source_tool_requirement(
                 lito::tools::HostToolCapability::GitCheckout,
                 request.owner.is_empty() ? "Git"_str : request.owner.as_str(),
@@ -470,7 +470,7 @@ class SourceManager {
                                                    : request.name.as_str(),
                            request.owner.is_empty() ? "Git"_str : request.owner.as_str()));
         }
-        return Ok(rstd::move(seeds));
+        return Ok(rstd::move(inputs));
     }
 
     auto source_cache_session() -> SourceResult<SourceCacheSession> {
@@ -833,19 +833,19 @@ class SourceManager {
         return acquire_git(git.url.as_str(), git.reference);
     }
 
-    auto acquire_seeded_git(const EffectivePackageSource& source, ResolvedGitSeed seed)
+    auto acquire_prepared_git(const EffectivePackageSource& source, ResolvedGitInput input)
         -> SourceResult<usize> {
         const auto& git         = source.as_Git();
         auto        registered  = rstd_try(register_git_source(
-            git.url.as_str(), git.reference, rstd::move(seed.commit), rstd::move(seed.path)));
+            git.url.as_str(), git.reference, rstd::move(input.commit), rstd::move(input.path)));
         auto        request_key = git_requirement_identity(git.url.as_str(), git.reference);
         source_requests_.insert(rstd::move(request_key), registered);
         return Ok(registered);
     }
 
-    auto acquire_external_seeded(const EffectivePackageSource& source, ResolvedGitSeed seed)
+    auto acquire_external_prepared(const EffectivePackageSource& source, ResolvedGitInput input)
         -> SourceResult<AcquiredSource> {
-        auto index = rstd_try(acquire_seeded_git(source, rstd::move(seed)));
+        auto index = rstd_try(acquire_prepared_git(source, rstd::move(input)));
         return Ok(AcquiredSource {
             .root      = entries_[index].source.root_directory.clone(),
             .identity  = entries_[index].source.identity.clone(),
@@ -1056,7 +1056,7 @@ public:
             return Ok(rstd::move(result));
         }
 
-        auto seeds = rstd_try(prepare_frontier_inputs(unique));
+        auto inputs = rstd_try(prepare_frontier_inputs(unique));
 
         auto work_groups  = source_work_groups(unique);
         auto worker_count = jobs < work_groups.len() ? jobs : work_groups.len();
@@ -1077,7 +1077,7 @@ public:
                 work.push(SourceWork {
                     .request = index,
                     .source  = rstd::move(unique[index]),
-                    .seed    = rstd::move(seeds[index]),
+                    .input   = rstd::move(inputs[index]),
                 });
             }
             auto graph_root  = graph_root_.clone();
@@ -1107,9 +1107,9 @@ public:
                                                         rstd::move(item_cache),
                                                         rstd::move(item_git));
                         auto acquired =
-                            item.seed.is_some()
-                                ? manager.acquire_seeded_git(item.source.source,
-                                                             rstd::move(item.seed).unwrap())
+                            item.input.is_some()
+                                ? manager.acquire_prepared_git(item.source.source,
+                                                               rstd::move(item.input).unwrap())
                                 : manager.acquire_effective(rstd::move(item.source.source));
                         if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
                         results.push(FetchedPackageSource {
@@ -1185,7 +1185,7 @@ public:
             unique.push(rstd::move(request));
         }
 
-        auto seeds = rstd_try(prepare_frontier_inputs(unique));
+        auto inputs = rstd_try(prepare_frontier_inputs(unique));
 
         auto work_groups  = source_work_groups(unique);
         auto worker_count = jobs < work_groups.len() ? jobs : work_groups.len();
@@ -1206,7 +1206,7 @@ public:
                 work.push(SourceWork {
                     .request = index,
                     .source  = rstd::move(unique[index]),
-                    .seed    = rstd::move(seeds[index]),
+                    .input   = rstd::move(inputs[index]),
                 });
             }
             auto graph_root  = graph_root_.clone();
@@ -1236,9 +1236,9 @@ public:
                                                         rstd::move(item_cache),
                                                         rstd::move(item_git));
                         auto acquired =
-                            item.seed.is_some()
-                                ? manager.acquire_external_seeded(item.source.source,
-                                                                  rstd::move(item.seed).unwrap())
+                            item.input.is_some()
+                                ? manager.acquire_external_prepared(item.source.source,
+                                                                    rstd::move(item.input).unwrap())
                                 : manager.acquire_external_effective(
                                       rstd::move(item.source.source));
                         if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());

@@ -29,10 +29,39 @@ struct Provider {
 };
 
 struct MetadataRequest {
+    PathBuf         source_root;
+    PathBuf         manifest;
+    String          package;
+    Option<PathBuf> source_config;
+    bool            offline { false };
+};
+
+struct FetchRequest {
+    String          alias;
+    PathBuf         source_root;
+    PathBuf         manifest;
+    String          target;
+    Option<PathBuf> source_config;
+    bool            locked { true };
+    bool            offline { false };
+};
+
+struct FetchSummary {
+    rstd::time::Duration elapsed;
+};
+
+struct VendorRequest {
+    String  alias;
     PathBuf source_root;
     PathBuf manifest;
-    String  package;
+    PathBuf destination;
+    bool    locked { true };
     bool    offline { false };
+};
+
+struct VendorSummary {
+    PathBuf              config;
+    rstd::time::Duration elapsed;
 };
 
 enum class ProfileOptimization
@@ -172,6 +201,7 @@ struct BuildRequest {
     String               request_identity;
     PathBuf              work_root;
     PathBuf              target_directory;
+    Option<PathBuf>      source_config;
     usize                jobs { usize(1) };
     bool                 offline { false };
 };
@@ -179,6 +209,7 @@ struct BuildRequest {
 enum class EventKind
 {
     Metadata,
+    Fetch,
     Build,
     Reuse,
 };

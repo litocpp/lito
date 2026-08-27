@@ -11,7 +11,7 @@ They accept:
 - repeated `--features FEATURES` and `--no-default-features`;
 - repeated `--target NAME`;
 - `--out DIRECTORY`;
-- `--locked`, `--offline`, `--frozen`, and repeated `--fetch-seed DIRECTORY`;
+- `--locked`, `--offline`, `--frozen`, and repeated `--source-bundle DIRECTORY`;
 - `--no-run`;
 - `--verbose`, `--timing-file FILE`, `--no-timing`, and `-j/--jobs N`.
 

@@ -29,9 +29,14 @@ public:
     RegistrySourceResolver(PathBuf                  cache_root,
                            RegistryEndpointTemplate blob_endpoint,
                            RegistryNetworkPolicy    network,
-                           RegistryBlobTransport    transport)
+                           RegistryBlobTransport    transport,
+                           const Vec<PathBuf>*      source_bundles = nullptr)
         : cache_root_(cache_root.clone()),
-          blobs_(rstd::move(cache_root), rstd::move(blob_endpoint), network, transport) {}
+          blobs_(rstd::move(cache_root),
+                 rstd::move(blob_endpoint),
+                 network,
+                 transport,
+                 source_bundles) {}
 
     auto materialize(const RegistryPackageId& package, const RegistryReleaseProjection& release)
         -> RegistryArtifactResult<MaterializedRegistrySource>;

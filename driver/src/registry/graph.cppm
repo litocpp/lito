@@ -55,6 +55,7 @@ class RegistryGraphClient {
     Vec<lito::source::RegistrySourcePin>     locked_;
     Vec<VerifiedPackageIndex>                verified_indices_;
     Vec<RegistryPackageId>                   development_packages_;
+    const Vec<PathBuf>*                      source_bundles_ {};
 
     static auto load_index(void*, const RegistryPackageId&) noexcept -> RegistryIndexLoadResult;
     static auto resolve_callback(void*, slice<RegistryGraphRequirement>) noexcept
@@ -71,14 +72,16 @@ public:
                         RegistryHttpTransport                    http,
                         RegistryBlobTransport                    blobs,
                         bool                                     locked_mode,
-                        Vec<lito::source::RegistrySourcePin>     locked = {})
+                        Vec<lito::source::RegistrySourcePin>     locked         = {},
+                        const Vec<PathBuf>*                      source_bundles = nullptr)
         : cache_root_(rstd::move(cache_root)),
           config_(rstd::addressof(config)),
           network_(network),
           http_(http),
           blobs_(blobs),
           locked_mode_(locked_mode),
-          locked_(rstd::move(locked)) {}
+          locked_(rstd::move(locked)),
+          source_bundles_(source_bundles) {}
 
     auto resolve(slice<RegistryGraphRequirement> requirements)
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
@@ -307,8 +310,9 @@ auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequi
             return graph_failure<Vec<ResolvedRegistryPackage>>(
                 rstd::format("Registry '{}' is not configured", state.package.registry.as_str()));
         }
-        auto client = RegistryReleaseClient(cache_root_.clone(), **config, network_, http_);
-        auto loaded = client.load(state.package, (*pin)->release);
+        auto client =
+            RegistryReleaseClient(cache_root_.clone(), **config, network_, http_, source_bundles_);
+        auto loaded = client.load(state.package, (*pin)->release, rstd::addressof((*pin)->version));
         if (loaded.is_err()) return Err(graph_index_error(rstd::move(loaded).unwrap_err()));
         auto release = loaded->release().clone();
         if (! (release.version == (*pin)->version)) {
@@ -350,8 +354,11 @@ auto lito::registry::RegistryGraphClient::materialize(Vec<ResolvedRegistryPackag
             return graph_failure<Vec<ResolvedRegistryGraphSource>>(rstd::format(
                 "Registry '{}' is not configured", selected.package.registry.as_str()));
         }
-        auto sources = RegistrySourceResolver(
-            cache_root_.clone(), (**config).effective_endpoints()->blob.clone(), network_, blobs_);
+        auto sources      = RegistrySourceResolver(cache_root_.clone(),
+                                                   (**config).effective_endpoints()->blob.clone(),
+                                                   network_,
+                                                   blobs_,
+                                                   source_bundles_);
         auto materialized = sources.materialize(selected.package, selected.release);
         if (materialized.is_err()) {
             return Err(graph_artifact_error(rstd::move(materialized).unwrap_err()));
@@ -422,8 +429,10 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
             return graph_failure<Vec<ResolvedRegistryGraphSource>>(rstd::format(
                 "Registry '{}' is not configured", selected.package.registry.as_str()));
         }
-        auto releases  = RegistryReleaseClient(cache_root_.clone(), **config, network_, http_);
-        auto immutable = releases.load(selected.package, selected.release.release);
+        auto releases =
+            RegistryReleaseClient(cache_root_.clone(), **config, network_, http_, source_bundles_);
+        auto immutable = releases.load(
+            selected.package, selected.release.release, rstd::addressof(selected.release.version));
         if (immutable.is_err()) return Err(graph_index_error(rstd::move(immutable).unwrap_err()));
         if (! registry_immutable_release_matches(selected.release, immutable->release())) {
             return graph_failure<Vec<ResolvedRegistryGraphSource>>(

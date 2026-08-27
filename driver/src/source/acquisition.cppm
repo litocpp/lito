@@ -42,6 +42,20 @@ struct AcquiredSource {
     bool    cacheable { false };
 };
 
+auto acquired_git_fetch_identity(const AcquiredSource& source, ref<str> url)
+    -> SourceResult<Option<FetchIdentity>> {
+    if (source.identity.as_str().starts_with("path+"_str)) return Ok(None());
+    auto prefix = rstd::format("git+{}#", url);
+    auto commit = source.identity.as_str().strip_prefix(prefix.as_str());
+    if (commit.is_none() || commit->is_empty()) {
+        return source_failure<Option<FetchIdentity>>(
+            rstd::format("acquired Git source '{}' has no exact commit for '{}'",
+                         source.identity.as_str(),
+                         url));
+    }
+    return Ok(Some(git_fetch_identity(url, *commit)));
+}
+
 struct PackageSourceFetchRequest {
     String                   owner;
     String                   name;
@@ -301,6 +315,72 @@ struct MaterializedArchiveTask {
 export namespace lito::source
 {
 
+auto cache_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
+                            usize                             jobs,
+                            lito::tools::ToolResolver&        resolver,
+                            const ResolvedProcessEnvironment& environment,
+                            const PackageSourceConfig&        source_config = {},
+                            SourceEventSink                   observer      = {})
+    -> SourceResult<Vec<lito::tools::acquisition::VerifiedFile>> {
+    if (jobs == usize {}) {
+        return source_failure<Vec<lito::tools::acquisition::VerifiedFile>>(
+            "archive source fetch jobs must be greater than zero"_str);
+    }
+    auto unique       = Vec<ArchiveSourceFetchRequest>::make();
+    auto request_keys = rstd::collections::BTreeMap<String, usize>::make();
+    auto bindings     = Vec<usize>::with_capacity(requests.len());
+    for (auto& request : requests) {
+        auto key      = archive_source_identity(request.url, request.sha256);
+        auto existing = request_keys.get(key.as_str());
+        if (existing.is_some()) {
+            bindings.push(usize(**existing));
+            continue;
+        }
+        auto index = unique.len();
+        request_keys.insert(rstd::move(key), index);
+        bindings.push(usize(index.to_primitive()));
+        unique.push(rstd::move(request));
+    }
+    auto tool_requests =
+        Vec<lito::tools::acquisition::VerifiedArchiveRequest>::with_capacity(unique.len());
+    for (auto& request : unique) {
+        auto identity = archive_fetch_identity(request.url.clone(), request.sha256.clone());
+        auto provided = rstd_try(locate_source_bundle(source_config.source_bundles, identity));
+        tool_requests.push(lito::tools::acquisition::VerifiedArchiveRequest {
+            .label =
+                request.name.is_empty() ? String::make(request.url.as_str()) : request.name.clone(),
+            .url             = request.url.clone(),
+            .sha256          = request.sha256.clone(),
+            .provided_source = rstd::move(provided),
+            .download_requirement =
+                archive_tool_requirement(request, lito::tools::HostToolCapability::HttpDownload),
+            .extraction_requirement = archive_tool_requirement(
+                request, lito::tools::HostToolCapability::ArchiveExtraction),
+        });
+    }
+    auto source_observer = SourceAcquisitionObserver { .sink = observer };
+    auto acquired        = lito::tools::acquisition::acquire_verified_files(
+        rstd::move(tool_requests),
+        jobs,
+        resolver,
+        environment,
+        source_config.network == NetworkPolicy::Offline,
+        acquisition_sink(source_observer));
+    if (acquired.is_err()) {
+        auto error = rstd::move(acquired).unwrap_err();
+        if (source_config.network == NetworkPolicy::Offline) {
+            auto operation = rstd::format("offline source resolution failed: {}", error);
+            return Err(SourceError::Operation(
+                rstd::move(operation), Box<dyn<rstd::error::Error>>::make(rstd::move(error))));
+        }
+        return Err(acquisition_source_error(rstd::move(error)));
+    }
+    auto unique_files = rstd::move(acquired).unwrap();
+    auto result       = Vec<lito::tools::acquisition::VerifiedFile>::with_capacity(bindings.len());
+    for (auto binding : bindings) result.push(unique_files[binding].clone());
+    return Ok(rstd::move(result));
+}
+
 auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                               usize                             jobs,
                               ref<rstd::path::Path>             materialization_root,
@@ -360,41 +440,9 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
             lito::tools::HostToolCapability::ArchiveExtraction,
             first.owner.is_empty() ? "archive"_str : first.owner.as_str(),
             first.name.is_empty() ? first.url.as_str() : first.name.as_str());
-        auto requests =
-            Vec<lito::tools::acquisition::VerifiedArchiveRequest>::with_capacity(pending.len());
-        for (auto& request : pending) {
-            auto identity = archive_fetch_identity(request.url.clone(), request.sha256.clone());
-            auto seed     = rstd_try(locate_fetch_seed(source_config.fetch_seeds, identity));
-            requests.push(lito::tools::acquisition::VerifiedArchiveRequest {
-                .label                = request.name.is_empty() ? String::make(request.url.as_str())
-                                                                : request.name.clone(),
-                .url                  = request.url.clone(),
-                .sha256               = request.sha256.clone(),
-                .seed                 = rstd::move(seed),
-                .download_requirement = archive_tool_requirement(
-                    request, lito::tools::HostToolCapability::HttpDownload),
-                .extraction_requirement = archive_tool_requirement(
-                    request, lito::tools::HostToolCapability::ArchiveExtraction),
-            });
-        }
-        auto source_observer = SourceAcquisitionObserver { .sink = observer };
-        auto files_result    = lito::tools::acquisition::acquire_verified_files(
-            rstd::move(requests),
-            jobs,
-            resolver,
-            environment,
-            source_config.network == NetworkPolicy::Offline,
-            acquisition_sink(source_observer));
-        if (files_result.is_err()) {
-            auto error = rstd::move(files_result).unwrap_err();
-            if (source_config.network == NetworkPolicy::Offline) {
-                auto operation = rstd::format("offline source resolution failed: {}", error);
-                return Err(SourceError::Operation(
-                    rstd::move(operation), Box<dyn<rstd::error::Error>>::make(rstd::move(error))));
-            }
-            return Err(acquisition_source_error(rstd::move(error)));
-        }
-        auto files              = rstd::move(files_result).unwrap();
+        auto source_observer    = SourceAcquisitionObserver { .sink = observer };
+        auto files              = rstd_try(cache_archive_frontier(
+            rstd::move(pending), jobs, resolver, environment, source_config, observer));
         auto extraction_files   = Vec<lito::tools::acquisition::VerifiedFile>::make();
         auto extraction_indices = Vec<usize>::make();
         for (usize index {}; index < files.len(); ++index) {

@@ -40,16 +40,19 @@ class RegistryBlobCache {
     RegistryEndpointTemplate endpoint_;
     RegistryNetworkPolicy    network_ { RegistryNetworkPolicy::Online };
     RegistryBlobTransport    transport_;
+    const Vec<PathBuf>*      source_bundles_ {};
 
 public:
     RegistryBlobCache(PathBuf                  cache_root,
                       RegistryEndpointTemplate endpoint,
                       RegistryNetworkPolicy    network,
-                      RegistryBlobTransport    transport)
+                      RegistryBlobTransport    transport,
+                      const Vec<PathBuf>*      source_bundles = nullptr)
         : cache_root_(rstd::move(cache_root)),
           endpoint_(rstd::move(endpoint)),
           network_(network),
-          transport_(transport) {}
+          transport_(transport),
+          source_bundles_(source_bundles) {}
 
     auto acquire(const RegistryPackageId& package, const RegistryBlobProjection& blob)
         -> RegistryArtifactResult<VerifiedRegistryBlob>;
@@ -304,6 +307,22 @@ auto lito::registry::RegistryBlobCache::acquire(const RegistryPackageId&      pa
     auto layout = blob_layout(cache_root_.as_path(), blob.digest);
     auto cached = rstd_try(verify_blob(layout.source.as_path(), package, blob));
     if (cached.is_some()) return Ok(rstd::move(cached).unwrap());
+    if (source_bundles_ != nullptr) {
+        for (const auto& root : *source_bundles_) {
+            auto bundled =
+                lito::source::SourceBundleLayout(root.clone()).registry_blob(blob.digest);
+            auto exists = rstd::fs::exists(bundled.as_path());
+            if (exists.is_err()) {
+                return artifact_failure<VerifiedRegistryBlob>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("cannot inspect Registry source bundle blob '{}': {}",
+                                 bundled.as_path(),
+                                 rstd::move(exists).unwrap_err()));
+            }
+            if (*exists) return verify_registry_blob_file(rstd::move(bundled), package, blob);
+        }
+    }
     if (network_ == RegistryNetworkPolicy::Offline) {
         return artifact_failure<VerifiedRegistryBlob>(
             RegistryArtifactErrorKind::OfflineCacheMiss,

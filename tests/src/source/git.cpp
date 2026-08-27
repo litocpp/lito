@@ -20,8 +20,8 @@ class GitSource : public ProjectFixture {};
 
 TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     auto directory = source_root("git-package-owned-external"_str);
-    auto seed      = directory.join(PathBuf::from("seed"_str).as_path());
-    auto upstream  = seed.join(PathBuf::from("git/source"_str).as_path());
+    auto bundle    = directory.join(PathBuf::from("bundle"_str).as_path());
+    auto upstream  = bundle.join(PathBuf::from("upstream"_str).as_path());
     auto package   = upstream.join(PathBuf::from("pkg"_str).as_path());
     auto shaders   = package.join(PathBuf::from("shaders"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(shaders.as_path()).is_ok());
@@ -161,26 +161,25 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
         usize(1));
     ASSERT_TRUE(cached_graph.is_ok());
 
-    auto seed_catalog = rstd::format(
-        "{{\"version\":1,\"sources\":[{{\"identity\":\"lito-fetch-v1\\ngit\\n{}\\n{}\","
-        "\"kind\":\"git\",\"path\":\"git/source\"}}]}}",
-        *url,
-        commit->as_str());
-    ASSERT_TRUE(
-        rstd::fs::write_atomic(
-            seed.join(PathBuf::from(lito::source::FETCH_SEED_DOCUMENT_NAME).as_path()).as_path(),
-            seed_catalog.as_str().as_bytes())
-            .is_ok());
+    auto identity = lito::source::git_fetch_identity(*url, commit->as_str());
+    auto bundled  = lito::source::SourceBundleLayout(bundle.clone()).git(identity);
+    ASSERT_TRUE(rstd::fs::create_dir_all(bundled.as_path().parent().unwrap()).is_ok());
+    ASSERT_TRUE(git_succeeds(directory.as_path(),
+                             "clone"_str,
+                             "--no-checkout"_str,
+                             upstream.as_path().as_os_str(),
+                             bundled.as_path().as_os_str()));
+    ASSERT_TRUE(git_succeeds(bundled.as_path(), "checkout"_str, "--detach"_str, commit->as_str()));
     ASSERT_TRUE(rstd::fs::remove_dir_all(data_home.as_path()).is_ok());
     auto session = lito::lock::load_lock_session(project.as_path(), true);
     ASSERT_TRUE(session.is_ok());
     auto options          = session->take_resolution_options();
     auto external_options = options.clone();
-    auto seeds            = Vec<PathBuf>::make();
-    seeds.push(seed.clone());
+    auto bundles          = Vec<PathBuf>::make();
+    bundles.push(bundle.clone());
     options.sources = lito::source::PackageSourceConfig {
-        .fetch_seeds = rstd::move(seeds),
-        .network     = lito::source::NetworkPolicy::Offline,
+        .source_bundles = rstd::move(bundles),
+        .network        = lito::source::NetworkPolicy::Offline,
     };
     external_options.sources = options.sources.clone();
     auto environment =
@@ -210,8 +209,9 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
         found_package      = true;
         const auto& source = dependency.requirement.source;
         ASSERT_TRUE(source.is_Directory());
-        EXPECT_TRUE(source.as_Directory().root.as_path().starts_with(shaders.as_path()));
-        EXPECT_TRUE(shaders.as_path().starts_with(source.as_Directory().root.as_path()));
+        auto bundled_shaders = bundled.join(PathBuf::from("pkg/shaders"_str).as_path());
+        EXPECT_TRUE(source.as_Directory().root.as_path().starts_with(bundled_shaders.as_path()));
+        EXPECT_TRUE(bundled_shaders.as_path().starts_with(source.as_Directory().root.as_path()));
     }
     EXPECT_TRUE(found_package);
 }

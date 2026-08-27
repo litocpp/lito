@@ -80,8 +80,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     }
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
+    auto acquisition_plan =
+        rstd_try(resolve_external_acquisition_plan(graph, external_sources, platform));
 
     struct CMakeBinding {
+        usize                              prepared {};
         usize                              catalog {};
         usize                              package {};
         String                             owner;
@@ -112,7 +115,9 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         catalog_indices[package_index] = Some(catalog_index);
     }
     while (catalog_indices.len() < graph.packages.len()) catalog_indices.push(None());
-    for (const auto& declaration : external_sources.cmake_dependencies) {
+    for (usize prepared_index {}; prepared_index < external_sources.cmake_dependencies.len();
+         ++prepared_index) {
+        const auto& declaration = external_sources.cmake_dependencies[prepared_index];
         if (declaration.package >= graph.packages.len() ||
             catalog_indices[declaration.package].is_none()) {
             continue;
@@ -122,6 +127,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             resolve_cmake_requirement_for_platform(declaration.requirement, platform);
         if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
         bindings.push(CMakeBinding {
+            .prepared           = prepared_index,
             .catalog            = *catalog_indices[declaration.package],
             .package            = declaration.package,
             .owner              = package.manifest.name.clone(),
@@ -140,60 +146,25 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        return left.requirement.package < right.requirement.package;
                                    });
 
-    auto source_catalog  = cpp::ExternalSourceRootCatalog {};
-    auto archive_sources = Vec<usize>::make();
-    auto source_archives = Vec<lito::source::ArchiveSourceFetchRequest>::make();
-    for (usize index {}; index < external_sources.sources.len(); ++index) {
-        const auto& source = external_sources.sources[index];
-        if (source.acquired.is_some()) {
-            source_catalog.sources.push(cpp::ExternalSourceRoot {
-                .package      = source.package,
-                .package_name = graph.packages[source.package].manifest.name.clone(),
-                .name         = source.name.clone(),
-                .root         = source.acquired->root.clone(),
-                .identity     = source.acquired->identity.clone(),
-            });
-            continue;
-        }
-        auto url    = Option<lito::parse::FetchUrl> {};
-        auto sha256 = Option<lito::crypto::Sha256Digest> {};
-        if (source.source.is_Archive()) {
-            url    = Some(source.source.as_Archive().url.clone());
-            sha256 = Some(source.source.as_Archive().sha256.clone());
-        } else if (source.source.is_ArchitectureArchives()) {
-            const lito::dependency::ExternalArchiveVariant* selected_variant = nullptr;
-            for (const auto& variant : source.source.as_ArchitectureArchives().variants) {
-                if (variant.architecture == platform.effective_target.architecture) {
-                    selected_variant = rstd::addressof(variant);
-                    break;
-                }
-            }
-            if (selected_variant == nullptr) {
-                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                    rstd::format("external source '{}:{}' has no archive for architecture '{}'",
-                                 graph.packages[source.package].manifest.name.as_str(),
-                                 source.name.as_str(),
-                                 architecture_name(platform.effective_target.architecture)));
-            }
-            url    = Some(selected_variant->url.clone());
-            sha256 = Some(selected_variant->sha256.clone());
-        } else {
-            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                rstd::format("external source '{}:{}' was not acquired",
-                             graph.packages[source.package].manifest.name.as_str(),
-                             source.name.as_str()));
-        }
-        archive_sources.push(usize(index));
-        source_archives.push(lito::source::ArchiveSourceFetchRequest {
-            .owner  = graph.packages[source.package].manifest.name.clone(),
-            .name   = source.name.clone(),
-            .url    = rstd::move(url).unwrap(),
-            .sha256 = rstd::move(sha256).unwrap(),
+    auto source_catalog = cpp::ExternalSourceRootCatalog {};
+    for (const auto& source : external_sources.sources) {
+        if (source.acquired.is_none()) continue;
+        source_catalog.sources.push(cpp::ExternalSourceRoot {
+            .package      = source.package,
+            .package_name = graph.packages[source.package].manifest.name.clone(),
+            .name         = source.name.clone(),
+            .root         = source.acquired->root.clone(),
+            .identity     = source.acquired->identity.clone(),
         });
     }
-    if (! source_archives.is_empty()) {
+    if (! acquisition_plan.archives.is_empty()) {
+        auto requests = Vec<lito::source::ArchiveSourceFetchRequest>::with_capacity(
+            acquisition_plan.archives.len());
+        for (auto& acquisition : acquisition_plan.archives) {
+            requests.push(rstd::move(acquisition.request));
+        }
         auto materialization_root = layout.source_materialization_root();
-        auto fetched = lito::source::acquire_archive_frontier(rstd::move(source_archives),
+        auto fetched = lito::source::acquire_archive_frontier(rstd::move(requests),
                                                               jobs,
                                                               materialization_root.as_path(),
                                                               tool_resolver,
@@ -204,15 +175,33 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             return Err(
                 rstd::into<lito::dependency::DependencyError>(rstd::move(fetched).unwrap_err()));
         }
-        for (usize index {}; index < fetched->len(); ++index) {
-            const auto& source = external_sources.sources[archive_sources[index]];
-            source_catalog.sources.push(cpp::ExternalSourceRoot {
-                .package      = source.package,
-                .package_name = graph.packages[source.package].manifest.name.clone(),
-                .name         = source.name.clone(),
-                .root         = (*fetched)[index].root.clone(),
-                .identity     = (*fetched)[index].identity.clone(),
-            });
+        for (usize index {}; index < acquisition_plan.archives.len(); ++index) {
+            const auto& owner = acquisition_plan.archives[index].owner;
+            if (owner.is_PackageExternal()) {
+                const auto& source = external_sources.sources[owner.as_PackageExternal().index];
+                source_catalog.sources.push(cpp::ExternalSourceRoot {
+                    .package      = source.package,
+                    .package_name = graph.packages[source.package].manifest.name.clone(),
+                    .name         = source.name.clone(),
+                    .root         = (*fetched)[index].root.clone(),
+                    .identity     = (*fetched)[index].identity.clone(),
+                });
+                continue;
+            }
+            const auto    prepared = owner.as_CMakeExternal().index;
+            CMakeBinding* binding  = nullptr;
+            for (auto& candidate : bindings) {
+                if (candidate.prepared == prepared) {
+                    binding = rstd::addressof(candidate);
+                    break;
+                }
+            }
+            if (binding == nullptr) {
+                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+                    "external acquisition plan refers to an unavailable CMake dependency"_str);
+            }
+            binding->requirement.source = SelectedCMakeDependencySource::Directory(
+                (*fetched)[index].root.clone(), (*fetched)[index].identity.clone(), true);
         }
     }
     for (auto& binding : bindings) {
@@ -235,41 +224,6 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             prepared->root.clone(), prepared->identity.clone(), true);
     }
 
-    auto archive_requests = Vec<lito::source::ArchiveSourceFetchRequest>::make();
-    auto archive_bindings = Vec<usize>::make();
-    for (usize index {}; index < bindings.len(); ++index) {
-        const auto& source = bindings[index].requirement.source;
-        if (! source.is_Archive()) continue;
-        archive_bindings.push(usize(index));
-        archive_requests.push(lito::source::ArchiveSourceFetchRequest {
-            .owner  = bindings[index].owner.clone(),
-            .name   = bindings[index].requirement.alias.clone(),
-            .url    = source.as_Archive().url.clone(),
-            .sha256 = source.as_Archive().sha256.clone(),
-        });
-    }
-    if (! archive_requests.is_empty()) {
-        auto fetch_observer       = source_observer(observer);
-        auto materialization_root = layout.source_materialization_root();
-        auto fetched = lito::source::acquire_archive_frontier(rstd::move(archive_requests),
-                                                              jobs,
-                                                              materialization_root.as_path(),
-                                                              tool_resolver,
-                                                              process_environment,
-                                                              source_config,
-                                                              fetch_observer);
-        if (fetched.is_err()) {
-            return Err(
-                rstd::into<lito::dependency::DependencyError>(rstd::move(fetched).unwrap_err()));
-        }
-        for (usize index {}; index < fetched->len(); ++index) {
-            auto acquired = rstd::move((*fetched)[index]);
-            bindings[archive_bindings[index]].requirement.source =
-                SelectedCMakeDependencySource::Directory(
-                    rstd::move(acquired.root), rstd::move(acquired.identity), true);
-        }
-    }
-
     auto cargo_provider = Option<lito::tools::cargo::Provider> {};
     auto assets         = ExternalAssetCatalog {};
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
@@ -285,6 +239,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        platform,
                                        layout,
                                        cargo_config,
+                                       source_config,
                                        tool_resolver,
                                        process_environment,
                                        jobs,

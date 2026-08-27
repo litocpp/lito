@@ -471,16 +471,16 @@ void apply_source_options(lito::source::PackageSourceConfig& sources,
                           ref<rstd::path::Path>              root,
                           bool                               offline,
                           bool                               frozen,
-                          Vec<rstd::path::PathBuf>           seeds) {
+                          Vec<rstd::path::PathBuf>           bundles) {
     if (offline || frozen) {
         sources.network = lito::source::NetworkPolicy::Offline;
         cargo_offline   = true;
     }
-    for (auto& seed : seeds) {
-        if (seed.as_path().is_relative()) {
-            seed = rstd::path::PathBuf::from(root).join(seed.as_path());
+    for (auto& bundle : bundles) {
+        if (bundle.as_path().is_relative()) {
+            bundle = rstd::path::PathBuf::from(root).join(bundle.as_path());
         }
-        sources.fetch_seeds.push(rstd::move(seed));
+        sources.source_bundles.push(rstd::move(bundle));
     }
 }
 
@@ -1202,7 +1202,8 @@ extern "C++" int main() {
     const auto build_command  = invocation.command.is_Build() ||
                                 (invocation.command.is_Install() && ! reuse_install) ||
                                 invocation.command.is_Test() || invocation.command.is_Bench() ||
-                                invocation.command.is_Doc() || invocation.command.is_Scan();
+                                invocation.command.is_Doc() || invocation.command.is_Scan() ||
+                                invocation.command.is_Fetch();
     if (build_command && project.build_target.is_Android() && project.toolchain.sdk.is_none()) {
         auto active_android_result = lito::acquire_active_android_ndk();
         if (active_android_result.is_err()) {
@@ -1258,7 +1259,7 @@ extern "C++" int main() {
                              project.root.as_path(),
                              options.offline || options.no_build,
                              options.frozen || options.no_build,
-                             rstd::move(options.fetch_seeds));
+                             rstd::move(options.source_bundles));
         auto destination = lito::resolve_install_destination(invocation.working_directory.as_path(),
                                                              rstd::move(options.destination),
                                                              project.install);
@@ -1383,7 +1384,7 @@ extern "C++" int main() {
                              project.root.as_path(),
                              options.offline,
                              false,
-                             rstd::move(options.fetch_seeds));
+                             rstd::move(options.source_bundles));
         auto event_context = EventContext {};
         auto request       = lito::UpdateRequest {
             .root          = rstd::move(project.root),
@@ -1411,6 +1412,78 @@ extern "C++" int main() {
             rstd::io::println("updated {}", request.lock.path.as_path());
         else
             rstd::io::println("dependencies are up to date");
+        return 0;
+    }
+
+    if (invocation.command.is_Fetch()) {
+        auto options = rstd::move(invocation.command).as_Fetch().options;
+        apply_source_options(project.sources,
+                             project.cargo.offline,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             {});
+        project.sources.source_bundles.clear();
+        auto destination = lito::FetchDestination::GlobalCache();
+        if (options.output.is_some()) {
+            auto output = rstd::move(options.output).unwrap();
+            if (output.as_path().is_relative()) output = project.root.join(output.as_path());
+            destination = lito::FetchDestination::SourceBundle(rstd::move(output));
+        }
+        auto jobs = usize(1);
+        if (options.jobs.is_some()) {
+            jobs = *options.jobs;
+        } else {
+            auto available = rstd::thread::available_parallelism();
+            if (available.is_ok()) jobs = available->get();
+        }
+        auto event_context = EventContext {};
+        auto request       = lito::FetchRequest {
+            .selection =
+                lito::package::PackageSelection {
+                    .root     = project.root.clone(),
+                    .features = rstd::move(options.features),
+                },
+            .environment           = rstd::move(project.environment),
+            .tools                 = rstd::move(project.tools),
+            .registries            = rstd::move(registry_bootstrap),
+            .configuration         = build_configuration(rstd::move(project.toolchain),
+                                                         project.standard_library,
+                                                         project.standard_library_runtime,
+                                                         rstd::move(project.build_options),
+                                                         rstd::move(project.build_target)),
+            .lock                  = rstd::move(project.lock),
+            .sources               = rstd::move(project.sources),
+            .cargo                 = rstd::move(project.cargo),
+            .cmake_build_overrides = rstd::move(project.cmake_build_overrides),
+            .destination           = rstd::move(destination),
+            .locked                = options.locked || options.frozen,
+            .jobs                  = jobs,
+            .observer              = Some(lito::BuildEventSink {
+                .context = rstd::addressof(event_context),
+                .notify  = observe,
+            }),
+            .tool_reporter         = Some(lito::tools::HostToolResolutionSink {
+                .context = rstd::addressof(event_context),
+                .notify  = report_host_tool_resolution,
+            }),
+        };
+        auto result = lito::fetch_dependencies(request);
+        if (result.is_err()) {
+            report_error(rstd::move(result).unwrap_err());
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        if (summary.destination.is_SourceBundle()) {
+            rstd::io::println("fetched {} source entries to {}",
+                              summary.entries,
+                              summary.destination.as_SourceBundle().path.as_path());
+        } else {
+            rstd::io::println("fetched {} source entries", summary.entries);
+        }
+        if (summary.lock == lito::lock::LockStatus::Updated) {
+            rstd::io::println("updated {}", request.lock.path.as_path());
+        }
         return 0;
     }
 
@@ -1453,7 +1526,7 @@ extern "C++" int main() {
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
-                             rstd::move(options.fetch_seeds));
+                             rstd::move(options.source_bundles));
         auto request                  = lito::ScanRequest {};
         request.selection.root        = rstd::move(project.root);
         request.environment           = rstd::move(project.environment);
@@ -1513,7 +1586,7 @@ extern "C++" int main() {
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
-                             rstd::move(options.fetch_seeds));
+                             rstd::move(options.source_bundles));
         auto timing                  = make_timing_output(project.root.as_path(),
                                                           rstd::move(options.timing_file),
                                                           options.verbose && ! options.no_timing);
@@ -1604,7 +1677,7 @@ extern "C++" int main() {
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
-                             rstd::move(options.fetch_seeds));
+                             rstd::move(options.source_bundles));
         auto timing                  = make_timing_output(project.root.as_path(),
                                                           rstd::move(options.timing_file),
                                                           options.verbose && ! options.no_timing);
@@ -1735,7 +1808,7 @@ extern "C++" int main() {
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
-                             rstd::move(options.fetch_seeds));
+                             rstd::move(options.source_bundles));
         auto timing                  = make_timing_output(project.root.as_path(),
                                                           rstd::move(options.timing_file),
                                                           options.verbose && ! options.no_timing);
@@ -1840,7 +1913,7 @@ extern "C++" int main() {
                          project.root.as_path(),
                          options.offline,
                          options.frozen,
-                         rstd::move(options.fetch_seeds));
+                         rstd::move(options.source_bundles));
     auto timing                   = make_timing_output(project.root.as_path(),
                                                        rstd::move(options.timing_file),
                                                        options.verbose && ! options.no_timing);

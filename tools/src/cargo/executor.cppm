@@ -149,6 +149,14 @@ auto append_cargo_profile_config(Vec<String>& arguments,
     arguments.push(rstd::format("profile.{}.{}={}", profile, key, value.as_str()));
 }
 
+auto append_cargo_source_config(Vec<String>& arguments, const Option<PathBuf>& source_config)
+    -> lito::tools::ToolResult<empty> {
+    if (source_config.is_none()) return Ok(empty {});
+    arguments.push(String::make("--config"_str));
+    arguments.push(rstd_try(cargo_path_text(source_config->as_path(), "Cargo source config"_str)));
+    return Ok(empty {});
+}
+
 auto append_cargo_profile_arguments(Vec<String>& arguments, const ProfileConfiguration& profile)
     -> lito::tools::ToolResult<empty> {
     if (profile.selected.as_str().is_empty() || profile.inherits.as_str().is_empty()) {
@@ -346,6 +354,169 @@ auto identify_provider(PathBuf executable, const ResolvedProcessEnvironment& env
     });
 }
 
+auto fetch_dependencies(const Provider&                   provider,
+                        const FetchRequest&               request,
+                        const ResolvedProcessEnvironment& environment,
+                        const Option<EventSink>&          observer = None())
+    -> lito::tools::ToolResult<FetchSummary> {
+    auto manifest  = rstd_try(canonical_owned_path(
+        request.manifest.as_path(), request.source_root.as_path(), "Cargo manifest"_str, true));
+    auto arguments = Vec<String>::make();
+    arguments.push(
+        rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    rstd_try(append_cargo_source_config(arguments, request.source_config));
+    arguments.push(String::make("fetch"_str));
+    arguments.push(String::make("--manifest-path"_str));
+    arguments.push(rstd_try(cargo_path_text(manifest.as_path(), "Cargo manifest"_str)));
+    if (! request.target.is_empty()) {
+        arguments.push(String::make("--target"_str));
+        arguments.push(request.target.clone());
+    }
+    if (request.locked) arguments.push(String::make("--locked"_str));
+    if (request.offline) arguments.push(String::make("--offline"_str));
+    emit_cargo(observer, EventKind::Fetch, request.alias.as_str(), manifest.as_path());
+    auto output =
+        rstd_try(invoke_cargo(arguments, environment, Some(request.source_root.as_path()), true));
+    if (output.exit_code != i32 {}) {
+        return Err(lito::tools::ToolError::Execution(
+            rstd::format("Cargo dependency '{}' fetch", request.alias),
+            output.exit_code,
+            rstd::move(output.standard_output),
+            rstd::move(output.standard_error)));
+    }
+    emit_cargo(observer,
+               EventKind::Fetch,
+               request.alias.as_str(),
+               manifest.as_path(),
+               output.elapsed,
+               true);
+    return Ok(FetchSummary { .elapsed = output.elapsed });
+}
+
+auto vendor_dependencies(const Provider&                   provider,
+                         const VendorRequest&              request,
+                         const ResolvedProcessEnvironment& environment,
+                         const Option<EventSink>&          observer = None())
+    -> lito::tools::ToolResult<VendorSummary> {
+    auto manifest = rstd_try(canonical_owned_path(
+        request.manifest.as_path(), request.source_root.as_path(), "Cargo manifest"_str, true));
+    auto created  = rstd::fs::create_dir_all(request.destination.as_path());
+    if (created.is_err()) {
+        return cargo_io_failure<VendorSummary>("create Cargo vendor destination"_str,
+                                               request.destination.as_path(),
+                                               rstd::move(created).unwrap_err());
+    }
+    auto arguments = Vec<String>::make();
+    arguments.push(
+        rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    arguments.push(String::make("vendor"_str));
+    arguments.push(String::make("--versioned-dirs"_str));
+    arguments.push(String::make("--manifest-path"_str));
+    arguments.push(rstd_try(cargo_path_text(manifest.as_path(), "Cargo manifest"_str)));
+    if (request.locked) arguments.push(String::make("--locked"_str));
+    if (request.offline) arguments.push(String::make("--offline"_str));
+    arguments.push(String::make("vendor"_str));
+    emit_cargo(observer, EventKind::Fetch, request.alias.as_str(), request.destination.as_path());
+    auto output =
+        rstd_try(invoke_cargo(arguments, environment, Some(request.destination.as_path())));
+    if (output.exit_code != i32 {}) {
+        return Err(lito::tools::ToolError::Execution(
+            rstd::format("Cargo dependency '{}' vendor", request.alias),
+            output.exit_code,
+            rstd::move(output.standard_output),
+            rstd::move(output.standard_error)));
+    }
+    auto config = request.destination.join(PathBuf::from("config.toml"_str).as_path());
+    auto written =
+        rstd::fs::write_atomic(config.as_path(), output.standard_output.as_str().as_bytes());
+    if (written.is_err()) {
+        return cargo_io_failure<VendorSummary>(
+            "write Cargo vendor config"_str, config.as_path(), rstd::move(written).unwrap_err());
+    }
+    emit_cargo(observer,
+               EventKind::Fetch,
+               request.alias.as_str(),
+               request.destination.as_path(),
+               output.elapsed,
+               true);
+    return Ok(VendorSummary {
+        .config  = rstd::move(config),
+        .elapsed = output.elapsed,
+    });
+}
+
+auto validate_vendor_config(ref<rstd::path::Path> path) -> lito::tools::ToolResult<empty> {
+    auto contents = rstd::fs::read_to_string(path);
+    if (contents.is_err()) {
+        return cargo_io_failure<empty>(
+            "read Cargo vendor config"_str, path, rstd::move(contents).unwrap_err());
+    }
+    auto remaining        = contents->as_str();
+    auto source_table     = false;
+    auto vendor_directory = false;
+    while (! remaining.is_empty()) {
+        auto split = remaining.split_once("\n"_str);
+        auto line  = (split.is_some() ? split->get<0>() : remaining).trim_ascii();
+        remaining  = split.is_some() ? split->get<1>() : ""_str;
+        if (line.is_empty()) continue;
+        if (line.starts_with("["_str)) {
+            if (! line.starts_with("[source."_str) || ! line.ends_with("]"_str)) {
+                return cargo_failure<empty>(
+                    rstd::format("Cargo vendor config '{}' contains a non-source table", path));
+            }
+            source_table = true;
+            continue;
+        }
+        if (! source_table) {
+            return cargo_failure<empty>(rstd::format(
+                "Cargo vendor config '{}' contains a value outside source tables", path));
+        }
+        auto assignment = line.split_once("="_str);
+        if (assignment.is_none()) {
+            return cargo_failure<empty>(
+                rstd::format("Cargo vendor config '{}' contains an invalid assignment", path));
+        }
+        auto key     = assignment->get<0>().trim_ascii();
+        auto value   = assignment->get<1>().trim_ascii();
+        auto allowed = key == "replace-with"_str || key == "git"_str || key == "rev"_str ||
+                       key == "branch"_str || key == "tag"_str || key == "registry"_str;
+        if (key == "directory"_str) {
+            if (value != "\"vendor\""_str) {
+                return cargo_failure<empty>(rstd::format(
+                    "Cargo vendor config '{}' has a non-local vendor directory", path));
+            }
+            vendor_directory = true;
+            continue;
+        }
+        if (! allowed || ! value.starts_with("\""_str) || ! value.ends_with("\""_str)) {
+            return cargo_failure<empty>(rstd::format(
+                "Cargo vendor config '{}' contains unsupported source configuration", path));
+        }
+    }
+    if (! contents->is_empty() && ! vendor_directory) {
+        return cargo_failure<empty>(
+            rstd::format("Cargo vendor config '{}' has no local vendor directory", path));
+    }
+    if (vendor_directory) {
+        auto parent = path.parent();
+        if (parent.is_none()) {
+            return cargo_failure<empty>("Cargo vendor config has no parent directory"_str);
+        }
+        auto vendor   = PathBuf::from(*parent).join(PathBuf::from("vendor"_str).as_path());
+        auto metadata = rstd::fs::symlink_metadata(vendor.as_path());
+        if (metadata.is_err()) {
+            return cargo_io_failure<empty>("inspect Cargo vendor directory"_str,
+                                           vendor.as_path(),
+                                           rstd::move(metadata).unwrap_err());
+        }
+        if (! metadata->is_dir() || metadata->is_symlink()) {
+            return cargo_failure<empty>(rstd::format(
+                "Cargo vendor directory '{}' must be a non-symlink directory", vendor.as_path()));
+        }
+    }
+    return Ok(empty {});
+}
+
 auto query_metadata(const Provider&                   provider,
                     const MetadataRequest&            request,
                     const ResolvedProcessEnvironment& environment,
@@ -360,6 +531,7 @@ auto query_metadata(const Provider&                   provider,
     auto arguments   = Vec<String>::make();
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    rstd_try(append_cargo_source_config(arguments, request.source_config));
     arguments.push(String::make("metadata"_str));
     arguments.push(String::make("--format-version"_str));
     arguments.push(String::make("1"_str));
@@ -715,6 +887,7 @@ auto build_static_library(const Provider&                   provider,
     auto arguments = Vec<String>::make();
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    rstd_try(append_cargo_source_config(arguments, request.source_config));
     rstd_try(append_cargo_profile_arguments(arguments, request.profile));
     arguments.push(String::make("rustc"_str));
     arguments.push(String::make("--manifest-path"_str));
@@ -945,6 +1118,7 @@ auto build_binaries(const Provider&                   provider,
     auto arguments = Vec<String>::make();
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
+    rstd_try(append_cargo_source_config(arguments, request.source_config));
     rstd_try(append_cargo_profile_arguments(arguments, request.profile));
     arguments.push(String::make("build"_str));
     arguments.push(String::make("--manifest-path"_str));

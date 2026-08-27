@@ -21,7 +21,7 @@ struct GitSourcePatch {
 
 struct PackageSourceConfig {
     Vec<GitSourcePatch> patches;
-    Vec<PathBuf>        fetch_seeds;
+    Vec<PathBuf>        source_bundles;
     NetworkPolicy       network { NetworkPolicy::Allow };
 
     auto clone() const -> PackageSourceConfig {
@@ -32,12 +32,12 @@ struct PackageSourceConfig {
                 .path = patch.path.clone(),
             });
         }
-        auto seeds = Vec<PathBuf>::with_capacity(fetch_seeds.len());
-        for (const auto& seed : fetch_seeds) seeds.push(seed.clone());
+        auto bundles = Vec<PathBuf>::with_capacity(source_bundles.len());
+        for (const auto& bundle : source_bundles) bundles.push(bundle.clone());
         return PackageSourceConfig {
-            .patches     = rstd::move(copied),
-            .fetch_seeds = rstd::move(seeds),
-            .network     = network,
+            .patches        = rstd::move(copied),
+            .source_bundles = rstd::move(bundles),
+            .network        = network,
         };
     }
 };
