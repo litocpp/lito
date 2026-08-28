@@ -84,6 +84,9 @@ auto prepare_build_units(cpp::PackageSpec&       package,
                     .relative_source        = source.relative_path.clone(),
                     .source_origin_identity = source.origin_identity.clone(),
                     .source                 = source.path.clone(),
+                    .source_overlay         = source.transformed.is_some()
+                                                  ? Some(source.transformed->overlay.clone())
+                                                  : Option<PathBuf> {},
                     .object                 = rstd::move(object).unwrap(),
                     .cache_record           = rstd::move(cache_record).unwrap(),
                     .compile_test_record    = rstd::move(compile_test_record),

@@ -1009,6 +1009,32 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                                           target_text(package.targets[dependency_id].id).as_str()));
             append_unique(context.external_identities, usage.external_identities);
         }
+        if (spec.artifact_kind == ArtifactKind::ProcMacroProvider) {
+            for (const auto& dependency : spec.plugin_dependencies) {
+                auto provider = Option<TargetId> {};
+                for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
+                    if (package.targets[candidate].artifact_kind != ArtifactKind::CompilerPlugin ||
+                        package.targets[candidate].id.package != dependency.package.as_str()) {
+                        continue;
+                    }
+                    if (provider.is_some()) {
+                        return plan_failure<ResolvedNativeTargetPlan>(
+                            rstd::format("proc-macro target '{}' has an ambiguous compiler plugin "
+                                         "dependency '{}'",
+                                         target_text(spec.id).as_str(),
+                                         dependency.package.as_str()));
+                    }
+                    provider = Some(candidate);
+                }
+                if (provider.is_none()) {
+                    return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                        "proc-macro target '{}' has no compiler plugin target for dependency '{}'",
+                        target_text(spec.id).as_str(),
+                        dependency.package.as_str()));
+                }
+                append_unique(visible, *provider);
+            }
+        }
         if (spec.language == lito::manifest::PackageLanguage::C) {
             if (! private_arguments.is_C()) {
                 return plan_failure<ResolvedNativeTargetPlan>(

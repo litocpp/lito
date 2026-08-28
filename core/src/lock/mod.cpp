@@ -143,7 +143,7 @@ auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_ver
             dependencies.push(String::make(name));
         }
         for (const auto& dependency : package.dev_dependencies) {
-            dependencies.push(dependency.name.clone());
+            dependencies.push(String::make(resolved_dependency_name(dependency)));
         }
         rstd::slice_::sort_unstable(dependencies.as_mut_slice().as_mut_ref());
 

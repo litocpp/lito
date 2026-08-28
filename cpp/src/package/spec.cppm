@@ -27,12 +27,15 @@ struct TargetSpec {
     lito::manifest::PackageLanguage    language { lito::manifest::PackageLanguage::Cpp };
     String                             artifact_name;
     bool                               link_stdlib { true };
+    bool                               host_tool { false };
     String                             archive_stem;
     Option<String>                     module_affiliation;
     PathBuf                            root;
     PathBuf                            source_root;
     Vec<TargetSource>                  sources;
     Vec<DependencySpec>                dependencies;
+    Vec<CompilerPluginDependencySpec>  plugin_dependencies;
+    Vec<ProcMacroDependencySpec>       proc_macro_dependencies;
     Vec<ResolvedExternalDependency>    external_dependencies;
     Vec<GeneratedArtifactContribution> generated_artifacts;
     UsageRequirements                  usage;

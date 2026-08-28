@@ -65,6 +65,11 @@ struct ModuleImport {
     bool               exported {};
 };
 
+struct ScopedAttributeUse {
+    String scope;
+    String name;
+};
+
 struct EmbeddedInput {
     String path;
     u64    size {};
@@ -82,15 +87,16 @@ struct ExternalMacro {
 };
 
 struct Snapshot {
-    String                 source;
-    Option<ProvidedModule> provided;
-    Option<String>         implementation_module;
-    Vec<ModuleImport>      imports;
-    Vec<String>            header_inputs;
-    Vec<EmbeddedInput>     embedded_inputs;
-    Vec<ExternalMacro>     external_macros;
-    String                 preprocessor_environment;
-    u64                    input_bytes {};
+    String                  source;
+    Option<ProvidedModule>  provided;
+    Option<String>          implementation_module;
+    Vec<ModuleImport>       imports;
+    Vec<ScopedAttributeUse> scoped_attributes;
+    Vec<String>             header_inputs;
+    Vec<EmbeddedInput>      embedded_inputs;
+    Vec<ExternalMacro>      external_macros;
+    String                  preprocessor_environment;
+    u64                     input_bytes {};
 };
 
 struct Receipt {
@@ -176,6 +182,14 @@ struct WriteModuleImport {
 
 struct WriteModuleImports {
     const Vec<frontend::ModuleImport>* values {};
+};
+
+struct WriteScopedAttributeUse {
+    const frontend::ScopedAttributeUse* value {};
+};
+
+struct WriteScopedAttributeUses {
+    const Vec<frontend::ScopedAttributeUse>* values {};
 };
 
 struct WritePaths {
@@ -515,6 +529,34 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteModuleImports> {
 };
 
 template<>
+struct Impl<serde::Serialize, lito::scan_cache_wire::WriteScopedAttributeUse> {
+    template<typename Serializer>
+    static auto serialize(Serializer&                                           serializer,
+                          const lito::scan_cache_wire::WriteScopedAttributeUse& value) ->
+        typename Serializer::result_type {
+        auto map = rstd_try(serializer.begin_map(usize(2)));
+        rstd_try(serde::field(map, "name"_str, value.value->name));
+        rstd_try(serde::field(map, "scope"_str, value.value->scope));
+        return map.end();
+    }
+};
+
+template<>
+struct Impl<serde::Serialize, lito::scan_cache_wire::WriteScopedAttributeUses> {
+    template<typename Serializer>
+    static auto serialize(Serializer&                                            serializer,
+                          const lito::scan_cache_wire::WriteScopedAttributeUses& value) ->
+        typename Serializer::result_type {
+        auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
+        for (const auto& attribute : *value.values) {
+            rstd_try(sequence.element(
+                lito::scan_cache_wire::WriteScopedAttributeUse { rstd::addressof(attribute) }));
+        }
+        return sequence.end();
+    }
+};
+
+template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteEmbeddedInput> {
     template<typename Serializer>
     static auto serialize(Serializer&                                      serializer,
@@ -586,7 +628,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSnapshot> {
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::WriteSnapshot& value)
         -> typename Serializer::result_type {
         const auto& result = *value.value;
-        auto        map    = rstd_try(serializer.begin_map(usize(9)));
+        auto        map    = rstd_try(serializer.begin_map(usize(10)));
         rstd_try(serde::field(map,
                               "embedded-inputs"_str,
                               lito::scan_cache_wire::WriteEmbeddedInputs {
@@ -613,6 +655,11 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSnapshot> {
                               "provided-module"_str,
                               lito::scan_cache_wire::WriteOptionalProvidedModule {
                                   rstd::addressof(result.provided),
+                              }));
+        rstd_try(serde::field(map,
+                              "scoped-attributes"_str,
+                              lito::scan_cache_wire::WriteScopedAttributeUses {
+                                  rstd::addressof(result.scoped_attributes),
                               }));
         rstd_try(serde::field(
             map, "source"_str, lito::scan_cache_wire::WritePath { result.source.as_path() }));
@@ -765,6 +812,19 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::ModuleImport> {
 };
 
 template<>
+struct Impl<serde::Serialize, lito::scan_cache_wire::ScopedAttributeUse> {
+    template<typename Serializer>
+    static auto serialize(Serializer&                                      serializer,
+                          const lito::scan_cache_wire::ScopedAttributeUse& value) ->
+        typename Serializer::result_type {
+        auto map = rstd_try(serializer.begin_map(usize(2)));
+        rstd_try(serde::field(map, "name"_str, value.name));
+        rstd_try(serde::field(map, "scope"_str, value.scope));
+        return map.end();
+    }
+};
+
+template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::EmbeddedInput> {
     template<typename Serializer>
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::EmbeddedInput& value)
@@ -799,7 +859,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::Snapshot> {
     template<typename Serializer>
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::Snapshot& value) ->
         typename Serializer::result_type {
-        auto map = rstd_try(serializer.begin_map(usize(9)));
+        auto map = rstd_try(serializer.begin_map(usize(10)));
         rstd_try(serde::field(map, "embedded-inputs"_str, value.embedded_inputs));
         rstd_try(serde::field(map, "external-macros"_str, value.external_macros));
         rstd_try(serde::field(map, "header-inputs"_str, value.header_inputs));
@@ -808,6 +868,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::Snapshot> {
         rstd_try(serde::field(map, "input-bytes"_str, value.input_bytes));
         rstd_try(serde::field(map, "preprocessor-environment"_str, value.preprocessor_environment));
         rstd_try(serde::field(map, "provided-module"_str, value.provided));
+        rstd_try(serde::field(map, "scoped-attributes"_str, value.scoped_attributes));
         rstd_try(serde::field(map, "source"_str, value.source));
         return map.end();
     }
@@ -1005,6 +1066,22 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::ModuleImport> {
 };
 
 template<>
+struct Impl<serde::Deserialize, lito::scan_cache_wire::ScopedAttributeUse> {
+    template<typename Deserializer>
+    static auto deserialize(Deserializer& deserializer)
+        -> Result<lito::scan_cache_wire::ScopedAttributeUse, typename Deserializer::error_type> {
+        auto scope = serde::RequiredField<String>("scope"_str);
+        auto name  = serde::RequiredField<String>("name"_str);
+        rstd_try(serde::deserialize_record(
+            deserializer, serde::UnknownFieldPolicy::Reject, scope, name));
+        return Ok(lito::scan_cache_wire::ScopedAttributeUse {
+            .scope = rstd_try(scope.take(deserializer)),
+            .name  = rstd_try(name.take(deserializer)),
+        });
+    }
+};
+
+template<>
 struct Impl<serde::Deserialize, lito::scan_cache_wire::EmbeddedInput> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
@@ -1064,6 +1141,9 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
         auto implementation = serde::RequiredField<Option<String>>("implementation-module"_str);
         auto imports =
             serde::RequiredField<Vec<lito::scan_cache_wire::ModuleImport>>("imports"_str);
+        auto scoped_attributes =
+            serde::RequiredField<Vec<lito::scan_cache_wire::ScopedAttributeUse>>(
+                "scoped-attributes"_str);
         auto headers = serde::RequiredField<Vec<String>>("header-inputs"_str);
         auto embedded =
             serde::RequiredField<Vec<lito::scan_cache_wire::EmbeddedInput>>("embedded-inputs"_str);
@@ -1077,6 +1157,7 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
                                            provided,
                                            implementation,
                                            imports,
+                                           scoped_attributes,
                                            headers,
                                            embedded,
                                            macros,
@@ -1087,6 +1168,7 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
             .provided                 = rstd_try(provided.take(deserializer)),
             .implementation_module    = rstd_try(implementation.take(deserializer)),
             .imports                  = rstd_try(imports.take(deserializer)),
+            .scoped_attributes        = rstd_try(scoped_attributes.take(deserializer)),
             .header_inputs            = rstd_try(headers.take(deserializer)),
             .embedded_inputs          = rstd_try(embedded.take(deserializer)),
             .external_macros          = rstd_try(macros.take(deserializer)),

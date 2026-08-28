@@ -31,18 +31,21 @@ struct BuildProductFileStamp {
 };
 
 struct CompletedBuildProduct {
-    String                     generation;
-    String                     profile;
-    String                     target;
-    String                     target_kind;
-    String                     android_abi;
-    u32                        android_minimum_api {};
-    PathBuf                    base_directory;
-    PathBuf                    build_directory;
-    Vec<BuiltArtifact>         artifacts;
-    Vec<BuiltTargetRuntime>    target_runtimes;
-    ExternalAssetCatalog       external_assets;
-    Vec<BuildProductFileStamp> install_files;
+    String                       generation;
+    String                       profile;
+    String                       target;
+    String                       target_kind;
+    String                       android_abi;
+    u32                          android_minimum_api {};
+    PathBuf                      base_directory;
+    PathBuf                      build_directory;
+    Vec<BuiltArtifact>           artifacts;
+    Vec<BuiltCompilerPlugin>     compiler_plugins;
+    Vec<BuiltProcMacroProvider>  proc_macro_providers;
+    Vec<BuiltProcMacroAggregate> proc_macro_aggregates;
+    Vec<BuiltTargetRuntime>      target_runtimes;
+    ExternalAssetCatalog         external_assets;
+    Vec<BuildProductFileStamp>   install_files;
 };
 
 struct BuildProductPublication {
@@ -86,7 +89,7 @@ auto validate_completed_build_product_file(const CompletedBuildProduct& product,
 namespace lito
 {
 
-inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(2);
+inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(5);
 
 template<typename T>
 auto product_failure(String message) -> BuildProductResult<T> {
@@ -195,6 +198,8 @@ auto package_target_kind_text(lito::package::PackageTargetKind kind) -> ref<str>
 auto parse_package_target_kind(ref<str> value)
     -> BuildProductResult<lito::package::PackageTargetKind> {
     if (value == "lib"_str) return Ok(lito::package::PackageTargetKind::Library);
+    if (value == "plugin"_str) return Ok(lito::package::PackageTargetKind::Plugin);
+    if (value == "proc-macro"_str) return Ok(lito::package::PackageTargetKind::ProcMacro);
     if (value == "bin"_str) return Ok(lito::package::PackageTargetKind::Binary);
     if (value == "test"_str) return Ok(lito::package::PackageTargetKind::Test);
     if (value == "bench"_str) return Ok(lito::package::PackageTargetKind::Benchmark);
@@ -209,6 +214,8 @@ auto parse_package_target_kind(ref<str> value)
 auto artifact_kind_text(cpp::ArtifactKind kind) -> ref<str> {
     switch (kind) {
     case cpp::ArtifactKind::StaticLibrary: return "static-library"_str;
+    case cpp::ArtifactKind::CompilerPlugin: return "compiler-plugin-support"_str;
+    case cpp::ArtifactKind::ProcMacroProvider: return "proc-macro-provider"_str;
     case cpp::ArtifactKind::SharedLibrary: return "shared-library"_str;
     case cpp::ArtifactKind::TestAttachmentArchive: return "test-attachment-archive"_str;
     case cpp::ArtifactKind::Executable: return "executable"_str;
@@ -221,6 +228,8 @@ auto artifact_kind_text(cpp::ArtifactKind kind) -> ref<str> {
 
 auto parse_artifact_kind(ref<str> value) -> BuildProductResult<cpp::ArtifactKind> {
     if (value == "static-library"_str) return Ok(cpp::ArtifactKind::StaticLibrary);
+    if (value == "compiler-plugin-support"_str) return Ok(cpp::ArtifactKind::CompilerPlugin);
+    if (value == "proc-macro-provider"_str) return Ok(cpp::ArtifactKind::ProcMacroProvider);
     if (value == "shared-library"_str) return Ok(cpp::ArtifactKind::SharedLibrary);
     if (value == "test-attachment-archive"_str) {
         return Ok(cpp::ArtifactKind::TestAttachmentArchive);
@@ -349,6 +358,116 @@ auto parse_artifact(const Json& value, ref<rstd::path::Path> base, ref<str> cont
         .package_root  = rstd_try(product_required_path(value, "package-root"_str, context)),
         .install_link  = rstd::move(install_link),
         .link_identity = rstd_try(product_required_text(value, "link-identity"_str, context)),
+    });
+}
+
+auto compiler_plugin_json(const CompletedBuildProduct& product, const BuiltCompilerPlugin& plugin)
+    -> BuildProductResult<Json> {
+    auto result = JsonMap::make();
+    result.insert(String::make("target"_str), target_json(plugin.target));
+    result.insert(String::make("support-archive"_str),
+                  rstd_try(product_build_path(product,
+                                              plugin.support_archive.as_path(),
+                                              "compiler plugin support archive"_str)));
+    result.insert(String::make("plugin"_str),
+                  rstd_try(product_build_path(
+                      product, plugin.plugin.as_path(), "compiler plugin shared object"_str)));
+    result.insert(String::make("identity"_str), product_string(plugin.identity.as_str()));
+    result.insert(String::make("content-identity"_str),
+                  product_string(plugin.content_identity.as_str()));
+    return Ok(Json::Object(rstd::move(result)));
+}
+
+auto parse_compiler_plugin(const Json& value, ref<rstd::path::Path> base, ref<str> context)
+    -> BuildProductResult<BuiltCompilerPlugin> {
+    rstd_try(product_known_fields(value,
+                                  context,
+                                  { "target"_str,
+                                    "support-archive"_str,
+                                    "plugin"_str,
+                                    "identity"_str,
+                                    "content-identity"_str }));
+    auto target = rstd_try(product_member(value, "target"_str, context));
+    return Ok(BuiltCompilerPlugin {
+        .target = rstd_try(parse_target(*target, "compiler plugin target"_str)),
+        .support_archive =
+            rstd_try(resolve_product_build_path(base, value, "support-archive"_str, context)),
+        .plugin   = rstd_try(resolve_product_build_path(base, value, "plugin"_str, context)),
+        .identity = rstd_try(product_required_string(value, "identity"_str, context)),
+        .content_identity =
+            rstd_try(product_required_string(value, "content-identity"_str, context)),
+    });
+}
+
+auto proc_macro_provider_json(const CompletedBuildProduct&  product,
+                              const BuiltProcMacroProvider& provider) -> BuildProductResult<Json> {
+    auto result = JsonMap::make();
+    result.insert(String::make("target"_str), target_json(provider.target));
+    result.insert(String::make("archive"_str),
+                  rstd_try(product_build_path(
+                      product, provider.archive.as_path(), "proc-macro provider archive"_str)));
+    result.insert(String::make("identity"_str), product_string(provider.identity.as_str()));
+    return Ok(Json::Object(rstd::move(result)));
+}
+
+auto parse_proc_macro_provider(const Json& value, ref<rstd::path::Path> base, ref<str> context)
+    -> BuildProductResult<BuiltProcMacroProvider> {
+    rstd_try(product_known_fields(value, context, { "target"_str, "archive"_str, "identity"_str }));
+    auto target = rstd_try(product_member(value, "target"_str, context));
+    return Ok(BuiltProcMacroProvider {
+        .target   = rstd_try(parse_target(*target, "proc-macro provider target"_str)),
+        .archive  = rstd_try(resolve_product_build_path(base, value, "archive"_str, context)),
+        .identity = rstd_try(product_required_string(value, "identity"_str, context)),
+    });
+}
+
+auto proc_macro_aggregate_json(const CompletedBuildProduct&   product,
+                               const BuiltProcMacroAggregate& aggregate)
+    -> BuildProductResult<Json> {
+    auto result = JsonMap::make();
+    result.insert(String::make("selection-identity"_str),
+                  product_string(aggregate.selection_identity.as_str()));
+    result.insert(String::make("identity"_str), product_string(aggregate.identity.as_str()));
+    result.insert(String::make("content-identity"_str),
+                  product_string(aggregate.content_identity.as_str()));
+    result.insert(String::make("plugin"_str),
+                  rstd_try(product_build_path(
+                      product, aggregate.plugin.as_path(), "proc-macro aggregate plugin"_str)));
+    auto providers = JsonArray::with_capacity(aggregate.providers.len());
+    for (const auto& provider : aggregate.providers) {
+        auto value = JsonMap::make();
+        value.insert(String::make("package"_str), product_string(provider.package.as_str()));
+        providers.push(Json::Object(rstd::move(value)));
+    }
+    result.insert(String::make("providers"_str), Json::Array(rstd::move(providers)));
+    return Ok(Json::Object(rstd::move(result)));
+}
+
+auto parse_proc_macro_aggregate(const Json& value, ref<rstd::path::Path> base, ref<str> context)
+    -> BuildProductResult<BuiltProcMacroAggregate> {
+    rstd_try(product_known_fields(value,
+                                  context,
+                                  { "selection-identity"_str,
+                                    "identity"_str,
+                                    "content-identity"_str,
+                                    "plugin"_str,
+                                    "providers"_str }));
+    auto provider_values = rstd_try(product_required_array(value, "providers"_str, context));
+    auto providers       = Vec<ProcMacroProviderBinding>::with_capacity(provider_values->len());
+    for (const auto& provider : *provider_values) {
+        rstd_try(product_known_fields(provider, context, { "package"_str }));
+        providers.push(ProcMacroProviderBinding {
+            .package = rstd_try(product_required_string(provider, "package"_str, context)),
+        });
+    }
+    return Ok(BuiltProcMacroAggregate {
+        .selection_identity =
+            rstd_try(product_required_string(value, "selection-identity"_str, context)),
+        .identity = rstd_try(product_required_string(value, "identity"_str, context)),
+        .content_identity =
+            rstd_try(product_required_string(value, "content-identity"_str, context)),
+        .plugin    = rstd_try(resolve_product_build_path(base, value, "plugin"_str, context)),
+        .providers = rstd::move(providers),
     });
 }
 
@@ -541,6 +660,26 @@ auto product_payload_json(const CompletedBuildProduct& product) -> BuildProductR
     }
     root.insert(String::make("artifacts"_str), Json::Array(rstd::move(artifacts)));
 
+    auto compiler_plugins = JsonArray::with_capacity(product.compiler_plugins.len());
+    for (const auto& plugin : product.compiler_plugins) {
+        compiler_plugins.push(rstd_try(compiler_plugin_json(product, plugin)));
+    }
+    root.insert(String::make("compiler-plugins"_str), Json::Array(rstd::move(compiler_plugins)));
+
+    auto proc_macro_providers = JsonArray::with_capacity(product.proc_macro_providers.len());
+    for (const auto& provider : product.proc_macro_providers) {
+        proc_macro_providers.push(rstd_try(proc_macro_provider_json(product, provider)));
+    }
+    root.insert(String::make("proc-macro-providers"_str),
+                Json::Array(rstd::move(proc_macro_providers)));
+
+    auto proc_macro_aggregates = JsonArray::with_capacity(product.proc_macro_aggregates.len());
+    for (const auto& aggregate : product.proc_macro_aggregates) {
+        proc_macro_aggregates.push(rstd_try(proc_macro_aggregate_json(product, aggregate)));
+    }
+    root.insert(String::make("proc-macro-aggregates"_str),
+                Json::Array(rstd::move(proc_macro_aggregates)));
+
     auto runtimes = JsonArray::with_capacity(product.target_runtimes.len());
     for (const auto& runtime : product.target_runtimes) {
         runtimes.push(rstd_try(target_runtime_json(runtime)));
@@ -572,6 +711,9 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
                                     "android-minimum-api"_str,
                                     "build-directory"_str,
                                     "artifacts"_str,
+                                    "compiler-plugins"_str,
+                                    "proc-macro-providers"_str,
+                                    "proc-macro-aggregates"_str,
                                     "target-runtimes"_str,
                                     "external-assets"_str,
                                     "install-files"_str }));
@@ -588,6 +730,31 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
     auto artifacts = Vec<BuiltArtifact>::with_capacity(artifact_values->len());
     for (const auto& artifact : *artifact_values) {
         artifacts.push(rstd_try(parse_artifact(artifact, base, "build product artifact"_str)));
+    }
+
+    auto plugin_values =
+        rstd_try(product_required_array(value, "compiler-plugins"_str, "build product"_str));
+    auto compiler_plugins = Vec<BuiltCompilerPlugin>::with_capacity(plugin_values->len());
+    for (const auto& plugin : *plugin_values) {
+        compiler_plugins.push(
+            rstd_try(parse_compiler_plugin(plugin, base, "build product compiler plugin"_str)));
+    }
+
+    auto provider_values =
+        rstd_try(product_required_array(value, "proc-macro-providers"_str, "build product"_str));
+    auto proc_macro_providers = Vec<BuiltProcMacroProvider>::with_capacity(provider_values->len());
+    for (const auto& provider : *provider_values) {
+        proc_macro_providers.push(rstd_try(
+            parse_proc_macro_provider(provider, base, "build product proc-macro provider"_str)));
+    }
+
+    auto aggregate_values =
+        rstd_try(product_required_array(value, "proc-macro-aggregates"_str, "build product"_str));
+    auto proc_macro_aggregates =
+        Vec<BuiltProcMacroAggregate>::with_capacity(aggregate_values->len());
+    for (const auto& aggregate : *aggregate_values) {
+        proc_macro_aggregates.push(rstd_try(
+            parse_proc_macro_aggregate(aggregate, base, "build product proc-macro aggregate"_str)));
     }
 
     auto runtime_values =
@@ -624,9 +791,12 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
         .base_directory      = PathBuf::from(base),
         .build_directory     = rstd_try(
             resolve_product_build_path(base, value, "build-directory"_str, "build product"_str)),
-        .artifacts       = rstd::move(artifacts),
-        .target_runtimes = rstd::move(target_runtimes),
-        .external_assets = rstd_try(
+        .artifacts             = rstd::move(artifacts),
+        .compiler_plugins      = rstd::move(compiler_plugins),
+        .proc_macro_providers  = rstd::move(proc_macro_providers),
+        .proc_macro_aggregates = rstd::move(proc_macro_aggregates),
+        .target_runtimes       = rstd::move(target_runtimes),
+        .external_assets       = rstd_try(
             parse_external_assets(*asset_value, base, "build product external-assets"_str)),
         .install_files = rstd::move(files),
     };
@@ -970,6 +1140,32 @@ auto finalize_completed_build_product(CompletedBuildProduct result)
                                    result.install_files,
                                    artifact.path.as_path(),
                                    "completed build artifact"_str,
+                                   BuildProductFileOwner::Build));
+    }
+    for (const auto& plugin : result.compiler_plugins) {
+        rstd_try(append_file_stamp(result,
+                                   result.install_files,
+                                   plugin.support_archive.as_path(),
+                                   "completed compiler plugin support archive"_str,
+                                   BuildProductFileOwner::Build));
+        rstd_try(append_file_stamp(result,
+                                   result.install_files,
+                                   plugin.plugin.as_path(),
+                                   "completed compiler plugin shared object"_str,
+                                   BuildProductFileOwner::Build));
+    }
+    for (const auto& provider : result.proc_macro_providers) {
+        rstd_try(append_file_stamp(result,
+                                   result.install_files,
+                                   provider.archive.as_path(),
+                                   "completed proc-macro provider archive"_str,
+                                   BuildProductFileOwner::Build));
+    }
+    for (const auto& aggregate : result.proc_macro_aggregates) {
+        rstd_try(append_file_stamp(result,
+                                   result.install_files,
+                                   aggregate.plugin.as_path(),
+                                   "completed proc-macro aggregate plugin"_str,
                                    BuildProductFileOwner::Build));
     }
     for (const auto& runtime : result.target_runtimes) {

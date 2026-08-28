@@ -84,6 +84,7 @@ target_sources(
         src/registry/config.cppm
         src/registry/inspection.cppm
         src/registry/metadata.cppm
+        src/registry/provider.cppm
          src/registry/solver.cppm
          src/registry/spec.cppm
          src/registry/error.cppm

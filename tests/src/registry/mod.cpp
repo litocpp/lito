@@ -5,6 +5,7 @@ import licrypto;
 import rstd.json;
 import rstd.test;
 import lito.core;
+import lito.pack;
 import lito.driver;
 
 using namespace rstd::prelude;
@@ -799,6 +800,11 @@ archive = "sample"
               lito::registry::REGISTRY_INSPECTION_CANDIDATE_SCHEMA);
     EXPECT_EQ(json["archive"_str]["checksum"_str].as_str().unwrap(),
               first->archive.checksum.text().as_str());
+    auto parsed = lito::registry::parse_verified_publish_candidate(protocol.as_str().as_bytes());
+    ASSERT_TRUE(parsed.is_ok());
+    EXPECT_EQ(parsed->package, package);
+    EXPECT_EQ(parsed->version, version);
+    EXPECT_EQ(parsed->archive.checksum, first->archive.checksum);
 
     auto capabilities =
         rstd::json::from_str(lito::registry::registry_inspector_capabilities_json().as_str())

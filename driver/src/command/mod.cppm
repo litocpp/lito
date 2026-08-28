@@ -13,4 +13,3 @@ export import :command.fetch;
 export import :command.lock;
 export import :command.install;
 export import :command.reporting;
-export import :command.package;

@@ -4,114 +4,124 @@ module;
 module lito.driver;
 
 import rstd;
-import licrypto;
 import lito.core;
+import lito.pack;
 import :package.builtin;
+import :registry.blob;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-static constexpr unsigned char QT_PACKAGE_MANIFEST[] = {
-#embed "../../../data/script-packages/qt/lito.toml"
-};
-static constexpr unsigned char QT_PACKAGE_MODULE[] = {
-#embed "../../../data/script-packages/qt/lib.lua"
-};
-static constexpr unsigned char QT_PACKAGE_MOC[] = {
-#embed "../../../data/script-packages/qt/qt/moc.lua"
-};
-static constexpr unsigned char QT_PACKAGE_QML[] = {
-#embed "../../../data/script-packages/qt/qt/qml.lua"
-};
-static constexpr unsigned char QT_PACKAGE_PROTOBUF[] = {
-#embed "../../../data/script-packages/qt/qt/protobuf.lua"
-};
-static constexpr unsigned char QT_PACKAGE_RESOURCE[] = {
-#embed "../../../data/script-packages/qt/qt/resource.lua"
-};
-static constexpr unsigned char QT_PACKAGE_TRANSLATIONS[] = {
-#embed "../../../data/script-packages/qt/qt/translations.lua"
-};
+namespace
+{
 
-template<rstd::size_t Size>
-auto embedded_text(const unsigned char (&contents)[Size]) noexcept -> ref<str> {
-    return ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(contents), usize(Size));
+template<typename T>
+auto embedded_failure(String message) -> lito::registry::RegistryGraphResult<T> {
+    return Err(lito::registry::RegistryGraphError { .message = rstd::move(message) });
 }
 
 template<typename T>
-auto builtin_failure(String message) -> lito::package::PackageResult<T> {
-    return Err(lito::package::PackageError::Message(rstd::move(message)));
+auto embedded_failure(ref<str> message) -> lito::registry::RegistryGraphResult<T> {
+    return embedded_failure<T>(String::make(message));
 }
 
-auto qt_source_tree() -> lito::package::PackageResult<lito::source::SourceTree> {
-    auto tree = lito::source::SourceTree::make();
-    const struct EmbeddedFile {
-        ref<str> path;
-        ref<str> contents;
-    } files[] = {
-        { "lito.toml"_str, embedded_text(QT_PACKAGE_MANIFEST) },
-        { "lib.lua"_str, embedded_text(QT_PACKAGE_MODULE) },
-        { "qt/moc.lua"_str, embedded_text(QT_PACKAGE_MOC) },
-        { "qt/qml.lua"_str, embedded_text(QT_PACKAGE_QML) },
-        { "qt/protobuf.lua"_str, embedded_text(QT_PACKAGE_PROTOBUF) },
-        { "qt/resource.lua"_str, embedded_text(QT_PACKAGE_RESOURCE) },
-        { "qt/translations.lua"_str, embedded_text(QT_PACKAGE_TRANSLATIONS) },
-    };
-    for (const auto& file : files) {
-        auto added = tree.add_text(file.path, file.contents);
-        if (added.is_err()) {
-            return builtin_failure<lito::source::SourceTree>(
-                rstd::format("cannot add '{}' to builtin build package '{}': {}",
-                             file.path,
-                             "qt",
-                             rstd::move(added).unwrap_err()));
+auto registry_config(const lito::config::LitoBootstrapConfig& config,
+                     const lito::registry::RegistryId&        identity)
+    -> Option<ref<lito::config::NamedRegistryConfig>> {
+    for (const auto& registry : *config.registries()) {
+        if (registry.identity == identity) {
+            return Some(
+                ref<lito::config::NamedRegistryConfig>::from_raw_parts(rstd::addressof(registry)));
         }
     }
-    return Ok(rstd::move(tree));
+    return None();
 }
 
-auto builtin_digest(ref<str> id, const lito::source::SourceTree& tree) -> String {
-    auto identity = rstd::format("lito-builtin-package-v2\n{}", id);
-    for (const auto& entry : tree.entries()) {
-        identity.push_ascii('\n');
-        identity.push_str(entry.path().as_str());
-        identity.push_ascii('\n');
-        identity.push_str(licrypto::sha256_hex(entry.contents()).as_str());
-    }
-    return licrypto::sha256_hex(identity.as_str());
+auto descriptor_error(ref<str> id, ref<str> message) -> String {
+    return rstd::format("embedded package '{}': {}", id, message);
 }
 
-auto lito::package::load_builtin_package(ref<str> id) -> PackageResult<BuiltinPackage> {
-    if (id != "qt"_str) {
-        return builtin_failure<BuiltinPackage>(
-            rstd::format("unknown builtin build package '{}'", id));
+} // namespace
+
+auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
+    -> lito::registry::RegistryGraphResult<lito::registry::BuiltinRegistryPackage> {
+    if (provider_.resolve == nullptr) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            rstd::format("builtin package '{}' has no embedded provider", id));
     }
-    auto tree     = rstd_try(qt_source_tree());
-    auto digest   = builtin_digest(id, tree);
-    auto manifest = lito::manifest::load_package_manifest_from_source_tree(id, tree);
-    if (manifest.is_err()) {
-        return Err(rstd::into<PackageError>(rstd::move(manifest).unwrap_err()));
+    auto input = provider_.resolve(provider_.context, id);
+    if (input.is_none()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            rstd::format("builtin package '{}' is not provided by this executable", id));
     }
-    auto package = rstd::move(manifest).unwrap();
-    if (! package.targets.is_empty() || ! package.compile_tests.is_empty() ||
-        package.install_script.is_some() || ! package.dependencies.is_empty() ||
-        ! package.dev_dependencies.is_empty() || ! package.runtime_dependencies.is_empty() ||
-        package.script.is_none() || ! package.build_tools.is_empty() ||
-        ! package.external_sources.is_empty() ||
-        ! package.pkg_config_external_dependencies.is_empty() ||
-        ! package.cmake_external_dependencies.is_empty() ||
-        ! package.cargo_external_dependencies.is_empty()) {
-        return builtin_failure<BuiltinPackage>(
-            rstd::format("builtin package '{}' must contain only a script contract", id));
+    auto descriptor = lito::registry::parse_verified_publish_candidate(input->descriptor);
+    if (descriptor.is_err()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            descriptor_error(id, rstd::move(descriptor).unwrap_err().message.as_str()));
     }
-    if (package.version.value.is_none()) {
-        return builtin_failure<BuiltinPackage>(
-            rstd::format("builtin package '{}' must declare a version", id));
+    auto definition = lito::registry::BuiltinRegistryPackage {
+        .package = descriptor->package.clone(),
+        .version = descriptor->version.clone(),
+    };
+    for (const auto& index : indices_) {
+        if (index.package() == descriptor->package) return Ok(rstd::move(definition));
     }
-    return Ok(BuiltinPackage {
-        .source_identity = rstd::format("builtin:{}:{}", id, digest.as_str()),
-        .digest          = rstd::move(digest),
-        .manifest        = rstd::move(package),
-        .source          = rstd::move(tree),
-    });
+    auto configured = registry_config(*config_, descriptor->package.registry);
+    if (configured.is_none()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            rstd::format("builtin package '{}' uses Registry '{}' which is not configured",
+                         id,
+                         descriptor->package.registry.as_str()));
+    }
+    auto cache =
+        lito::registry::RegistryBlobCache(cache_root_.clone(),
+                                          (*configured)->effective_endpoints()->blob.clone(),
+                                          lito::registry::RegistryNetworkPolicy::Offline,
+                                          {});
+    auto blob = cache.publish(descriptor->package, input->archive);
+    if (blob.is_err()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            descriptor_error(id, rstd::move(blob).unwrap_err().message.as_str()));
+    }
+    if (blob->checksum != descriptor->archive.checksum ||
+        blob->size != descriptor->archive.size.value()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            descriptor_error(id, "archive does not match its verified descriptor"_str));
+    }
+    auto inspected = lito::registry::PackageArchiveInspector::inspect_candidate(
+        *blob, descriptor->package, descriptor->version);
+    if (inspected.is_err()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            descriptor_error(id, rstd::move(inspected).unwrap_err().message.as_str()));
+    }
+    if (inspected->archive.checksum != descriptor->archive.checksum ||
+        inspected->archive.size != descriptor->archive.size ||
+        inspected->archive.format != descriptor->archive.format ||
+        inspected->candidate.file_count != descriptor->file_count ||
+        inspected->candidate.unpacked_size != descriptor->unpacked_size ||
+        ! lito::registry::registry_dependencies_match(inspected->candidate.dependencies.as_slice(),
+                                                      descriptor->dependencies.as_slice())) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            descriptor_error(id, "descriptor does not describe the embedded archive"_str));
+    }
+    auto dependencies = Vec<lito::registry::RegistryDependencyProjection>::with_capacity(
+        descriptor->dependencies.len());
+    for (const auto& dependency : descriptor->dependencies) {
+        dependencies.push(dependency.clone());
+    }
+    auto index = lito::registry::RegistryPackageIndex::single(descriptor->package.clone(),
+                                                              descriptor->version.clone(),
+                                                              descriptor->archive.checksum.clone(),
+                                                              rstd::move(dependencies));
+    if (index.is_err()) {
+        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
+            rstd::format("embedded package '{}': {}", id, rstd::move(index).unwrap_err()));
+    }
+    indices_.push(rstd::move(index).unwrap());
+    return Ok(rstd::move(definition));
+}
+
+auto lito::package::EmbeddedRegistryPackages::add_indices(
+    lito::registry::RegistryGraphClient& client) const -> void {
+    for (const auto& index : indices_) client.add_index(index.clone());
 }

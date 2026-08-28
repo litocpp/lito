@@ -243,6 +243,9 @@ auto run_preprocessor_test() -> int {
                 "/// active documentation\n"
                 "export LITO_MODULE fixture.memory;\n"
                 "export LITO_IMPORT :dependency;\n"
+                "struct [[pmacro::attr(\"fixture::attr\")]] MacroAttribute {};\n"
+                "struct [[pmacro::derive(\"fixture::derive\")]] MacroDerive {};\n"
+                "struct [[other::marker]] OtherAttribute {};\n"
                 "#endif\n"
                 "#define LITO_DUP(value) value + value\n"
                 "LITO_DUP(__COUNTER__)\n"
@@ -394,6 +397,15 @@ auto run_preprocessor_test() -> int {
         facts->imports[usize {}].logical_name.as_str() != "fixture.memory:dependency"_str ||
         ! facts->imports[usize {}].exported) {
         return 10;
+    }
+    if (facts->scoped_attributes.len() != usize(3) ||
+        facts->scoped_attributes[usize {}].scope != "pmacro"_str ||
+        facts->scoped_attributes[usize {}].name != "attr"_str ||
+        facts->scoped_attributes[usize(1)].scope != "pmacro"_str ||
+        facts->scoped_attributes[usize(1)].name != "derive"_str ||
+        facts->scoped_attributes[usize(2)].scope != "other"_str ||
+        facts->scoped_attributes[usize(2)].name != "marker"_str) {
+        return 35;
     }
     if (streamed->statistics.scratch_releases != usize(1)) return 34;
     return 0;

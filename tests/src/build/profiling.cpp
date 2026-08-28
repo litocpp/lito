@@ -117,6 +117,7 @@ auto run_profiling_test() -> int {
     if (stage_timing.timing(lito::BuildStage::Archive).count != usize(2) ||
         stage_timing.attributed().as_micros() != u64(350) ||
         stage_timing.unattributed().as_micros() != u64(650) ||
+        lito::build_stage_label(lito::BuildStage::Plugin) != "build.plugin"_str ||
         lito::build_stage_label(lito::BuildStage::ProductFinalize) !=
             "build.product-finalize"_str) {
         return 7;

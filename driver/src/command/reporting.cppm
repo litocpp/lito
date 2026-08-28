@@ -77,20 +77,11 @@ inline constexpr BuildOperation BUILD_OPERATIONS[] = {
 };
 
 inline constexpr BuildStage BUILD_STAGES[] = {
-    BuildStage::Total,
-    BuildStage::ProductBegin,
-    BuildStage::Environment,
-    BuildStage::ProjectPrepare,
-    BuildStage::TargetPrepare,
-    BuildStage::Script,
-    BuildStage::RuntimeResource,
-    BuildStage::Scan,
-    BuildStage::CompilePlan,
-    BuildStage::CompileExecute,
-    BuildStage::CompileCacheFinish,
-    BuildStage::Archive,
-    BuildStage::Link,
-    BuildStage::ProductFinalize,
+    BuildStage::Total,           BuildStage::ProductBegin,   BuildStage::Environment,
+    BuildStage::ProjectPrepare,  BuildStage::TargetPrepare,  BuildStage::Script,
+    BuildStage::RuntimeResource, BuildStage::Scan,           BuildStage::Plugin,
+    BuildStage::CompilePlan,     BuildStage::CompileExecute, BuildStage::CompileCacheFinish,
+    BuildStage::Archive,         BuildStage::Link,           BuildStage::ProductFinalize,
     BuildStage::ProductPublish,
 };
 

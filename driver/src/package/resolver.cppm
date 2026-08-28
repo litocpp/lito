@@ -8,7 +8,6 @@ import lito.core;
 import lito.tools;
 import lito.system;
 import :source.manager;
-import :package.builtin;
 import :registry.graph;
 
 using namespace rstd::prelude;
@@ -74,9 +73,7 @@ struct AcquiredProjectSources {
 };
 
 struct AcquiredDependencySource {
-    Option<usize>          source;
-    String                 builtin_id;
-    Option<BuiltinPackage> builtin;
+    Option<usize> source;
 };
 
 struct PreparedRegistrySource {
@@ -139,7 +136,8 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<
     auto requires_version = selected.package.script.is_some();
     for (const auto& target : selected.package.targets) {
         const auto kind = lito::manifest::package_target_kind(target);
-        if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
+        if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Plugin ||
+            kind == PackageTargetKind::ProcMacro || kind == PackageTargetKind::Binary ||
             kind == PackageTargetKind::Benchmark) {
             requires_version = true;
             break;
@@ -188,6 +186,62 @@ class PackageGraphResolver {
     PreparedRegistryMap registry_sources_ { PreparedRegistryMap::make() };
     StringSet           discovered_ { StringSet::make() };
     usize               jobs_ { usize(1) };
+
+    auto effective_source(const lito::source::PackageSourceRequirement& source,
+                          ref<str>                                      expected_name)
+        -> PackageResult<lito::source::PackageSourceRequirement> {
+        if (! source.is_Builtin()) return Ok(clone_dependency_source(source));
+        auto id       = source.as_Builtin().id.as_str();
+        auto override = sources_.builtin_package(id);
+        if (override.is_some() && (*override)->is_Registry()) {
+            auto package = lito::registry::RegistryPackageName::parse(expected_name);
+            if (package.is_err()) {
+                return package_resolution_failure<lito::source::PackageSourceRequirement>(
+                    rstd::format("builtin package '{}' has invalid Registry package name '{}': {}",
+                                 id,
+                                 expected_name,
+                                 rstd::move(package).unwrap_err()));
+            }
+            return Ok(lito::source::PackageSourceRequirement::Registry(
+                (*override)->as_Registry().registry.clone(),
+                rstd::move(package).unwrap(),
+                (*override)->as_Registry().requirement.clone()));
+        }
+        if (override.is_some() && (*override)->is_Git()) {
+            return Ok(lito::source::PackageSourceRequirement::Git(
+                (*override)->as_Git().url.clone(), (*override)->as_Git().reference.clone()));
+        }
+        if (override.is_some()) {
+            return Ok(
+                lito::source::PackageSourceRequirement::Path((*override)->as_Path().path.clone()));
+        }
+        if (registry_.resolve_builtin == nullptr) {
+            return package_resolution_failure<lito::source::PackageSourceRequirement>(
+                rstd::format("builtin package '{}' has no configured provider", id));
+        }
+        auto definition = registry_.resolve_builtin(registry_.context, id);
+        if (definition.is_err()) {
+            return package_resolution_failure<lito::source::PackageSourceRequirement>(
+                rstd::move(definition).unwrap_err().message);
+        }
+        if (definition->package.name.as_str() != expected_name) {
+            return package_resolution_failure<lito::source::PackageSourceRequirement>(
+                rstd::format("dependency '{}' resolves builtin '{}' as package '{}'",
+                             expected_name,
+                             id,
+                             definition->package.name.as_str()));
+        }
+        auto requirement = lito::registry::VersionRequirement::parse(
+            rstd::format("={}", definition->version.text()).as_str());
+        if (requirement.is_err()) {
+            return package_resolution_failure<lito::source::PackageSourceRequirement>(
+                rstd::format("builtin package '{}' has an invalid embedded version", id));
+        }
+        return Ok(lito::source::PackageSourceRequirement::Registry(
+            Some(String::make(definition->package.registry.as_str())),
+            definition->package.name.clone(),
+            rstd::move(requirement).unwrap()));
+    }
 
     auto ensure_catalog_slot(usize source) -> void {
         while (catalogs_.len() <= source) catalogs_.push(None());
@@ -266,14 +320,8 @@ class PackageGraphResolver {
         for (usize index {}; index < requests.len(); ++index) {
             auto& request = requests[index];
             if (request.source.is_Builtin()) {
-                auto builtin_id = request.source.as_Builtin().id.clone();
-                auto package    = load_builtin_package(builtin_id.as_str());
-                if (package.is_err()) return Err(rstd::move(package).unwrap_err());
-                result[index] = Some(AcquiredDependencySource {
-                    .builtin_id = rstd::move(builtin_id),
-                    .builtin    = Some(rstd::move(package).unwrap()),
-                });
-                continue;
+                return package_resolution_failure<Vec<AcquiredDependencySource>>(
+                    "builtin dependency was not projected to an effective source"_str);
             }
             if (request.source.is_Registry()) {
                 auto prepared_registry = registry_sources_.get(request.name.as_str());
@@ -358,9 +406,11 @@ class PackageGraphResolver {
         discovered_.insert(String::make(key), empty {});
         auto       requests = Vec<lito::source::PackageSourceFetchRequest>::make();
         auto       names    = Vec<String>::make();
-        const auto append   = [&](const auto& dependency) -> void {
-            if (dependency.source.is_Registry()) {
-                const auto& source = dependency.source.as_Registry();
+        const auto append   = [&](const auto& dependency) -> PackageResult<empty> {
+            auto effective =
+                rstd_try(effective_source(dependency.source, dependency.name.as_str()));
+            if (effective.is_Registry()) {
+                const auto& source = effective.as_Registry();
                 registry_requirements_.push(lito::registry::RegistryGraphRequirement {
                     .registry    = source.registry.is_some() ? Some(source.registry->clone())
                                                              : Option<String> {},
@@ -370,7 +420,7 @@ class PackageGraphResolver {
                                                 package.name.as_str(),
                                                 dependency.name.as_str()),
                 });
-                return;
+                return Ok(empty {});
             }
             auto declaring_root = package.root.clone();
             if (dependency.declaration_root.is_some()) {
@@ -380,20 +430,18 @@ class PackageGraphResolver {
             requests.push(lito::source::PackageSourceFetchRequest {
                 .owner          = package.name.clone(),
                 .name           = dependency.name.clone(),
-                .source         = clone_dependency_source(dependency.source),
+                .source         = rstd::move(effective),
                 .declaring_root = rstd::move(declaring_root),
             });
+            return Ok(empty {});
         };
-        for (const auto& dependency : package.dependencies) append(dependency);
-        for (const auto& dependency : package.dev_dependencies) append(dependency);
-        for (const auto& dependency : package.runtime_dependencies) append(dependency);
+        for (const auto& dependency : package.dependencies) rstd_try(append(dependency));
+        for (const auto& dependency : package.dev_dependencies) rstd_try(append(dependency));
+        for (const auto& dependency : package.runtime_dependencies) rstd_try(append(dependency));
+        auto pmacro_support = rstd_try(pmacro_support_dependency(package));
+        if (pmacro_support.is_some()) rstd_try(append(*pmacro_support));
         auto acquired = rstd_try(acquire_frontier(rstd::move(requests)));
         for (usize index {}; index < acquired.len(); ++index) {
-            if (acquired[index].builtin.is_some()) {
-                const auto& builtin = *acquired[index].builtin;
-                rstd_try(discover_dependencies(builtin.source_identity.as_str(), builtin.manifest));
-                continue;
-            }
             auto source    = *acquired[index].source;
             auto child_key = rstd::format("{}\n{}", sources_.source_identity(source), names[index]);
             auto child     = catalog(source).package(names[index].as_str());
@@ -518,66 +566,72 @@ class PackageGraphResolver {
         return false;
     }
 
-    auto resolve_builtin(BuiltinPackage package, ref<str> builtin, ref<str> expected_name)
-        -> PackageResult<String> {
-        if (package.manifest.name != expected_name) {
-            return package_resolution_failure<String>(
-                rstd::format("dependency '{}' resolves builtin '{}' as package '{}'",
-                             expected_name,
-                             builtin,
-                             package.manifest.name.as_str()));
+    auto package_has_proc_macro(const lito::manifest::PackageManifest& package) const noexcept
+        -> bool {
+        for (const auto& target : package.targets) {
+            if (lito::manifest::package_target_kind(target) == PackageTargetKind::ProcMacro)
+                return true;
         }
-        auto existing = coordinates_.get(expected_name);
-        if (existing.is_some()) {
-            if ((**existing).source_identity == package.source_identity.as_str()) {
-                return Ok(String::make(expected_name));
+        return false;
+    }
+
+    auto package_has_plugin(const lito::manifest::PackageManifest& package) const noexcept -> bool {
+        for (const auto& target : package.targets) {
+            if (lito::manifest::package_target_kind(target) == PackageTargetKind::Plugin)
+                return true;
+        }
+        return false;
+    }
+
+    auto validate_pmacro_support_contract(const lito::manifest::DeclaredDependency& declaration,
+                                          const lito::manifest::PackageManifest&    provider) const
+        -> PackageResult<empty> {
+        if (! declaration.source.is_Builtin() ||
+            declaration.source.as_Builtin().id != "pmacro"_str) {
+            return Ok(empty {});
+        }
+        if (package_has_plugin(provider)) return Ok(empty {});
+        return package_resolution_failure<empty>(
+            rstd::format("builtin package 'pmacro' at '{}' must provide [plugin]",
+                         provider.manifest_path.as_path()));
+    }
+
+    auto pmacro_support_dependency(const lito::manifest::PackageManifest& package)
+        -> PackageResult<Option<lito::manifest::DeclaredDependency>> {
+        if (! package_has_proc_macro(package)) {
+            return Ok(None<lito::manifest::DeclaredDependency>());
+        }
+        for (const auto& dependency : package.dependencies) {
+            if (dependency.name == "pmacro"_str) {
+                return package_resolution_failure<
+                    Option<lito::manifest::DeclaredDependency>>(rstd::format(
+                    "pmacro package '{}' must not declare the compiler-support package 'pmacro'; "
+                    "configure builtin package 'pmacro' instead",
+                    package.name.as_str()));
             }
-            auto candidate = PackageCoordinate {
-                .version         = package.manifest.version.value.clone(),
-                .source_identity = package.source_identity.clone(),
-                .manifest        = package.manifest.manifest_path.clone(),
-            };
-            return Err(package_conflict(expected_name, **existing, candidate));
         }
-        auto coordinate = PackageCoordinate {
-            .version         = package.manifest.version.value.clone(),
-            .source_identity = package.source_identity.clone(),
-            .manifest        = package.manifest.manifest_path.clone(),
-        };
-        coordinates_.insert(String::make(expected_name),
-                            PackageCoordinate {
-                                .version         = coordinate.version.clone(),
-                                .source_identity = coordinate.source_identity.clone(),
-                                .manifest        = coordinate.manifest.clone(),
-                            });
-        auto resolved_source = lito::source::ResolvedPackageSource {
-            .identity       = package.source_identity.clone(),
-            .kind           = lito::source::PackageSourceKind::Builtin,
-            .root_directory = package.manifest.root.clone(),
-            .builtin        = String::make(builtin),
-            .digest         = package.digest.clone(),
-        };
-        packages_.push(ResolvedPackage {
-            .source_identity      = rstd::move(package.source_identity),
-            .source               = rstd::move(resolved_source),
-            .source_manifest      = PathBuf::from("lito.toml"_str),
-            .manifest             = rstd::move(package.manifest),
-            .embedded_source      = Some(rstd::move(package.source)),
-            .dependencies         = {},
-            .dev_dependencies     = {},
-            .runtime_dependencies = {},
-            .features             = {},
-        });
-        return Ok(String::make(expected_name));
+        for (const auto& dependency : package.dev_dependencies) {
+            if (dependency.name == "pmacro"_str) {
+                return package_resolution_failure<
+                    Option<lito::manifest::DeclaredDependency>>(rstd::format(
+                    "pmacro package '{}' must not declare the compiler-support package 'pmacro'; "
+                    "configure builtin package 'pmacro' instead",
+                    package.name.as_str()));
+            }
+        }
+        return Ok(Some(lito::manifest::DeclaredDependency {
+            .name   = String::make("pmacro"_str),
+            .source = lito::source::PackageSourceRequirement::Builtin(String::make("pmacro"_str)),
+            .visibility       = None(),
+            .features         = None(),
+            .default_features = None(),
+            .declaration_root = None(),
+        }));
     }
 
     auto resolve_acquired(AcquiredDependencySource& acquired,
                           ref<str>                  expected_name,
                           PackageDependencyKind     incoming) -> PackageResult<String> {
-        if (acquired.builtin.is_some()) {
-            return resolve_builtin(
-                rstd::move(acquired.builtin).unwrap(), acquired.builtin_id.as_str(), expected_name);
-        }
         return resolve(*acquired.source, expected_name, incoming);
     }
 
@@ -589,6 +643,7 @@ class PackageGraphResolver {
             return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
                 "resolved dependency '{}' is missing from the package graph", declaration.name));
         }
+        rstd_try(validate_pmacro_support_contract(declaration, provider->manifest));
         if (provider->manifest.script.is_some()) {
             if (kind == PackageDependencyKind::Development) {
                 return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
@@ -626,10 +681,44 @@ class PackageGraphResolver {
                 .supports        = provider->manifest.script->supports.clone(),
             }));
         }
+        if (package_has_plugin(provider->manifest)) {
+            if (declaration.visibility.is_some()) {
+                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                    "dependency '{}' resolves to plugin package '{}', so visibility is not "
+                    "allowed",
+                    declaration.name.as_str(),
+                    provider->manifest.manifest_path.as_path()));
+            }
+            auto features = declaration.features.is_some() ? declaration.features->clone()
+                                                           : Vec<String>::make();
+            return Ok(ResolvedRequiredDependency::Plugin(ResolvedPluginDependency {
+                .name     = provider->manifest.name.clone(),
+                .features = rstd::move(features),
+                .default_features =
+                    declaration.default_features.is_some() ? *declaration.default_features : true,
+            }));
+        }
+        if (package_has_proc_macro(provider->manifest)) {
+            if (declaration.visibility.is_some()) {
+                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                    "dependency '{}' resolves to pmacro package '{}', so visibility is not "
+                    "allowed",
+                    declaration.name.as_str(),
+                    provider->manifest.manifest_path.as_path()));
+            }
+            auto features = declaration.features.is_some() ? declaration.features->clone()
+                                                           : Vec<String>::make();
+            return Ok(ResolvedRequiredDependency::Pmacro(ResolvedPmacroDependency {
+                .name     = provider->manifest.name.clone(),
+                .features = rstd::move(features),
+                .default_features =
+                    declaration.default_features.is_some() ? *declaration.default_features : true,
+            }));
+        }
         if (! package_has_library(provider->manifest)) {
             return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
                 "dependency '{}' resolves to package '{}' which exposes neither a C/C++ library "
-                "nor a script contract",
+                "nor a script, plugin or pmacro contract",
                 declaration.name.as_str(),
                 provider->manifest.manifest_path.as_path()));
         }
@@ -756,6 +845,10 @@ public:
                              loaded.package.name.as_str(),
                              source_identity.as_str()));
         }
+        auto pmacro_support = rstd_try(pmacro_support_dependency(loaded.package));
+        if (pmacro_support.is_some()) {
+            loaded.package.dependencies.push(rstd::move(pmacro_support).unwrap());
+        }
         auto coordinate = package_coordinate(loaded);
         if (coordinate.is_err()) return Err(rstd::move(coordinate).unwrap_err());
         auto candidate = rstd::move(coordinate).unwrap();
@@ -777,31 +870,34 @@ public:
             loaded.package.dependencies.len() + loaded.package.dev_dependencies.len() +
             loaded.package.runtime_dependencies.len());
         const auto append_fetch_requests =
-            [&](const Vec<lito::manifest::DeclaredDependency>& declarations) -> void {
+            [&](const Vec<lito::manifest::DeclaredDependency>& declarations)
+            -> PackageResult<empty> {
             for (const auto& dependency : declarations) {
                 auto declaring_root = loaded.package.root.clone();
                 if (dependency.declaration_root.is_some()) {
                     declaring_root = dependency.declaration_root->clone();
                 }
                 fetch_requests.push(lito::source::PackageSourceFetchRequest {
-                    .owner          = loaded.package.name.clone(),
-                    .name           = dependency.name.clone(),
-                    .source         = clone_dependency_source(dependency.source),
+                    .owner = loaded.package.name.clone(),
+                    .name  = dependency.name.clone(),
+                    .source =
+                        rstd_try(effective_source(dependency.source, dependency.name.as_str())),
                     .declaring_root = rstd::move(declaring_root),
                 });
             }
+            return Ok(empty {});
         };
-        append_fetch_requests(loaded.package.dependencies);
-        append_fetch_requests(loaded.package.dev_dependencies);
+        rstd_try(append_fetch_requests(loaded.package.dependencies));
+        rstd_try(append_fetch_requests(loaded.package.dev_dependencies));
         for (const auto& dependency : loaded.package.runtime_dependencies) {
             auto declaring_root = loaded.package.root.clone();
             if (dependency.declaration_root.is_some()) {
                 declaring_root = dependency.declaration_root->clone();
             }
             fetch_requests.push(lito::source::PackageSourceFetchRequest {
-                .owner          = loaded.package.name.clone(),
-                .name           = dependency.name.clone(),
-                .source         = clone_dependency_source(dependency.source),
+                .owner  = loaded.package.name.clone(),
+                .name   = dependency.name.clone(),
+                .source = rstd_try(effective_source(dependency.source, dependency.name.as_str())),
                 .declaring_root = rstd::move(declaring_root),
             });
         }
@@ -821,6 +917,15 @@ public:
             [](const ResolvedRequiredDependency& left, const ResolvedRequiredDependency& right) {
                 return resolved_dependency_name_value(left) < resolved_dependency_name_value(right);
             });
+        if (package_has_plugin(loaded.package)) {
+            for (const auto& dependency : dependencies) {
+                if (! dependency.is_Plugin()) continue;
+                return package_resolution_failure<String>(
+                    rstd::format("plugin package '{}' cannot depend on plugin package '{}'",
+                                 loaded.package.name.as_str(),
+                                 dependency.as_Plugin().value.name.as_str()));
+            }
+        }
         for (usize index {}; index < dependencies.len(); ++index) {
             if (! dependencies[index].is_Script()) continue;
             for (usize other = index + usize(1); other < dependencies.len(); ++other) {
@@ -839,24 +944,18 @@ public:
         }
 
         auto dev_dependencies =
-            Vec<ResolvedCppDependency>::with_capacity(loaded.package.dev_dependencies.len());
+            Vec<ResolvedRequiredDependency>::with_capacity(loaded.package.dev_dependencies.len());
         for (const auto& dependency : loaded.package.dev_dependencies) {
             rstd_try(resolve_acquired(fetched_sources[source_offset++],
                                       dependency.name.as_str(),
                                       PackageDependencyKind::Development));
-            auto classified =
-                rstd_try(classify_dependency(dependency, PackageDependencyKind::Development));
-            if (! classified.is_Cpp()) {
-                return package_resolution_failure<String>(
-                    rstd::format("development dependency '{}' does not expose a C/C++ contract",
-                                 dependency.name.as_str()));
-            }
-            dev_dependencies.push(rstd::move(classified.as_Cpp().value));
+            dev_dependencies.push(
+                rstd_try(classify_dependency(dependency, PackageDependencyKind::Development)));
         }
         rstd::slice_::sort_unstable_by(
             dev_dependencies.as_mut_slice().as_mut_ref(),
-            [](const ResolvedCppDependency& left, const ResolvedCppDependency& right) {
-                return left.name < right.name;
+            [](const ResolvedRequiredDependency& left, const ResolvedRequiredDependency& right) {
+                return resolved_dependency_name_value(left) < resolved_dependency_name_value(right);
             });
         auto runtime_dependencies = Vec<ResolvedRuntimeDependency>::with_capacity(
             loaded.package.runtime_dependencies.len());

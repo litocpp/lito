@@ -102,6 +102,21 @@ struct Doc {
     Option<String> litodoc_path;
 };
 
+struct BuiltinPackage {
+    Option<String> version;
+    Option<String> registry;
+    Option<String> git;
+    Option<String> branch;
+    Option<String> tag;
+    Option<String> rev;
+    Option<String> commit;
+    Option<String> path;
+};
+
+struct Builtin {
+    Option<rstd::collections::BTreeMap<String, BuiltinPackage>> packages;
+};
+
 struct Document {
     Option<Environment>                                environment;
     Option<Tools>                                      tools;
@@ -111,6 +126,7 @@ struct Document {
     Option<Install>                                    install;
     Option<Build>                                      build;
     Option<Doc>                                        doc;
+    Option<Builtin>                                    builtin;
 };
 
 struct HostDocument {
@@ -122,6 +138,7 @@ struct HostDocument {
     Option<rstd::serde::Ignored> install;
     Option<rstd::serde::Ignored> build;
     Option<rstd::serde::Ignored> doc;
+    Option<rstd::serde::Ignored> builtin;
 };
 
 } // namespace lito::config::wire
@@ -412,6 +429,56 @@ struct Impl<serde::Deserialize, lito::config::wire::Doc> {
 };
 
 template<>
+struct Impl<serde::Deserialize, lito::config::wire::BuiltinPackage> {
+    template<typename Deserializer>
+    static auto deserialize(Deserializer& deserializer)
+        -> Result<lito::config::wire::BuiltinPackage, typename Deserializer::error_type> {
+        auto version  = serde::OptionalField<String>("version"_str);
+        auto registry = serde::OptionalField<String>("registry"_str);
+        auto git      = serde::OptionalField<String>("git"_str);
+        auto branch   = serde::OptionalField<String>("branch"_str);
+        auto tag      = serde::OptionalField<String>("tag"_str);
+        auto rev      = serde::OptionalField<String>("rev"_str);
+        auto commit   = serde::OptionalField<String>("commit"_str);
+        auto path     = serde::OptionalField<String>("path"_str);
+        rstd_try(serde::deserialize_record(deserializer,
+                                           serde::UnknownFieldPolicy::Reject,
+                                           version,
+                                           registry,
+                                           git,
+                                           branch,
+                                           tag,
+                                           rev,
+                                           commit,
+                                           path));
+        return Ok(lito::config::wire::BuiltinPackage {
+            .version  = version.take(),
+            .registry = registry.take(),
+            .git      = git.take(),
+            .branch   = branch.take(),
+            .tag      = tag.take(),
+            .rev      = rev.take(),
+            .commit   = commit.take(),
+            .path     = path.take(),
+        });
+    }
+};
+
+template<>
+struct Impl<serde::Deserialize, lito::config::wire::Builtin> {
+    template<typename Deserializer>
+    static auto deserialize(Deserializer& deserializer)
+        -> Result<lito::config::wire::Builtin, typename Deserializer::error_type> {
+        auto packages = serde::OptionalField<
+            rstd::collections::BTreeMap<String, lito::config::wire::BuiltinPackage>>(
+            "packages"_str);
+        rstd_try(
+            serde::deserialize_record(deserializer, serde::UnknownFieldPolicy::Reject, packages));
+        return Ok(lito::config::wire::Builtin { .packages = packages.take() });
+    }
+};
+
+template<>
 struct Impl<serde::Deserialize, lito::config::wire::Document> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
@@ -426,6 +493,7 @@ struct Impl<serde::Deserialize, lito::config::wire::Document> {
         auto install = serde::OptionalField<lito::config::wire::Install>("install"_str);
         auto build   = serde::OptionalField<lito::config::wire::Build>("build"_str);
         auto doc     = serde::OptionalField<lito::config::wire::Doc>("doc"_str);
+        auto builtin = serde::OptionalField<lito::config::wire::Builtin>("builtin"_str);
         rstd_try(serde::deserialize_record(deserializer,
                                            serde::UnknownFieldPolicy::Reject,
                                            environment,
@@ -435,7 +503,8 @@ struct Impl<serde::Deserialize, lito::config::wire::Document> {
                                            lock,
                                            install,
                                            build,
-                                           doc));
+                                           doc,
+                                           builtin));
         return Ok(lito::config::wire::Document {
             .environment = environment.take(),
             .tools       = tools.take(),
@@ -445,6 +514,7 @@ struct Impl<serde::Deserialize, lito::config::wire::Document> {
             .install     = install.take(),
             .build       = build.take(),
             .doc         = doc.take(),
+            .builtin     = builtin.take(),
         });
     }
 };
@@ -462,6 +532,7 @@ struct Impl<serde::Deserialize, lito::config::wire::HostDocument> {
         auto install     = serde::OptionalField<serde::Ignored>("install"_str);
         auto build       = serde::OptionalField<serde::Ignored>("build"_str);
         auto doc         = serde::OptionalField<serde::Ignored>("doc"_str);
+        auto builtin     = serde::OptionalField<serde::Ignored>("builtin"_str);
         rstd_try(serde::deserialize_record(deserializer,
                                            serde::UnknownFieldPolicy::Reject,
                                            environment,
@@ -471,7 +542,8 @@ struct Impl<serde::Deserialize, lito::config::wire::HostDocument> {
                                            lock,
                                            install,
                                            build,
-                                           doc));
+                                           doc,
+                                           builtin));
         return Ok(lito::config::wire::HostDocument {
             .environment = environment.take(),
             .tools       = tools.take(),
@@ -481,6 +553,7 @@ struct Impl<serde::Deserialize, lito::config::wire::HostDocument> {
             .install     = install.take(),
             .build       = build.take(),
             .doc         = doc.take(),
+            .builtin     = builtin.take(),
         });
     }
 };

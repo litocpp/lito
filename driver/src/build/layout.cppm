@@ -201,6 +201,50 @@ public:
 
     auto generated_root() const -> PathBuf { return join(output_.as_path(), "generated"_str); }
 
+    auto proc_macro_root() const -> PathBuf {
+        return join(generated_root().as_path(), "proc-macro"_str);
+    }
+
+    auto compiler_plugin(const lito::package::PackageTargetId& target, ref<str> filename) const
+        -> PathBuf {
+        auto root      = join(generated_root().as_path(), "plugins"_str);
+        auto directory = target_directory(root.as_path(), target);
+        return directory.join(PathBuf::from(filename).as_path());
+    }
+
+    auto proc_macro_aggregate(ref<str> identity, ref<str> filename) const -> PathBuf {
+        auto directory = join(proc_macro_root().as_path(), "aggregates"_str);
+        return join(join(directory.as_path(), identity).as_path(), filename);
+    }
+
+    auto proc_macro_transformed_source(const lito::package::PackageTargetId& target,
+                                       ref<rstd::path::Path>                 relative_source) const
+        -> BuildLayoutResult<PathBuf> {
+        auto root = join(proc_macro_root().as_path(), "transformed"_str);
+        return source_path(root.as_path(), target, relative_source, ".expanded"_str);
+    }
+
+    auto proc_macro_source_overlay(const lito::package::PackageTargetId& target,
+                                   ref<rstd::path::Path>                 relative_source) const
+        -> BuildLayoutResult<PathBuf> {
+        auto root = join(proc_macro_root().as_path(), "transformed"_str);
+        return source_path(root.as_path(), target, relative_source, ".overlay.yaml"_str);
+    }
+
+    auto proc_macro_expansion_trace(const lito::package::PackageTargetId& target,
+                                    ref<rstd::path::Path>                 relative_source) const
+        -> BuildLayoutResult<PathBuf> {
+        auto root = join(proc_macro_root().as_path(), "transformed"_str);
+        return source_path(root.as_path(), target, relative_source, ".trace"_str);
+    }
+
+    auto proc_macro_expansion_status(const lito::package::PackageTargetId& target,
+                                     ref<rstd::path::Path>                 relative_source) const
+        -> BuildLayoutResult<PathBuf> {
+        auto root = join(proc_macro_root().as_path(), "transformed"_str);
+        return source_path(root.as_path(), target, relative_source, ".status"_str);
+    }
+
     auto source_materialization_root() const -> PathBuf {
         return join(output_.as_path(), "sources"_str);
     }

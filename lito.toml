@@ -1,6 +1,6 @@
 [workspace]
 name = "lito"
-members = ["third-party/zstd", "archive", "frontend", "core", "cpp", "tools", "toolchain", "driver", "cli"]
+members = ["third-party/zstd", "frontend", "core", "pack", "cpp", "tools", "toolchain", "driver", "cli"]
 default-members = ["cli"]
 
 [workspace.package]
@@ -12,6 +12,9 @@ path = "frontend"
 
 [workspace.dependencies.lito-core]
 path = "core"
+
+[workspace.dependencies.lito-pack]
+path = "pack"
 
 [workspace.dependencies.lito-cpp]
 path = "cpp"
@@ -27,9 +30,6 @@ path = "driver"
 
 [workspace.dependencies.lito-zstd]
 path = "third-party/zstd"
-
-[workspace.dependencies.lito-archive]
-path = "archive"
 
 [workspace.dependencies.licrypto]
 git = "https://github.com/litocpp/licrypto.git"

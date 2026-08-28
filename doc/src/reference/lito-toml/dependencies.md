@@ -15,7 +15,11 @@ package aliases are not supported:
 `commit` is a full 40-digit hexadecimal Git object ID. Git URLs and selectors must be non-empty, may
 not start with `-`, and URLs may not contain a fragment.
 
-Normal dependencies require `visibility = "public" | "private" | "link"`.
+After resolving the provider package, Lito classifies the dependency as a C/C++ library, script,
+or pmacro contract. C/C++ library dependencies accept
+`visibility = "public" | "private" | "link"` and default to `private`. Pmacro dependencies do not
+accept `visibility` because they execute only in the compiler host. Script dependencies retain
+their script-specific field restrictions.
 
 `features` is an optional array of provider feature names. `default-features` is a boolean and
 defaults to `true`.
@@ -44,6 +48,27 @@ Development dependencies use the same package sources and feature fields but do 
 accept `visibility`. They are considered when selected targets are tests, benchmarks, or compile
 tests.
 
+## Pmacro dependencies
+
+A normal dependency that resolves to a package containing `[pmacro]` is a compiler-host input. Its
+dependency key is the provider package name and is the left side of an invocation identity:
+
+```toml
+[dependencies.model-macros]
+path = "../model-macros"
+features = ["diagnostics"]
+default-features = false
+```
+
+```cpp
+struct [[pmacro::attr("model-macros::validate")]] Model {};
+struct [[pmacro::derive("model-macros::equal")]] Value {};
+```
+
+Source, feature, and workspace fields match other dependencies. A pmacro dependency never enters
+target compile or link usage. A `[pmacro]` provider may depend on host C/C++ libraries through
+ordinary dependencies, but cannot recursively depend on another `[pmacro]` provider.
+
 ## `[runtime-dependencies.NAME]`
 
 Runtime dependencies use the same package sources and do not accept `visibility`, `features`, or
@@ -68,8 +93,9 @@ visibility = "public"
 features = ["simd"]
 ```
 
-For a workspace dev dependency, the member omits visibility. For a workspace runtime dependency, it
-also omits feature fields.
+For a workspace pmacro dependency, the member may set features and `default-features`, but omits
+visibility. Workspace development dependencies also omit visibility. Workspace runtime
+dependencies additionally omit feature fields.
 
 ## Source and package conflicts
 

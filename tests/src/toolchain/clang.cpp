@@ -864,3 +864,72 @@ TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
     EXPECT_FALSE(*bmi_exists);
     EXPECT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
 }
+
+TEST(ClangToolchain, AttachesResolvedCompilerPluginUsageToCompileIdentity) {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_ok());
+    auto toolchain  = rstd::move(created).unwrap();
+    auto invocation = CompileInvocation {
+        .arguments                  = strings("clang++"_str, "-c"_str, "source.cpp"_str),
+        .working_directory          = PathBuf::from("workspace"_str),
+        .identity_working_directory = String::make("workspace"_str),
+        .staged_object              = PathBuf::from("object.o.building"_str),
+    };
+    auto original_identity = invocation.identity();
+    auto arguments         = strings("mode=define"_str, "provider=fixture"_str);
+    auto attached =
+        toolchain.attach_compile_plugin(invocation,
+                                        ResolvedCompilerPluginUsage {
+                                            .plugin    = PathBuf::from("fixture.so"_str),
+                                            .name      = String::make("fixture"_str),
+                                            .arguments = rstd::move(arguments),
+                                            .identity = String::make("fixture-plugin-identity"_str),
+                                        });
+    ASSERT_TRUE(attached.is_ok());
+    EXPECT_TRUE(has_argument(invocation.arguments, "-fplugin=fixture.so"_str));
+    EXPECT_TRUE(has_argument(invocation.arguments, "-fplugin-arg-fixture-mode=define"_str));
+    EXPECT_TRUE(has_argument(invocation.arguments, "-fplugin-arg-fixture-provider=fixture"_str));
+    ASSERT_EQ(invocation.identity_inputs.len(), usize(1));
+    EXPECT_EQ(invocation.identity_inputs[usize {}].as_str(), "fixture-plugin-identity"_str);
+    EXPECT_NE(invocation.identity().as_str(), original_identity.as_str());
+}
+
+TEST(ClangToolchain, ResolvesAndAttachesCompilerPluginSdkFromCompilerPrefix) {
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto created = ClangToolchain::create(
+        lito::config::ToolchainSpec {
+            .cxx = PathBuf::from("clang++"_str),
+            .ar  = PathBuf::from("llvm-ar"_str),
+        },
+        *environment);
+    ASSERT_TRUE(created.is_ok());
+    auto toolchain = rstd::move(created).unwrap();
+    auto sdk       = resolve_clang_sdk(toolchain.compiler_identity(), *environment);
+    ASSERT_TRUE(sdk.is_ok());
+    EXPECT_TRUE(sdk->include_directory.as_path().is_absolute());
+    EXPECT_TRUE(sdk->clang_cpp.as_path().is_absolute());
+
+    auto options = cpp_options(
+        "c++23"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
+    auto context = cpp::CompileContext {
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(options), cpp::CppPublicRequirements {}),
+    };
+    ASSERT_TRUE(attach_clang_plugin_sdk(context, *sdk, true).is_ok());
+    ASSERT_EQ(context.language.as_Cpp().options.preprocessor.include_directories.len(), usize(1));
+    const auto& include =
+        context.language.as_Cpp().options.preprocessor.include_directories[usize {}];
+    EXPECT_EQ(include.path.as_path(), sdk->include_directory.as_path());
+    EXPECT_EQ(include.kind, cpp::CppIncludeDirectoryKind::System);
+    ASSERT_EQ(context.external_identities.len(), usize(1));
+    EXPECT_EQ(context.external_identities[usize {}].as_str(), sdk->identity.as_str());
+
+    ASSERT_TRUE(attach_clang_plugin_sdk(context, *sdk, true).is_ok());
+    EXPECT_EQ(context.language.as_Cpp().options.preprocessor.include_directories.len(), usize(1));
+    EXPECT_EQ(context.external_identities.len(), usize(1));
+}

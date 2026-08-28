@@ -15,6 +15,9 @@ sources = [
   "src/support/source.cppm",
   "src/support/mod.cppm",
   "src/build/compile_executor.cpp",
+  "src/build/proc_macro.cpp",
+  "src/pmacro/consumer.cppm",
+  "src/pmacro/generated.cppm",
   "src/build/environment.cpp",
   "src/build/profile.cpp",
   "src/build/profile_execution.cpp",
@@ -84,7 +87,7 @@ sources = [
 workspace = true
 visibility = "private"
 
-[dependencies.lito-archive]
+[dependencies.lito-pack]
 workspace = true
 visibility = "private"
 
@@ -139,3 +142,6 @@ visibility = "private"
 [dependencies.rstd-nostd]
 workspace = true
 visibility = "link"
+
+[dependencies.pmacro-basic-provider]
+path = "proc-macro/basic"

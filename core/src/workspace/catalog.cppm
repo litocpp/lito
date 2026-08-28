@@ -44,10 +44,12 @@ auto workspace_contains(const lito::manifest::WorkspaceManifest& workspace,
     return Ok(false);
 }
 
-auto test_only_package(const lito::manifest::PackageManifest& package) -> bool {
+auto associated_test_package(const lito::manifest::PackageManifest& package) -> bool {
     if (package.targets.is_empty()) return ! package.compile_tests.is_empty();
     for (const auto& target : package.targets) {
-        if (lito::manifest::package_target_kind(target) != lito::package::PackageTargetKind::Test)
+        const auto kind = lito::manifest::package_target_kind(target);
+        if (kind != lito::package::PackageTargetKind::Test &&
+            kind != lito::package::PackageTargetKind::ProcMacro)
             return false;
     }
     return true;
@@ -55,13 +57,14 @@ auto test_only_package(const lito::manifest::PackageManifest& package) -> bool {
 
 auto associated_package_matches(const lito::manifest::PackageManifest& package,
                                 lito::package::ProjectRootRole         role) -> bool {
-    if (role == lito::package::ProjectRootRole::AssociatedTest) return test_only_package(package);
+    if (role == lito::package::ProjectRootRole::AssociatedTest)
+        return associated_test_package(package);
     return false;
 }
 
 auto associated_declarations(lito::package::ProjectRootRole role) noexcept -> ref<str> {
     if (role == lito::package::ProjectRootRole::AssociatedTest)
-        return "[[test]] or [compile-test]"_str;
+        return "[[test]], [compile-test], or [pmacro]"_str;
     return "associated targets"_str;
 }
 

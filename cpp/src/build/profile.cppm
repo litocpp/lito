@@ -505,6 +505,71 @@ auto parse_build_arguments(const BuildConfiguration& configuration, const CppArg
     return parse_build_arguments(configuration.global_options, parser);
 }
 
+auto project_host_profile_options(const lito::config::ProjectBuildOptions& options,
+                                  const CppArgumentParser&                 parser)
+    -> lito::manifest::BuildProfileResult<lito::config::ProjectBuildOptions> {
+    auto       result = lito::config::ProjectBuildOptions {};
+    const auto append = [](Vec<lito::config::BuildOptionInput>& output,
+                           const Vec<String>&                   arguments,
+                           ref<str>                             source) -> void {
+        if (arguments.is_empty()) return;
+        output.push(lito::config::BuildOptionInput {
+            .arguments = arguments.clone(),
+            .source    = String::make(source),
+        });
+    };
+    for (const auto& input : options.cpp) {
+        auto parsed = parser.parse(input.arguments, input.source.as_str());
+        if (parsed.is_err()) {
+            return Err(lito::manifest::BuildProfileError::Options(
+                erase_error(rstd::move(parsed).unwrap_err())));
+        }
+        for (const auto& occurrence : parsed->occurrences) {
+            auto selected = occurrence.argument.is_CodegenSetting();
+            if (occurrence.argument.is_Macro()) {
+                selected = is_profile_owned_definition(
+                    occurrence.argument.as_Macro().directive.value.as_str());
+            } else if (occurrence.argument.is_OwnedSetting()) {
+                const auto& setting = occurrence.argument.as_OwnedSetting();
+                selected =
+                    setting.enabled.is_some() && (setting.setting == CppOwnedSetting::Exceptions ||
+                                                  setting.setting == CppOwnedSetting::Rtti);
+            }
+            if (selected) append(result.cpp, occurrence.raw_tokens, occurrence.source.as_str());
+        }
+    }
+    for (const auto& input : options.c) {
+        auto parsed = parser.parse_c(input.arguments, input.source.as_str());
+        if (parsed.is_err()) {
+            return Err(lito::manifest::BuildProfileError::Options(
+                erase_error(rstd::move(parsed).unwrap_err())));
+        }
+        for (const auto& occurrence : parsed->occurrences) {
+            auto selected = occurrence.argument.is_CodegenSetting();
+            if (occurrence.argument.is_Macro()) {
+                selected = is_profile_owned_definition(
+                    occurrence.argument.as_Macro().directive.value.as_str());
+            }
+            if (selected) append(result.c, occurrence.raw_tokens, occurrence.source.as_str());
+        }
+    }
+    for (const auto& input : options.linker) {
+        auto normalized = lito::link::normalize_arguments(lito::link::ArgumentSequence {
+            .tokens   = input.arguments.clone(),
+            .source   = input.source.clone(),
+            .identity = input.source.clone(),
+        });
+        if (normalized.is_err()) {
+            return Err(lito::manifest::BuildProfileError::Options(
+                erase_error(rstd::move(normalized).unwrap_err())));
+        }
+        for (const auto& occurrence : normalized->profile_arguments) {
+            append(result.linker, occurrence.raw_tokens, occurrence.source.as_str());
+        }
+    }
+    return Ok(rstd::move(result));
+}
+
 auto make_profile_spec(const BuildConfiguration&               configuration,
                        const lito::manifest::ProjectProfile&   project_profile,
                        const lito::manifest::BuildProfileName& selected_profile,

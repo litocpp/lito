@@ -130,13 +130,13 @@ auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed)
 }
 
 auto package_root_key(ref<str> key) -> bool {
-    return key == "package"_str || key == "lib"_str || key == "bin"_str || key == "test"_str ||
-           key == "bench"_str || key == "compile-test"_str || key == "usage"_str ||
-           key == "dependencies"_str || key == "dev-dependencies"_str ||
-           key == "runtime-dependencies"_str || key == "external-dependencies"_str ||
-           key == "external-sources"_str || key == "source-groups"_str ||
-           key == "build-tools"_str || key == "script"_str || key == "profile"_str ||
-           key == "when"_str || key == "features"_str;
+    return key == "package"_str || key == "lib"_str || key == "plugin"_str || key == "pmacro"_str ||
+           key == "bin"_str || key == "test"_str || key == "bench"_str ||
+           key == "compile-test"_str || key == "usage"_str || key == "dependencies"_str ||
+           key == "dev-dependencies"_str || key == "runtime-dependencies"_str ||
+           key == "external-dependencies"_str || key == "external-sources"_str ||
+           key == "source-groups"_str || key == "build-tools"_str || key == "script"_str ||
+           key == "profile"_str || key == "when"_str || key == "features"_str;
 }
 
 auto parse_archive_url(ref<str> value, ref<str> context)

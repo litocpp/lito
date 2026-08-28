@@ -901,6 +901,13 @@ public:
     }
 
 private:
+    auto append_source_overlay(Vec<String>& command, const Option<PathBuf>& overlay) const
+        -> ToolchainResult<empty> {
+        if (overlay.is_none()) return Ok(empty {});
+        toolchain::command::push_option(command, "-ivfsoverlay"_str);
+        return toolchain::command::push_path(command, overlay->as_path());
+    }
+
     auto prepare_scan_input_with_catalog(const cpp::CompileContext&           compile_context,
                                          toolchain::SharedPackageMacroCatalog external_macros,
                                          ref<rstd::path::Path> working_directory) const
@@ -933,6 +940,81 @@ private:
     }
 
 public:
+    auto attach_compile_plugin(CompileInvocation&                 invocation,
+                               const ResolvedCompilerPluginUsage& usage) const
+        -> ToolchainResult<empty> {
+        if (usage.name.is_empty() || usage.identity.is_empty()) {
+            return failure<empty>("compiler plugin usage requires name and identity"_str);
+        }
+        auto pushed = toolchain::command::push_path_option(
+            invocation.arguments, "-fplugin="_str, usage.plugin.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        for (const auto& argument : usage.arguments) {
+            invocation.arguments.push(
+                rstd::format("-fplugin-arg-{}-{}", usage.name.as_str(), argument.as_str()));
+        }
+        invocation.identity_inputs.push(usage.identity.clone());
+        return Ok(empty {});
+    }
+
+    auto prepare_frontend_plugin(const cpp::CompileContext&                compile_context,
+                                 ref<rstd::path::Path>                     source,
+                                 ref<rstd::path::Path>                     working_directory,
+                                 const Vec<cpp::ModuleArtifactDependency>& module_dependencies,
+                                 ref<rstd::path::Path>                     plugin,
+                                 ref<str>                                  plugin_name,
+                                 const Vec<String>&                        plugin_arguments,
+                                 ref<str>                                  action,
+                                 const Option<PathBuf>& source_overlay = None()) const
+        -> ToolchainResult<FrontendPluginInvocation> {
+        if (compile_context.language.is_C()) {
+            return failure<FrontendPluginInvocation>(
+                "Clang frontend plugins require a C++ compile context"_str);
+        }
+        auto command = Vec<String>::make();
+        auto context = append_compile_context(command, compile_context, false);
+        if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        auto overlay = append_source_overlay(command, source_overlay);
+        if (overlay.is_err()) return Err(rstd::move(overlay).unwrap_err());
+        for (const auto& dependency : module_dependencies) {
+            auto prefix = rstd::format(
+                "{}{}=", toolchain::clang_options::MODULE_FILE, dependency.logical_name.as_str());
+            auto pushed = toolchain::command::push_path_option(
+                command, prefix.as_str(), dependency.path.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        }
+        auto pushed = toolchain::command::push_path_option(command, "-fplugin="_str, plugin);
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        for (const auto& argument : plugin_arguments) {
+            command.push(rstd::format("-fplugin-arg-{}-{}", plugin_name, argument.as_str()));
+        }
+        toolchain::command::push_option(command, "-fsyntax-only"_str);
+        pushed = toolchain::command::push_path(command, source);
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        return Ok(FrontendPluginInvocation {
+            .arguments         = rstd::move(command),
+            .working_directory = PathBuf::from(working_directory),
+            .source            = PathBuf::from(source),
+            .action            = String::make(action),
+        });
+    }
+
+    auto execute_frontend_plugin(const FrontendPluginInvocation& invocation) const
+        -> ToolchainResult<rstd::time::Duration> {
+        auto output = run_command(
+            invocation.arguments, environment_, Some(invocation.working_directory.as_path()));
+        if (output.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        }
+        if (output->exit_code != i32 {}) {
+            return failure<rstd::time::Duration>(rstd::format("Clang {} failed for '{}':\n{}",
+                                                              invocation.action.as_str(),
+                                                              invocation.source.as_path(),
+                                                              output->standard_error.as_str()));
+        }
+        return Ok(output->elapsed);
+    }
+
     auto prepare_compile(
         const cpp::PreparedUnit&                  prepared,
         const cpp::ScanResult&                    scan_result,
@@ -953,6 +1035,8 @@ public:
             auto command = Vec<String>::make();
             auto context = append_compile_context(command, *prepared.unit.context, false);
             if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+            auto overlay = append_source_overlay(command, prepared.unit.source_overlay);
+            if (overlay.is_err()) return Err(rstd::move(overlay).unwrap_err());
             for (const auto& macro : scan.external_macros) {
                 if (macro.state == frontend::ExternalMacroState::Undefined) continue;
                 if (macro.compiler_definition.is_none()) {
@@ -999,6 +1083,8 @@ public:
         auto command    = Vec<String>::make();
         auto context    = append_compile_context(command, *prepared.unit.context, false);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        auto overlay = append_source_overlay(command, prepared.unit.source_overlay);
+        if (overlay.is_err()) return Err(rstd::move(overlay).unwrap_err());
         if (prepared.unit.owner.is_StandardLibrary()) {
             toolchain::command::push_option(command, "-Wno-reserved-module-identifier"_str);
         }
@@ -1070,22 +1156,6 @@ public:
             .final_bmi = source_unit.bmi.is_some() ? Some(source_unit.bmi->path.clone())
                                                    : Option<PathBuf> {},
         });
-    }
-
-    auto execute_compile(const CompileInvocation& invocation, ref<rstd::path::Path> source) const
-        -> ToolchainResult<rstd::time::Duration> {
-        auto output = execute_compile_capture(invocation);
-        if (output.is_err()) {
-            return Err(rstd::move(output).unwrap_err());
-        }
-        if (output->exit_code != i32 {}) {
-            return failure<rstd::time::Duration>(
-                rstd::format("clang++ failed for '{}'\n{}\n{}",
-                             source,
-                             command_text(invocation.arguments).as_str(),
-                             output->standard_error.as_str()));
-        }
-        return Ok(output->elapsed);
     }
 
     auto compile_executor() const noexcept -> ClangCompileExecutor {

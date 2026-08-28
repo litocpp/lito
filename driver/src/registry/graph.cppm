@@ -37,11 +37,17 @@ struct RegistryGraphError {
 template<typename T>
 using RegistryGraphResult = Result<T, RegistryGraphError>;
 
+struct BuiltinRegistryPackage {
+    RegistryPackageId package;
+    SemanticVersion   version;
+};
+
 struct RegistryGraphProvider {
     void*                                      context {};
     const lito::source::ResolvedPackageSource* root_source {};
     RegistryGraphResult<Vec<ResolvedRegistryGraphSource>> (
         *resolve)(void*, slice<RegistryGraphRequirement>) noexcept {};
+    RegistryGraphResult<BuiltinRegistryPackage> (*resolve_builtin)(void*, ref<str>) noexcept {};
 };
 
 class RegistryGraphClient {
@@ -88,6 +94,7 @@ public:
                          Option<String>             registry = None(),
                          ref<str>                   source   = "Registry install"_str)
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
+    auto add_index(RegistryPackageIndex index) -> void { indices_.push(rstd::move(index)); }
     auto provider() noexcept -> RegistryGraphProvider {
         return RegistryGraphProvider {
             .context = this,

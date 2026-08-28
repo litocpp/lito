@@ -81,9 +81,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(licrypto)
 
 add_subdirectory(third-party/zstd)
-add_subdirectory(archive)
 add_subdirectory(frontend)
 add_subdirectory(core)
+add_subdirectory(pack)
 add_subdirectory(cpp)
 add_subdirectory(tools)
 add_subdirectory(toolchain)

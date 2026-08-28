@@ -18,6 +18,15 @@ using PathBuf = rstd::path::PathBuf;
 
 class PackageResolver : public ProjectFixture {};
 
+auto pmacro_source_options(ref<rstd::path::Path> support) -> lito::source::SourceResolutionOptions {
+    auto options = lito::source::SourceResolutionOptions {};
+    options.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {
+        .id     = String::make("pmacro"_str),
+        .source = lito::source::BuiltinPackageSource::Path(PathBuf::from(support)),
+    });
+    return options;
+}
+
 using GraphFactory = lito::source::SourceTreeResult<lito::source::SourceTree> (*)();
 
 auto workspace_convention_test_invalid_kind_tree()
@@ -944,6 +953,451 @@ sources = ["lib.cppm"]
         }
     }
     EXPECT_TRUE(provider_library);
+}
+
+TEST_F(PackageResolver, PmacroDependenciesUseTheHostContract) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-consumer"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-pmacro-consumer"
+sources = ["main.cpp"]
+link-stdlib = false
+
+[dependencies.fixture-pmacro-provider]
+path = "provider"
+features = ["diagnostics"]
+default-features = false
+)toml"_str },
+        { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-provider"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.pmacro.provider"
+sources = ["lib.cppm"]
+
+[features.diagnostics]
+
+[dependencies.fixture-pmacro-host-lib]
+path = "../host-lib"
+visibility = "private"
+)toml"_str },
+        { "provider/lib.cppm"_str, "export module fixture.pmacro.provider;\n"_str },
+        { "host-lib/lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-host-lib"
+version = "0.1.0"
+
+[lib]
+name = "fixture-pmacro-host-lib"
+module = "fixture.pmacro.host_lib"
+archive = "fixture-pmacro-host-lib"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "host-lib/lib.cppm"_str, "export module fixture.pmacro.host_lib;\n"_str },
+        { "support/lito.toml"_str, R"toml([package]
+name = "pmacro"
+version = "0.3.0"
+
+[plugin]
+module = "pmacro"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "support/lib.cppm"_str, "export module pmacro;\n"_str },
+    };
+    auto project = materialize("pmacro-host-contract"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto options =
+        pmacro_source_options(project->root.join(PathBuf::from("support"_str).as_path()).as_path());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production,
+        rstd::move(options));
+    if (selected.is_err()) {
+        auto message = error_chain_text(rstd::move(selected).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+
+    const lito::package::ResolvedPackage* consumer = nullptr;
+    const lito::package::ResolvedPackage* provider = nullptr;
+    for (const auto& package : selected->graph.packages) {
+        if (package.manifest.name == "fixture-pmacro-consumer"_str) consumer = &package;
+        if (package.manifest.name == "fixture-pmacro-provider"_str) provider = &package;
+    }
+    ASSERT_NE(consumer, nullptr);
+    ASSERT_NE(provider, nullptr);
+    ASSERT_EQ(consumer->dependencies.len(), usize(1));
+    ASSERT_TRUE(consumer->dependencies[usize {}].is_Pmacro());
+    const auto& dependency = consumer->dependencies[usize {}].as_Pmacro().value;
+    EXPECT_EQ(dependency.name.as_str(), "fixture-pmacro-provider"_str);
+    ASSERT_EQ(dependency.features.len(), usize(1));
+    EXPECT_EQ(dependency.features[usize {}].as_str(), "diagnostics"_str);
+    EXPECT_FALSE(dependency.default_features);
+    ASSERT_EQ(provider->dependencies.len(), usize(2));
+    auto has_cpp    = false;
+    auto has_plugin = false;
+    for (const auto& provider_dependency : provider->dependencies) {
+        has_cpp |= provider_dependency.is_Cpp();
+        has_plugin |= provider_dependency.is_Plugin();
+    }
+    EXPECT_TRUE(has_cpp);
+    EXPECT_TRUE(has_plugin);
+
+    ASSERT_EQ(selected->selected_package_names.len(), usize(1));
+    EXPECT_EQ(selected->selected_package_names[usize {}].as_str(), "fixture-pmacro-consumer"_str);
+    ASSERT_EQ(selected->proc_macro_provider_names.len(), usize(1));
+    EXPECT_EQ(selected->proc_macro_provider_names[usize {}].as_str(),
+              "fixture-pmacro-provider"_str);
+    ASSERT_EQ(selected->plugin_package_names.len(), usize(1));
+    EXPECT_EQ(selected->plugin_package_names[usize {}].as_str(), "pmacro"_str);
+    EXPECT_EQ(selected->host_package_names.len(), usize(3));
+    auto diagnostics = false;
+    for (const auto& feature : provider->features) {
+        if (feature.name == "diagnostics"_str) diagnostics = feature.enabled;
+    }
+    EXPECT_TRUE(diagnostics);
+}
+
+TEST_F(PackageResolver, PluginDependenciesUseTheHostContract) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-plugin-consumer"
+version = "0.1.0"
+
+[lib]
+name = "fixture-plugin-consumer"
+module = "fixture.plugin_consumer"
+archive = "fixture-plugin-consumer"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-compiler-plugin]
+path = "plugin"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.plugin_consumer;\n"_str },
+        { "plugin/lito.toml"_str, R"toml([package]
+name = "fixture-compiler-plugin"
+version = "0.1.0"
+
+[plugin]
+module = "fixture.compiler_plugin"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "plugin/lib.cppm"_str, "export module fixture.compiler_plugin;\n"_str },
+    };
+    auto project = materialize("plugin-host-contract"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production);
+    if (selected.is_err()) {
+        auto message = error_chain_text(rstd::move(selected).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    const lito::package::ResolvedPackage* consumer = nullptr;
+    for (const auto& package : selected->graph.packages) {
+        if (package.manifest.name == "fixture-plugin-consumer"_str) consumer = &package;
+    }
+    ASSERT_NE(consumer, nullptr);
+    ASSERT_EQ(consumer->dependencies.len(), usize(1));
+    EXPECT_TRUE(consumer->dependencies[usize {}].is_Plugin());
+    ASSERT_EQ(selected->plugin_package_names.len(), usize(1));
+    EXPECT_EQ(selected->plugin_package_names[usize {}].as_str(), "fixture-compiler-plugin"_str);
+    ASSERT_EQ(selected->host_package_names.len(), usize(1));
+    EXPECT_EQ(selected->host_package_names[usize {}].as_str(), "fixture-compiler-plugin"_str);
+}
+
+TEST_F(PackageResolver, PmacroBuiltinOverrideRequiresAPluginTarget) {
+    constexpr ref<str> support_manifests[] = {
+        R"toml([package]
+name = "pmacro"
+version = "0.3.0"
+
+[lib]
+name = "pmacro"
+module = "pmacro"
+archive = "pmacro"
+sources = ["lib.cppm"]
+)toml"_str,
+    };
+    auto index = usize {};
+    for (auto support_manifest : support_manifests) {
+        const ProjectFile files[] = {
+            { "lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-override-consumer"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-pmacro-override-consumer"
+sources = ["main.cpp"]
+link-stdlib = false
+
+[dependencies.fixture-pmacro-override-provider]
+path = "provider"
+)toml"_str },
+            { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+            { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-override-provider"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.pmacro.override_provider"
+sources = ["lib.cppm"]
+)toml"_str },
+            { "provider/lib.cppm"_str, "export module fixture.pmacro.override_provider;\n"_str },
+            { "support/lito.toml"_str, support_manifest },
+            { "support/lib.cppm"_str, "export module pmacro;\n"_str },
+        };
+        auto project =
+            materialize(rstd::format("pmacro-invalid-override-{}", index).as_str(), files);
+        ASSERT_TRUE(project.is_ok());
+        auto options = pmacro_source_options(
+            project->root.join(PathBuf::from("support"_str).as_path()).as_path());
+        auto selected = lito::package::resolve_package_selection(
+            lito::package::PackageSelection { .root = project->root.clone() },
+            lito::package::PackageSelectionPurpose::Production,
+            rstd::move(options));
+        ASSERT_TRUE(selected.is_err());
+        EXPECT_TRUE(error_chain_text(rstd::move(selected).unwrap_err())
+                        .as_str()
+                        .contains("must provide [plugin]"_str));
+        ++index;
+    }
+}
+
+TEST_F(PackageResolver, PluginPackagesCannotDependOnPlugins) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-plugin-root"
+version = "0.1.0"
+
+[lib]
+name = "fixture-plugin-root"
+module = "fixture.plugin_root"
+archive = "fixture-plugin-root"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-plugin-a]
+path = "plugin-a"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.plugin_root;\n"_str },
+        { "plugin-a/lito.toml"_str, R"toml([package]
+name = "fixture-plugin-a"
+version = "0.1.0"
+
+[plugin]
+module = "fixture.plugin_a"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-plugin-b]
+path = "../plugin-b"
+)toml"_str },
+        { "plugin-a/lib.cppm"_str, "export module fixture.plugin_a;\n"_str },
+        { "plugin-b/lito.toml"_str, R"toml([package]
+name = "fixture-plugin-b"
+version = "0.1.0"
+
+[plugin]
+module = "fixture.plugin_b"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "plugin-b/lib.cppm"_str, "export module fixture.plugin_b;\n"_str },
+    };
+    auto project = materialize("nested-plugin-dependency"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(selected.is_err());
+    EXPECT_TRUE(error_chain_text(rstd::move(selected).unwrap_err())
+                    .as_str()
+                    .contains("cannot depend on plugin package"_str));
+}
+
+TEST_F(PackageResolver, PmacroDependencyRejectsVisibility) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-visibility"
+version = "0.1.0"
+
+[lib]
+name = "fixture-pmacro-visibility"
+module = "fixture.pmacro.visibility"
+archive = "fixture-pmacro-visibility"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-pmacro-visibility-provider]
+path = "provider"
+visibility = "private"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.pmacro.visibility;\n"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-visibility-provider"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.pmacro.visibility_provider"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "provider/lib.cppm"_str, "export module fixture.pmacro.visibility_provider;\n"_str },
+        { "support/lito.toml"_str, R"toml([package]
+name = "pmacro"
+version = "0.3.0"
+
+[plugin]
+module = "pmacro"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "support/lib.cppm"_str, "export module pmacro;\n"_str },
+    };
+    auto project = materialize("pmacro-visibility"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto options =
+        pmacro_source_options(project->root.join(PathBuf::from("support"_str).as_path()).as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path(), rstd::move(options));
+    ASSERT_TRUE(graph.is_err());
+    auto message = error_chain_text(graph.unwrap_err());
+    if (! message.as_str().contains("visibility"_str)) {
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+}
+
+TEST_F(PackageResolver, DevelopmentPmacroDependenciesOnlySelectForDevelopmentTargets) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-dev-pmacro-consumer"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-dev-pmacro-consumer"
+sources = ["main.cpp"]
+link-stdlib = false
+
+[[test]]
+name = "fixture-dev-pmacro-test"
+sources = ["test.cpp"]
+link-stdlib = false
+
+[dev-dependencies.fixture-dev-pmacro-provider]
+path = "provider"
+)toml"_str },
+        { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "test.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-dev-pmacro-provider"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.dev_pmacro.provider"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "provider/lib.cppm"_str, "export module fixture.dev_pmacro.provider;\n"_str },
+        { "support/lito.toml"_str, R"toml([package]
+name = "pmacro"
+version = "0.3.0"
+
+[plugin]
+module = "pmacro"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "support/lib.cppm"_str, "export module pmacro;\n"_str },
+    };
+    auto project = materialize("development-pmacro"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto support    = project->root.join(PathBuf::from("support"_str).as_path());
+    auto production = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production,
+        pmacro_source_options(support.as_path()));
+    if (production.is_err()) {
+        auto message = error_chain_text(rstd::move(production).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(production->host_package_names.is_empty());
+    EXPECT_TRUE(production->proc_macro_provider_names.is_empty());
+
+    auto development = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::All,
+        pmacro_source_options(support.as_path()));
+    if (development.is_err()) {
+        auto message = error_chain_text(rstd::move(development).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    ASSERT_EQ(development->proc_macro_provider_names.len(), usize(1));
+    EXPECT_EQ(development->proc_macro_provider_names[usize {}].as_str(),
+              "fixture-dev-pmacro-provider"_str);
+    EXPECT_EQ(development->host_package_names.len(), usize(2));
+}
+
+TEST_F(PackageResolver, PmacroProvidersCannotDependOnPmacroProviders) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-recursive-pmacro-consumer"
+version = "0.1.0"
+
+[lib]
+name = "fixture-recursive-pmacro-consumer"
+module = "fixture.recursive_pmacro.consumer"
+archive = "fixture-recursive-pmacro-consumer"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-pmacro-provider-a]
+path = "provider-a"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.recursive_pmacro.consumer;\n"_str },
+        { "provider-a/lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-provider-a"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.pmacro.provider_a"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-pmacro-provider-b]
+path = "../provider-b"
+)toml"_str },
+        { "provider-a/lib.cppm"_str, "export module fixture.pmacro.provider_a;\n"_str },
+        { "provider-b/lito.toml"_str, R"toml([package]
+name = "fixture-pmacro-provider-b"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.pmacro.provider_b"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "provider-b/lib.cppm"_str, "export module fixture.pmacro.provider_b;\n"_str },
+        { "support/lito.toml"_str, R"toml([package]
+name = "pmacro"
+version = "0.3.0"
+
+[plugin]
+module = "pmacro"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "support/lib.cppm"_str, "export module pmacro;\n"_str },
+    };
+    auto project = materialize("recursive-pmacro"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto options =
+        pmacro_source_options(project->root.join(PathBuf::from("support"_str).as_path()).as_path());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production,
+        rstd::move(options));
+    ASSERT_TRUE(selected.is_err());
+    auto message = error_chain_text(selected.unwrap_err());
+    if (! message.as_str().contains("cannot depend"_str)) {
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
 }
 
 TEST_F(PackageResolver, WorkspaceDefaultsSelectOnlyDeclaredMembers) {

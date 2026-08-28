@@ -352,6 +352,52 @@
       ],
       "additionalProperties": false
     },
+    "pmacroTarget": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "$ref": "#/definitions/moduleName"
+        },
+        "sources": {
+          "$ref": "#/definitions/nonEmptyPathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/targetSources"
+        }
+      ],
+      "additionalProperties": false
+    },
+    "pluginTarget": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "$ref": "#/definitions/moduleName"
+        },
+        "sources": {
+          "$ref": "#/definitions/nonEmptyPathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/targetSources"
+        }
+      ],
+      "additionalProperties": false
+    },
     "runnableTarget": {
       "type": "object",
       "required": [
@@ -1029,6 +1075,15 @@
         "commit": {
           "$ref": "#/definitions/gitCommit"
         },
+        "version": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "registry": {
+          "$ref": "#/definitions/packageName"
+        },
+        "package": {
+          "$ref": "#/definitions/packageName"
+        },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
         },
@@ -1081,6 +1136,16 @@
                     "required": [
                       "commit"
                     ]
+                  },
+                  {
+                    "required": [
+                      "version"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "registry"
+                    ]
                   }
                 ]
               }
@@ -1092,7 +1157,9 @@
               "not": {
                 "anyOf": [
                   { "required": ["path"] },
-                  { "required": ["builtin"] }
+                  { "required": ["builtin"] },
+                  { "required": ["version"] },
+                  { "required": ["registry"] }
                 ]
               }
             },
@@ -1102,6 +1169,22 @@
                 "anyOf": [
                   { "required": ["path"] },
                   { "required": ["git"] },
+                  { "required": ["branch"] },
+                  { "required": ["tag"] },
+                  { "required": ["rev"] },
+                  { "required": ["commit"] },
+                  { "required": ["version"] },
+                  { "required": ["registry"] }
+                ]
+              }
+            },
+            {
+              "required": ["version"],
+              "not": {
+                "anyOf": [
+                  { "required": ["path"] },
+                  { "required": ["git"] },
+                  { "required": ["builtin"] },
                   { "required": ["branch"] },
                   { "required": ["tag"] },
                   { "required": ["rev"] },
@@ -1115,7 +1198,14 @@
       "additionalProperties": false
     },
     "explicitDependency": {
-      "$ref": "#/definitions/dependencySource"
+      "allOf": [
+        {
+          "$ref": "#/definitions/dependencySource"
+        },
+        {
+          "not": { "required": ["package"] }
+        }
+      ]
     },
     "workspaceDependencyReference": {
       "type": "object",
@@ -1156,8 +1246,9 @@
         },
         {
           "not": {
-            "required": [
-              "visibility"
+            "anyOf": [
+              { "required": ["visibility"] },
+              { "required": ["package"] }
             ]
           }
         }
@@ -1226,7 +1317,8 @@
             "anyOf": [
               { "required": ["visibility"] },
               { "required": ["features"] },
-              { "required": ["default-features"] }
+              { "required": ["default-features"] },
+              { "required": ["package"] }
             ]
           }
         }
@@ -1789,6 +1881,12 @@
         "lib": {
           "$ref": "#/definitions/libraryTarget"
         },
+        "plugin": {
+          "$ref": "#/definitions/pluginTarget"
+        },
+        "pmacro": {
+          "$ref": "#/definitions/pmacroTarget"
+        },
         "bin": {
           "type": "array",
           "minItems": 1,
@@ -1867,6 +1965,8 @@
                   "not": {
                     "anyOf": [
                       { "required": ["lib"] },
+                      { "required": ["plugin"] },
+                      { "required": ["pmacro"] },
                       { "required": ["bin"] },
                       { "required": ["bench"] }
                     ]
@@ -1881,6 +1981,30 @@
               ]
             }
           ]
+        },
+        {
+          "not": {
+            "allOf": [
+              { "required": ["lib"] },
+              { "required": ["plugin"] }
+            ]
+          }
+        },
+        {
+          "not": {
+            "allOf": [
+              { "required": ["lib"] },
+              { "required": ["pmacro"] }
+            ]
+          }
+        },
+        {
+          "not": {
+            "allOf": [
+              { "required": ["plugin"] },
+              { "required": ["pmacro"] }
+            ]
+          }
         },
         {
           "anyOf": [

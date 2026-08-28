@@ -41,6 +41,18 @@ struct SourceParseState {
     bool                ignore_statement { false };
 };
 
+struct ScopedAttributeParseState {
+    bool           first_open {};
+    bool           in_list {};
+    bool           first_close {};
+    usize          parentheses {};
+    usize          braces {};
+    usize          squares {};
+    Option<String> scope;
+    bool           separator {};
+    bool           complete {};
+};
+
 auto parse_name(const Vec<lexical::Token>& tokens, usize start, ref<str> context)
     -> lexical::Result<Option<ParsedName>> {
     if (start >= tokens.len()) return Ok(None());
@@ -108,6 +120,13 @@ public:
     auto consume(slice<lexical::Token> tokens) -> lexical::Result<empty> {
         for (const auto& token : tokens) {
             while (states_.len() <= token.expansion.source) states_.emplace_back();
+            while (attribute_states_.len() <= token.expansion.source) {
+                attribute_states_.emplace_back();
+                scoped_attributes_.emplace_back();
+            }
+            observe_scoped_attribute(token,
+                                     attribute_states_[token.expansion.source],
+                                     scoped_attributes_[token.expansion.source]);
             auto& state = states_[token.expansion.source];
             if (token.kind == lexical::TokenKind::Newline) continue;
             auto text = token.text.as_str();
@@ -168,6 +187,9 @@ public:
             .source = rstd::path::PathBuf::from(translation.sources.path(translation.main_source)),
             .provided              = rstd::move(provided_),
             .implementation_module = rstd::move(implementation_module_),
+            .scoped_attributes     = translation.main_source < scoped_attributes_.len()
+                                         ? rstd::move(scoped_attributes_[translation.main_source])
+                                         : Vec<ScopedAttributeUse>::make(),
             .header_inputs =
                 [&]() {
                     auto paths =
@@ -196,6 +218,108 @@ public:
     }
 
 private:
+    static auto reset_attribute_candidate(ScopedAttributeParseState& state) -> void {
+        state.scope     = None();
+        state.separator = false;
+        state.complete  = false;
+    }
+
+    static auto append_scoped_attribute(Vec<ScopedAttributeUse>& attributes,
+                                        ref<str>                 scope,
+                                        ref<str>                 name) -> void {
+        for (const auto& attribute : attributes) {
+            if (attribute.scope == scope && attribute.name == name) return;
+        }
+        attributes.push(ScopedAttributeUse {
+            .scope = String::make(scope),
+            .name  = String::make(name),
+        });
+    }
+
+    static auto observe_scoped_attribute(const lexical::Token&      token,
+                                         ScopedAttributeParseState& state,
+                                         Vec<ScopedAttributeUse>&   attributes) -> void {
+        if (token.kind == lexical::TokenKind::Newline) return;
+        const auto text = token.text.as_str();
+        if (! state.in_list) {
+            if (text == "["_str) {
+                if (state.first_open) {
+                    state.in_list    = true;
+                    state.first_open = false;
+                    reset_attribute_candidate(state);
+                } else {
+                    state.first_open = true;
+                }
+            } else {
+                state.first_open = false;
+            }
+            return;
+        }
+
+        if (state.parentheses != usize {} || state.braces != usize {} ||
+            state.squares != usize {}) {
+            if (text == "("_str)
+                ++state.parentheses;
+            else if (text == ")"_str && state.parentheses != usize {})
+                --state.parentheses;
+            else if (text == "{"_str)
+                ++state.braces;
+            else if (text == "}"_str && state.braces != usize {})
+                --state.braces;
+            else if (text == "["_str)
+                ++state.squares;
+            else if (text == "]"_str && state.squares != usize {})
+                --state.squares;
+            return;
+        }
+
+        if (text == "]"_str) {
+            if (state.first_close) {
+                state = ScopedAttributeParseState {};
+            } else {
+                state.first_close = true;
+            }
+            return;
+        }
+        state.first_close = false;
+        if (text == ","_str) {
+            reset_attribute_candidate(state);
+            return;
+        }
+        if (text == "("_str) {
+            state.parentheses = usize(1);
+            state.complete    = true;
+            return;
+        }
+        if (text == "{"_str) {
+            state.braces   = usize(1);
+            state.complete = true;
+            return;
+        }
+        if (text == "["_str) {
+            state.squares  = usize(1);
+            state.complete = true;
+            return;
+        }
+        if (state.complete) return;
+        if (token.kind == lexical::TokenKind::Identifier) {
+            if (state.scope.is_none()) {
+                state.scope = Some(String::make(text));
+            } else if (state.separator) {
+                append_scoped_attribute(attributes, state.scope->as_str(), text);
+                state.complete = true;
+            } else {
+                state.complete = true;
+            }
+            return;
+        }
+        if (text == "::"_str && state.scope.is_some()) {
+            state.separator = true;
+            return;
+        }
+        state.complete = true;
+    }
+
     auto parse_candidate(const Vec<lexical::Token>& candidate) -> lexical::Result<empty> {
         auto declaration = usize {};
         auto exported    = candidate[usize {}].text.as_str() == "export"_str;
@@ -257,12 +381,14 @@ private:
         return Ok(empty {});
     }
 
-    Option<ProvidedModule> provided_;
-    Option<String>         implementation_module_;
-    String                 declared_;
-    ImportIndexMap         import_names_;
-    Vec<PendingImport>     imports_;
-    Vec<SourceParseState>  states_;
+    Option<ProvidedModule>         provided_;
+    Option<String>                 implementation_module_;
+    String                         declared_;
+    ImportIndexMap                 import_names_;
+    Vec<PendingImport>             imports_;
+    Vec<SourceParseState>          states_;
+    Vec<ScopedAttributeParseState> attribute_states_;
+    Vec<Vec<ScopedAttributeUse>>   scoped_attributes_;
 };
 
 auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& translation)

@@ -80,6 +80,7 @@ enum class BuildStage
     Script,
     RuntimeResource,
     Scan,
+    Plugin,
     CompilePlan,
     CompileExecute,
     CompileCacheFinish,
@@ -143,6 +144,7 @@ auto build_stage_label(BuildStage stage) noexcept -> ref<str> {
     case BuildStage::Script: return "build.script"_str;
     case BuildStage::RuntimeResource: return "build.runtime-resource"_str;
     case BuildStage::Scan: return "build.scan"_str;
+    case BuildStage::Plugin: return "build.plugin"_str;
     case BuildStage::CompilePlan: return "build.compile-plan"_str;
     case BuildStage::CompileExecute: return "build.compile-execute"_str;
     case BuildStage::CompileCacheFinish: return "build.compile-cache-finish"_str;
@@ -235,7 +237,7 @@ public:
 };
 
 class BuildStageTimingReport {
-    array<BuildOperationTiming, 15> timings_;
+    array<BuildOperationTiming, 16> timings_;
 
     static auto index(BuildStage stage) noexcept -> usize {
         return usize(static_cast<rstd::size_t>(stage));
@@ -263,7 +265,7 @@ public:
 
     auto attributed() const noexcept -> rstd::time::Duration {
         auto total = rstd::time::Duration {};
-        for (auto index = usize(1); index < usize(15); ++index) {
+        for (auto index = usize(1); index < usize(16); ++index) {
             total = total.saturating_add(timings_[index].total);
         }
         return total;

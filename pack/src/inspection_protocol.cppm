@@ -1,7 +1,7 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.driver:registry.inspection_protocol;
+export module lito.pack:inspection_protocol;
 
 import rstd;
 import rstd.json;
@@ -35,9 +35,20 @@ struct RegistryInspectionRequest {
     u64                    maximum_blob_size {};
 };
 
+struct VerifiedRegistryPackageDescriptor {
+    RegistryPackageId                 package;
+    SemanticVersion                   version;
+    RegistryPackageArchive            archive;
+    Vec<RegistryDependencyProjection> dependencies;
+    usize                             file_count {};
+    u64                               unpacked_size {};
+};
+
 auto registry_inspector_capabilities_json() -> String;
 auto parse_registry_inspection_request(slice<u8> input)
     -> RegistryInspectionProtocolResult<RegistryInspectionRequest>;
+auto parse_verified_publish_candidate(slice<u8> input)
+    -> RegistryInspectionProtocolResult<VerifiedRegistryPackageDescriptor>;
 auto serialize_verified_publish_candidate(const InspectedRegistryArchive& inspected) -> String;
 
 } // namespace lito::registry
@@ -107,6 +118,16 @@ auto string_member(const Json& value, ref<str> key, ref<str> context)
     return Ok(*text);
 }
 
+auto bool_member(const Json& value, ref<str> key, ref<str> context)
+    -> RegistryInspectionProtocolResult<bool> {
+    auto result  = rstd_try(member(value, key, context));
+    auto boolean = result->as_bool();
+    if (boolean.is_none()) {
+        return protocol_failure<bool>(rstd::format("{}.{} must be a boolean", context, key));
+    }
+    return Ok(*boolean);
+}
+
 template<typename T>
 auto parse_registry_value(RegistryValueResult<T> result, ref<str> context)
     -> RegistryInspectionProtocolResult<T> {
@@ -145,6 +166,91 @@ auto dependency_visibility_text(lito::dependency::DependencyVisibility visibilit
     case lito::dependency::DependencyVisibility::LinkOnly: return "link"_str;
     }
     rstd::unreachable();
+}
+
+auto dependency_kind(ref<str> value, ref<str> context)
+    -> RegistryInspectionProtocolResult<RegistryDependencyKind> {
+    if (value == "normal"_str) return Ok(RegistryDependencyKind::Normal);
+    if (value == "development"_str) return Ok(RegistryDependencyKind::Development);
+    if (value == "runtime"_str) return Ok(RegistryDependencyKind::Runtime);
+    return protocol_failure<RegistryDependencyKind>(
+        rstd::format("{}.kind is unsupported", context));
+}
+
+auto dependency_visibility(ref<str> value, ref<str> context)
+    -> RegistryInspectionProtocolResult<lito::dependency::DependencyVisibility> {
+    using lito::dependency::DependencyVisibility;
+    if (value == "public"_str) return Ok(DependencyVisibility::Public);
+    if (value == "private"_str) return Ok(DependencyVisibility::Private);
+    if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
+    return protocol_failure<DependencyVisibility>(
+        rstd::format("{}.visibility is unsupported", context));
+}
+
+auto canonical_size(const Json& value, ref<str> field, ref<str> context)
+    -> RegistryInspectionProtocolResult<u64> {
+    auto text   = rstd_try(string_member(value, field, context));
+    auto parsed = RegistryBlobSize::parse(text);
+    if (parsed.is_err()) {
+        return protocol_failure<u64>(
+            rstd::format("{}.{} must be a canonical unsigned decimal string", context, field));
+    }
+    return Ok(parsed->value());
+}
+
+auto parse_dependency(const Json& value, usize index)
+    -> RegistryInspectionProtocolResult<RegistryDependencyProjection> {
+    auto context = rstd::format("candidate.dependencies[{}]", index);
+    rstd_try(reject_unknown(value,
+                            context.as_str(),
+                            { "alias"_str,
+                              "registry"_str,
+                              "package"_str,
+                              "requirement"_str,
+                              "kind"_str,
+                              "visibility"_str,
+                              "features"_str,
+                              "default_features"_str }));
+    auto registry = rstd_try(parse_registry_value(
+        RegistryId::parse(rstd_try(string_member(value, "registry"_str, context.as_str()))),
+        context.as_str()));
+    auto package  = rstd_try(parse_registry_value(
+        RegistryPackageName::parse(rstd_try(string_member(value, "package"_str, context.as_str()))),
+        context.as_str()));
+    auto requirement =
+        rstd_try(parse_registry_value(VersionRequirement::parse(rstd_try(string_member(
+                                          value, "requirement"_str, context.as_str()))),
+                                      context.as_str()));
+    auto features_value = rstd_try(member(value, "features"_str, context.as_str()));
+    auto features_array = features_value->as_array();
+    if (features_array.is_none()) {
+        return protocol_failure<RegistryDependencyProjection>(
+            rstd::format("{}.features must be an array", context.as_str()));
+    }
+    auto features = Vec<String>::with_capacity((*features_array)->len());
+    for (usize feature_index {}; feature_index < (*features_array)->len(); ++feature_index) {
+        auto feature = (**features_array)[feature_index].as_str();
+        if (feature.is_none()) {
+            return protocol_failure<RegistryDependencyProjection>(
+                rstd::format("{}.features[{}] must be a string", context.as_str(), feature_index));
+        }
+        features.push(String::make(*feature));
+    }
+    return Ok(RegistryDependencyProjection {
+        .alias = String::make(rstd_try(string_member(value, "alias"_str, context.as_str()))),
+        .package =
+            RegistryPackageId {
+                .registry = rstd::move(registry),
+                .name     = rstd::move(package),
+            },
+        .requirement      = rstd::move(requirement),
+        .kind             = rstd_try(dependency_kind(
+            rstd_try(string_member(value, "kind"_str, context.as_str())), context.as_str())),
+        .visibility       = rstd_try(dependency_visibility(
+            rstd_try(string_member(value, "visibility"_str, context.as_str())), context.as_str())),
+        .features         = rstd::move(features),
+        .default_features = rstd_try(bool_member(value, "default_features"_str, context.as_str())),
+    });
 }
 
 auto dependency_json(const RegistryDependencyProjection& dependency) -> Json {
@@ -271,6 +377,94 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
                 .maximum_entries       = usize(maximum_entries.to_primitive()),
             },
         .maximum_blob_size = maximum_blob_size,
+    });
+}
+
+auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
+    -> RegistryInspectionProtocolResult<VerifiedRegistryPackageDescriptor> {
+    auto parsed =
+        rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
+    if (parsed.is_err()) {
+        return protocol_failure<VerifiedRegistryPackageDescriptor>(rstd::format(
+            "verified candidate is not strict JSON: {}", rstd::move(parsed).unwrap_err()));
+    }
+    auto& root = *parsed;
+    rstd_try(reject_unknown(root,
+                            "candidate"_str,
+                            { "schema"_str,
+                              "protocol"_str,
+                              "registry"_str,
+                              "package"_str,
+                              "version"_str,
+                              "archive"_str,
+                              "dependencies"_str,
+                              "file_count"_str,
+                              "unpacked_size"_str,
+                              "receipt"_str }));
+    if (rstd_try(string_member(root, "schema"_str, "candidate"_str)) !=
+            REGISTRY_INSPECTION_CANDIDATE_SCHEMA ||
+        rstd_try(string_member(root, "protocol"_str, "candidate"_str)) !=
+            REGISTRY_INSPECTION_PROTOCOL ||
+        rstd_try(string_member(root, "receipt"_str, "candidate"_str)) !=
+            REGISTRY_INSPECTOR_RECEIPT) {
+        return protocol_failure<VerifiedRegistryPackageDescriptor>(
+            "verified candidate protocol identity is unsupported"_str);
+    }
+    auto registry = rstd_try(parse_registry_value(
+        RegistryId::parse(rstd_try(string_member(root, "registry"_str, "candidate"_str))),
+        "candidate.registry"_str));
+    auto package  = rstd_try(parse_registry_value(
+        RegistryPackageName::parse(rstd_try(string_member(root, "package"_str, "candidate"_str))),
+        "candidate.package"_str));
+    auto version  = rstd_try(parse_registry_value(
+        SemanticVersion::parse(rstd_try(string_member(root, "version"_str, "candidate"_str))),
+        "candidate.version"_str));
+    auto archive  = rstd_try(member(root, "archive"_str, "candidate"_str));
+    rstd_try(reject_unknown(
+        *archive, "candidate.archive"_str, { "checksum"_str, "size"_str, "format"_str }));
+    auto checksum =
+        rstd_try(parse_registry_value(PackageChecksum::parse(rstd_try(string_member(
+                                          *archive, "checksum"_str, "candidate.archive"_str))),
+                                      "candidate.archive.checksum"_str));
+    auto size = rstd_try(parse_registry_value(RegistryBlobSize::parse(rstd_try(string_member(
+                                                  *archive, "size"_str, "candidate.archive"_str))),
+                                              "candidate.archive.size"_str));
+    auto format =
+        rstd_try(parse_registry_value(RegistryArchiveFormat::parse(rstd_try(string_member(
+                                          *archive, "format"_str, "candidate.archive"_str))),
+                                      "candidate.archive.format"_str));
+    auto dependencies_value = rstd_try(member(root, "dependencies"_str, "candidate"_str));
+    auto dependencies_array = dependencies_value->as_array();
+    if (dependencies_array.is_none()) {
+        return protocol_failure<VerifiedRegistryPackageDescriptor>(
+            "candidate.dependencies must be an array"_str);
+    }
+    auto dependencies =
+        Vec<RegistryDependencyProjection>::with_capacity((*dependencies_array)->len());
+    for (usize index {}; index < (*dependencies_array)->len(); ++index) {
+        dependencies.push(rstd_try(parse_dependency((**dependencies_array)[index], index)));
+    }
+    auto file_count = rstd_try(canonical_size(root, "file_count"_str, "candidate"_str));
+    if (file_count > as_cast<u64>(usize::MAX)) {
+        return protocol_failure<VerifiedRegistryPackageDescriptor>(
+            "candidate.file_count exceeds this platform's range"_str);
+    }
+    return Ok(VerifiedRegistryPackageDescriptor {
+        .package =
+            RegistryPackageId {
+                .registry = rstd::move(registry),
+                .name     = rstd::move(package),
+            },
+        .version = rstd::move(version),
+        .archive =
+            RegistryPackageArchive {
+                .checksum = rstd::move(checksum),
+                .size     = rstd::move(size),
+                .format   = rstd::move(format),
+            },
+        .dependencies  = rstd::move(dependencies),
+        .file_count    = usize(file_count.to_primitive()),
+        .unpacked_size = rstd_try(canonical_size(root, "unpacked_size"_str, "candidate"_str)),
     });
 }
 

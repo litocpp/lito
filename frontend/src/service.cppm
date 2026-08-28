@@ -352,12 +352,14 @@ class FrontendSourceStore {
         SharedLoadCell cell;
     };
 
-    using CellMap = rstd::collections::HashMap<String, CacheRecord>;
+    using CellMap    = rstd::collections::HashMap<String, CacheRecord>;
+    using OverlayMap = rstd::collections::HashMap<String, rstd::path::PathBuf>;
 
     struct Fields {
         Option<ScanMemoryDomain> memory_domain;
         CellMap                  source_entries;
         CellMap                  identity_entries;
+        OverlayMap               overlays;
         bool                     closed {};
         usize                    ready_entries {};
         usize                    ready_peak {};
@@ -390,7 +392,8 @@ class FrontendSourceStore {
         Fields()
             : memory_domain(Some(ScanMemoryDomain::make())),
               source_entries(CellMap::make()),
-              identity_entries(CellMap::make()) {}
+              identity_entries(CellMap::make()),
+              overlays(OverlayMap::make()) {}
     };
 
     using State       = rstd::sync::Mutex<Fields>;
@@ -437,6 +440,23 @@ public:
     }
 
     auto clone() const -> FrontendSourceStore { return FrontendSourceStore { state_.clone() }; }
+
+    auto add_overlay(ref<rstd::path::Path> logical, ref<rstd::path::Path> physical) const -> bool {
+        auto logical_text = logical.to_str();
+        if (logical_text.is_none()) return false;
+        auto fields = state_->lock().unwrap_unchecked();
+        if (fields->closed) return false;
+        fields->overlays.insert(String::make(*logical_text), rstd::path::PathBuf::from(physical));
+        return true;
+    }
+
+    auto overlay(ref<rstd::path::Path> logical) const -> Option<rstd::path::PathBuf> {
+        auto logical_text = logical.to_str();
+        if (logical_text.is_none()) return None();
+        auto fields = state_->lock().unwrap_unchecked();
+        auto found  = fields->overlays.get(*logical_text);
+        return found.is_some() ? Some((**found).clone()) : Option<rstd::path::PathBuf> {};
+    }
 
     auto release_domain(ref<str> domain) const -> void {
         auto fields = state_->lock().unwrap_unchecked();
@@ -736,6 +756,10 @@ public:
         return FrontendService { store.clone(), rstd::move(observer), rstd::move(classifier) };
     }
 
+    auto add_source_overlay(ref<rstd::path::Path> logical, ref<rstd::path::Path> physical) -> bool {
+        return store_.add_overlay(logical, physical);
+    }
+
     auto load(ref<rstd::path::Path> path, preprocessor::SourceLoadRole role)
         -> lexical::Result<lexical::SharedScanFileStorage> {
         ++statistics_.source_requests;
@@ -751,8 +775,21 @@ public:
                 "cannot resolve source '{}': {}", path, rstd::move(canonical).unwrap_err())));
         }
         auto canonical_path = rstd::move(canonical).unwrap();
+        auto physical_path  = store_.overlay(canonical_path.as_path());
+        if (physical_path.is_none()) physical_path = store_.overlay(path);
+        auto physical = canonical_path.clone();
+        if (physical_path.is_some()) {
+            auto resolved_physical = rstd::fs::canonicalize(physical_path->as_path());
+            if (resolved_physical.is_err()) {
+                return Err(
+                    lexical::Error::make(rstd::format("cannot resolve source contents for '{}': {}",
+                                                      canonical_path.as_path(),
+                                                      rstd::move(resolved_physical).unwrap_err())));
+            }
+            physical = rstd::move(resolved_physical).unwrap();
+        }
         if (role == preprocessor::SourceLoadRole::Primary) {
-            auto loaded = read_source(canonical_path.as_path());
+            auto loaded = read_source(physical.as_path(), canonical_path.as_path());
             return lexical_result(loaded);
         }
         auto classification = classifier_.is_some() ? classifier_->resolve(canonical_path.as_path())
@@ -778,7 +815,7 @@ public:
         auto initialized    = false;
         auto stored         = source_cell->get_or_init([&]() -> FrontendSourceStore::LoadResult {
             initialized   = true;
-            auto metadata = rstd::fs::metadata(canonical_path.as_path());
+            auto metadata = rstd::fs::metadata(physical.as_path());
             if (metadata.is_err()) {
                 return share_error(
                     lexical::Error::make(rstd::format("cannot inspect source '{}': {}",
@@ -818,7 +855,7 @@ public:
             auto identity_result =
                 identity_cell->get_or_init([&]() -> FrontendSourceStore::LoadResult {
                     identity_initialized = true;
-                    return read_source(canonical_path.as_path());
+                    return read_source(physical.as_path(), canonical_path.as_path());
                 });
             if (identity_waiting && ! identity_initialized) {
                 ++statistics_.source_waits;
@@ -895,7 +932,8 @@ private:
         return Ok(borrowed.unwrap_unchecked().clone());
     }
 
-    auto read_source(ref<rstd::path::Path> path) -> FrontendSourceStore::LoadResult {
+    auto read_source(ref<rstd::path::Path> path, ref<rstd::path::Path> logical_path)
+        -> FrontendSourceStore::LoadResult {
         auto load = store_.begin_load();
         if (load.is_none()) {
             return share_error(lexical::Error::make(String::make("source store is closed"_str)));
@@ -911,7 +949,7 @@ private:
         }
         ++statistics_.source_reads;
         statistics_.source_bytes += contents->len();
-        auto snapshot = lexical::make_source_snapshot(rstd::path::PathBuf::from(path),
+        auto snapshot = lexical::make_source_snapshot(rstd::path::PathBuf::from(logical_path),
                                                       rstd::move(contents).unwrap());
         auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
         auto lexed    = [&] {

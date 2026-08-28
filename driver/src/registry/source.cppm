@@ -6,7 +6,7 @@ export module lito.driver:registry.source;
 import rstd;
 import rstd.json;
 import lito.core;
-import :registry.archive;
+import lito.pack;
 import :registry.blob;
 
 using namespace rstd::prelude;

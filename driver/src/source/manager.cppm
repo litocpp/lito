@@ -964,6 +964,10 @@ public:
         return Ok(clone_source(entries_[acquired].source));
     }
 
+    auto builtin_package(ref<str> id) const noexcept -> Option<ref<BuiltinPackageSource>> {
+        return options_.sources.builtin_package(id);
+    }
+
     auto acquire_root(ref<rstd::path::Path> root) -> SourceResult<usize> {
         return acquire_path(root);
     }

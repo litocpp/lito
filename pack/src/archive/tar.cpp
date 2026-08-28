@@ -1,10 +1,10 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.archive;
+module lito.pack;
 
 import rstd;
-import :tar;
+import :archive.tar;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

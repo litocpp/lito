@@ -1,7 +1,7 @@
-export module lito.archive:zstd;
+export module lito.pack:archive.zstd;
 
 import rstd;
-import :error;
+import :archive.error;
 
 using namespace rstd::prelude;
 

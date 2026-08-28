@@ -34,7 +34,8 @@ auto resolve_features(ResolvedPackageGraph&       graph,
                       const Vec<String>&          selected_roots,
                       const Vec<String>&          selected_packages,
                       const Vec<PackageTargetId>& selected_targets,
-                      const FeatureSelection&     selection) -> PackageResult<empty> {
+                      const FeatureSelection&     selection,
+                      const Vec<String>*          host_packages = nullptr) -> PackageResult<empty> {
     auto indices = rstd::collections::BTreeMap<String, usize>::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
@@ -67,6 +68,11 @@ auto resolve_features(ResolvedPackageGraph&       graph,
     const auto selected = [&](ref<str> name) -> bool {
         for (const auto& package : selected_packages) {
             if (package.as_str() == name) return true;
+        }
+        if (host_packages != nullptr) {
+            for (const auto& package : *host_packages) {
+                if (package.as_str() == name) return true;
+            }
         }
         return false;
     };
@@ -126,10 +132,44 @@ auto resolve_features(ResolvedPackageGraph&       graph,
             return Ok(empty {});
         };
         for (const auto& dependency : package.dependencies) {
-            if (dependency.is_Cpp()) rstd_try(collect(dependency.as_Cpp().value));
+            if (dependency.is_Cpp()) {
+                rstd_try(collect(dependency.as_Cpp().value));
+            } else if (dependency.is_Plugin()) {
+                const auto& plugin = dependency.as_Plugin().value;
+                rstd_try(collect(ResolvedCppDependency {
+                    .name             = plugin.name.clone(),
+                    .features         = plugin.features.clone(),
+                    .default_features = plugin.default_features,
+                }));
+            } else if (dependency.is_Pmacro()) {
+                const auto& pmacro = dependency.as_Pmacro().value;
+                rstd_try(collect(ResolvedCppDependency {
+                    .name             = pmacro.name.clone(),
+                    .features         = pmacro.features.clone(),
+                    .default_features = pmacro.default_features,
+                }));
+            }
         }
         if (development(package.manifest.name.as_str())) {
-            for (const auto& dependency : package.dev_dependencies) rstd_try(collect(dependency));
+            for (const auto& dependency : package.dev_dependencies) {
+                if (dependency.is_Cpp()) {
+                    rstd_try(collect(dependency.as_Cpp().value));
+                } else if (dependency.is_Plugin()) {
+                    const auto& plugin = dependency.as_Plugin().value;
+                    rstd_try(collect(ResolvedCppDependency {
+                        .name             = plugin.name.clone(),
+                        .features         = plugin.features.clone(),
+                        .default_features = plugin.default_features,
+                    }));
+                } else if (dependency.is_Pmacro()) {
+                    const auto& pmacro = dependency.as_Pmacro().value;
+                    rstd_try(collect(ResolvedCppDependency {
+                        .name             = pmacro.name.clone(),
+                        .features         = pmacro.features.clone(),
+                        .default_features = pmacro.default_features,
+                    }));
+                }
+            }
         }
     }
     for (usize index {}; index < graph.packages.len(); ++index) {

@@ -637,12 +637,134 @@ auto configured_doc(const Option<lito::config::wire::Doc>& value,
     return Ok(DocConfig { .litodoc_path = Some(rstd::move(canonical).unwrap_unchecked()) });
 }
 
+auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value,
+                                ref<rstd::path::Path>                      project_root)
+    -> ConfigResult<Vec<lito::source::BuiltinPackageSourceEntry>> {
+    auto result = Vec<lito::source::BuiltinPackageSourceEntry>::make();
+    if (value.is_none() || value->packages.is_none()) return Ok(rstd::move(result));
+    for (auto key : value->packages->keys()) {
+        auto id        = (*key).as_str();
+        auto data_path = rstd::serde::DataPath()
+                             .with_field("builtin"_str)
+                             .with_field("packages"_str)
+                             .with_map_key(id);
+        if (lito::registry::RegistryPackageName::parse(id).is_err()) {
+            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                rstd::move(data_path), "key must be a valid builtin package id"_str);
+        }
+        const auto& source       = **value->packages->get(id);
+        const auto  source_count = usize(source.version.is_some()) + usize(source.git.is_some()) +
+                                   usize(source.path.is_some());
+        if (source_count != usize(1)) {
+            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                rstd::move(data_path),
+                "must contain exactly one of 'version', 'git', or 'path'"_str);
+        }
+        if (source.version.is_some()) {
+            if (source.branch.is_some() || source.tag.is_some() || source.rev.is_some() ||
+                source.commit.is_some()) {
+                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    rstd::move(data_path), "Registry source cannot contain Git selectors"_str);
+            }
+            auto requirement = lito::registry::VersionRequirement::parse(source.version->as_str());
+            if (requirement.is_err()) {
+                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    data_path.with_field("version"_str), "must be a valid version requirement"_str);
+            }
+            result.push(lito::source::BuiltinPackageSourceEntry {
+                .id     = (*key).clone(),
+                .source = lito::source::BuiltinPackageSource::Registry(
+                    source.registry.clone(), rstd::move(requirement).unwrap()),
+            });
+            continue;
+        }
+        if (source.path.is_some()) {
+            if (source.registry.is_some() || source.branch.is_some() || source.tag.is_some() ||
+                source.rev.is_some() || source.commit.is_some()) {
+                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    rstd::move(data_path), "Path source cannot contain Registry or Git fields"_str);
+            }
+            auto requested = PathBuf::from(source.path->as_str());
+            if (requested.as_path().is_relative()) {
+                requested = PathBuf::from(project_root).join(requested.as_path());
+            }
+            auto canonical = rstd::fs::canonicalize(requested.as_path());
+            if (canonical.is_err()) {
+                return config_io_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    "resolve builtin package path"_str,
+                    requested.as_path(),
+                    rstd::move(canonical).unwrap_err());
+            }
+            auto metadata = rstd::fs::metadata(canonical->as_path());
+            if (metadata.is_err()) {
+                return config_io_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    "inspect builtin package path"_str,
+                    canonical->as_path(),
+                    rstd::move(metadata).unwrap_err());
+            }
+            if (! metadata->is_dir()) {
+                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    data_path.with_field("path"_str), "must be a directory"_str);
+            }
+            result.push(lito::source::BuiltinPackageSourceEntry {
+                .id     = (*key).clone(),
+                .source = lito::source::BuiltinPackageSource::Path(rstd::move(canonical).unwrap()),
+            });
+            continue;
+        }
+        if (source.registry.is_some()) {
+            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                data_path.with_field("registry"_str), "is only valid with 'version'"_str);
+        }
+        if (source.git->is_empty() || source.git->as_str().starts_with("-"_str) ||
+            source.git->as_str().contains("#"_str)) {
+            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                data_path.with_field("git"_str), "must be a valid Git URL"_str);
+        }
+        const auto selector_count = usize(source.branch.is_some()) + usize(source.tag.is_some()) +
+                                    usize(source.rev.is_some()) + usize(source.commit.is_some());
+        if (selector_count > usize(1)) {
+            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                rstd::move(data_path), "Git source accepts at most one selector"_str);
+        }
+        auto reference = lito::source::GitReference {};
+        if (source.branch.is_some()) {
+            reference.kind  = lito::source::GitReferenceKind::Branch;
+            reference.value = source.branch->clone();
+        } else if (source.tag.is_some()) {
+            reference.kind  = lito::source::GitReferenceKind::Tag;
+            reference.value = source.tag->clone();
+        } else if (source.rev.is_some()) {
+            reference.kind  = lito::source::GitReferenceKind::Rev;
+            reference.value = source.rev->clone();
+        } else if (source.commit.is_some()) {
+            if (! lito::source::git_commit_is_valid(source.commit->as_str())) {
+                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                    data_path.with_field("commit"_str),
+                    "must be a 40-digit hexadecimal commit"_str);
+            }
+            reference.kind  = lito::source::GitReferenceKind::Commit;
+            reference.value = source.commit->clone();
+        }
+        result.push(lito::source::BuiltinPackageSourceEntry {
+            .id = (*key).clone(),
+            .source =
+                lito::source::BuiltinPackageSource::Git(source.git->clone(), rstd::move(reference)),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto configured_sources(
     const Option<rstd::collections::BTreeMap<String, lito::config::wire::Patch>>& value,
+    const Option<lito::config::wire::Builtin>&                                    builtin,
     ref<rstd::path::Path> project_root) -> ConfigResult<lito::source::PackageSourceConfig> {
     auto patches = Vec<lito::source::GitSourcePatch>::make();
     if (value.is_none()) {
-        return Ok(lito::source::PackageSourceConfig { .patches = rstd::move(patches) });
+        return Ok(lito::source::PackageSourceConfig {
+            .patches          = rstd::move(patches),
+            .builtin_packages = rstd_try(configured_builtin_sources(builtin, project_root)),
+        });
     }
     for (auto key : value->keys()) {
         const auto& url = *key;
@@ -691,7 +813,10 @@ auto configured_sources(
             .path = rstd::move(canonical).unwrap_unchecked(),
         });
     }
-    return Ok(lito::source::PackageSourceConfig { .patches = rstd::move(patches) });
+    return Ok(lito::source::PackageSourceConfig {
+        .patches          = rstd::move(patches),
+        .builtin_packages = rstd_try(configured_builtin_sources(builtin, project_root)),
+    });
 }
 
 auto decode_project_config(PathBuf               root,
@@ -713,7 +838,7 @@ auto decode_project_config(PathBuf               root,
     auto standard_library_runtime = rstd_try(configured_standard_library_runtime(wire.toolchain));
     auto environment   = rstd_try(configured_environment(wire.environment, root.as_path()));
     auto lock          = rstd_try(configured_lock(wire.lock, root.as_path()));
-    auto sources       = rstd_try(configured_sources(wire.patch, root.as_path()));
+    auto sources       = rstd_try(configured_sources(wire.patch, wire.builtin, root.as_path()));
     auto install       = rstd_try(configured_install(wire.install, root.as_path()));
     auto doc           = rstd_try(configured_doc(wire.doc, root.as_path()));
     auto build_options = rstd_try(configured_build_options(wire.build));

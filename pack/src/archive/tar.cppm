@@ -1,9 +1,9 @@
-export module lito.archive:tar;
+export module lito.pack:archive.tar;
 
 import rstd;
-import :entry;
-import :error;
-import :zstd;
+import :archive.entry;
+import :archive.error;
+import :archive.zstd;
 
 using namespace rstd::prelude;
 

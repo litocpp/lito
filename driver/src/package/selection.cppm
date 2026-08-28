@@ -39,6 +39,9 @@ struct ResolvedPackageSelection {
     Vec<String>                selected_root_names;
     Vec<String>                install_package_names;
     Vec<String>                selected_package_names;
+    Vec<String>                host_package_names;
+    Vec<String>                plugin_package_names;
+    Vec<String>                proc_macro_provider_names;
     Vec<PackageTargetId>       selected_targets;
     Vec<PackageTargetId>       effective_targets;
     EffectiveLanguageStandards standards;
@@ -108,7 +111,8 @@ auto selected_by_purpose(ProjectRootRole         role,
     if (purpose == PackageSelectionPurpose::Install) {
         return kind == PackageTargetKind::Binary;
     }
-    return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary;
+    return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
+           kind == PackageTargetKind::Plugin || kind == PackageTargetKind::ProcMacro;
 }
 
 auto append_selected_targets(Vec<PackageTargetId>&   output,
@@ -117,6 +121,7 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
                              PackageSelectionPurpose purpose) -> bool {
     auto selected = false;
     for (const auto& target : package.manifest.targets) {
+        if (lito::manifest::package_target_is_host_tool(target)) continue;
         const auto kind = lito::manifest::package_target_kind(target);
         if (! selected_by_purpose(role, kind, purpose)) continue;
         output.push(PackageTargetId {
@@ -141,10 +146,17 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
     return selected;
 }
 
+struct SelectedPackageClosure {
+    Vec<String> target;
+    Vec<String> host;
+    Vec<String> plugins;
+    Vec<String> providers;
+};
+
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>&          selected_roots,
                       const Vec<PackageTargetId>& selected_targets,
-                      const TargetInfo*           target) -> PackageSelectionResult<Vec<String>> {
+                      const TargetInfo* target) -> PackageSelectionResult<SelectedPackageClosure> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
@@ -159,37 +171,115 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         }
     }
 
-    auto pending  = copy_strings(selected_roots);
-    auto selected = StringSet::make();
-    while (! pending.is_empty()) {
-        auto current = rstd::move(pending.pop()).unwrap();
-        if (selected.contains_key(current.as_str())) continue;
+    auto pending_target  = Vec<String>::make();
+    auto pending_host    = Vec<String>::make();
+    auto selected_target = StringSet::make();
+    auto selected_host   = StringSet::make();
+    auto plugins         = StringSet::make();
+    auto providers       = StringSet::make();
+    for (const auto& root : selected_roots) {
+        auto has_target   = false;
+        auto has_plugin   = false;
+        auto has_provider = false;
+        for (const auto& selected : selected_targets) {
+            if (selected.package != root.as_str()) continue;
+            if (selected.kind == PackageTargetKind::Plugin)
+                has_plugin = true;
+            else if (selected.kind == PackageTargetKind::ProcMacro)
+                has_provider = true;
+            else
+                has_target = true;
+        }
+        if (! has_target && ! has_plugin && ! has_provider) has_target = true;
+        if (has_target) pending_target.push(root.clone());
+        if (has_plugin) {
+            pending_host.push(root.clone());
+            plugins.insert(root.clone(), empty {});
+        }
+        if (has_provider) {
+            pending_host.push(root.clone());
+            providers.insert(root.clone(), empty {});
+        }
+    }
+    const auto consume = [&](String current, bool host) -> PackageSelectionResult<empty> {
+        auto& selected = host ? selected_host : selected_target;
+        if (selected.contains_key(current.as_str())) return Ok(empty {});
         auto index = indices.get(current.as_str());
         if (index.is_none()) {
-            return package_selection_failure<Vec<String>>(rstd::format(
+            return package_selection_failure<empty>(rstd::format(
                 "selected package '{}' is missing from resolved graph", current.as_str()));
         }
-        if (target != nullptr && ! graph.packages[**index].manifest.target.matches(*target)) {
-            return package_selection_failure<Vec<String>>(
+        if (! host && target != nullptr &&
+            ! graph.packages[**index].manifest.target.matches(*target)) {
+            return package_selection_failure<empty>(
                 rstd::format("package '{}' does not support target '{}'",
                              current.as_str(),
                              target->triple.as_str()));
         }
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
-            pending.push(String::make(resolved_dependency_name(dependency)));
-        }
-        if (development.contains_key(current.as_str())) {
-            for (const auto& dependency : graph.packages[**index].dev_dependencies) {
-                pending.push(dependency.name.clone());
+            if (dependency.is_Plugin()) {
+                if (host && plugins.contains_key(current.as_str())) {
+                    return package_selection_failure<empty>(
+                        rstd::format("plugin '{}' cannot depend on plugin '{}'",
+                                     current.as_str(),
+                                     dependency.as_Plugin().value.name.as_str()));
+                }
+                pending_host.push(dependency.as_Plugin().value.name.clone());
+                plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
+            } else if (dependency.is_Pmacro()) {
+                if (host) {
+                    return package_selection_failure<empty>(
+                        rstd::format("pmacro provider '{}' cannot depend on pmacro provider '{}'",
+                                     current.as_str(),
+                                     dependency.as_Pmacro().value.name.as_str()));
+                }
+                pending_host.push(dependency.as_Pmacro().value.name.clone());
+                providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
+            } else if (host) {
+                pending_host.push(String::make(resolved_dependency_name(dependency)));
+            } else {
+                pending_target.push(String::make(resolved_dependency_name(dependency)));
             }
+        }
+        if (! host && development.contains_key(current.as_str())) {
+            for (const auto& dependency : graph.packages[**index].dev_dependencies) {
+                if (dependency.is_Plugin()) {
+                    pending_host.push(dependency.as_Plugin().value.name.clone());
+                    plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
+                } else if (dependency.is_Pmacro()) {
+                    pending_host.push(dependency.as_Pmacro().value.name.clone());
+                    providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
+                } else {
+                    pending_target.push(String::make(resolved_dependency_name(dependency)));
+                }
+            }
+        }
+        return Ok(empty {});
+    };
+    while (! pending_target.is_empty() || ! pending_host.is_empty()) {
+        if (! pending_target.is_empty()) {
+            auto consumed = consume(rstd::move(pending_target.pop()).unwrap(), false);
+            if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
+        } else {
+            auto consumed = consume(rstd::move(pending_host.pop()).unwrap(), true);
+            if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
         }
     }
 
-    auto result = Vec<String>::make();
+    auto result = SelectedPackageClosure {};
     for (const auto& package : graph.packages) {
-        if (selected.contains_key(package.manifest.name.as_str())) {
-            result.push(package.manifest.name.clone());
+        if (selected_target.contains_key(package.manifest.name.as_str())) {
+            result.target.push(package.manifest.name.clone());
+        }
+        if (selected_host.contains_key(package.manifest.name.as_str())) {
+            result.host.push(package.manifest.name.clone());
+        }
+        if (plugins.contains_key(package.manifest.name.as_str())) {
+            result.plugins.push(package.manifest.name.clone());
+        }
+        if (providers.contains_key(package.manifest.name.as_str())) {
+            result.providers.push(package.manifest.name.clone());
         }
     }
     return Ok(rstd::move(result));
@@ -397,25 +487,101 @@ auto resolve_package_selection_with_environment_impl(
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
     }
-    auto resolved_features = resolve_features(
-        graph, selected_roots, *selected_packages, selected_targets, selection.features);
+    auto resolved_features = resolve_features(graph,
+                                              selected_roots,
+                                              selected_packages->target,
+                                              selected_targets,
+                                              selection.features,
+                                              rstd::addressof(selected_packages->host));
     if (resolved_features.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(resolved_features).unwrap_err()));
     }
-    auto standards = resolve_effective_language_standards(graph, *selected_packages);
+    auto standards = resolve_effective_language_standards(graph, selected_packages->target);
     if (standards.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(standards).unwrap_err()));
     }
-    auto effective_targets = effective_compile_targets(graph, *selected_packages, selected_targets);
+    auto target_selected_targets = Vec<PackageTargetId>::make();
+    for (const auto& selected_target : selected_targets) {
+        if (selected_target.kind != PackageTargetKind::Plugin &&
+            selected_target.kind != PackageTargetKind::ProcMacro)
+            target_selected_targets.push(selected_target.clone());
+    }
+    auto effective_targets =
+        effective_compile_targets(graph, selected_packages->target, target_selected_targets);
     return Ok(ResolvedPackageSelection {
-        .graph                  = rstd::move(graph),
-        .selected_root_names    = rstd::move(selected_roots),
-        .install_package_names  = rstd::move(install_packages),
-        .selected_package_names = rstd::move(selected_packages).unwrap(),
-        .selected_targets       = rstd::move(selected_targets),
-        .effective_targets      = rstd::move(effective_targets),
-        .standards              = rstd::move(standards).unwrap(),
+        .graph                     = rstd::move(graph),
+        .selected_root_names       = rstd::move(selected_roots),
+        .install_package_names     = rstd::move(install_packages),
+        .selected_package_names    = rstd::move(selected_packages->target),
+        .host_package_names        = rstd::move(selected_packages->host),
+        .plugin_package_names      = rstd::move(selected_packages->plugins),
+        .proc_macro_provider_names = rstd::move(selected_packages->providers),
+        .selected_targets          = rstd::move(target_selected_targets),
+        .effective_targets         = rstd::move(effective_targets),
+        .standards                 = rstd::move(standards).unwrap(),
     });
+}
+
+auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
+    -> PackageSelectionResult<ResolvedPackageSelection> {
+    if (selection.host_package_names.is_empty()) {
+        return package_selection_failure<ResolvedPackageSelection>(
+            "plugin host selection has no packages"_str);
+    }
+    auto host = StringSet::make();
+    for (const auto& name : selection.host_package_names) host.insert(name.clone(), empty {});
+    auto providers = StringSet::make();
+    for (const auto& name : selection.proc_macro_provider_names) {
+        providers.insert(name.clone(), empty {});
+    }
+    auto plugins = StringSet::make();
+    for (const auto& name : selection.plugin_package_names) {
+        plugins.insert(name.clone(), empty {});
+    }
+    auto selected_targets  = Vec<PackageTargetId>::make();
+    auto effective_targets = Vec<PackageTargetId>::make();
+    for (const auto& package : selection.graph.packages) {
+        if (! host.contains_key(package.manifest.name.as_str())) continue;
+        for (const auto& target : package.manifest.targets) {
+            const auto kind        = lito::manifest::package_target_kind(target);
+            const auto is_provider = providers.contains_key(package.manifest.name.as_str()) &&
+                                     kind == PackageTargetKind::ProcMacro;
+            const auto is_plugin   = plugins.contains_key(package.manifest.name.as_str()) &&
+                                     kind == PackageTargetKind::Plugin;
+            const auto is_library  = kind == PackageTargetKind::Library;
+            if (! is_provider && ! is_plugin && ! is_library) continue;
+            auto id = PackageTargetId {
+                .package = package.manifest.name.clone(),
+                .kind    = kind,
+                .name    = String::make(lito::manifest::package_target_name(target)),
+            };
+            if (is_provider || is_plugin) selected_targets.push(id.clone());
+            effective_targets.push(rstd::move(id));
+        }
+    }
+    if (selected_targets.len() !=
+        selection.proc_macro_provider_names.len() + selection.plugin_package_names.len()) {
+        return package_selection_failure<ResolvedPackageSelection>(
+            "plugin host selection is missing a plugin or provider target"_str);
+    }
+    auto standards =
+        resolve_effective_language_standards(selection.graph, selection.host_package_names);
+    if (standards.is_err()) {
+        return Err(rstd::into<PackageSelectionError>(rstd::move(standards).unwrap_err()));
+    }
+    selection.selected_root_names = selection.plugin_package_names.clone();
+    for (const auto& name : selection.proc_macro_provider_names) {
+        if (! plugins.contains_key(name.as_str())) selection.selected_root_names.push(name.clone());
+    }
+    selection.install_package_names.clear();
+    selection.selected_package_names = rstd::move(selection.host_package_names);
+    selection.selected_targets       = rstd::move(selected_targets);
+    selection.effective_targets      = rstd::move(effective_targets);
+    selection.standards              = rstd::move(standards).unwrap();
+    selection.host_package_names.clear();
+    selection.plugin_package_names.clear();
+    selection.proc_macro_provider_names.clear();
+    return Ok(rstd::move(selection));
 }
 
 auto resolve_package_selection_with_environment(

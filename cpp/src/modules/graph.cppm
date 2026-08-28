@@ -10,6 +10,7 @@ import :header;
 import :modules.convention;
 import :modules.error;
 import :package.metadata;
+import :package.spec;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -69,10 +70,18 @@ auto provider_for(ref<str>                 logical_name,
 
 auto directly_visible(const PackagePlan& package, TargetId importer, TargetId provider) -> bool {
     if (importer == provider) return true;
-    for (const auto& dependency : package.package->targets[importer].dependencies) {
+    const auto& importer_target = package.package->targets[importer];
+    const auto& provider_target = package.package->targets[provider];
+    for (const auto& dependency : importer_target.dependencies) {
         if (dependency.visibility != lito::dependency::DependencyVisibility::LinkOnly &&
-            dependency.target == package.package->targets[provider].id) {
+            dependency.target == provider_target.id) {
             return true;
+        }
+    }
+    if (importer_target.artifact_kind == ArtifactKind::ProcMacroProvider &&
+        provider_target.artifact_kind == ArtifactKind::CompilerPlugin) {
+        for (const auto& dependency : importer_target.plugin_dependencies) {
+            if (dependency.package == provider_target.id.package.as_str()) return true;
         }
     }
     return false;
@@ -212,6 +221,9 @@ public:
     static auto make(const PackageMetadata&          package,
                      const ResolvedNativeTargetPlan& plan,
                      const HeaderOwnershipIndex&     ownership) -> SemanticScanGraphBuilder;
+    static auto make(const PackageSpec&          package,
+                     const PackagePlan&          plan,
+                     const HeaderOwnershipIndex& ownership) -> SemanticScanGraphBuilder;
 
     auto register_project_unit(TargetId              target,
                                ref<rstd::path::Path> source,
@@ -278,6 +290,52 @@ private:
 auto SemanticScanGraphBuilder::make(const PackageMetadata&          package,
                                     const ResolvedNativeTargetPlan& plan,
                                     const HeaderOwnershipIndex&     ownership)
+    -> SemanticScanGraphBuilder {
+    auto selected = Vec<bool>::with_capacity(package.targets.len());
+    auto targets  = Vec<TargetState>::with_capacity(package.targets.len());
+    auto reverse  = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+        selected.emplace_back(false);
+        reverse.emplace_back();
+    }
+    for (auto target : plan.target_order) selected[target] = true;
+    for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+        targets.push(TargetState {
+            .identity = package.targets[target].id.clone(),
+            .selected = selected[target],
+            .sealed   = ! selected[target],
+        });
+    }
+    for (auto importer : plan.target_order) {
+        for (auto provider : plan.visible_targets[importer]) {
+            if (provider == importer || ! selected[provider]) continue;
+            auto repeated = false;
+            for (auto existing : reverse[provider]) {
+                if (existing == importer) repeated = true;
+            }
+            if (! repeated) reverse[provider].emplace_back(importer);
+        }
+    }
+    auto domains = Vec<String>::make();
+    for (const auto& root : ownership.roots()) {
+        auto domain = header_retention_domain(HeaderClassification {
+            .owner  = as<Clone>(root.owner).clone(),
+            .access = as<Clone>(root.access).clone(),
+        });
+        if (domain.is_none()) continue;
+        auto repeated = false;
+        for (const auto& existing : domains) {
+            if (existing == domain->as_str()) repeated = true;
+        }
+        if (! repeated) domains.push(rstd::move(domain).unwrap());
+    }
+    return SemanticScanGraphBuilder(
+        ownership, rstd::move(targets), rstd::move(reverse), rstd::move(domains));
+}
+
+auto SemanticScanGraphBuilder::make(const PackageSpec&          package,
+                                    const PackagePlan&          plan,
+                                    const HeaderOwnershipIndex& ownership)
     -> SemanticScanGraphBuilder {
     auto selected = Vec<bool>::with_capacity(package.targets.len());
     auto targets  = Vec<TargetState>::with_capacity(package.targets.len());

@@ -31,12 +31,15 @@ using PackageFileSetResult = Result<T, PackageFileSetError>;
 
 class PackageFileSet {
     lito::source::SourceTree tree_;
+    Vec<PathBuf>             directories_;
 
-    explicit PackageFileSet(lito::source::SourceTree tree): tree_(rstd::move(tree)) {}
+    PackageFileSet(lito::source::SourceTree tree, Vec<PathBuf> directories)
+        : tree_(rstd::move(tree)), directories_(rstd::move(directories)) {}
     friend class PackageFileSetResolver;
 
 public:
     auto tree() const noexcept -> const lito::source::SourceTree& { return tree_; }
+    auto directories() const noexcept -> const Vec<PathBuf>& { return directories_; }
 
     auto paths() const -> Vec<String> {
         auto result = Vec<String>::make();
@@ -205,6 +208,7 @@ struct FileSetState {
     rstd::collections::BTreeMap<String, empty> candidates;
     rstd::collections::BTreeMap<String, empty> selected;
     Vec<String>                                pruned_roots;
+    Vec<PathBuf>                               directories;
 };
 
 auto nested_manifest(ref<rstd::path::Path> directory) -> PackageFileSetResult<bool> {
@@ -283,6 +287,7 @@ auto append_file(FileSetState&             state,
 
 auto collect_directory(FileSetState& state, ref<rstd::path::Path> physical, ref<str> prefix)
     -> PackageFileSetResult<empty> {
+    state.directories.push(PathBuf::from(physical));
     auto opened = rstd::fs::read_dir(physical);
     if (opened.is_err()) {
         return publish_failure<empty>(rstd::format(
@@ -558,5 +563,5 @@ auto lito::manifest::PackageFileSetResolver::resolve(const PackageManifest&     
             "package root lito.toml is missing from the publish file set"_str);
     }
     rstd_try(validate_references(state));
-    return Ok(PackageFileSet(rstd::move(state.tree)));
+    return Ok(PackageFileSet(rstd::move(state.tree), rstd::move(state.directories)));
 }

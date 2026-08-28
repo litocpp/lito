@@ -80,6 +80,7 @@ struct ResolvedTarget {
     lito::manifest::PackageLanguage              language { lito::manifest::PackageLanguage::Cpp };
     String                                       artifact_name;
     bool                                         link_stdlib { true };
+    bool                                         host_tool { false };
     lito::manifest::TargetSourceManifest         source;
     Vec<ResolvedSourceGroup>                     source_groups;
     PathBuf                                      root;
@@ -89,6 +90,8 @@ struct ResolvedTarget {
     Vec<lito::manifest::TestAttachmentManifest>  attachments;
     Vec<lito::manifest::RuntimeResourceManifest> runtime_resources;
     Vec<DependencySpec>                          dependencies;
+    Vec<CompilerPluginDependencySpec>            plugin_dependencies;
+    Vec<ProcMacroDependencySpec>                 proc_macro_dependencies;
     Vec<ResolvedExternalDependency>              external_dependencies;
     Vec<GeneratedArtifactContribution>           generated_artifacts;
     Option<TestAttachmentTarget>                 test_attachment;

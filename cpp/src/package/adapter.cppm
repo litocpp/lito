@@ -270,13 +270,15 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
 }
 
 auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
-    if (kind != ArtifactKind::StaticLibrary && kind != ArtifactKind::SharedLibrary &&
+    if (kind != ArtifactKind::StaticLibrary && kind != ArtifactKind::CompilerPlugin &&
+        kind != ArtifactKind::ProcMacroProvider && kind != ArtifactKind::SharedLibrary &&
         kind != ArtifactKind::TestAttachmentArchive) {
         return String::make(declared_name);
     }
     auto result = String::make("lib"_str);
     result.push_str(declared_name);
-    if (kind == ArtifactKind::StaticLibrary) {
+    if (kind == ArtifactKind::StaticLibrary || kind == ArtifactKind::CompilerPlugin ||
+        kind == ArtifactKind::ProcMacroProvider) {
         result.push_str(".a"_str);
     } else if (kind == ArtifactKind::SharedLibrary) {
         result.push_str(".so"_str);
@@ -737,6 +739,20 @@ auto clone_dependencies(const Vec<DependencySpec>& dependencies) -> Vec<Dependen
     return result;
 }
 
+auto clone_proc_macro_dependencies(const Vec<ProcMacroDependencySpec>& dependencies)
+    -> Vec<ProcMacroDependencySpec> {
+    auto result = Vec<ProcMacroDependencySpec>::with_capacity(dependencies.len());
+    for (const auto& dependency : dependencies) result.push(dependency.clone());
+    return result;
+}
+
+auto clone_plugin_dependencies(const Vec<CompilerPluginDependencySpec>& dependencies)
+    -> Vec<CompilerPluginDependencySpec> {
+    auto result = Vec<CompilerPluginDependencySpec>::with_capacity(dependencies.len());
+    for (const auto& dependency : dependencies) result.push(dependency.clone());
+    return result;
+}
+
 auto clone_external_dependencies(const Vec<ResolvedExternalDependency>& dependencies)
     -> Vec<ResolvedExternalDependency> {
     auto result = Vec<ResolvedExternalDependency>::with_capacity(dependencies.len());
@@ -750,6 +766,8 @@ auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -
     case lito::package::PackageTargetKind::Library:
         return lito::manifest::package_library_is_shared(target) ? ArtifactKind::SharedLibrary
                                                                  : ArtifactKind::StaticLibrary;
+    case lito::package::PackageTargetKind::Plugin: return ArtifactKind::CompilerPlugin;
+    case lito::package::PackageTargetKind::ProcMacro: return ArtifactKind::ProcMacroProvider;
     case lito::package::PackageTargetKind::Binary: return ArtifactKind::Executable;
     case lito::package::PackageTargetKind::Test: return ArtifactKind::TestExecutable;
     case lito::package::PackageTargetKind::Benchmark: return ArtifactKind::BenchmarkExecutable;
@@ -1019,12 +1037,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
         }
         for (const auto& dependency : package.dev_dependencies) {
-            if (! libraries.contains_key(dependency.name.as_str())) {
+            if (! dependency.is_Cpp()) continue;
+            const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(
                     rstd::format("package '{}' has development dependency '{}' which does not "
                                  "expose a library target",
                                  package.manifest.name.as_str(),
-                                 dependency.name.as_str()));
+                                 cpp_dependency.name.as_str()));
             }
         }
     }
@@ -1129,6 +1149,20 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .visibility = cpp_dependency.visibility,
             });
         }
+        auto proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
+        auto plugin_dependencies     = Vec<CompilerPluginDependencySpec>::make();
+        for (const auto& dependency : package.dependencies) {
+            if (dependency.is_Plugin()) {
+                plugin_dependencies.push(CompilerPluginDependencySpec {
+                    .package = dependency.as_Plugin().value.name.clone(),
+                });
+                continue;
+            }
+            if (! dependency.is_Pmacro()) continue;
+            proc_macro_dependencies.push(ProcMacroDependencySpec {
+                .package = dependency.as_Pmacro().value.name.clone(),
+            });
+        }
         auto development_selected = false;
         for (const auto& selected_target : selected_targets) {
             if (selected_target.package == package.manifest.name.as_str() &&
@@ -1138,18 +1172,34 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
         }
         auto dev_dependencies = Vec<DependencySpec>::with_capacity(package.dev_dependencies.len());
+        auto dev_plugin_dependencies     = Vec<CompilerPluginDependencySpec>::make();
+        auto dev_proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
         if (development_selected) {
             for (const auto& dependency : package.dev_dependencies) {
-                if (! selected.contains_key(dependency.name.as_str())) {
+                if (dependency.is_Plugin()) {
+                    dev_plugin_dependencies.push(CompilerPluginDependencySpec {
+                        .package = dependency.as_Plugin().value.name.clone(),
+                    });
+                    continue;
+                }
+                if (dependency.is_Pmacro()) {
+                    dev_proc_macro_dependencies.push(ProcMacroDependencySpec {
+                        .package = dependency.as_Pmacro().value.name.clone(),
+                    });
+                    continue;
+                }
+                if (! dependency.is_Cpp()) continue;
+                const auto& cpp_dependency = dependency.as_Cpp().value;
+                if (! selected.contains_key(cpp_dependency.name.as_str())) {
                     return adapter_failure<PackageMetadata>(
                         rstd::format("resolved development dependency '{}' is missing",
-                                     dependency.name.as_str()));
+                                     cpp_dependency.name.as_str()));
                 }
-                auto library = libraries.get(dependency.name.as_str());
+                auto library = libraries.get(cpp_dependency.name.as_str());
                 if (library.is_none()) {
                     return adapter_failure<PackageMetadata>(
                         rstd::format("resolved development dependency '{}' has no library target",
-                                     dependency.name.as_str()));
+                                     cpp_dependency.name.as_str()));
                 }
                 dev_dependencies.push(DependencySpec {
                     .target     = (**library).clone(),
@@ -1177,12 +1227,21 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 runtime_resources = rstd::move(manifest_target.as_Binary().resources);
             }
             auto target_dependencies = clone_dependencies(dependencies);
+            auto target_proc_macro_dependencies =
+                clone_proc_macro_dependencies(proc_macro_dependencies);
+            auto target_plugin_dependencies = clone_plugin_dependencies(plugin_dependencies);
             if (development_target(kind)) {
                 for (const auto& dependency : dev_dependencies) {
                     target_dependencies.push(DependencySpec {
                         .target     = dependency.target.clone(),
                         .visibility = lito::dependency::DependencyVisibility::Private,
                     });
+                }
+                for (const auto& dependency : dev_proc_macro_dependencies) {
+                    target_proc_macro_dependencies.push(dependency.clone());
+                }
+                for (const auto& dependency : dev_plugin_dependencies) {
+                    target_plugin_dependencies.push(dependency.clone());
                 }
             }
             if (kind != lito::package::PackageTargetKind::Library && own_library.is_some()) {
@@ -1201,15 +1260,18 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .artifact_name =
                     String::make(lito::manifest::package_target_artifact_name(manifest_target)),
                 .link_stdlib   = lito::manifest::package_target_links_stdlib(manifest_target),
+                .host_tool     = lito::manifest::package_target_is_host_tool(manifest_target),
                 .source        = rstd::move(source),
                 .source_groups = rstd::move(source_groups),
                 .root          = package.manifest.root.clone(),
                 .source_root   = package.manifest.source_root.clone(),
                 .usage         = clone_usage(
                     package.manifest.usage, arguments, interface_arguments, target_link),
-                .attachments       = rstd::move(attachments),
-                .runtime_resources = rstd::move(runtime_resources),
-                .dependencies      = rstd::move(target_dependencies),
+                .attachments             = rstd::move(attachments),
+                .runtime_resources       = rstd::move(runtime_resources),
+                .dependencies            = rstd::move(target_dependencies),
+                .plugin_dependencies     = rstd::move(target_plugin_dependencies),
+                .proc_macro_dependencies = rstd::move(target_proc_macro_dependencies),
                 .external_dependencies =
                     clone_external_dependencies(external_by_package[package_index]),
                 .compile_metadata = compile_metadata.clone(),
@@ -1220,11 +1282,20 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             for (const auto& test : package.manifest.compile_tests)
                 sources.push(test.source.clone());
             auto compile_dependencies = clone_dependencies(dependencies);
+            auto compile_proc_macro_dependencies =
+                clone_proc_macro_dependencies(proc_macro_dependencies);
+            auto compile_plugin_dependencies = clone_plugin_dependencies(plugin_dependencies);
             for (const auto& dependency : dev_dependencies) {
                 compile_dependencies.push(DependencySpec {
                     .target     = dependency.target.clone(),
                     .visibility = lito::dependency::DependencyVisibility::Private,
                 });
+            }
+            for (const auto& dependency : dev_proc_macro_dependencies) {
+                compile_proc_macro_dependencies.push(dependency.clone());
+            }
+            for (const auto& dependency : dev_plugin_dependencies) {
+                compile_plugin_dependencies.push(dependency.clone());
             }
             if (own_library.is_some()) {
                 compile_dependencies.push(DependencySpec {
@@ -1251,8 +1322,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .root        = package.manifest.root.clone(),
                 .source_root = package.manifest.source_root.clone(),
                 .usage = clone_usage(package.manifest.usage, arguments, interface_arguments, link),
-                .compile_tests = rstd::move(compile_tests),
-                .dependencies  = rstd::move(compile_dependencies),
+                .compile_tests           = rstd::move(compile_tests),
+                .dependencies            = rstd::move(compile_dependencies),
+                .plugin_dependencies     = rstd::move(compile_plugin_dependencies),
+                .proc_macro_dependencies = rstd::move(compile_proc_macro_dependencies),
                 .external_dependencies =
                     clone_external_dependencies(external_by_package[package_index]),
                 .compile_metadata = compile_metadata.clone(),
@@ -1532,12 +1605,15 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> sourc
             .language                = target.language,
             .artifact_name           = rstd::move(artifact_name),
             .link_stdlib             = target.link_stdlib,
+            .host_tool               = target.host_tool,
             .archive_stem            = rstd::move(archive_stem),
             .module_affiliation      = rstd::move(target.source.module),
             .root                    = rstd::move(target.root),
             .source_root             = rstd::move(target.source_root),
             .sources                 = rstd::move(sources),
             .dependencies            = rstd::move(target.dependencies),
+            .plugin_dependencies     = rstd::move(target.plugin_dependencies),
+            .proc_macro_dependencies = rstd::move(target.proc_macro_dependencies),
             .external_dependencies   = rstd::move(target.external_dependencies),
             .generated_artifacts     = rstd::move(target.generated_artifacts),
             .usage                   = rstd::move(target.usage),

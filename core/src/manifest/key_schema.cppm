@@ -32,13 +32,23 @@ auto library_key(ref<str> key) -> bool {
            key == "source-groups"_str || key == "when"_str || key == "linker-options"_str;
 }
 
+auto plugin_key(ref<str> key) -> bool {
+    return key == "module"_str || key == "sources"_str || key == "source-groups"_str ||
+           key == "when"_str;
+}
+
+auto pmacro_key(ref<str> key) -> bool {
+    return key == "module"_str || key == "sources"_str || key == "source-groups"_str ||
+           key == "when"_str;
+}
+
 auto runnable_key(ref<str> key) -> bool {
     return key == "name"_str || key == "module"_str || key == "sources"_str ||
            key == "source-groups"_str || key == "when"_str || key == "link-stdlib"_str;
 }
 
 auto binary_key(ref<str> key) -> bool {
-    return runnable_key(key) || key == "resources"_str;
+    return runnable_key(key) || key == "resources"_str || key == "host-tool"_str;
 }
 
 auto build_tool_key(ref<str> key) -> bool {

@@ -1,0 +1,9 @@
+[package]
+name = "pmacro"
+version = "0.3.0"
+license = "MIT OR Apache-2.0"
+standard = "c++23"
+
+[plugin]
+module = "pmacro"
+sources = ["src/lib.cppm", "src/clang/plugin.cpp"]

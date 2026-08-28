@@ -1,0 +1,1 @@
+#define PMACRO_LOCAL_VALUE 7

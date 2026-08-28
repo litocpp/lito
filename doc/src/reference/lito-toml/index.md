@@ -17,6 +17,7 @@ A package manifest accepts:
 
 - `[package]`;
 - `[lib]`;
+- `[pmacro]`;
 - `[[bin]]`;
 - `[[test]]`;
 - `[[bench]]`;

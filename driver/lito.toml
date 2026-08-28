@@ -11,6 +11,10 @@ archive = "lito.driver"
 workspace = true
 visibility = "public"
 
+[dependencies.lito-pack]
+workspace = true
+visibility = "public"
+
 [dependencies.lito-cpp]
 workspace = true
 visibility = "public"
@@ -22,10 +26,6 @@ visibility = "public"
 [dependencies.lito-toolchain]
 workspace = true
 visibility = "public"
-
-[dependencies.lito-archive]
-workspace = true
-visibility = "private"
 
 [dependencies.lito-frontend]
 workspace = true

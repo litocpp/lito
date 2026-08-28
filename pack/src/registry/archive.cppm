@@ -1,12 +1,12 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.driver:registry.archive;
+export module lito.pack:registry.archive;
 
 import rstd;
 import lito.core;
-import lito.archive;
-import :registry.blob;
+import :archive.tar_zstd;
+import :blob;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

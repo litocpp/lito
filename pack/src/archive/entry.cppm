@@ -1,4 +1,4 @@
-export module lito.archive:entry;
+export module lito.pack:archive.entry;
 
 import rstd;
 

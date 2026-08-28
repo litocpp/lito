@@ -40,6 +40,9 @@ struct BuildSummary {
     BuildScriptReport                   script;
     CompilerIdentity                    compiler;
     Vec<DocumentationBuildUnit>         documentation_units;
+    Vec<BuiltCompilerPlugin>            compiler_plugins;
+    Vec<BuiltProcMacroProvider>         proc_macro_providers;
+    Vec<BuiltProcMacroAggregate>        proc_macro_aggregates;
 };
 
 } // namespace lito

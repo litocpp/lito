@@ -66,7 +66,10 @@ auto project_frontend_analysis(frontend::FrontendAnalysis      analysis,
             .origin                  = analysis.origin,
         });
     }
-    auto result = CppScanResult { .common = rstd::move(common) };
+    auto result = CppScanResult {
+        .common            = rstd::move(common),
+        .scoped_attributes = rstd::move(facts.scoped_attributes),
+    };
     if (facts.provided.is_some()) {
         result.provided = Some(rstd::move(facts.provided).unwrap());
     }

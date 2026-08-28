@@ -1,10 +1,10 @@
 module;
 #include <zstd.h>
 
-module lito.archive;
+module lito.pack;
 
 import rstd;
-import :zstd;
+import :archive.zstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

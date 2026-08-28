@@ -1,11 +1,10 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.driver:command.package;
+export module lito.pack:package;
 
 import rstd;
 import lito.core;
-import :command.error;
 import :registry.archive;
 
 using namespace rstd::prelude;
@@ -34,10 +33,11 @@ struct PackPackageSummary {
     lito::registry::SemanticVersion                  version;
     PathBuf                                          output;
     Vec<String>                                      files;
+    Vec<PathBuf>                                     directories;
     Option<lito::registry::InspectedRegistryArchive> artifact;
 };
 
-auto pack_package(PackPackageRequest request) -> CommandResult<PackPackageSummary>;
+auto pack_package(PackPackageRequest request) -> lito::package::PackageResult<PackPackageSummary>;
 
 } // namespace lito
 
@@ -45,18 +45,18 @@ namespace
 {
 
 template<typename T>
-auto pack_failure(String message) -> lito::CommandResult<T> {
-    return Err(lito::CommandError::Message(rstd::move(message)));
+auto pack_failure(String message) -> lito::package::PackageResult<T> {
+    return Err(lito::package::PackageError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto pack_failure(ref<str> message) -> lito::CommandResult<T> {
+auto pack_failure(ref<str> message) -> lito::package::PackageResult<T> {
     return pack_failure<T>(String::make(message));
 }
 
 auto select_publish_package(lito::workspace::WorkspaceCatalog& catalog,
                             const Option<String>&              requested)
-    -> lito::CommandResult<lito::manifest::PackageManifest> {
+    -> lito::package::PackageResult<lito::manifest::PackageManifest> {
     auto name = Option<String> {};
     if (requested.is_some()) {
         name = Some(requested->clone());
@@ -76,12 +76,13 @@ auto select_publish_package(lito::workspace::WorkspaceCatalog& catalog,
 
 } // namespace
 
-auto lito::pack_package(PackPackageRequest request) -> CommandResult<PackPackageSummary> {
+auto lito::pack_package(PackPackageRequest request)
+    -> lito::package::PackageResult<PackPackageSummary> {
     auto resolved = lito::workspace::resolve_local_project(request.root.as_path());
     if (resolved.is_err()) {
         auto package_error =
             rstd::into<lito::package::PackageError>(rstd::move(resolved).unwrap_err());
-        return Err(rstd::into<CommandError>(rstd::move(package_error)));
+        return Err(rstd::move(package_error));
     }
     auto project  = rstd::move(resolved).unwrap();
     auto manifest = rstd_try(select_publish_package(project.primary, request.package));
@@ -133,13 +134,15 @@ auto lito::pack_package(PackPackageRequest request) -> CommandResult<PackPackage
     if (files.is_err()) {
         return pack_failure<PackPackageSummary>(rstd::move(files).unwrap_err().message);
     }
-    auto paths = files->paths();
+    auto paths       = files->paths();
+    auto directories = as<Clone>(files->directories()).clone();
     if (request.list) {
         return Ok(PackPackageSummary {
-            .package = rstd::move(package),
-            .version = rstd::move(exact),
-            .output  = rstd::move(output),
-            .files   = rstd::move(paths),
+            .package     = rstd::move(package),
+            .version     = rstd::move(exact),
+            .output      = rstd::move(output),
+            .files       = rstd::move(paths),
+            .directories = rstd::move(directories),
         });
     }
     auto built = lito::registry::PackageArchiveBuilder::build(
@@ -148,10 +151,11 @@ auto lito::pack_package(PackPackageRequest request) -> CommandResult<PackPackage
         return pack_failure<PackPackageSummary>(rstd::move(built).unwrap_err().message);
     }
     return Ok(PackPackageSummary {
-        .package  = rstd::move(package),
-        .version  = rstd::move(exact),
-        .output   = rstd::move(output),
-        .files    = rstd::move(paths),
-        .artifact = Some(rstd::move(built).unwrap()),
+        .package     = rstd::move(package),
+        .version     = rstd::move(exact),
+        .output      = rstd::move(output),
+        .files       = rstd::move(paths),
+        .directories = rstd::move(directories),
+        .artifact    = Some(rstd::move(built).unwrap()),
     });
 }

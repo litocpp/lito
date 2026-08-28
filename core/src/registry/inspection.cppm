@@ -201,11 +201,15 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
                                : lito::manifest::load_package_manifest_from_source_tree(
                                      source_identity.as_str(), tree);
     if (loaded.is_err()) {
+        auto error   = rstd::move(loaded).unwrap_err();
+        auto message = rstd::format("cannot parse standalone Registry manifest: {}", error);
+        auto source  = as<rstd::error::Error>(error).source();
+        while (source.is_some()) {
+            message.push_str(rstd::format(": {}", *source).as_str());
+            source = (*source)->source();
+        }
         return inspection_failure<VerifiedRegistrySourceCandidate>(
-            RegistryArtifactErrorKind::Manifest,
-            expected_package,
-            rstd::format("cannot parse standalone Registry manifest: {}",
-                         rstd::move(loaded).unwrap_err()));
+            RegistryArtifactErrorKind::Manifest, expected_package, rstd::move(message));
     }
     auto manifest = rstd::move(loaded).unwrap();
     if (manifest.name.as_str() != expected_package.name.as_str() ||

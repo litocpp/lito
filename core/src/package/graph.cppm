@@ -42,6 +42,18 @@ struct ResolvedScriptDependency {
     Vec<lito::manifest::ScriptHostKind> supports;
 };
 
+struct ResolvedPmacroDependency {
+    String      name;
+    Vec<String> features;
+    bool        default_features { true };
+};
+
+struct ResolvedPluginDependency {
+    String      name;
+    Vec<String> features;
+    bool        default_features { true };
+};
+
 struct ResolvedScriptPackageView {
     String                              name;
     String                              require_name;
@@ -55,13 +67,17 @@ struct ResolvedScriptPackageView {
 class ResolvedRequiredDependency {
     RSTD_ENUM(ResolvedRequiredDependency,
               (Cpp, (ResolvedCppDependency value;)),
-              (Script, (ResolvedScriptDependency value;)))
+              (Script, (ResolvedScriptDependency value;)),
+              (Plugin, (ResolvedPluginDependency value;)),
+              (Pmacro, (ResolvedPmacroDependency value;)))
 };
 
 auto resolved_dependency_name_value(const ResolvedRequiredDependency& dependency) noexcept
     -> const String& {
     if (dependency.is_Cpp()) return dependency.as_Cpp().value.name;
-    return dependency.as_Script().value.name;
+    if (dependency.is_Script()) return dependency.as_Script().value.name;
+    if (dependency.is_Plugin()) return dependency.as_Plugin().value.name;
+    return dependency.as_Pmacro().value.name;
 }
 
 auto resolved_dependency_name(const ResolvedRequiredDependency& dependency) noexcept -> ref<str> {
@@ -86,7 +102,7 @@ struct ResolvedPackage {
     lito::manifest::PackageManifest                     manifest;
     Option<lito::source::SourceTree>                    embedded_source;
     Vec<ResolvedRequiredDependency>                     dependencies;
-    Vec<ResolvedCppDependency>                          dev_dependencies;
+    Vec<ResolvedRequiredDependency>                     dev_dependencies;
     Vec<ResolvedRuntimeDependency>                      runtime_dependencies;
     Vec<ResolvedFeature>                                features;
     Vec<lito::dependency::ResolvedExternalSourceRecord> externals;

@@ -33,6 +33,7 @@ C; C++ standard values select C++. A compile package without the field defaults 
 Lito has these package target kinds:
 
 - `[lib]` builds one static archive and can own a C++ module namespace.
+- `[pmacro]` builds a host-only C++ macro provider consumed through an aggregate Clang plugin.
 - `[[bin]]` builds an executable and may publish generated runtime resources.
 - `[[test]]` builds an executable run by `lito test`.
 - `[[bench]]` builds an executable run by `lito bench`.

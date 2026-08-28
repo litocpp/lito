@@ -25,6 +25,8 @@ import :build.compile_executor;
 import :build.compile_plan;
 import :build.profiling;
 import :build.prepared_project;
+import :build.plugin;
+import :build.proc_macro;
 import :cache.error;
 import :project.error;
 import lito.toolchain.common;
@@ -66,6 +68,61 @@ auto emit(const BuildRequest&   request,
     const auto& observer = *request.observer;
     if (observer.notify == nullptr) return;
     observer.notify(observer.context, BuildEvent { kind, target, path });
+}
+
+auto build_archive_target(const BuildRequest&                        request,
+                          const BuildLayout&                         layout,
+                          const ClangToolchain&                      toolchain,
+                          ArchiveCacheSession&                       cache,
+                          const cpp::TargetSpec&                     target,
+                          const Vec<cpp::PreparedUnit>&              units,
+                          const Vec<cpp::UnitId>&                    target_units,
+                          const Vec<Option<CachedArtifactIdentity>>& object_identities,
+                          BuildTimingReport& timing) -> BuildResult<PathBuf> {
+    auto archive =
+        target.test_attachment.is_some()
+            ? layout.test_attachment_archive(*target.test_attachment, target.archive_stem.as_str())
+            : layout.archive(target.id, target.artifact_name.as_str());
+    auto objects = Vec<PathBuf>::with_capacity(target_units.len());
+    auto inputs  = Vec<CachedArtifactIdentity>::with_capacity(target_units.len());
+    for (auto unit : target_units) {
+        objects.push(units[unit].unit.object.clone());
+        if (unit >= object_identities.len() || object_identities[unit].is_none()) {
+            return build_failure<PathBuf>(
+                rstd::format("archive input '{}' has no compiled object identity",
+                             units[unit].unit.object.as_path()));
+        }
+        inputs.push(object_identities[unit]->clone());
+    }
+    auto identity   = lito::package::package_target_id_text(target.id);
+    auto invocation = toolchain.prepare_archive(archive.as_path(), objects, target.root.as_path());
+    if (invocation.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
+    }
+    auto decision = cache.evaluate(
+        identity.as_str(), layout.cache_archive(target.id).as_path(), *invocation, inputs);
+    if (decision.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
+    }
+    if (decision->current()) {
+        emit(request, BuildEventKind::ArchiveReuse, identity.as_str(), archive.as_path());
+        return Ok(rstd::move(archive));
+    }
+    auto begun = cache.begin_archive(*decision);
+    if (begun.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(begun).unwrap_err()));
+    }
+    emit(request, BuildEventKind::Archive, identity.as_str(), archive.as_path());
+    auto archived = toolchain.execute_archive(*invocation);
+    if (archived.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(archived).unwrap_err()));
+    }
+    timing.record(BuildOperation::Archive, *archived);
+    auto committed = cache.commit_success(*decision);
+    if (committed.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(committed).unwrap_err()));
+    }
+    return Ok(rstd::move(archive));
 }
 
 struct ResolvedScanExecution {
@@ -139,7 +196,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                  const ResolvedProcessEnvironment&         process_environment,
                                  Option<lito::workspace::WorkspaceCatalog> catalog,
                                  Option<PreparedBuildProject>              prepared,
-                                 BuildStageTimingReport stage_timing) -> BuildResult<BuildSummary> {
+                                 BuildStageTimingReport                    stage_timing,
+                                 bool prepared_defaults = false) -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return build_failure<BuildSummary>("build project root is required"_str);
     }
@@ -197,11 +255,25 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             });
     }();
     if (resolved_project.is_err()) return Err(rstd::move(resolved_project).unwrap_err());
-    auto  project   = rstd::move(resolved_project).unwrap();
+    auto project     = rstd::move(resolved_project).unwrap();
+    auto plugin_host = Option<BuildSummary> {};
+    if (project.plugin_host.is_some()) {
+        auto host  = rstd::move(project.plugin_host).unwrap();
+        auto built = stage_timing.measure(BuildStage::Plugin, [&] {
+            return build_with_environment_impl(request,
+                                               process_environment,
+                                               None(),
+                                               Some(rstd::move(*host)),
+                                               BuildStageTimingReport {},
+                                               true);
+        });
+        if (built.is_err()) return Err(rstd::move(built).unwrap_err());
+        plugin_host = Some(rstd::move(built).unwrap());
+    }
     auto& toolchain = project.toolchain;
     auto& metadata  = project.metadata;
     auto& layout    = project.layout;
-    if (supplied_prepared) {
+    if (supplied_prepared && ! prepared_defaults) {
         if (profile.as_str() != metadata.default_profile.as_str()) {
             return build_failure<BuildSummary>(
                 rstd::format("prepared project profile '{}' cannot satisfy requested profile '{}'",
@@ -235,8 +307,15 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto frontend_observer = FrontendProfileObserver::make(profiler);
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
 
-    auto selected = cpp::resolve_source_selection(
-        metadata, metadata.default_profile.as_str(), request.targets, request.exact_targets);
+    auto        default_target_names   = Vec<String>::make();
+    auto        default_exact_targets  = Vec<lito::package::PackageTargetId>::make();
+    const auto& requested_target_names = prepared_defaults ? default_target_names : request.targets;
+    const auto& requested_exact_targets =
+        prepared_defaults ? default_exact_targets : request.exact_targets;
+    auto selected = cpp::resolve_source_selection(metadata,
+                                                  metadata.default_profile.as_str(),
+                                                  requested_target_names,
+                                                  requested_exact_targets);
     if (selected.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(selected).unwrap_err()));
     }
@@ -245,25 +324,29 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     for (auto target : selected->selected_targets) {
         selected_targets.push(metadata.targets[target].id.clone());
     }
-    for (const auto& requested : request.artifact_link_variants) {
-        const cpp::ResolvedTarget* target = nullptr;
-        for (auto selected_target : selected->selected_targets) {
-            if (metadata.targets[selected_target].id == requested.target) {
-                target = rstd::addressof(metadata.targets[selected_target]);
-                break;
+    const auto* artifact_link_variants =
+        prepared_defaults ? static_cast<const Vec<RequestedArtifactLinkVariant>*>(nullptr)
+                          : rstd::addressof(request.artifact_link_variants);
+    if (artifact_link_variants != nullptr)
+        for (const auto& requested : *artifact_link_variants) {
+            const cpp::ResolvedTarget* target = nullptr;
+            for (auto selected_target : selected->selected_targets) {
+                if (metadata.targets[selected_target].id == requested.target) {
+                    target = rstd::addressof(metadata.targets[selected_target]);
+                    break;
+                }
+            }
+            if (target == nullptr) {
+                return build_failure<BuildSummary>(
+                    rstd::format("requested install link variant target '{}' is not selected",
+                                 lito::package::package_target_id_text(requested.target).as_str()));
+            }
+            if (target->artifact_kind != cpp::ArtifactKind::Executable) {
+                return build_failure<BuildSummary>(
+                    rstd::format("requested install link variant target '{}' is not an executable",
+                                 lito::package::package_target_id_text(requested.target).as_str()));
             }
         }
-        if (target == nullptr) {
-            return build_failure<BuildSummary>(
-                rstd::format("requested install link variant target '{}' is not selected",
-                             lito::package::package_target_id_text(requested.target).as_str()));
-        }
-        if (target->artifact_kind != cpp::ArtifactKind::Executable) {
-            return build_failure<BuildSummary>(
-                rstd::format("requested install link variant target '{}' is not an executable",
-                             lito::package::package_target_id_text(requested.target).as_str()));
-        }
-    }
     auto selected_packages = Vec<cpp::SelectedPackageMetadata>::make();
     for (const auto& package : metadata.selected_packages) {
         auto version = Option<String> {};
@@ -287,6 +370,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
     }
     auto native_target_plan = rstd::move(resolved).unwrap();
+    auto compiler_plugin_sdk =
+        prepare_compiler_plugin_sdk(metadata, native_target_plan, toolchain, process_environment);
+    if (compiler_plugin_sdk.is_err()) {
+        return Err(rstd::move(compiler_plugin_sdk).unwrap_err());
+    }
+    auto plugin_sdk = rstd::move(compiler_plugin_sdk).unwrap();
 
     auto needs_strip_tool = false;
     for (const auto target : selected->target_order) {
@@ -369,6 +458,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         });
     if (toolchain_header_roots.is_err()) {
         return Err(rstd::move(toolchain_header_roots).unwrap_err());
+    }
+    if (plugin_sdk.is_some()) {
+        for (auto& root : plugin_sdk->header_roots) {
+            toolchain_header_roots->push(rstd::move(root));
+        }
     }
     auto header_ownership = cpp::resolve_header_ownership(
         metadata, native_target_plan, rstd::move(toolchain_header_roots).unwrap());
@@ -491,46 +585,399 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto scanned                                      = scans.len();
     stage_timing.record(BuildStage::Scan, scan_started.elapsed());
 
-    auto compile_plan_started = rstd::time::Instant::now();
+    auto initial_plan_started = rstd::time::Instant::now();
     auto cache                = CompileCacheSession::create(cache_environment, layout.output());
     auto archive_cache        = ArchiveCacheSession::create(cache_environment, layout.output());
-    auto materialized         = materialize_build_actions(package,
-                                                          layout,
-                                                          toolchain,
-                                                          bmi_format,
-                                                          units,
-                                                          rstd::move(scans),
-                                                          rstd::move(semantic_graph),
-                                                          selected_targets.as_slice(),
-                                                          request.result);
-    if (materialized.is_err()) {
-        return Err(rstd::move(materialized).unwrap_err());
+    auto proc_macro_sources   = Vec<u8>::make();
+    if (plugin_host.is_some()) {
+        auto selected = select_proc_macro_sources(package, package_plan, target_units, scans);
+        if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
+        proc_macro_sources = rstd::move(selected).unwrap();
     }
+    auto materialized = materialize_build_actions(package,
+                                                  layout,
+                                                  toolchain,
+                                                  bmi_format,
+                                                  units,
+                                                  rstd::move(scans),
+                                                  rstd::move(semantic_graph),
+                                                  selected_targets.as_slice(),
+                                                  request.result);
+    if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
     auto actions                = rstd::move(materialized).unwrap();
     auto documentation_units    = rstd::move(actions.documentation);
     auto documentation_retained = documentation_retained_bytes(documentation_units);
-    stage_timing.record(BuildStage::CompilePlan, compile_plan_started.elapsed());
-    auto executed = stage_timing.measure(BuildStage::CompileExecute, [&] {
-        return execute_compile_plan(package,
-                                    units,
-                                    rstd::move(actions.compile),
-                                    cache,
-                                    toolchain.compile_executor(),
-                                    request.observer,
-                                    *compile_execution);
-    });
-    if (executed.is_err()) {
-        return Err(rstd::move(executed).unwrap_err());
+    auto initial_plan_elapsed   = initial_plan_started.elapsed();
+    auto compile_plan_recorded  = false;
+
+    auto prerequisite_selection = Vec<u8>::with_capacity(actions.compile.nodes.len());
+    auto prerequisite_identities =
+        Vec<Option<CachedArtifactIdentity>>::with_capacity(actions.compile.nodes.len());
+    for (auto unit = cpp::UnitId {}; unit < actions.compile.nodes.len(); ++unit) {
+        prerequisite_selection.push(u8 {});
+        prerequisite_identities.emplace_back();
     }
-    auto compile_result                             = rstd::move(executed).unwrap();
-    auto object_identities                          = rstd::move(compile_result.object_identities);
-    auto compiled                                   = compile_result.compiled;
-    auto reused                                     = compile_result.reused;
-    auto compile_tests                              = rstd::move(compile_result.compile_tests);
-    auto compile_statistics                         = compile_result.statistics;
+
+    auto rebuild_after_source_transformation = [&]() -> BuildResult<empty> {
+        auto authoritative_profiler_result = ScanProfiler::create();
+        if (authoritative_profiler_result.is_err()) {
+            return build_failure<empty>(
+                rstd::move(authoritative_profiler_result).unwrap_err_unchecked());
+        }
+        auto authoritative_profiler = rstd::move(authoritative_profiler_result).unwrap_unchecked();
+        auto authoritative_observer = FrontendProfileObserver::make(authoritative_profiler);
+        auto authoritative_frontend =
+            frontend::FrontendService::make(Some(authoritative_observer.observer()));
+        for (const auto& target : package.targets) {
+            for (const auto& source : target.sources) {
+                if (source.transformed.is_none()) continue;
+                if (! authoritative_frontend.add_source_overlay(
+                        source.transformed->logical_path.as_path(),
+                        source.transformed->physical_path.as_path())) {
+                    return build_failure<empty>(
+                        rstd::format("cannot register transformed source overlay for '{}'",
+                                     source.transformed->logical_path.as_path()));
+                }
+            }
+        }
+        auto authoritative_cache    = ScanCacheSession::create(cache_environment);
+        auto authoritative_analysis = FrontendAnalysisService::make(layout,
+                                                                    toolchain,
+                                                                    header_ownership,
+                                                                    authoritative_frontend,
+                                                                    authoritative_cache,
+                                                                    authoritative_profiler);
+        auto authoritative_graph =
+            cpp::SemanticScanGraphBuilder::make(package, package_plan, header_ownership);
+        auto authoritative_span = authoritative_profiler.span(ScanProbe::Total);
+        for (auto target : package_plan.target_order) {
+            auto& target_spec = package.targets[target];
+            for (auto& source : target_spec.sources) {
+                auto graph_unit = authoritative_graph.register_project_unit(
+                    target,
+                    source.path.as_path(),
+                    package_plan.contexts[target].scan_id.as_str(),
+                    package_plan.contexts[target].id.as_str());
+                auto analyzed = authoritative_analysis.analyze(target_spec.id,
+                                                               source.relative_path.as_path(),
+                                                               source.origin_identity.as_str(),
+                                                               source.path.as_path(),
+                                                               package_plan.contexts[target],
+                                                               target_spec.compile_metadata,
+                                                               target_spec.root.as_path());
+                if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
+                auto projected = authoritative_analysis.project(rstd::move(analyzed).unwrap(),
+                                                                target_spec.language);
+                if (projected.is_err()) {
+                    return build_failure<empty>(rstd::move(projected).unwrap_err());
+                }
+                source.scan_artifact = Some(rstd::move(projected).unwrap());
+                auto completed = authoritative_graph.complete(graph_unit, *source.scan_artifact);
+                if (completed.is_err()) {
+                    return build_failure<empty>(rstd::move(completed).unwrap_err());
+                }
+            }
+        }
+        auto discovery_finished = authoritative_graph.finish_discovery();
+        if (discovery_finished.is_err()) {
+            return build_failure<empty>(rstd::move(discovery_finished).unwrap_err());
+        }
+
+        auto authoritative_units = prepare_build_units(package, package_plan, layout, toolchain);
+        if (authoritative_units.is_err()) {
+            return Err(rstd::move(authoritative_units).unwrap_err());
+        }
+        prepared_build                      = rstd::move(authoritative_units).unwrap();
+        auto authoritative_standard_modules = prepare_standard_library_modules(
+            prepared_build, scans, authoritative_analysis, layout, toolchain);
+        if (authoritative_standard_modules.is_err()) {
+            return Err(rstd::move(authoritative_standard_modules).unwrap_err());
+        }
+        auto authoritative_incremental = rstd::move(authoritative_graph).finalize(units, scans);
+        if (authoritative_incremental.is_err()) {
+            return build_failure<empty>(rstd::move(authoritative_incremental).unwrap_err());
+        }
+        auto authoritative_conventions = cpp::validate_module_conventions(package, units, scans);
+        if (authoritative_conventions.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(authoritative_conventions).unwrap_err()));
+        }
+        auto authoritative_semantics = cpp::resolve_semantic_build(
+            package_plan, units, scans, rstd::move(authoritative_incremental).unwrap(), bmi_format);
+        if (authoritative_semantics.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(authoritative_semantics).unwrap_err()));
+        }
+        scan_graph_statistics            = authoritative_semantics->statistics;
+        auto authoritative_span_finished = authoritative_profiler.complete(authoritative_span);
+        if (authoritative_span_finished.is_err()) {
+            return build_failure<empty>(
+                rstd::move(authoritative_span_finished).unwrap_err_unchecked());
+        }
+        auto authoritative_release = authoritative_analysis.release_source_cache();
+        if (authoritative_release.is_err()) {
+            return build_failure<empty>("cannot release authoritative source cache"_str);
+        }
+        authoritative_analysis.record_source_release(rstd::move(authoritative_release).unwrap());
+        frontend_statistics.add(authoritative_analysis.statistics());
+        auto authoritative_profile = authoritative_profiler.finish();
+        if (authoritative_profile.is_err()) {
+            return build_failure<empty>(rstd::move(authoritative_profile).unwrap_err_unchecked());
+        }
+        scan_profile = rstd::move(authoritative_profile).unwrap_unchecked();
+        scanned += scans.len();
+
+        auto authoritative_actions =
+            materialize_build_actions(package,
+                                      layout,
+                                      toolchain,
+                                      bmi_format,
+                                      units,
+                                      rstd::move(scans),
+                                      rstd::move(authoritative_semantics).unwrap(),
+                                      selected_targets.as_slice(),
+                                      request.result);
+        if (authoritative_actions.is_err()) {
+            return Err(rstd::move(authoritative_actions).unwrap_err());
+        }
+        actions                = rstd::move(authoritative_actions).unwrap();
+        documentation_units    = rstd::move(actions.documentation);
+        documentation_retained = documentation_retained_bytes(documentation_units);
+        prerequisite_selection.clear();
+        prerequisite_identities.clear();
+        for (auto unit = cpp::UnitId {}; unit < actions.compile.nodes.len(); ++unit) {
+            prerequisite_selection.push(u8 {});
+            prerequisite_identities.emplace_back();
+        }
+        return Ok(empty {});
+    };
+
+    if (plugin_host.is_some()) {
+        auto plugin_action_started = rstd::time::Instant::now();
+        auto macro_roots           = Vec<cpp::UnitId>::make();
+        for (auto unit = cpp::UnitId {}; unit < proc_macro_sources.len(); ++unit) {
+            if (proc_macro_sources[unit] != u8 {}) macro_roots.emplace_back(unit);
+        }
+        prerequisite_selection = compile_plan_prerequisite_closure(actions.compile, macro_roots);
+        for (auto root : macro_roots) prerequisite_selection[root] = u8 {};
+        auto prepared_dependencies =
+            execute_compile_plan_selection(package,
+                                           units,
+                                           actions.compile,
+                                           prerequisite_selection,
+                                           rstd::move(prerequisite_identities),
+                                           cache,
+                                           toolchain.compile_executor(),
+                                           request.observer,
+                                           *compile_execution);
+        if (prepared_dependencies.is_err()) {
+            return Err(rstd::move(prepared_dependencies).unwrap_err());
+        }
+        auto prepared_dependency_result = rstd::move(prepared_dependencies).unwrap();
+        prerequisite_identities         = rstd::move(prepared_dependency_result.object_identities);
+        auto transformed = transform_proc_macro_sources(layout,
+                                                        toolchain,
+                                                        package,
+                                                        package_plan,
+                                                        units,
+                                                        target_units,
+                                                        proc_macro_sources,
+                                                        plugin_host->proc_macro_aggregates);
+        if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
+        if (*transformed) {
+            stage_timing.record(BuildStage::Plugin, initial_plan_elapsed);
+            auto authoritative_plan_started = rstd::time::Instant::now();
+            rstd_try(rebuild_after_source_transformation());
+            stage_timing.record(BuildStage::CompilePlan, authoritative_plan_started.elapsed());
+            compile_plan_recorded = true;
+        }
+        stage_timing.record(BuildStage::Plugin, plugin_action_started.elapsed());
+    }
+    if (! compile_plan_recorded) {
+        stage_timing.record(BuildStage::CompilePlan, initial_plan_elapsed);
+    }
+
+    auto object_identities  = rstd::move(prerequisite_identities);
+    auto compiled           = usize {};
+    auto reused             = usize {};
+    auto compile_tests      = Vec<CompileTestExecution>::make();
+    auto compile_statistics = CompileExecutionStatistics {};
+    auto build_timing       = BuildTimingReport {};
+    auto library_paths      = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
+    for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
+        library_paths.emplace_back();
+    }
+    auto compiler_plugins = Vec<BuiltCompilerPlugin>::make();
+    if (plugin_host.is_some()) {
+        compiler_plugins.reserve(plugin_host->compiler_plugins.len());
+        for (const auto& product : plugin_host->compiler_plugins) {
+            compiler_plugins.push(product.clone());
+        }
+    }
+    auto plugin_targets = Vec<u8>::with_capacity(package.targets.len());
+    for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
+        plugin_targets.push(u8 {});
+    }
+    auto pending_plugin_targets = Vec<cpp::TargetId>::make();
+    for (auto target : package_plan.target_order) {
+        if (package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin) {
+            pending_plugin_targets.emplace_back(target);
+        }
+    }
+    while (! pending_plugin_targets.is_empty()) {
+        const auto target = rstd::move(pending_plugin_targets.pop()).unwrap_unchecked();
+        if (plugin_targets[target] != u8 {}) continue;
+        plugin_targets[target] = u8(1);
+        for (const auto& input : package_plan.link_inputs[target]) {
+            if (input.is_Target()) pending_plugin_targets.emplace_back(input.as_Target().target);
+        }
+    }
+
+    auto plugin_roots   = Vec<cpp::UnitId>::make();
+    auto provider_roots = Vec<cpp::UnitId>::make();
+    for (auto target : package_plan.target_order) {
+        if (plugin_targets[target] != u8 {}) {
+            for (auto unit : target_units[target]) plugin_roots.emplace_back(unit);
+        }
+        if (package.targets[target].artifact_kind == cpp::ArtifactKind::ProcMacroProvider) {
+            for (auto unit : target_units[target]) provider_roots.emplace_back(unit);
+        }
+    }
+    auto plugin_selection    = compile_plan_prerequisite_closure(actions.compile, plugin_roots);
+    auto completed_selection = prerequisite_selection.clone();
+    for (auto unit = cpp::UnitId {}; unit < completed_selection.len(); ++unit) {
+        if (plugin_selection[unit] != u8 {}) completed_selection[unit] = u8(1);
+    }
+    if (! plugin_roots.is_empty()) {
+        auto plugin_started = rstd::time::Instant::now();
+        auto plugin_compile = execute_compile_plan_selection(package,
+                                                             units,
+                                                             actions.compile,
+                                                             plugin_selection,
+                                                             rstd::move(object_identities),
+                                                             cache,
+                                                             toolchain.compile_executor(),
+                                                             request.observer,
+                                                             *compile_execution);
+        if (plugin_compile.is_err()) {
+            return Err(rstd::move(plugin_compile).unwrap_err());
+        }
+        auto plugin_result = rstd::move(plugin_compile).unwrap();
+        object_identities  = rstd::move(plugin_result.object_identities);
+        compiled += plugin_result.compiled;
+        reused += plugin_result.reused;
+        for (auto target : package_plan.target_order) {
+            if (plugin_targets[target] == u8 {}) continue;
+            const auto kind = package.targets[target].artifact_kind;
+            if (kind == cpp::ArtifactKind::SharedLibrary) {
+                return build_failure<BuildSummary>(
+                    "compiler plugin host dependency cannot be a shared library"_str);
+            }
+            if (kind != cpp::ArtifactKind::StaticLibrary &&
+                kind != cpp::ArtifactKind::CompilerPlugin) {
+                continue;
+            }
+            auto archived = build_archive_target(request,
+                                                 layout,
+                                                 toolchain,
+                                                 archive_cache,
+                                                 package.targets[target],
+                                                 units,
+                                                 target_units[target],
+                                                 object_identities,
+                                                 build_timing);
+            if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
+            library_paths[target] = Some(rstd::move(archived).unwrap());
+        }
+        auto built_plugins = build_compiler_plugins(project.configuration,
+                                                    project.platform,
+                                                    layout,
+                                                    toolchain,
+                                                    plugin_sdk->sdk,
+                                                    package,
+                                                    package_plan,
+                                                    library_paths);
+        if (built_plugins.is_err()) return Err(rstd::move(built_plugins).unwrap_err());
+        compiler_plugins = rstd::move(built_plugins).unwrap();
+        if (! provider_roots.is_empty()) {
+            auto provider_prerequisites =
+                compile_plan_prerequisite_closure(actions.compile, provider_roots);
+            for (auto root : provider_roots) provider_prerequisites[root] = u8 {};
+            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
+                if (completed_selection[unit] != u8 {}) provider_prerequisites[unit] = u8 {};
+            }
+            auto provider_dependency_compile =
+                execute_compile_plan_selection(package,
+                                               units,
+                                               actions.compile,
+                                               provider_prerequisites,
+                                               rstd::move(object_identities),
+                                               cache,
+                                               toolchain.compile_executor(),
+                                               request.observer,
+                                               *compile_execution);
+            if (provider_dependency_compile.is_err()) {
+                return Err(rstd::move(provider_dependency_compile).unwrap_err());
+            }
+            auto provider_dependency_result = rstd::move(provider_dependency_compile).unwrap();
+            object_identities = rstd::move(provider_dependency_result.object_identities);
+            compiled += provider_dependency_result.compiled;
+            reused += provider_dependency_result.reused;
+            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
+                if (provider_prerequisites[unit] != u8 {}) completed_selection[unit] = u8(1);
+            }
+            auto provider_transformed = transform_proc_macro_provider_sources(
+                layout, toolchain, package, package_plan, units, target_units, compiler_plugins);
+            if (provider_transformed.is_err()) {
+                return Err(rstd::move(provider_transformed).unwrap_err());
+            }
+            if (*provider_transformed) {
+                auto expected_units = actions.compile.nodes.len();
+                rstd_try(rebuild_after_source_transformation());
+                if (actions.compile.nodes.len() != expected_units ||
+                    object_identities.len() != actions.compile.nodes.len()) {
+                    return build_failure<BuildSummary>(
+                        "proc-macro provider transformation changed compile unit alignment"_str);
+                }
+                completed_selection.clear();
+                for (const auto& identity : object_identities) {
+                    completed_selection.push(identity.is_some() ? u8(1) : u8 {});
+                }
+            }
+        }
+        auto attached = attach_target_compiler_plugins(
+            package, package_plan, target_units, compiler_plugins, toolchain, actions.compile);
+        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
+        stage_timing.record(BuildStage::Plugin, plugin_started.elapsed());
+    } else if (! compiler_plugins.is_empty()) {
+        auto attached = attach_target_compiler_plugins(
+            package, package_plan, target_units, compiler_plugins, toolchain, actions.compile);
+        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
+    }
+
+    auto remaining = compile_plan_remaining_selection(actions.compile, completed_selection);
+    auto executed  = stage_timing.measure(BuildStage::CompileExecute, [&] {
+        return execute_compile_plan_selection(package,
+                                              units,
+                                              actions.compile,
+                                              remaining,
+                                              rstd::move(object_identities),
+                                              cache,
+                                              toolchain.compile_executor(),
+                                              request.observer,
+                                              *compile_execution);
+    });
+    if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
+    auto compile_result = rstd::move(executed).unwrap();
+    object_identities   = rstd::move(compile_result.object_identities);
+    compiled += compile_result.compiled;
+    reused += compile_result.reused;
+    compile_tests                                   = rstd::move(compile_result.compile_tests);
+    compile_statistics                              = compile_result.statistics;
     compile_statistics.documentation_units          = documentation_units.len();
     compile_statistics.documentation_retained_bytes = documentation_retained;
-    auto build_timing                               = rstd::move(compile_result.timing);
+    const auto& compile_timing = compile_result.timing.timing(BuildOperation::Compile);
+    if (compile_timing.count != usize {}) {
+        build_timing.record(BuildOperation::Compile, compile_timing.total);
+    }
 
     auto cache_finish_started = rstd::time::Instant::now();
     for (auto target : package_plan.target_order) {
@@ -546,6 +993,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
         }
         if (package.targets[target].artifact_kind == cpp::ArtifactKind::StaticLibrary ||
+            package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin ||
+            package.targets[target].artifact_kind == cpp::ArtifactKind::ProcMacroProvider ||
             package.targets[target].artifact_kind == cpp::ArtifactKind::TestAttachmentArchive) {
             records.push(layout.cache_archive(package.targets[target].id));
         }
@@ -556,69 +1005,28 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     stage_timing.record(BuildStage::CompileCacheFinish, cache_finish_started.elapsed());
 
-    auto artifacts     = Vec<BuiltArtifact>::make();
-    auto library_paths = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
-    for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
-        library_paths.emplace_back(None());
-    }
+    auto artifacts = Vec<BuiltArtifact>::make();
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
+        if (library_paths[target].is_some()) continue;
         if (target_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary &&
+            target_spec.artifact_kind != cpp::ArtifactKind::CompilerPlugin &&
+            target_spec.artifact_kind != cpp::ArtifactKind::ProcMacroProvider &&
             target_spec.artifact_kind != cpp::ArtifactKind::TestAttachmentArchive) {
             continue;
         }
         auto archive_started = rstd::time::Instant::now();
-        auto archive_path =
-            target_spec.test_attachment.is_some()
-                ? layout.test_attachment_archive(*target_spec.test_attachment,
-                                                 target_spec.archive_stem.as_str())
-                : layout.archive(target_spec.id, target_spec.artifact_name.as_str());
-        auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
-        auto inputs  = Vec<CachedArtifactIdentity>::with_capacity(target_units[target].len());
-        for (auto unit : target_units[target]) {
-            objects.push(units[unit].unit.object.clone());
-            if (unit >= object_identities.len() || object_identities[unit].is_none()) {
-                return build_failure<BuildSummary>(
-                    rstd::format("archive input '{}' has no compiled object identity",
-                                 units[unit].unit.object.as_path()));
-            }
-            inputs.push(object_identities[unit]->clone());
-        }
-        auto target_identity = lito::package::package_target_id_text(target_spec.id);
-        auto invocation =
-            toolchain.prepare_archive(archive_path.as_path(), objects, target_spec.root.as_path());
-        if (invocation.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
-        }
-        auto decision = archive_cache.evaluate(target_identity.as_str(),
-                                               layout.cache_archive(target_spec.id).as_path(),
-                                               *invocation,
-                                               inputs);
-        if (decision.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
-        }
-        if (decision->current()) {
-            emit(request,
-                 BuildEventKind::ArchiveReuse,
-                 target_identity.as_str(),
-                 archive_path.as_path());
-        } else {
-            auto begun = archive_cache.begin_archive(*decision);
-            if (begun.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(begun).unwrap_err()));
-            }
-            emit(
-                request, BuildEventKind::Archive, target_identity.as_str(), archive_path.as_path());
-            auto archived = toolchain.execute_archive(*invocation);
-            if (archived.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(archived).unwrap_err()));
-            }
-            build_timing.record(BuildOperation::Archive, *archived);
-            auto committed = archive_cache.commit_success(*decision);
-            if (committed.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(committed).unwrap_err()));
-            }
-        }
+        auto archived        = build_archive_target(request,
+                                                    layout,
+                                                    toolchain,
+                                                    archive_cache,
+                                                    target_spec,
+                                                    units,
+                                                    target_units[target],
+                                                    object_identities,
+                                                    build_timing);
+        if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
+        auto archive_path     = rstd::move(archived).unwrap();
         library_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
             .target        = target_spec.id.clone(),
@@ -633,6 +1041,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         if (target_spec.artifact_kind == cpp::ArtifactKind::StaticLibrary ||
+            target_spec.artifact_kind == cpp::ArtifactKind::CompilerPlugin ||
+            target_spec.artifact_kind == cpp::ArtifactKind::ProcMacroProvider ||
             target_spec.artifact_kind == cpp::ArtifactKind::TestAttachmentArchive ||
             target_spec.artifact_kind == cpp::ArtifactKind::CompileTest) {
             continue;
@@ -690,15 +1100,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
         }
         const RequestedArtifactLinkVariant* install_variant = nullptr;
-        for (const auto& requested : request.artifact_link_variants) {
-            if (requested.target != target_spec.id) continue;
-            if (install_variant != nullptr) {
-                return build_failure<BuildSummary>(
-                    rstd::format("target '{}' has more than one requested install link variant",
-                                 lito::package::package_target_id_text(target_spec.id).as_str()));
+        if (artifact_link_variants != nullptr)
+            for (const auto& requested : *artifact_link_variants) {
+                if (requested.target != target_spec.id) continue;
+                if (install_variant != nullptr) {
+                    return build_failure<BuildSummary>(rstd::format(
+                        "target '{}' has more than one requested install link variant",
+                        lito::package::package_target_id_text(target_spec.id).as_str()));
+                }
+                install_variant = rstd::addressof(requested);
             }
-            install_variant = rstd::addressof(requested);
-        }
         auto link_requirements = package_plan.link_requirements[target].clone();
         auto executable_path =
             target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
@@ -735,7 +1146,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             .platform                  = project.platform.clone(),
             .language                  = target_spec.language,
             .standard_library          = package_plan.profile->cpp.abi.standard_library,
-            .standard_library_runtime  = request.configuration.standard_library_runtime,
+            .standard_library_runtime  = project.configuration.standard_library_runtime,
             .microsoft_runtime_library = microsoft_runtime_library,
             .link_standard_library     = target_spec.link_stdlib,
         };
@@ -802,7 +1213,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         link_identity.push_ascii('\n');
         link_identity.push_str("stdlib-runtime="_str);
         link_identity.push_str(lito::config::standard_library_runtime_name(
-            request.configuration.standard_library_runtime));
+            project.configuration.standard_library_runtime));
         link_identity.push_ascii('\n');
         link_identity.push_str(target_identity.as_str());
         link_identity.push_ascii('\n');
@@ -834,22 +1245,83 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         stage_timing.record(BuildStage::Link, link_started.elapsed());
     }
 
+    auto proc_macro_products = build_proc_macro_aggregates(project.configuration,
+                                                           project.platform,
+                                                           layout,
+                                                           toolchain,
+                                                           package,
+                                                           package_plan,
+                                                           library_paths,
+                                                           compiler_plugins,
+                                                           project.proc_macro_aggregates);
+    if (proc_macro_products.is_err()) {
+        return Err(rstd::move(proc_macro_products).unwrap_err());
+    }
+    auto built_proc_macro_products = rstd::move(proc_macro_products).unwrap();
+    auto proc_macro_providers      = rstd::move(built_proc_macro_products.providers);
+    auto proc_macro_aggregates     = rstd::move(built_proc_macro_products.aggregates);
+    for (const auto& provider : proc_macro_providers) {
+        auto recorded = false;
+        for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
+            if (package.targets[target].id == provider.target) {
+                if (library_paths[target].is_none() ||
+                    library_paths[target]->as_path() != provider.archive.as_path()) {
+                    return build_failure<BuildSummary>(
+                        "proc-macro provider product does not match its target archive"_str);
+                }
+                recorded = true;
+                break;
+            }
+        }
+        if (! recorded) {
+            return build_failure<BuildSummary>(
+                "proc-macro provider product has no package target"_str);
+        }
+    }
+    if (plugin_host.is_some()) {
+        proc_macro_providers =
+            Vec<BuiltProcMacroProvider>::with_capacity(plugin_host->proc_macro_providers.len());
+        for (const auto& provider : plugin_host->proc_macro_providers) {
+            proc_macro_providers.push(provider.clone());
+        }
+        proc_macro_aggregates =
+            Vec<BuiltProcMacroAggregate>::with_capacity(plugin_host->proc_macro_aggregates.len());
+        for (const auto& aggregate : plugin_host->proc_macro_aggregates) {
+            proc_macro_aggregates.push(aggregate.clone());
+        }
+    }
+    auto product_proc_macro_providers =
+        Vec<BuiltProcMacroProvider>::with_capacity(proc_macro_providers.len());
+    for (const auto& provider : proc_macro_providers) {
+        product_proc_macro_providers.push(provider.clone());
+    }
+    auto product_proc_macro_aggregates =
+        Vec<BuiltProcMacroAggregate>::with_capacity(proc_macro_aggregates.len());
+    for (const auto& aggregate : proc_macro_aggregates) {
+        product_proc_macro_aggregates.push(aggregate.clone());
+    }
+    auto product_compiler_plugins = Vec<BuiltCompilerPlugin>::with_capacity(compiler_plugins.len());
+    for (const auto& plugin : compiler_plugins) product_compiler_plugins.push(plugin.clone());
+
     auto product = CompletedBuildProduct {
         .profile = package_plan.profile->name.clone(),
         .target  = project.platform.effective_target.triple.clone(),
         .target_kind =
-            String::make(request.configuration.target.is_Android() ? "android"_str : "default"_str),
-        .android_abi         = project.platform.android_abi.is_some()
-                                   ? project.platform.android_abi->clone()
-                                   : String::make(),
-        .android_minimum_api = project.platform.android_minimum_api.is_some()
-                                   ? *project.platform.android_minimum_api
-                                   : u32 {},
-        .base_directory      = PathBuf::from(layout.base_directory()),
-        .build_directory     = PathBuf::from(layout.output()),
-        .artifacts           = rstd::move(artifacts),
-        .target_runtimes     = rstd::move(project.target_runtimes),
-        .external_assets     = rstd::move(project.external_assets),
+            String::make(project.configuration.target.is_Android() ? "android"_str : "default"_str),
+        .android_abi           = project.platform.android_abi.is_some()
+                                     ? project.platform.android_abi->clone()
+                                     : String::make(),
+        .android_minimum_api   = project.platform.android_minimum_api.is_some()
+                                     ? *project.platform.android_minimum_api
+                                     : u32 {},
+        .base_directory        = PathBuf::from(layout.base_directory()),
+        .build_directory       = PathBuf::from(layout.output()),
+        .artifacts             = rstd::move(artifacts),
+        .compiler_plugins      = rstd::move(product_compiler_plugins),
+        .proc_macro_providers  = rstd::move(product_proc_macro_providers),
+        .proc_macro_aggregates = rstd::move(product_proc_macro_aggregates),
+        .target_runtimes       = rstd::move(project.target_runtimes),
+        .external_assets       = rstd::move(project.external_assets),
     };
     emit(request,
          BuildEventKind::ProductFinalize,
@@ -870,7 +1342,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         .runtime_resources          = rstd::move(runtime_resources),
         .external_source_provenance = rstd::move(project.external_source_provenance),
         .platform                   = project.platform.clone(),
-        .language_standard          = request.configuration.language_standard.clone(),
+        .language_standard          = project.configuration.language_standard.clone(),
         .scanned                    = scanned,
         .compiled                   = compiled,
         .reused                     = reused,
@@ -886,6 +1358,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         .script                     = rstd::move(script_report),
         .compiler                   = toolchain.compiler_identity().clone(),
         .documentation_units        = rstd::move(documentation_units),
+        .compiler_plugins           = rstd::move(compiler_plugins),
+        .proc_macro_providers       = rstd::move(proc_macro_providers),
+        .proc_macro_aggregates      = rstd::move(proc_macro_aggregates),
     });
 }
 

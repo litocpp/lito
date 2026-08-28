@@ -1,4 +1,4 @@
-export module lito.archive:error;
+export module lito.pack:archive.error;
 
 import rstd;
 

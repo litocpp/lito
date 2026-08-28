@@ -199,6 +199,15 @@ auto restore_snapshot(scan_cache_wire::Snapshot value) -> Option<frontend::Front
             .exported = stored.exported,
         });
     }
+    auto scoped_attributes =
+        Vec<frontend::ScopedAttributeUse>::with_capacity(value.scoped_attributes.len());
+    for (auto& stored : value.scoped_attributes) {
+        if (stored.scope.is_empty() || stored.name.is_empty()) return None();
+        scoped_attributes.push(frontend::ScopedAttributeUse {
+            .scope = rstd::move(stored.scope),
+            .name  = rstd::move(stored.name),
+        });
+    }
     auto headers = Vec<PathBuf>::with_capacity(value.header_inputs.len());
     for (auto& path : value.header_inputs) headers.push(PathBuf::from(path.as_str()));
     auto embedded = Vec<frontend::EmbeddedInput>::with_capacity(value.embedded_inputs.len());
@@ -224,6 +233,7 @@ auto restore_snapshot(scan_cache_wire::Snapshot value) -> Option<frontend::Front
         .provided                 = rstd::move(provided),
         .implementation_module    = rstd::move(value.implementation_module),
         .imports                  = rstd::move(imports),
+        .scoped_attributes        = rstd::move(scoped_attributes),
         .header_inputs            = rstd::move(headers),
         .embedded_inputs          = rstd::move(embedded),
         .external_macros          = rstd::move(macros),

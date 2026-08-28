@@ -22,7 +22,7 @@ Supported package sources are:
 
 The dependency key is always the provider package name. Package aliases are not supported.
 
-A package dependency declares `visibility`:
+A C/C++ library dependency may declare `visibility` and defaults to `private`:
 
 - `public` propagates the provider's public compile and link requirements through a library;
 - `private` makes the dependency available to the consumer package without exporting it;
@@ -31,6 +31,13 @@ A package dependency declares `visibility`:
 Development dependencies omit visibility and are active for tests, benchmarks, and compile tests.
 Runtime dependencies describe packages needed by installation/runtime handling and do not accept
 compile feature requests.
+
+When an ordinary dependency resolves to a package with a `[pmacro]` target, it becomes a host
+compiler input. The dependency key must equal the provider package name and is used directly by
+`[[pmacro::attr("package-name::macro")]]` or
+`[[pmacro::derive("package-name::macro")]]`. Pmacro dependencies accept source and feature fields
+but no visibility, and never enter the target link closure. Cross-target builds still compile and
+execute them with the host Clang toolchain.
 
 ## Features on dependencies
 

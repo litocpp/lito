@@ -50,10 +50,11 @@ struct CScanResult {
 };
 
 struct CppScanResult {
-    CommonScanResult                 common;
-    Option<frontend::ProvidedModule> provided;
-    Option<String>                   implementation_module;
-    Vec<RequiredModule>              required_modules;
+    CommonScanResult                  common;
+    Option<frontend::ProvidedModule>  provided;
+    Option<String>                    implementation_module;
+    Vec<RequiredModule>               required_modules;
+    Vec<frontend::ScopedAttributeUse> scoped_attributes;
 };
 
 class LanguageScanResult {
@@ -86,6 +87,8 @@ struct SourceScanArtifact {
         if (language.is_Cpp()) {
             bytes +=
                 language.as_Cpp().facts.required_modules.capacity() * usize(sizeof(RequiredModule));
+            bytes += language.as_Cpp().facts.scoped_attributes.capacity() *
+                     usize(sizeof(frontend::ScopedAttributeUse));
         }
         return bytes;
     }

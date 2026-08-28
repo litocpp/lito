@@ -3,7 +3,7 @@
 
 import rstd;
 import rstd.test;
-import lito.archive;
+import lito.pack;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

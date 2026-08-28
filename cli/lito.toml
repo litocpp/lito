@@ -11,6 +11,10 @@ link-stdlib = false
 workspace = true
 visibility = "private"
 
+[dependencies.lito-pack]
+workspace = true
+visibility = "private"
+
 [dependencies.rstd-std]
 workspace = true
 visibility = "private"
@@ -22,3 +26,12 @@ visibility = "private"
 [dependencies.rstd-nostd]
 workspace = true
 visibility = "link"
+
+[external-sources.builtin-pmacro]
+path = "../plugins/pmacro"
+
+[external-sources.builtin-qt]
+path = "../data/script-packages/qt"
+
+[external-sources.builtin-libxml2]
+path = "../data/sdk/libxml2/2.13.8-minimal-elf-v1"

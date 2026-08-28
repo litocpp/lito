@@ -44,8 +44,9 @@ struct NamedRegistryConfig {
 };
 
 class LitoBootstrapConfig {
-    Vec<NamedRegistryConfig> registries_;
-    Option<String>           default_registry_;
+    Vec<NamedRegistryConfig>                registries_;
+    Option<String>                          default_registry_;
+    lito::registry::EmbeddedPackageProvider embedded_packages_;
 
 public:
     LitoBootstrapConfig(Vec<NamedRegistryConfig> registries, Option<String> default_registry)
@@ -69,6 +70,12 @@ public:
     auto default_registry() const noexcept -> Option<ref<NamedRegistryConfig>> {
         if (default_registry_.is_none()) return None();
         return registry(default_registry_->as_str());
+    }
+    auto set_embedded_packages(lito::registry::EmbeddedPackageProvider provider) noexcept -> void {
+        embedded_packages_ = provider;
+    }
+    auto embedded_packages() const noexcept -> lito::registry::EmbeddedPackageProvider {
+        return embedded_packages_;
     }
 };
 

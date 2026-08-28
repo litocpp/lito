@@ -314,6 +314,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                        request.build.pkg_config,
                                        request.build.cmake,
                                        rstd::move(resolved.toolchain),
+                                       rstd::move(resolved.plugin_host),
                                        resolver,
                                        *environment,
                                        jobs,

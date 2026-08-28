@@ -18,6 +18,7 @@ struct CompileCommandResult {
 
 struct CompileInvocation {
     Vec<String>     arguments;
+    Vec<String>     identity_inputs;
     PathBuf         working_directory;
     String          identity_working_directory;
     PathBuf         staged_object;
@@ -28,6 +29,7 @@ struct CompileInvocation {
     auto clone() const -> CompileInvocation {
         return CompileInvocation {
             .arguments                  = arguments.clone(),
+            .identity_inputs            = identity_inputs.clone(),
             .working_directory          = working_directory.clone(),
             .identity_working_directory = identity_working_directory.clone(),
             .staged_object              = staged_object.clone(),
@@ -46,18 +48,39 @@ struct CompileInvocation {
         for (const auto& argument : arguments) {
             result.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
         }
+        for (const auto& input : identity_inputs) {
+            result.push_str(
+                rstd::format("identity:{}:{}\n", input.size(), input.as_str()).as_str());
+        }
         return result;
     }
 
     auto retained_bytes() const noexcept -> usize {
-        auto result = arguments.capacity() * usize(sizeof(String)) + working_directory.capacity() +
-                      identity_working_directory.capacity() + staged_object.capacity();
+        auto result = arguments.capacity() * usize(sizeof(String)) +
+                      identity_inputs.capacity() * usize(sizeof(String)) +
+                      working_directory.capacity() + identity_working_directory.capacity() +
+                      staged_object.capacity();
         for (const auto& argument : arguments) result += argument.capacity();
+        for (const auto& input : identity_inputs) result += input.capacity();
         if (final_object.is_some()) result += final_object->capacity();
         if (staged_bmi.is_some()) result += staged_bmi->capacity();
         if (final_bmi.is_some()) result += final_bmi->capacity();
         return result;
     }
+};
+
+struct ResolvedCompilerPluginUsage {
+    PathBuf     plugin;
+    String      name;
+    Vec<String> arguments;
+    String      identity;
+};
+
+struct FrontendPluginInvocation {
+    Vec<String> arguments;
+    PathBuf     working_directory;
+    PathBuf     source;
+    String      action;
 };
 
 } // namespace lito

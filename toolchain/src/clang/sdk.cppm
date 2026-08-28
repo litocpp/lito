@@ -42,6 +42,20 @@ auto require_sdk_file(ref<rstd::path::Path> path, ref<str> description) -> Toolc
     return Ok(empty {});
 }
 
+auto require_sdk_directory(ref<rstd::path::Path> path, ref<str> description)
+    -> ToolchainResult<empty> {
+    auto metadata = rstd::fs::metadata(path);
+    if (metadata.is_err()) {
+        return Err(ToolchainError::Io(rstd::format("inspect {}", description),
+                                      PathBuf::from(path),
+                                      rstd::move(metadata).unwrap_err()));
+    }
+    if (! metadata->is_dir()) {
+        return sdk_failure<empty>(rstd::format("{} '{}' is not a directory", description, path));
+    }
+    return Ok(empty {});
+}
+
 auto require_contained_sdk_file(ref<rstd::path::Path> prefix,
                                 ref<rstd::path::Path> path,
                                 ref<str>              description) -> ToolchainResult<empty> {
@@ -59,6 +73,23 @@ auto require_contained_sdk_file(ref<rstd::path::Path> prefix,
     return Ok(empty {});
 }
 
+auto require_contained_sdk_directory(ref<rstd::path::Path> prefix,
+                                     ref<rstd::path::Path> path,
+                                     ref<str> description) -> ToolchainResult<PathBuf> {
+    rstd_try(require_sdk_directory(path, description));
+    auto canonical = rstd::fs::canonicalize(path);
+    if (canonical.is_err()) {
+        return Err(ToolchainError::Io(rstd::format("resolve {}", description),
+                                      PathBuf::from(path),
+                                      rstd::move(canonical).unwrap_err()));
+    }
+    if (! canonical->as_path().starts_with(prefix)) {
+        return sdk_failure<PathBuf>(rstd::format(
+            "{} '{}' escapes LLVM SDK prefix '{}'", description, canonical->as_path(), prefix));
+    }
+    return Ok(rstd::move(canonical).unwrap());
+}
+
 } // namespace lito
 
 export namespace lito
@@ -73,7 +104,9 @@ struct ClangSdkLayout {
 struct ClangSdk {
     PathBuf                       prefix;
     PathBuf                       cmake_search_path;
+    PathBuf                       include_directory;
     PathBuf                       clang_cpp;
+    Option<PathBuf>               plugin_link_library;
     PathBuf                       llvm_config;
     lito::config::StandardLibrary standard_library { lito::config::StandardLibrary::Libstdcxx };
     bool                          exceptions { false };
@@ -112,18 +145,46 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
     rstd_try(require_contained_sdk_file(
         canonical_prefix->as_path(), llvm_config.as_path(), "llvm-config"_str));
 
-    auto flags_command = Vec<String>::make();
-    flags_command.push(String::make(llvm_config.as_path().to_str().unwrap()));
-    flags_command.push(String::make("--cxxflags"_str));
-    auto flags = run_command(flags_command, environment);
-    if (flags.is_err()) return Err(rstd::into<ToolchainError>(rstd::move(flags).unwrap_err()));
-    if (flags->exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make("query Clang SDK C++ flags"_str),
-                                             flags->exit_code,
-                                             rstd::move(flags->standard_output),
-                                             rstd::move(flags->standard_error)));
+    const auto query_llvm_config = [&](ref<str> option,
+                                       ref<str> description) -> ToolchainResult<String> {
+        auto command = Vec<String>::make();
+        command.push(String::make(llvm_config.as_path().to_str().unwrap()));
+        command.push(String::make(option));
+        auto output = run_command(command, environment);
+        if (output.is_err())
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        if (output->exit_code != i32 {}) {
+            return Err(ToolchainError::Execution(String::make(description),
+                                                 output->exit_code,
+                                                 rstd::move(output->standard_output),
+                                                 rstd::move(output->standard_error)));
+        }
+        return Ok(trim_ascii(rstd::move(output->standard_output)));
+    };
+
+    auto include_text =
+        rstd_try(query_llvm_config("--includedir"_str, "query Clang SDK include directory"_str));
+    auto include_path = PathBuf::from(include_text.as_str());
+    if (! include_path.as_path().is_absolute()) {
+        include_path = canonical_prefix->join(include_path.as_path());
     }
-    auto cxxflags         = trim_ascii(rstd::move(flags->standard_output));
+    auto include_directory = rstd_try(require_contained_sdk_directory(
+        canonical_prefix->as_path(), include_path.as_path(), "Clang SDK include directory"_str));
+    auto plugin_header     = include_directory.join(
+        PathBuf::from("clang/Frontend/FrontendPluginRegistry.h"_str).as_path());
+    rstd_try(require_contained_sdk_file(
+        canonical_prefix->as_path(), plugin_header.as_path(), "Clang frontend plugin header"_str));
+
+    auto plugin_link_library = Option<PathBuf> {};
+    if (target.family == TargetFamily::Windows) {
+        auto import_library =
+            canonical_prefix->join(PathBuf::from("lib/clang-cpp.lib"_str).as_path());
+        rstd_try(require_contained_sdk_file(
+            canonical_prefix->as_path(), import_library.as_path(), "Clang C++ import library"_str));
+        plugin_link_library = Some(rstd::move(import_library));
+    }
+
+    auto cxxflags = rstd_try(query_llvm_config("--cxxflags"_str, "query Clang SDK C++ flags"_str));
     auto standard_library = target.environment == TargetEnvironment::Msvc
                                 ? lito::config::StandardLibrary::Msvc
                             : cxxflags.as_str().contains("-stdlib=libc++"_str)
@@ -139,21 +200,73 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
                                       clang_cpp.clone(),
                                       rstd::move(library_metadata).unwrap_err()));
     }
-    auto identity = rstd::format("clang-sdk-v1\ncompiler={}\nlibrary={}\nsize={}\ncxxflags={}",
+    auto identity = rstd::format("clang-sdk-v2\ncompiler={}\ninclude={}\nlibrary={}\nsize={}\n"
+                                 "plugin-link={}\ncxxflags={}",
                                  compiler.build_identity.as_str(),
+                                 include_directory.as_path(),
                                  clang_cpp.as_path(),
                                  library_metadata->len(),
+                                 plugin_link_library.is_some()
+                                     ? plugin_link_library->as_path().to_string_lossy().as_str()
+                                     : "<host-symbols>"_str,
                                  cxxflags.as_str());
     return Ok(ClangSdk {
-        .prefix            = rstd::move(canonical_prefix).unwrap(),
-        .cmake_search_path = rstd::move(cmake_search_path),
-        .clang_cpp         = rstd::move(clang_cpp),
-        .llvm_config       = rstd::move(llvm_config),
-        .standard_library  = standard_library,
-        .exceptions        = exceptions,
-        .rtti              = rtti,
-        .identity          = rstd::move(identity),
+        .prefix              = rstd::move(canonical_prefix).unwrap(),
+        .cmake_search_path   = rstd::move(cmake_search_path),
+        .include_directory   = rstd::move(include_directory),
+        .clang_cpp           = rstd::move(clang_cpp),
+        .plugin_link_library = rstd::move(plugin_link_library),
+        .llvm_config         = rstd::move(llvm_config),
+        .standard_library    = standard_library,
+        .exceptions          = exceptions,
+        .rtti                = rtti,
+        .identity            = rstd::move(identity),
     });
+}
+
+auto attach_clang_plugin_sdk(cpp::CompileContext& context,
+                             const ClangSdk&      sdk,
+                             bool                 include_directory) -> ToolchainResult<empty> {
+    if (! context.language.is_Cpp()) {
+        return sdk_failure<empty>("Clang compiler plugins require a C++ compile context"_str);
+    }
+    if (include_directory) {
+        auto& includes = context.language.as_Cpp().options.preprocessor.include_directories;
+        auto  present  = false;
+        for (const auto& include : includes) {
+            if (include.path.as_path() == sdk.include_directory.as_path()) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) {
+            includes.push(cpp::CppIncludeDirectory {
+                .path = sdk.include_directory.clone(),
+                .kind = cpp::CppIncludeDirectoryKind::System,
+            });
+        }
+    }
+    auto identity_present = false;
+    for (const auto& identity : context.external_identities) {
+        if (identity == sdk.identity.as_str()) {
+            identity_present = true;
+            break;
+        }
+    }
+    if (! identity_present) context.external_identities.push(sdk.identity.clone());
+    cpp::refresh_compile_context_identity(context);
+    return Ok(empty {});
+}
+
+auto clang_plugin_sdk_header_root(const ClangSdk& sdk, const lito::package::PackageTargetId& target)
+    -> cpp::ResolvedHeaderRoot {
+    return cpp::ResolvedHeaderRoot {
+        .root       = sdk.include_directory.clone(),
+        .owner      = cpp::HeaderOwner::Toolchain(sdk.identity.clone()),
+        .access     = cpp::HeaderAccess::TargetPrivate(target.clone()),
+        .kind       = cpp::HeaderIncludeKind::System,
+        .provenance = String::make("Clang compiler plugin SDK"_str),
+    };
 }
 
 auto resolve_clang_sdk(const CompilerIdentity&           compiler,

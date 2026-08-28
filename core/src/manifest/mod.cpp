@@ -168,6 +168,10 @@ auto assemble_manifest_document(PathBuf                               root,
     auto target_language =
         standard.is_some() ? package_standard_language(*standard) : PackageLanguage::Cpp;
     auto library = rstd_try(parse_library_target(member(document, "lib"_str), target_language));
+    auto plugin  = rstd_try(
+        parse_plugin_target(member(document, "plugin"_str), name->as_str(), target_language));
+    auto proc_macro = rstd_try(
+        parse_pmacro_target(member(document, "pmacro"_str), name->as_str(), target_language));
     auto bins    = rstd_try(parse_runnable_targets(member(document, "bin"_str),
                                                    lito::package::PackageTargetKind::Binary,
                                                    "bin"_str,
@@ -199,11 +203,23 @@ auto assemble_manifest_document(PathBuf                               root,
                                                     : discover_install_script(root.as_path());
     if (install_script.is_err()) return Err(rstd::move(install_script).unwrap_err());
 
-    const auto has_library = library.is_some();
-    const auto has_bins    = ! bins.is_empty();
-    auto       targets     = Vec<PackageTargetManifest>::with_capacity(
-        (has_library ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len());
+    const auto compile_contracts = (library.is_some() ? usize(1) : usize {}) +
+                                   (plugin.is_some() ? usize(1) : usize {}) +
+                                   (proc_macro.is_some() ? usize(1) : usize {});
+    if (compile_contracts > usize(1)) {
+        return manifest_schema_failure<ManifestDocument>(
+            "manifest.lib, manifest.plugin and manifest.pmacro are mutually exclusive"_str);
+    }
+    const auto has_library    = library.is_some();
+    const auto has_plugin     = plugin.is_some();
+    const auto has_proc_macro = proc_macro.is_some();
+    const auto has_bins       = ! bins.is_empty();
+    auto       targets        = Vec<PackageTargetManifest>::with_capacity(
+        (has_library ? usize(1) : usize {}) + (has_plugin ? usize(1) : usize {}) +
+        (has_proc_macro ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len());
     if (library.is_some()) targets.push(rstd::move(library).unwrap());
+    if (plugin.is_some()) targets.push(rstd::move(plugin).unwrap());
+    if (proc_macro.is_some()) targets.push(rstd::move(proc_macro).unwrap());
     for (auto& target : bins) targets.push(rstd::move(target));
     for (auto& target : tests) targets.push(rstd::move(target));
     for (auto& target : benches) targets.push(rstd::move(target));
@@ -233,8 +249,8 @@ auto assemble_manifest_document(PathBuf                               root,
     if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none() &&
         script.is_none()) {
         return manifest_schema_failure<ManifestDocument>(
-            "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
-            "'compile-test', provide install.lua, or declare a script package"_str);
+            "manifest must contain at least one of 'lib', 'plugin', 'pmacro', 'bin', 'test', "
+            "'bench' or 'compile-test', provide install.lua, or declare a script package"_str);
     }
     auto has_benches = false;
     for (const auto& target : targets) {
@@ -243,8 +259,9 @@ auto assemble_manifest_document(PathBuf                               root,
             break;
         }
     }
-    const auto version_optional = install_script->is_none() && ! has_library && ! has_bins &&
-                                  ! has_benches && script.is_none();
+    const auto version_optional = install_script->is_none() && ! has_library && ! has_plugin &&
+                                  ! has_proc_macro && ! has_bins && ! has_benches &&
+                                  script.is_none();
     auto       version          = parse_package_version(package_value, version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     auto license = parse_package_license(package_value);
@@ -254,7 +271,10 @@ auto assemble_manifest_document(PathBuf                               root,
     auto publish = parse_package_publish(package_value);
     if (publish.is_err()) return Err(rstd::move(publish).unwrap_err());
 
-    auto usage = parse_usage(member(document, "usage"_str), source_root->as_path());
+    auto usage = parse_usage(member(document, "usage"_str),
+                             source_root->as_path(),
+                             "manifest.usage"_str,
+                             embedded_source);
     auto conditions =
         parse_conditional_configurations(member(document, "when"_str), source_root->as_path());
     auto features         = parse_features(member(document, "features"_str));

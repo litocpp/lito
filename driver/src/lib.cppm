@@ -1,6 +1,7 @@
 export module lito.driver;
 
 export import lito.core;
+export import lito.pack;
 export import lito.cpp;
 export import lito.tools;
 export import lito.toolchain;

@@ -19,6 +19,7 @@ import :manifest.primitives;
 import :manifest.key_schema;
 import :manifest.convention;
 import :manifest.wire;
+import :source.tree;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -513,6 +514,35 @@ auto parse_library_target(Option<ref<Toml>> value, PackageLanguage language)
         rstd::move(name), rstd::move(output), rstd::move(source), rstd::move(linker_options))));
 }
 
+auto parse_plugin_target(Option<ref<Toml>> value, ref<str> package_name, PackageLanguage language)
+    -> ManifestSchemaResult<Option<PackageTargetManifest>> {
+    if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
+    if (language != PackageLanguage::Cpp) {
+        return manifest_schema_failure<Option<PackageTargetManifest>>(
+            "manifest.plugin requires a C++ package"_str);
+    }
+    auto table = rstd_try(table_value(**value, "manifest.plugin"_str));
+    rstd_try(reject_unknown(*table, "manifest.plugin"_str, plugin_key));
+    auto source = rstd_try(parse_target_source(
+        **value, "manifest.plugin"_str, DataPath().with_field("plugin"_str), true, language));
+    return Ok(Some(PackageTargetManifest::Plugin(String::make(package_name), rstd::move(source))));
+}
+
+auto parse_pmacro_target(Option<ref<Toml>> value, ref<str> package_name, PackageLanguage language)
+    -> ManifestSchemaResult<Option<PackageTargetManifest>> {
+    if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
+    if (language != PackageLanguage::Cpp) {
+        return manifest_schema_failure<Option<PackageTargetManifest>>(
+            "manifest.pmacro requires a C++ package"_str);
+    }
+    auto table = rstd_try(table_value(**value, "manifest.pmacro"_str));
+    rstd_try(reject_unknown(*table, "manifest.pmacro"_str, pmacro_key));
+    auto source = rstd_try(parse_target_source(
+        **value, "manifest.pmacro"_str, DataPath().with_field("pmacro"_str), true, language));
+    return Ok(
+        Some(PackageTargetManifest::ProcMacro(String::make(package_name), rstd::move(source))));
+}
+
 auto parse_runtime_resources(Option<ref<Toml>> value, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<RuntimeResourceManifest>> {
     auto result = Vec<RuntimeResourceManifest>::make();
@@ -604,9 +634,26 @@ auto parse_runnable_targets(Option<ref<Toml>>                value,
             link_stdlib = *parsed;
         }
         if (kind == lito::package::PackageTargetKind::Binary) {
+            auto host_tool          = false;
+            auto declared_host_tool = member(item, "host-tool"_str);
+            if (declared_host_tool.is_some()) {
+                auto parsed = (**declared_host_tool).as_bool();
+                if (parsed.is_none()) {
+                    return manifest_schema_failure<Vec<PackageTargetManifest>>(
+                        rstd::format("{}.host-tool must be a bool", context.as_str()));
+                }
+                host_tool = *parsed;
+            }
             auto resources = rstd_try(parse_runtime_resources(member(item, "resources"_str), path));
-            result.push(PackageTargetManifest::Binary(
-                rstd::move(name), rstd::move(source), link_stdlib, rstd::move(resources)));
+            if (host_tool && ! resources.is_empty()) {
+                return manifest_schema_failure<Vec<PackageTargetManifest>>(rstd::format(
+                    "{}.resources are not allowed for a host-tool binary", context.as_str()));
+            }
+            result.push(PackageTargetManifest::Binary(rstd::move(name),
+                                                      rstd::move(source),
+                                                      link_stdlib,
+                                                      host_tool,
+                                                      rstd::move(resources)));
         } else if (kind == lito::package::PackageTargetKind::Benchmark) {
             result.push(PackageTargetManifest::Benchmark(
                 rstd::move(name), rstd::move(source), link_stdlib));
@@ -624,8 +671,31 @@ struct ResolvedIncludeDirectories {
     Vec<lito::dependency::IncludeDirectoryRequirement> deferred;
 };
 
-auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root, ref<str> context)
+auto source_tree_directory(const lito::source::SourceTree& tree, ref<rstd::path::Path> path)
+    -> bool {
+    auto text = path.to_str();
+    if (text.is_none()) return false;
+    for (const auto& entry : tree.entries()) {
+        if (entry.path().as_str() == *text &&
+            entry.kind() == lito::source::SourceEntryKind::Directory) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto resolve_package_include_directory(PathBuf                               path,
+                                       ref<rstd::path::Path>                 root,
+                                       ref<str>                              context,
+                                       Option<ref<lito::source::SourceTree>> embedded)
     -> ManifestSchemaResult<PathBuf> {
+    if (embedded.is_some()) {
+        if (! source_tree_directory(**embedded, path.as_path())) {
+            return manifest_schema_failure<PathBuf>(
+                rstd::format("{} entry '{}' is not a directory", context, path.as_path()));
+        }
+        return Ok(PathBuf::from(root).join(path.as_path()));
+    }
     auto requested = PathBuf::from(root).join(path.as_path());
     auto canonical =
         canonical_existing(requested.as_path(), "cannot resolve include directory"_str);
@@ -649,10 +719,11 @@ auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root,
     return Ok(rstd::move(resolved));
 }
 
-auto resolve_include_directories(Option<ref<Toml>>     value,
-                                 ref<rstd::path::Path> root,
-                                 ref<str>              context,
-                                 bool                  allow_generated)
+auto resolve_include_directories(Option<ref<Toml>>                     value,
+                                 ref<rstd::path::Path>                 root,
+                                 ref<str>                              context,
+                                 bool                                  allow_generated,
+                                 Option<ref<lito::source::SourceTree>> embedded)
     -> ManifestSchemaResult<ResolvedIncludeDirectories> {
     auto result = ResolvedIncludeDirectories {};
     if (value.is_none()) return Ok(rstd::move(result));
@@ -670,7 +741,7 @@ auto resolve_include_directories(Option<ref<Toml>>     value,
             auto relative = relative_path(String::make(*text), item_context.as_str());
             if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
             auto resolved = resolve_package_include_directory(
-                rstd::move(relative).unwrap(), root, item_context.as_str());
+                rstd::move(relative).unwrap(), root, item_context.as_str(), embedded);
             if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
             result.physical.push(rstd::move(resolved).unwrap());
             continue;
@@ -711,7 +782,7 @@ auto resolve_include_directories(Option<ref<Toml>>     value,
         auto root_kind = root_value.is_some() ? root_value->as_str() : "package"_str;
         if (root_kind == "package"_str) {
             auto resolved = resolve_package_include_directory(
-                rstd::move(relative).unwrap(), root, item_context.as_str());
+                rstd::move(relative).unwrap(), root, item_context.as_str(), embedded);
             if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
             result.physical.push(rstd::move(resolved).unwrap());
             continue;
@@ -797,9 +868,10 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Co
     return Ok(rstd::move(result));
 }
 
-auto parse_usage(Option<ref<Toml>>     value,
-                 ref<rstd::path::Path> root,
-                 ref<str>              context = "manifest.usage"_str)
+auto parse_usage(Option<ref<Toml>>                     value,
+                 ref<rstd::path::Path>                 root,
+                 ref<str>                              context  = "manifest.usage"_str,
+                 Option<ref<lito::source::SourceTree>> embedded = None())
     -> ManifestSchemaResult<lito::dependency::DeclaredUsageRequirements> {
     if (value.is_none()) return Ok(lito::dependency::DeclaredUsageRequirements {});
     auto table = table_value(**value, context);
@@ -811,12 +883,14 @@ auto parse_usage(Option<ref<Toml>>     value,
         resolve_include_directories(member(**value, "public-include-directories"_str),
                                     root,
                                     rstd::format("{}.public-include-directories", context).as_str(),
-                                    false);
+                                    false,
+                                    embedded);
     auto private_includes = resolve_include_directories(
         member(**value, "private-include-directories"_str),
         root,
         rstd::format("{}.private-include-directories", context).as_str(),
-        true);
+        true,
+        embedded);
     auto public_definitions = string_array(member(**value, "public-definitions"_str),
                                            rstd::format("{}.public-definitions", context).as_str());
     auto private_definitions =

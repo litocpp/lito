@@ -371,6 +371,48 @@ TEST_F(BuildProfile, GlobalCOptionsRemainInTheCLanguageDomain) {
     EXPECT_EQ(profile->c_link_requirements.thread_sources[usize {}].as_str(), "CFLAGS"_str);
 }
 
+TEST_F(BuildProfile, HostProjectionKeepsOnlyProfileOwnedOptions) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto options = lito::config::ProjectBuildOptions {};
+    options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str,
+                             "-g"_str,
+                             "-flto=thin"_str,
+                             "-DNDEBUG"_str,
+                             "-fno-exceptions"_str,
+                             "-fno-rtti"_str,
+                             "--target=x86_64-unknown-linux-gnu"_str,
+                             "-fno-builtin"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings(
+            "-O1"_str, "-DNDEBUG"_str, "--target=x86_64-unknown-linux-gnu"_str, "-fno-builtin"_str),
+        .source = String::make("CFLAGS"_str),
+    });
+    options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=auto"_str, "-Wl,--strip-debug"_str, "-Wl,--as-needed"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
+
+    auto projected = lito::cpp::project_host_profile_options(options, *parser);
+    ASSERT_TRUE(projected.is_ok());
+    ASSERT_EQ(projected->cpp.len(), usize(6));
+    EXPECT_EQ(projected->cpp[usize {}].arguments[usize {}].as_str(), "-O2"_str);
+    EXPECT_EQ(projected->cpp[usize(1)].arguments[usize {}].as_str(), "-g"_str);
+    EXPECT_EQ(projected->cpp[usize(2)].arguments[usize {}].as_str(), "-flto=thin"_str);
+    EXPECT_EQ(projected->cpp[usize(3)].arguments[usize {}].as_str(), "-DNDEBUG"_str);
+    EXPECT_EQ(projected->cpp[usize(4)].arguments[usize {}].as_str(), "-fno-exceptions"_str);
+    EXPECT_EQ(projected->cpp[usize(5)].arguments[usize {}].as_str(), "-fno-rtti"_str);
+    ASSERT_EQ(projected->c.len(), usize(2));
+    EXPECT_EQ(projected->c[usize {}].arguments[usize {}].as_str(), "-O1"_str);
+    EXPECT_EQ(projected->c[usize(1)].arguments[usize {}].as_str(), "-DNDEBUG"_str);
+    ASSERT_EQ(projected->linker.len(), usize(2));
+    EXPECT_EQ(projected->linker[usize {}].arguments[usize {}].as_str(), "-flto=auto"_str);
+    EXPECT_EQ(projected->linker[usize(1)].arguments[usize {}].as_str(), "-Wl,--strip-debug"_str);
+}
+
 TEST_F(BuildProfile, ExceptionFlagsRespectLanguageOwnership) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

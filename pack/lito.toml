@@ -1,0 +1,38 @@
+[package]
+name = "lito-pack"
+version.workspace = true
+
+[lib]
+name = "lito-pack"
+module = "lito.pack"
+archive = "lito.pack"
+
+[[bin]]
+module = "lito.package_embed"
+name = "lito-package-embed"
+host-tool = true
+link-stdlib = false
+
+[dependencies.lito-core]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-zstd]
+workspace = true
+visibility = "private"
+
+[dependencies.licrypto]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-std]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-json]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-nostd]
+workspace = true
+visibility = "link"

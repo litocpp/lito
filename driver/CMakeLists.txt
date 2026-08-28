@@ -40,6 +40,8 @@ target_sources(
          src/build/profiling.cppm
          src/build/product.cppm
          src/build/product_error.cppm
+         src/build/plugin.cppm
+         src/build/proc_macro.cppm
          src/build/request.cppm
          src/build/result.cppm
          src/build/script_error.cppm
@@ -58,7 +60,6 @@ target_sources(
          src/command/fetch.cppm
          src/command/install.cppm
          src/command/lock.cppm
-         src/command/package.cppm
          src/command/reporting.cppm
          src/command/scan.cppm
          src/command/test.cppm
@@ -105,12 +106,10 @@ target_sources(
          src/source/manager.cppm
          src/source/mod.cppm
          src/project/error.cppm
-         src/registry/archive.cppm
          src/registry/blob.cppm
          src/registry/graph.cppm
          src/registry/http.cppm
          src/registry/index.cppm
-         src/registry/inspection_protocol.cppm
          src/registry/publish.cppm
          src/registry/source.cppm
          src/registry/mod.cppm
@@ -140,5 +139,5 @@ target_sources(
          src/sdk/mod.cppm)
 target_link_libraries(
   lito.driver
-  PUBLIC lito.core lito.cpp lito.tools lito.toolchain lito.frontend rstd.std
-  PRIVATE luato::luato rstd.bench rstd.json rstd.serde rstd.toml lito.archive)
+  PUBLIC lito.core lito.pack lito.cpp lito.tools lito.toolchain lito.frontend rstd.std
+  PRIVATE luato::luato rstd.bench rstd.json rstd.serde rstd.toml)

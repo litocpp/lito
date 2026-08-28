@@ -5,6 +5,7 @@ import rstd.serde;
 import rstd.toml;
 import rstd.test;
 import lito.core;
+import lito.pack;
 import lito.system;
 import lito.tools.cmake;
 import lito.toolchain;
@@ -981,9 +982,11 @@ link-stdlib = false
     for (const auto& target : loaded->targets) {
         switch (lito::manifest::package_target_kind(target)) {
         case lito::package::PackageTargetKind::Library: ++libraries; break;
+        case lito::package::PackageTargetKind::Plugin: break;
         case lito::package::PackageTargetKind::Binary: ++binaries; break;
         case lito::package::PackageTargetKind::Test: ++tests; break;
         case lito::package::PackageTargetKind::Benchmark: ++benchmarks; break;
+        case lito::package::PackageTargetKind::ProcMacro:
         case lito::package::PackageTargetKind::TestAttachment:
         case lito::package::PackageTargetKind::CompileTest: break;
         }
@@ -1480,4 +1483,174 @@ visibility = "public"
     ASSERT_TRUE(contents.is_ok());
     EXPECT_FALSE(contents->as_str().contains("example.invalid"_str));
     EXPECT_FALSE(contents->as_str().contains("# normalized"_str));
+}
+
+TEST_F(Manifest, PluginTargetUsesThePackageName) {
+    auto project = manifest("compiler-plugin"_str, R"toml([package]
+name = "fixture-compiler-plugin"
+version = "0.1.0"
+
+[plugin]
+module = "fixture.compiler_plugin"
+sources = ["src/lib.cppm", "src/plugin.cpp"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->targets.len(), usize(1));
+    ASSERT_TRUE(loaded->targets[usize {}].is_Plugin());
+    EXPECT_EQ(loaded->targets[usize {}].as_Plugin().name.as_str(), "fixture-compiler-plugin"_str);
+
+    constexpr ref<str> invalid[] = {
+        R"toml([package]
+name = "fixture-plugin-with-action"
+version = "0.1.0"
+[plugin]
+module = "fixture.plugin_with_action"
+action = "legacy-action"
+)toml"_str,
+        R"toml([package]
+name = "fixture-c-plugin"
+version = "0.1.0"
+standard = "c17"
+[plugin]
+sources = ["src/plugin.c"]
+)toml"_str,
+        R"toml([package]
+name = "fixture-mixed-plugin"
+version = "0.1.0"
+[lib]
+module = "fixture.mixed_plugin"
+[plugin]
+module = "fixture.mixed_plugin_support"
+)toml"_str,
+    };
+    auto index = usize {};
+    for (auto contents : invalid) {
+        auto invalid_project =
+            manifest(rstd::format("invalid-plugin-{}", index).as_str(), contents);
+        ASSERT_TRUE(invalid_project.is_ok());
+        EXPECT_TRUE(
+            lito::manifest::load_package_manifest(invalid_project->root.as_path()).is_err());
+        ++index;
+    }
+}
+
+TEST_F(Manifest, PmacroTargetUsesOrdinaryDependencyDomain) {
+    auto provider_project = manifest("proc-macro-provider"_str, R"toml([package]
+name = "fixture-proc-macro-provider"
+version = "0.1.0"
+
+[pmacro]
+module = "fixture.proc_macro.provider"
+sources = ["src/lib.cppm"]
+)toml"_str);
+    ASSERT_TRUE(provider_project.is_ok());
+    auto provider = lito::manifest::load_package_manifest(provider_project->root.as_path());
+    ASSERT_TRUE(provider.is_ok());
+    ASSERT_EQ(provider->targets.len(), usize(1));
+    ASSERT_TRUE(provider->targets[usize {}].is_ProcMacro());
+    EXPECT_EQ(provider->targets[usize {}].as_ProcMacro().name.as_str(),
+              "fixture-proc-macro-provider"_str);
+    ASSERT_TRUE(provider->targets[usize {}].as_ProcMacro().source.module.is_some());
+    EXPECT_EQ(provider->targets[usize {}].as_ProcMacro().source.module->as_str(),
+              "fixture.proc_macro.provider"_str);
+
+    auto consumer_project = manifest("proc-macro-consumer"_str, R"toml([package]
+name = "fixture-proc-macro-consumer"
+version = "0.1.0"
+
+[lib]
+name = "fixture-proc-macro-consumer"
+module = "fixture.proc_macro.consumer"
+archive = "fixture-proc-macro-consumer"
+
+[dependencies.fixture-proc-macro-provider]
+version = "^0.1"
+features = ["diagnostics"]
+default-features = false
+)toml"_str);
+    ASSERT_TRUE(consumer_project.is_ok());
+    auto consumer = lito::manifest::load_package_manifest(consumer_project->root.as_path());
+    ASSERT_TRUE(consumer.is_ok());
+    ASSERT_EQ(consumer->dependencies.len(), usize(1));
+    const auto& dependency = consumer->dependencies[usize {}];
+    EXPECT_EQ(dependency.name.as_str(), "fixture-proc-macro-provider"_str);
+    ASSERT_TRUE(dependency.features.is_some());
+    ASSERT_EQ(dependency.features->len(), usize(1));
+    EXPECT_EQ((*dependency.features)[usize {}].as_str(), "diagnostics"_str);
+    ASSERT_TRUE(dependency.default_features.is_some());
+    EXPECT_FALSE(*dependency.default_features);
+}
+
+TEST_F(Manifest, PmacroManifestRejectsMixedAndLegacyTargets) {
+    constexpr ref<str> invalid[] = {
+        R"toml([package]
+name = "fixture-mixed-proc-macro"
+version = "0.1.0"
+[lib]
+module = "fixture.mixed"
+[pmacro]
+module = "fixture.mixed.macros"
+)toml"_str,
+        R"toml([package]
+name = "fixture-c-pmacro"
+version = "0.1.0"
+standard = "c17"
+[pmacro]
+sources = ["src/lib.c"]
+)toml"_str,
+        R"toml([package]
+name = "fixture-legacy-proc-macro"
+version = "0.1.0"
+[proc-macro]
+module = "fixture.legacy"
+)toml"_str,
+        R"toml([package]
+name = "fixture-legacy-proc-macro-dependency"
+version = "0.1.0"
+[lib]
+module = "fixture.legacy_dependency"
+[proc-macro-dependencies.other]
+version = "1.0"
+)toml"_str,
+    };
+    auto index = usize {};
+    for (auto contents : invalid) {
+        auto project = manifest(rstd::format("invalid-proc-macro-{}", index).as_str(), contents);
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
+        ++index;
+    }
+}
+
+TEST_F(Manifest, StandaloneManifestPreservesPmacroAsOrdinaryDependency) {
+    auto project = manifest("standalone-proc-macro"_str, R"toml([package]
+name = "fixture-standalone-proc-macro"
+version = "1.2.3"
+
+[pmacro]
+module = "fixture.standalone.proc_macro"
+
+[dependencies.fixture-proc-macro-provider]
+version = "^2.0"
+features = ["diagnostics"]
+default-features = false
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    EXPECT_TRUE(serialized->as_str().contains("[pmacro]"_str));
+    EXPECT_FALSE(serialized->as_str().contains("[proc-macro]"_str));
+    EXPECT_TRUE(serialized->as_str().contains("[dependencies.fixture-proc-macro-provider]"_str));
+    EXPECT_FALSE(serialized->as_str().contains("proc-macro-dependencies"_str));
+    auto reparsed = rstd::toml::from_str(serialized->as_str());
+    ASSERT_TRUE(reparsed.is_ok());
 }

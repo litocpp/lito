@@ -2,6 +2,9 @@
 
 Lito discovers an associated test project at `tests/lito.toml`. The test project is separate from
 the production package, so its dependencies and sources do not affect a normal `lito build`.
+An associated test workspace may also contain `[pmacro]` provider packages. They are built with the
+host toolchain only when selected test targets reference them through ordinary `[dependencies]` or
+`[dev-dependencies]`; they do not need to be members of the production workspace.
 
 Add these files:
 

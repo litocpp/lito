@@ -166,6 +166,32 @@ auto merge_config_value(Toml& destination, const Toml& source) -> void {
     }
 }
 
+auto builtin_package_entries(Toml& document) -> Option<mut_ref<Table>> {
+    auto builtin = document.get_mut("builtin"_str);
+    if (builtin.is_none() || (**builtin).as_table_mut().is_none()) return None();
+    auto packages = (**builtin).get_mut("packages"_str);
+    if (packages.is_none() || (**packages).as_table_mut().is_none()) return None();
+    return Some(*(**packages).as_table_mut());
+}
+
+auto builtin_package_entries(const Toml& document) -> Option<ref<Table>> {
+    auto builtin = document.get("builtin"_str);
+    if (builtin.is_none() || (**builtin).as_table().is_none()) return None();
+    auto packages = (**builtin).get("packages"_str);
+    if (packages.is_none() || (**packages).as_table().is_none()) return None();
+    return Some(*(**packages).as_table());
+}
+
+auto replace_builtin_package_entries(Toml& destination, const Toml& source) -> void {
+    auto source_packages = builtin_package_entries(source);
+    if (source_packages.is_none()) return;
+    auto destination_packages = builtin_package_entries(destination);
+    if (destination_packages.is_none()) return;
+    for (auto key : (*source_packages)->keys()) {
+        (void)(*destination_packages)->remove((*key).as_str());
+    }
+}
+
 auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
     -> ConfigResult<ConfigDocument> {
     auto location = rstd_try(resolve_config_location(root));
@@ -197,6 +223,7 @@ auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
         rstd_try(read_config_value(document.location.path.as_path(), "configuration"_str, false));
     if (local.is_some()) {
         normalize_host_tool_provider_shorthand(*local);
+        replace_builtin_package_entries(document.value, *local);
         merge_config_value(document.value, *local);
     }
     return Ok(rstd::move(document));
@@ -425,7 +452,16 @@ auto lito::config::load_project_config(ref<rstd::path::Path> root, ProjectConfig
     -> ConfigResult<ProjectConfig> {
     auto document = rstd_try(open_config_document(root, request.mode));
     for (usize index {}; index < request.overrides.len(); ++index) {
-        rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
+        auto overlay = ConfigDocument {
+            .location =
+                ConfigLocation {
+                    .root = document.location.root.clone(),
+                },
+            .value = Toml::Table(Table::make()),
+        };
+        rstd_try(apply_config_override(overlay, request.overrides[index].as_str(), index));
+        replace_builtin_package_entries(document.value, overlay.value);
+        merge_config_value(document.value, overlay.value);
     }
     return decode_project_config(document.location.root.clone(),
                                  document.value,
@@ -446,7 +482,16 @@ auto lito::config::load_host_tool_command_config(ref<rstd::path::Path> root,
     -> ConfigResult<HostToolCommandConfig> {
     auto document = rstd_try(open_config_document(root, request.mode));
     for (usize index {}; index < request.overrides.len(); ++index) {
-        rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
+        auto overlay = ConfigDocument {
+            .location =
+                ConfigLocation {
+                    .root = document.location.root.clone(),
+                },
+            .value = Toml::Table(Table::make()),
+        };
+        rstd_try(apply_config_override(overlay, request.overrides[index].as_str(), index));
+        replace_builtin_package_entries(document.value, overlay.value);
+        merge_config_value(document.value, overlay.value);
     }
     return decode_host_tool_command_config(
         document.location.root.clone(), document.value, rstd::move(request.defaults));

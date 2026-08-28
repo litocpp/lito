@@ -33,6 +33,7 @@ struct UnitSpec {
     PathBuf                        relative_source;
     String                         source_origin_identity;
     PathBuf                        source;
+    Option<PathBuf>                source_overlay;
     PathBuf                        object;
     PathBuf                        cache_record;
     Option<PathBuf>                compile_test_record;

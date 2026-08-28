@@ -1,6 +1,7 @@
 export module lito.driver:build.artifact;
 
 import rstd;
+import licrypto;
 import lito.core;
 import lito.cpp;
 import :build.request;
@@ -29,6 +30,98 @@ struct BuiltArtifact {
         };
     }
 };
+
+struct ProcMacroProviderBinding {
+    String package;
+
+    auto clone() const -> ProcMacroProviderBinding {
+        return ProcMacroProviderBinding {
+            .package = package.clone(),
+        };
+    }
+};
+
+struct BuiltProcMacroProvider {
+    lito::package::PackageTargetId target;
+    PathBuf                        archive;
+    String                         identity;
+
+    auto clone() const -> BuiltProcMacroProvider {
+        return BuiltProcMacroProvider {
+            .target   = target.clone(),
+            .archive  = archive.clone(),
+            .identity = identity.clone(),
+        };
+    }
+};
+
+struct BuiltCompilerPlugin {
+    lito::package::PackageTargetId target;
+    PathBuf                        support_archive;
+    PathBuf                        plugin;
+    String                         identity;
+    String                         content_identity;
+
+    auto clone() const -> BuiltCompilerPlugin {
+        return BuiltCompilerPlugin {
+            .target           = target.clone(),
+            .support_archive  = support_archive.clone(),
+            .plugin           = plugin.clone(),
+            .identity         = identity.clone(),
+            .content_identity = content_identity.clone(),
+        };
+    }
+};
+
+struct ProcMacroAggregateRequest {
+    String                        identity;
+    Vec<ProcMacroProviderBinding> providers;
+
+    auto clone() const -> ProcMacroAggregateRequest {
+        auto copied = Vec<ProcMacroProviderBinding>::with_capacity(providers.len());
+        for (const auto& provider : providers) copied.push(provider.clone());
+        return ProcMacroAggregateRequest {
+            .identity  = identity.clone(),
+            .providers = rstd::move(copied),
+        };
+    }
+};
+
+struct BuiltProcMacroAggregate {
+    String                        selection_identity;
+    String                        identity;
+    String                        content_identity;
+    PathBuf                       plugin;
+    Vec<ProcMacroProviderBinding> providers;
+
+    auto clone() const -> BuiltProcMacroAggregate {
+        auto copied = Vec<ProcMacroProviderBinding>::with_capacity(providers.len());
+        for (const auto& provider : providers) copied.push(provider.clone());
+        return BuiltProcMacroAggregate {
+            .selection_identity = selection_identity.clone(),
+            .identity           = identity.clone(),
+            .content_identity   = content_identity.clone(),
+            .plugin             = plugin.clone(),
+            .providers          = rstd::move(copied),
+        };
+    }
+};
+
+struct BuiltProcMacroProducts {
+    Vec<BuiltProcMacroProvider>  providers;
+    Vec<BuiltProcMacroAggregate> aggregates;
+};
+
+auto proc_macro_aggregate_identity(const Vec<cpp::ProcMacroDependencySpec>& dependencies)
+    -> String {
+    auto identity = String::make("lito-proc-macro-aggregate-v4\ncontract:cpp2\n"_str);
+    for (const auto& dependency : dependencies) {
+        identity.push_str(
+            rstd::format("{}:{}\n", dependency.package.size(), dependency.package.as_str())
+                .as_str());
+    }
+    return licrypto::sha256_hex(identity.as_str());
+}
 
 struct BuiltRuntimeResource {
     lito::package::PackageTargetId target;

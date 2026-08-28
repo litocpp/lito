@@ -157,7 +157,7 @@ sources = ["src/lib.cppm"]
         { "library/src/lib.cppm"_str, "export module fixture.conventional.workspace;\n"_str },
         { "tests/lito.toml"_str, R"([workspace]
 name = "fixture-conventional-test-workspace"
-members = ["runtime", "compile"]
+members = ["runtime", "compile", "macro"]
 )"_str },
         { "tests/runtime/lito.toml"_str, R"([package]
 name = "fixture-conventional-workspace-test"
@@ -168,8 +168,18 @@ sources = ["main.cpp"]
 [dependencies.fixture-conventional-workspace-library]
 path = "../../library"
 visibility = "private"
+[dependencies.fixture-conventional-workspace-macro]
+path = "../macro"
 )"_str },
         { "tests/runtime/main.cpp"_str, "import fixture.conventional.workspace;\n"_str },
+        { "tests/macro/lito.toml"_str, R"([package]
+name = "fixture-conventional-workspace-macro"
+version = "0.1.0"
+[pmacro]
+module = "fixture.conventional.workspace.macro"
+sources = ["lib.cppm"]
+)"_str },
+        { "tests/macro/lib.cppm"_str, "export module fixture.conventional.workspace.macro;\n"_str },
         { "tests/compile/lito.toml"_str, R"([package]
 name = "fixture-conventional-workspace-compile-test"
 [compile-test]
@@ -276,7 +286,7 @@ TEST_F(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies)
             EXPECT_TRUE(package.manifest.workspace_dev_dependencies.is_empty());
             ASSERT_EQ(package.manifest.dev_dependencies.len(), usize(1));
             ASSERT_EQ(package.dev_dependencies.len(), usize(1));
-            EXPECT_EQ(package.dev_dependencies[usize {}].name.as_str(),
+            EXPECT_EQ(lito::package::resolved_dependency_name(package.dev_dependencies[usize {}]),
                       "fixture-associated-workspace-bench-helper"_str);
             auto benchmark_found = false;
             for (const auto& target : package.manifest.targets) {
@@ -444,16 +454,19 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
     auto directory = project->root.clone();
     auto graph     = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
-    ASSERT_EQ(graph->roots.len(), usize(3));
+    ASSERT_EQ(graph->roots.len(), usize(4));
     auto library = project_root_role(*graph, "fixture-conventional-workspace-library"_str);
     auto runtime = project_root_role(*graph, "fixture-conventional-workspace-test"_str);
     auto compile = project_root_role(*graph, "fixture-conventional-workspace-compile-test"_str);
+    auto macro   = project_root_role(*graph, "fixture-conventional-workspace-macro"_str);
     ASSERT_TRUE(library.is_some());
     ASSERT_TRUE(runtime.is_some());
     ASSERT_TRUE(compile.is_some());
+    ASSERT_TRUE(macro.is_some());
     EXPECT_EQ(*library, lito::package::ProjectRootRole::WorkspaceMember);
     EXPECT_EQ(*runtime, lito::package::ProjectRootRole::AssociatedTest);
     EXPECT_EQ(*compile, lito::package::ProjectRootRole::AssociatedTest);
+    EXPECT_EQ(*macro, lito::package::ProjectRootRole::AssociatedTest);
 
     auto production = lito::package::resolve_package_selection(
         lito::package::PackageSelection { .root = directory.clone() },
@@ -474,6 +487,10 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
                               "fixture-conventional-workspace-compile-test"_str));
     EXPECT_TRUE(
         contains_name(tests->selected_package_names, "fixture-conventional-workspace-library"_str));
+    EXPECT_TRUE(
+        contains_name(tests->host_package_names, "fixture-conventional-workspace-macro"_str));
+    EXPECT_TRUE(contains_name(tests->proc_macro_provider_names,
+                              "fixture-conventional-workspace-macro"_str));
 }
 
 TEST_F(WorkspaceConvention, DependencyTestsAreNotAssociatedWithTheRootProject) {

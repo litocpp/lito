@@ -465,53 +465,102 @@ auto materialize_build_actions(const cpp::PackageSpec&               package,
     });
 }
 
-auto execute_compile_plan(const cpp::PackageSpec&       package,
-                          Vec<cpp::PreparedUnit>&       units,
-                          CompilePlan                   plan,
-                          CompileCacheSession&          cache,
-                          ClangCompileExecutor          compile,
-                          const Option<BuildEventSink>& observer,
-                          ResolvedCompileExecution policy) -> BuildResult<CompileExecutionResult> {
+auto compile_plan_prerequisite_closure(const CompilePlan& plan, const Vec<cpp::UnitId>& roots)
+    -> Vec<u8> {
+    auto selected = Vec<u8>::with_capacity(plan.nodes.len());
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) selected.push(u8 {});
+    auto pending = roots.clone();
+    while (! pending.is_empty()) {
+        const auto unit = rstd::move(pending.pop()).unwrap_unchecked();
+        if (unit >= plan.nodes.len() || selected[unit] != u8 {}) continue;
+        selected[unit] = u8(1);
+        for (auto prerequisite : plan.nodes[unit].prerequisites) pending.emplace_back(prerequisite);
+    }
+    return selected;
+}
+
+auto compile_plan_remaining_selection(const CompilePlan& plan, const Vec<u8>& completed)
+    -> Vec<u8> {
+    auto selected = Vec<u8>::with_capacity(plan.nodes.len());
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+        selected.push(unit < completed.len() && completed[unit] != u8 {} ? u8 {} : u8(1));
+    }
+    return selected;
+}
+
+auto compile_plan_invocation(CompilePlan& plan, cpp::UnitId unit) -> CompileInvocation* {
+    if (unit >= plan.nodes.len() || plan.nodes[unit].invocation.is_none()) return nullptr;
+    return rstd::addressof(*plan.nodes[unit].invocation);
+}
+
+auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
+                                    Vec<cpp::PreparedUnit>&             units,
+                                    CompilePlan&                        plan,
+                                    const Vec<u8>&                      selection,
+                                    Vec<Option<CachedArtifactIdentity>> object_identities,
+                                    CompileCacheSession&                cache,
+                                    ClangCompileExecutor                compile,
+                                    const Option<BuildEventSink>&       observer,
+                                    ResolvedCompileExecution            policy)
+    -> BuildResult<CompileExecutionResult> {
+    if (selection.len() != plan.nodes.len() || object_identities.len() != plan.nodes.len()) {
+        return compile_failure<CompileExecutionResult>(
+            "compile selection inputs have inconsistent lengths"_str);
+    }
     auto result = CompileExecutionResult {
-        .object_identities = Vec<Option<CachedArtifactIdentity>>::with_capacity(plan.nodes.len()),
+        .object_identities = rstd::move(object_identities),
         .compile_tests     = Vec<CompileTestExecution>::make(),
     };
-    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
-        result.object_identities.emplace_back();
-    }
+    auto selected_nodes = usize {};
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit)
+        if (selection[unit] != u8 {}) ++selected_nodes;
     auto retained                           = compile_plan_retained_bytes(plan);
-    result.statistics.plan_nodes            = plan.nodes.len();
+    result.statistics.plan_nodes            = selected_nodes;
     result.statistics.plan_retained_bytes   = retained.total;
     result.statistics.plan_invocation_bytes = retained.invocations;
     result.statistics.plan_dependency_bytes = retained.dependencies;
-    if (plan.nodes.is_empty()) {
+    if (selected_nodes == usize {}) {
         result.statistics.jobs          = policy.jobs;
         result.statistics.max_in_flight = policy.max_in_flight;
         return Ok(rstd::move(result));
     }
 
-    auto jobs = policy.jobs < plan.nodes.len() ? policy.jobs : plan.nodes.len();
-    auto capacity =
-        policy.max_in_flight < plan.nodes.len() ? policy.max_in_flight : plan.nodes.len();
+    auto jobs       = policy.jobs < selected_nodes ? policy.jobs : selected_nodes;
+    auto capacity   = policy.max_in_flight < selected_nodes ? policy.max_in_flight : selected_nodes;
     auto runtime    = Vec<CompileNodeRuntime>::with_capacity(plan.nodes.len());
     auto errors     = Vec<Option<BuildError>>::with_capacity(plan.nodes.len());
     auto dependents = Vec<Vec<cpp::UnitId>>::with_capacity(plan.nodes.len());
     for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
-        auto&      node      = plan.nodes[unit];
-        const auto remaining = node.prerequisites.len();
-        node.prerequisites   = Vec<cpp::UnitId>::make();
+        const auto& node = plan.nodes[unit];
+        if (selection[unit] == u8 {}) {
+            runtime.push(CompileNodeRuntime { .status = CompileNodeStatus::Succeeded });
+            errors.emplace_back();
+            dependents.emplace_back();
+            continue;
+        }
+        auto remaining = usize {};
+        for (auto prerequisite : node.prerequisites)
+            if (selection[prerequisite] != u8 {}) ++remaining;
         runtime.push(CompileNodeRuntime {
             .status = remaining == usize {} ? CompileNodeStatus::Ready : CompileNodeStatus::Pending,
             .remaining = remaining,
         });
         errors.emplace_back();
-        dependents.push(rstd::move(node.dependents));
+        auto selected_dependents = Vec<cpp::UnitId>::make();
+        for (auto dependent : node.dependents)
+            if (selection[dependent] != u8 {}) selected_dependents.emplace_back(dependent);
+        dependents.push(rstd::move(selected_dependents));
     }
 
     auto wall_started   = rstd::time::Instant::now();
     auto compile_total  = usize {};
     auto cache_retained = usize {};
     for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+        if (selection[unit] == u8 {}) continue;
+        if (plan.nodes[unit].invocation.is_none()) {
+            return compile_failure<CompileExecutionResult>(
+                "compile selection contains an invocation that was already consumed"_str);
+        }
         auto started = rstd::time::Instant::now();
         auto target  = cpp::project_target(units[unit].unit);
         auto target_identity =
@@ -549,7 +598,7 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
     auto terminal          = usize {};
     auto in_flight         = usize {};
     auto compile_announced = usize {};
-    while (terminal < plan.nodes.len()) {
+    while (terminal < selected_nodes) {
         while (in_flight < capacity) {
             auto selected = next_ready(runtime);
             if (selected.is_none()) break;
@@ -660,7 +709,7 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
         }
 
         if (in_flight == usize {}) {
-            if (terminal == plan.nodes.len()) break;
+            if (terminal == selected_nodes) break;
             executor.cancel();
             executor.finish();
             return compile_failure<CompileExecutionResult>(
@@ -808,6 +857,23 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
         }
     }
     return Ok(rstd::move(result));
+}
+
+auto execute_compile_plan(const cpp::PackageSpec&       package,
+                          Vec<cpp::PreparedUnit>&       units,
+                          CompilePlan                   plan,
+                          CompileCacheSession&          cache,
+                          ClangCompileExecutor          compile,
+                          const Option<BuildEventSink>& observer,
+                          ResolvedCompileExecution policy) -> BuildResult<CompileExecutionResult> {
+    auto selection  = Vec<u8>::with_capacity(plan.nodes.len());
+    auto identities = Vec<Option<CachedArtifactIdentity>>::with_capacity(plan.nodes.len());
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+        selection.push(u8(1));
+        identities.emplace_back();
+    }
+    return execute_compile_plan_selection(
+        package, units, plan, selection, rstd::move(identities), cache, compile, observer, policy);
 }
 
 } // namespace lito

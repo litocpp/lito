@@ -16,6 +16,8 @@ export namespace lito::cpp
 enum class ArtifactKind
 {
     StaticLibrary,
+    CompilerPlugin,
+    ProcMacroProvider,
     SharedLibrary,
     TestAttachmentArchive,
     Executable,
@@ -31,6 +33,35 @@ struct DependencySpec {
     };
 };
 
+struct ProcMacroDependencySpec {
+    String package;
+
+    auto clone() const -> ProcMacroDependencySpec {
+        return ProcMacroDependencySpec {
+            .package = package.clone(),
+        };
+    }
+};
+
+struct CompilerPluginDependencySpec {
+    String package;
+
+    auto clone() const -> CompilerPluginDependencySpec {
+        return CompilerPluginDependencySpec {
+            .package = package.clone(),
+        };
+    }
+};
+
+struct TransformedSource {
+    PathBuf         logical_path;
+    PathBuf         physical_path;
+    PathBuf         overlay;
+    String          producer_identity;
+    String          original_source_identity;
+    Option<PathBuf> source_map;
+};
+
 struct TargetSource {
     PathBuf                    relative_path;
     PathBuf                    path;
@@ -39,6 +70,7 @@ struct TargetSource {
     bool                       external { false };
     Option<String>             expected_module;
     Option<SourceScanArtifact> scan_artifact;
+    Option<TransformedSource>  transformed;
 };
 
 struct TestAttachmentTarget {

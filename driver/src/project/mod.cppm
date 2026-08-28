@@ -59,6 +59,18 @@ struct ProjectRegistryResolver {
     const Vec<PathBuf>*                   source_bundles {};
     lito::tools::ToolResolver*            tools {};
     const ResolvedProcessEnvironment*     environment {};
+    Option<lito::package::EmbeddedRegistryPackages> embedded;
+
+    static auto resolve_builtin(void* raw, ref<str> id) noexcept
+        -> lito::registry::RegistryGraphResult<lito::registry::BuiltinRegistryPackage> {
+        auto& self = *static_cast<ProjectRegistryResolver*>(raw);
+        if (self.embedded.is_none()) {
+            return Err(lito::registry::RegistryGraphError {
+                .message = rstd::format("builtin package '{}' has no embedded provider", id),
+            });
+        }
+        return self.embedded->resolve(id);
+    }
 
     static auto resolve(void*                                           raw,
                         slice<lito::registry::RegistryGraphRequirement> requirements) noexcept
@@ -113,13 +125,15 @@ struct ProjectRegistryResolver {
                                                           self.locked_mode,
                                                           rstd::move(pins),
                                                           self.source_bundles);
+        if (self.embedded.is_some()) self.embedded->add_indices(client);
         return client.resolve(requirements);
     }
 
     auto provider() noexcept -> lito::registry::RegistryGraphProvider {
         return lito::registry::RegistryGraphProvider {
-            .context = this,
-            .resolve = resolve,
+            .context         = this,
+            .resolve         = resolve,
+            .resolve_builtin = embedded.is_some() ? resolve_builtin : nullptr,
         };
     }
 };
@@ -158,6 +172,18 @@ auto start_project_resolution(
         auto pins =
             Vec<lito::source::RegistrySourcePin>::with_capacity(resolution.registry_sources.len());
         for (const auto& pin : resolution.registry_sources) pins.push(pin.clone());
+        auto embedded          = Option<lito::package::EmbeddedRegistryPackages> {};
+        auto embedded_provider = registries->embedded_packages();
+        if (embedded_provider.resolve != nullptr) {
+            auto data = lito::system::LitoDataRoot::resolve();
+            if (data.is_err()) {
+                return Err(ProjectError::Message(
+                    rstd::format("cannot resolve embedded Registry cache root: {}",
+                                 rstd::move(data).unwrap_err())));
+            }
+            embedded = Some(lito::package::EmbeddedRegistryPackages(
+                PathBuf::from(data->root()), *registries, embedded_provider));
+        }
         registry_resolver = Some(ProjectRegistryResolver {
             .config  = registries,
             .network = materialization == lito::source::SourceMaterializationPolicy::ExistingOnly ||
@@ -169,6 +195,7 @@ auto start_project_resolution(
             .source_bundles = rstd::addressof(sources.source_bundles),
             .tools          = tool_resolver,
             .environment    = rstd::addressof(environment),
+            .embedded       = rstd::move(embedded),
         });
         registry_provider = registry_resolver->provider();
     }
@@ -322,15 +349,18 @@ auto resolve_existing_project_selection(
 }
 
 struct PreparedBuildProject {
-    ClangToolchain                toolchain;
-    BuildPlatform                 platform;
-    BuildLayout                   layout;
-    cpp::PackageMetadata          metadata;
-    ExternalAssetCatalog          external_assets;
-    Vec<ExternalSourceProvenance> external_source_provenance;
-    Vec<BuiltTargetRuntime>       target_runtimes;
-    Option<PathBuf>               target_stripper;
-    Option<AndroidNdkLease>       android_sdk;
+    ClangToolchain                    toolchain;
+    cpp::BuildConfiguration           configuration;
+    BuildPlatform                     platform;
+    BuildLayout                       layout;
+    cpp::PackageMetadata              metadata;
+    ExternalAssetCatalog              external_assets;
+    Vec<ExternalSourceProvenance>     external_source_provenance;
+    Vec<BuiltTargetRuntime>           target_runtimes;
+    Option<PathBuf>                   target_stripper;
+    Option<AndroidNdkLease>           android_sdk;
+    Option<Box<PreparedBuildProject>> plugin_host;
+    Vec<ProcMacroAggregateRequest>    proc_macro_aggregates;
 };
 
 struct ResolvedProjectMetadata {
@@ -348,14 +378,51 @@ struct ResolvedProjectSession {
     Option<AndroidCmakeProjection> android_cmake;
 };
 
-struct ResolvedBuildProject {
+struct ResolvedPluginBuildProject {
     cpp::BuildConfiguration configuration;
     ClangToolchain          toolchain;
     ResolvedProjectSession  session;
-    Vec<BuiltTargetRuntime> target_runtimes;
-    Option<PathBuf>         target_stripper;
-    Option<AndroidNdkLease> android_sdk;
 };
+
+struct ResolvedBuildProject {
+    cpp::BuildConfiguration                 configuration;
+    ClangToolchain                          toolchain;
+    ResolvedProjectSession                  session;
+    Vec<BuiltTargetRuntime>                 target_runtimes;
+    Option<PathBuf>                         target_stripper;
+    Option<AndroidNdkLease>                 android_sdk;
+    Option<Box<ResolvedPluginBuildProject>> plugin_host;
+};
+
+auto proc_macro_aggregate_requests(const cpp::PackageMetadata& metadata)
+    -> Vec<ProcMacroAggregateRequest> {
+    auto requests = Vec<ProcMacroAggregateRequest>::make();
+    for (const auto& target : metadata.targets) {
+        if (target.proc_macro_dependencies.is_empty()) continue;
+        auto providers =
+            Vec<ProcMacroProviderBinding>::with_capacity(target.proc_macro_dependencies.len());
+        for (const auto& dependency : target.proc_macro_dependencies) {
+            providers.push(ProcMacroProviderBinding {
+                .package = dependency.package.clone(),
+            });
+        }
+        auto digest  = proc_macro_aggregate_identity(target.proc_macro_dependencies);
+        auto present = false;
+        for (const auto& existing : requests) {
+            if (existing.identity == digest.as_str()) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) {
+            requests.push(ProcMacroAggregateRequest {
+                .identity  = rstd::move(digest),
+                .providers = rstd::move(providers),
+            });
+        }
+    }
+    return requests;
+}
 
 struct ConfiguredToolchainSelection {
     lito::config::ToolchainSpec      tools;
@@ -855,6 +922,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const lito::dependency::PkgConfigProviderConfig& pkg_config,
                                     const lito::dependency::CMakeProviderConfig&     cmake,
                                     ClangToolchain                                   toolchain,
+                                    Option<Box<ResolvedPluginBuildProject>>          plugin_host,
                                     lito::tools::ToolResolver&                       tool_resolver,
                                     const ResolvedProcessEnvironment&                environment,
                                     usize                                            jobs,
@@ -878,9 +946,35 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                              setup_reporter,
                                              cmake_find_install_prefix);
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
-    auto resolved = rstd::move(metadata).unwrap();
+    auto resolved           = rstd::move(metadata).unwrap();
+    auto aggregate_requests = proc_macro_aggregate_requests(resolved.metadata);
+    auto prepared_host      = Option<Box<PreparedBuildProject>> {};
+    if (plugin_host.is_some()) {
+        auto host        = rstd::move(plugin_host).unwrap();
+        auto host_output = PathBuf::from(resolved.layout.output())
+                               .join(PathBuf::from("plugin-host"_str).as_path());
+        auto prepared    = prepare_resolved_build_project(rstd::move(host->session),
+                                                          host->configuration,
+                                                          profile,
+                                                          host_output.as_path(),
+                                                          sources,
+                                                          cargo,
+                                                          pkg_config,
+                                                          cmake,
+                                                          rstd::move(host->toolchain),
+                                                          None(),
+                                                          tool_resolver,
+                                                          environment,
+                                                          jobs,
+                                                          observer,
+                                                          None());
+        if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
+        prepared->proc_macro_aggregates = rstd::move(aggregate_requests);
+        prepared_host = Some(Box<PreparedBuildProject>::make(rstd::move(prepared).unwrap()));
+    }
     return Ok(PreparedBuildProject {
         .toolchain                  = rstd::move(toolchain),
+        .configuration              = configuration.clone(),
         .platform                   = rstd::move(resolved.platform),
         .layout                     = rstd::move(resolved.layout),
         .metadata                   = rstd::move(resolved.metadata),
@@ -889,6 +983,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
         .target_runtimes            = Vec<BuiltTargetRuntime>::make(),
         .target_stripper            = None(),
         .android_sdk                = None(),
+        .plugin_host                = rstd::move(prepared_host),
+        .proc_macro_aggregates      = Vec<ProcMacroAggregateRequest>::make(),
     });
 }
 
@@ -957,6 +1053,11 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
                            const lito::config::LitoBootstrapConfig*       registries = nullptr,
                            lito::registry::RegistryGraphProvider          registry   = {})
     -> ProjectResult<ResolvedBuildProject> {
+    auto host_request                     = configuration.clone();
+    host_request.target                   = config::BuildTargetRequest::Default();
+    host_request.toolchain.sdk            = None();
+    host_request.toolchain.target         = config::ToolchainTargetSelection::CompilerDefault();
+    host_request.standard_library_runtime = config::StandardLibraryRuntime::Dynamic;
     auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
     auto target_runtimes = Vec<BuiltTargetRuntime>::make();
     auto target_stripper = Option<PathBuf> {};
@@ -980,9 +1081,11 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
-    auto toolchain        = rstd::move(created).unwrap();
-    auto platform         = Option<BuildPlatform> {};
-    auto cmake_projection = Option<AndroidCmakeProjection> {};
+    auto toolchain              = rstd::move(created).unwrap();
+    host_request.global_options = rstd_try(cpp::project_host_profile_options(
+        configuration.global_options, toolchain.argument_parser()));
+    auto platform               = Option<BuildPlatform> {};
+    auto cmake_projection       = Option<AndroidCmakeProjection> {};
     if (selected.android.is_some()) {
         auto& android = *selected.android;
         auto  resolved =
@@ -1017,6 +1120,48 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         registries,
         registry);
     if (session.is_err()) return Err(rstd::move(session).unwrap_err());
+    auto plugin_host = Option<Box<ResolvedPluginBuildProject>> {};
+    if (! session->project.selection.host_package_names.is_empty()) {
+        auto host_selected = rstd_try(resolve_configured_toolchain(host_request, environment));
+        auto host_created  = ClangToolchain::create(
+            host_selected.tools.clone(), host_request.standard_library, environment);
+        if (host_created.is_err()) {
+            return Err(rstd::into<ProjectError>(rstd::move(host_created).unwrap_err()));
+        }
+        auto host_toolchain = rstd::move(host_created).unwrap();
+        auto host_context =
+            rstd_try(resolve_build_context(host_request.global_options, host_toolchain));
+        auto host_session   = rstd_try(resolve_project_session(selection,
+                                                               sources,
+                                                               lock,
+                                                               tool_resolver,
+                                                               environment,
+                                                               cmake_build_overrides,
+                                                               locked,
+                                                               purpose,
+                                                               jobs,
+                                                               rstd::move(host_context),
+                                                               observer,
+                                                               None(),
+                                                               nullptr,
+                                                               registries,
+                                                               registry));
+        auto host_selection = lito::package::resolve_plugin_host_selection(
+            rstd::move(host_session.project.selection));
+        if (host_selection.is_err()) {
+            return Err(rstd::into<ProjectError>(rstd::move(host_selection).unwrap_err()));
+        }
+        host_session.project.selection  = rstd::move(host_selection).unwrap();
+        auto resolved_host_request      = host_request.clone();
+        resolved_host_request.toolchain = host_selected.tools.clone();
+        auto host_configuration         = config::resolve_build_configuration(
+            rstd::move(resolved_host_request), host_toolchain.compile_target().standard_library);
+        plugin_host = Some(Box<ResolvedPluginBuildProject>::make(ResolvedPluginBuildProject {
+            .configuration = rstd::move(host_configuration),
+            .toolchain     = rstd::move(host_toolchain),
+            .session       = rstd::move(host_session),
+        }));
+    }
     return Ok(ResolvedBuildProject {
         .configuration   = rstd::move(resolved_configuration),
         .toolchain       = rstd::move(toolchain),
@@ -1024,6 +1169,7 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         .target_runtimes = rstd::move(target_runtimes),
         .target_stripper = rstd::move(target_stripper),
         .android_sdk     = rstd::move(selected.android_sdk),
+        .plugin_host     = rstd::move(plugin_host),
     });
 }
 
@@ -1070,6 +1216,7 @@ auto prepare_build_project(
                                                    pkg_config,
                                                    cmake,
                                                    rstd::move(resolved.toolchain),
+                                                   rstd::move(resolved.plugin_host),
                                                    tool_resolver,
                                                    environment,
                                                    jobs,

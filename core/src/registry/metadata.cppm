@@ -71,6 +71,11 @@ class RegistryPackageIndex : public DefaultInClass<RegistryPackageIndex, Clone> 
         -> RegistryValueResult<RegistryPackageIndex>;
 
 public:
+    static auto single(RegistryPackageId                 package,
+                       SemanticVersion                   version,
+                       PackageChecksum                   checksum,
+                       Vec<RegistryDependencyProjection> dependencies)
+        -> RegistryValueResult<RegistryPackageIndex>;
     auto package() const noexcept -> const RegistryPackageId& { return package_; }
     auto releases() const noexcept -> slice<RegistryReleaseProjection> {
         return releases_.as_slice();
@@ -413,6 +418,23 @@ auto lito::registry::RegistryPackageIndex::clone() const -> RegistryPackageIndex
     auto releases = Vec<RegistryReleaseProjection>::with_capacity(releases_.len());
     for (const auto& release : releases_) releases.push(release.clone());
     return RegistryPackageIndex(package_.clone(), rstd::move(releases));
+}
+
+auto lito::registry::RegistryPackageIndex::single(RegistryPackageId                 package,
+                                                  SemanticVersion                   version,
+                                                  PackageChecksum                   checksum,
+                                                  Vec<RegistryDependencyProjection> dependencies)
+    -> RegistryValueResult<RegistryPackageIndex> {
+    auto timestamp = RegistryTimestamp::parse("2000-01-01T00:00:00Z"_str);
+    if (timestamp.is_err()) return Err(rstd::move(timestamp).unwrap_err());
+    auto releases = Vec<RegistryReleaseProjection>::make();
+    releases.push(RegistryReleaseProjection {
+        .version      = rstd::move(version),
+        .checksum     = rstd::move(checksum),
+        .dependencies = rstd::move(dependencies),
+        .published_at = rstd::move(timestamp).unwrap(),
+    });
+    return Ok(RegistryPackageIndex(rstd::move(package), rstd::move(releases)));
 }
 
 auto lito::registry::parse_package_index(slice<u8> input, const RegistryPackageId& expected)

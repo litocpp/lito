@@ -3,8 +3,10 @@ export module lito.executable;
 import rstd;
 import lito.tools;
 import lito.driver;
+import lito.pack;
 import lito.system;
 import :cli;
+import :builtin_packages;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -428,6 +430,8 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
     for (const auto& artifact : summary.product.artifacts) {
         switch (artifact.kind) {
         case lito::cpp::ArtifactKind::StaticLibrary: ++counts.archives; break;
+        case lito::cpp::ArtifactKind::CompilerPlugin: ++counts.archives; break;
+        case lito::cpp::ArtifactKind::ProcMacroProvider: ++counts.archives; break;
         case lito::cpp::ArtifactKind::SharedLibrary: ++counts.shared_libraries; break;
         case lito::cpp::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
         case lito::cpp::ArtifactKind::Executable: ++counts.executables; break;
@@ -1225,6 +1229,9 @@ extern "C++" int main() {
             return 1;
         }
         registry_bootstrap = Some(rstd::move(loaded).unwrap());
+    }
+    if (registry_bootstrap.is_some()) {
+        registry_bootstrap->set_embedded_packages(lito_embedded_packages());
     }
 
     if (invocation.command.is_Lock()) {

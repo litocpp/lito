@@ -29,6 +29,13 @@ struct ModuleImport : DefaultInClass<ModuleImport, Clone> {
     auto clone() const -> ModuleImport;
 };
 
+struct ScopedAttributeUse : DefaultInClass<ScopedAttributeUse, Clone> {
+    String scope;
+    String name;
+
+    auto clone() const -> ScopedAttributeUse;
+};
+
 enum class IncludeLookupKind
 {
     Quoted,
@@ -115,6 +122,7 @@ struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
     Option<ProvidedModule>            provided;
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
+    Vec<ScopedAttributeUse>           scoped_attributes;
     Vec<rstd::path::PathBuf>          header_inputs;
     Vec<EmbeddedInput>                embedded_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
@@ -129,6 +137,7 @@ struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
     Option<ProvidedModule>            provided;
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
+    Vec<ScopedAttributeUse>           scoped_attributes;
     Vec<rstd::path::PathBuf>          header_inputs;
     Vec<EmbeddedInput>                embedded_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
@@ -182,6 +191,13 @@ auto ModuleImport::clone() const -> ModuleImport {
     };
 }
 
+auto ScopedAttributeUse::clone() const -> ScopedAttributeUse {
+    return ScopedAttributeUse {
+        .scope = scope.clone(),
+        .name  = name.clone(),
+    };
+}
+
 auto ExternalMacroMaterialization::clone() const -> ExternalMacroMaterialization {
     return ExternalMacroMaterialization {
         .name                = name.clone(),
@@ -208,6 +224,7 @@ auto FrontendResult::clone() const -> FrontendResult {
         .provided                 = as<Clone>(provided).clone(),
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
+        .scoped_attributes        = as<Clone>(scoped_attributes).clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
         .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
         .external_macros          = as<Clone>(external_macros).clone(),
@@ -222,6 +239,7 @@ auto FrontendSnapshot::clone() const -> FrontendSnapshot {
         .provided                 = as<Clone>(provided).clone(),
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
+        .scoped_attributes        = as<Clone>(scoped_attributes).clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
         .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
         .external_macros          = as<Clone>(external_macros).clone(),
@@ -236,6 +254,7 @@ auto snapshot(const FrontendResult& result) -> FrontendSnapshot {
         .provided                 = as<Clone>(result.provided).clone(),
         .implementation_module    = as<Clone>(result.implementation_module).clone(),
         .imports                  = as<Clone>(result.imports).clone(),
+        .scoped_attributes        = as<Clone>(result.scoped_attributes).clone(),
         .header_inputs            = as<Clone>(result.header_inputs).clone(),
         .embedded_inputs          = as<Clone>(result.embedded_inputs).clone(),
         .external_macros          = as<Clone>(result.external_macros).clone(),
@@ -251,6 +270,9 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
         return None();
     for (const auto& imported : value.imports) {
         if (imported.logical_name.is_empty() || imported.location.path.is_empty()) return None();
+    }
+    for (const auto& attribute : value.scoped_attributes) {
+        if (attribute.scope.is_empty() || attribute.name.is_empty()) return None();
     }
     for (const auto& macro : value.external_macros) {
         if (macro.name.is_empty() || macro.dependency_key.is_empty() ||
@@ -276,6 +298,7 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
         .provided                 = rstd::move(value.provided),
         .implementation_module    = rstd::move(value.implementation_module),
         .imports                  = rstd::move(value.imports),
+        .scoped_attributes        = rstd::move(value.scoped_attributes),
         .header_inputs            = rstd::move(value.header_inputs),
         .embedded_inputs          = rstd::move(value.embedded_inputs),
         .external_macros          = rstd::move(value.external_macros),
