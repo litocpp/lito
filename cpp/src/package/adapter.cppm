@@ -741,6 +741,13 @@ auto clone_dependencies(const Vec<DependencySpec>& dependencies) -> Vec<Dependen
     return result;
 }
 
+auto clone_host_tool_dependencies(const Vec<HostToolDependencySpec>& dependencies)
+    -> Vec<HostToolDependencySpec> {
+    auto result = Vec<HostToolDependencySpec>::with_capacity(dependencies.len());
+    for (const auto& dependency : dependencies) result.push(dependency.clone());
+    return result;
+}
+
 auto clone_proc_macro_dependencies(const Vec<ProcMacroDependencySpec>& dependencies)
     -> Vec<ProcMacroDependencySpec> {
     auto result = Vec<ProcMacroDependencySpec>::with_capacity(dependencies.len());
@@ -760,6 +767,87 @@ auto clone_external_dependencies(const Vec<ResolvedExternalDependency>& dependen
     auto result = Vec<ResolvedExternalDependency>::with_capacity(dependencies.len());
     for (const auto& dependency : dependencies) result.push(dependency.clone());
     return result;
+}
+
+auto clone_usage_requirements(const UsageRequirements& usage) -> UsageRequirements {
+    auto include_requirements = Vec<lito::dependency::IncludeDirectoryRequirement>::with_capacity(
+        usage.private_include_directory_requirements.len());
+    for (const auto& requirement : usage.private_include_directory_requirements) {
+        include_requirements.push(requirement.clone());
+    }
+    return UsageRequirements {
+        .public_include_directories  = as<Clone>(usage.public_include_directories).clone(),
+        .private_include_directories = as<Clone>(usage.private_include_directories).clone(),
+        .public_definitions          = as<Clone>(usage.public_definitions).clone(),
+        .private_definitions         = as<Clone>(usage.private_definitions).clone(),
+        .arguments                   = as<Clone>(usage.arguments).clone(),
+        .interface_arguments         = as<Clone>(usage.interface_arguments).clone(),
+        .link_requirements           = usage.link_requirements.clone(),
+        .linker_options              = as<Clone>(usage.linker_options).clone(),
+        .private_include_directory_requirements = rstd::move(include_requirements),
+    };
+}
+
+auto clone_profile(const ProfileSpec& profile) -> ProfileSpec {
+    return ProfileSpec {
+        .name                  = profile.name.clone(),
+        .family                = profile.family,
+        .bmi                   = profile.bmi,
+        .c                     = profile.c.clone(),
+        .cpp                   = as<Clone>(profile.cpp).clone(),
+        .c_link_requirements   = profile.c_link_requirements.clone(),
+        .cpp_link_requirements = profile.cpp_link_requirements.clone(),
+        .strip                 = profile.strip,
+        .c_ndebug              = profile.c_ndebug,
+        .cpp_ndebug            = profile.cpp_ndebug,
+        .link_lto              = profile.link_lto,
+        .linker_strip          = profile.linker_strip,
+        .c_sources             = profile.c_sources.clone(),
+        .cpp_sources           = profile.cpp_sources.clone(),
+        .cpp_language_sources  = profile.cpp_language_sources.clone(),
+        .strip_source          = as<Clone>(profile.strip_source).clone(),
+        .link_lto_source       = as<Clone>(profile.link_lto_source).clone(),
+        .linker_strip_source   = as<Clone>(profile.linker_strip_source).clone(),
+        .linker_options        = as<Clone>(profile.linker_options).clone(),
+    };
+}
+
+auto clone_compile_tests(const Vec<ResolvedCompileTestCase>& tests)
+    -> Vec<ResolvedCompileTestCase> {
+    auto result = Vec<ResolvedCompileTestCase>::with_capacity(tests.len());
+    for (const auto& test : tests) {
+        result.push(ResolvedCompileTestCase {
+            .name                    = test.name.clone(),
+            .source                  = test.source.clone(),
+            .outcome                 = test.outcome,
+            .arguments               = as<Clone>(test.arguments).clone(),
+            .diagnostic_contains     = as<Clone>(test.diagnostic_contains).clone(),
+            .diagnostic_contains_any = as<Clone>(test.diagnostic_contains_any).clone(),
+        });
+    }
+    return result;
+}
+
+auto clone_generated_artifacts(const Vec<GeneratedArtifactContribution>& artifacts)
+    -> Vec<GeneratedArtifactContribution> {
+    auto result = Vec<GeneratedArtifactContribution>::with_capacity(artifacts.len());
+    for (const auto& artifact : artifacts) {
+        result.push(GeneratedArtifactContribution {
+            .role            = artifact.role,
+            .path            = artifact.path.clone(),
+            .action_identity = artifact.action_identity.clone(),
+        });
+    }
+    return result;
+}
+
+auto clone_test_attachment(const Option<TestAttachmentTarget>& attachment)
+    -> Option<TestAttachmentTarget> {
+    if (attachment.is_none()) return None();
+    return Some(TestAttachmentTarget {
+        .test_target    = attachment->test_target.clone(),
+        .library_target = attachment->library_target.clone(),
+    });
 }
 
 auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -> ArtifactKind {
@@ -1001,6 +1089,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     }
     auto libraries = library_targets(graph);
 
+    const auto package_has_host_tools = [&graph](ref<str> name) noexcept {
+        for (const auto& package : graph.packages) {
+            if (package.manifest.name == name)
+                return lito::manifest::package_has_host_tool_target(package.manifest);
+        }
+        return false;
+    };
+
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
     const auto is_host_only_dependency =
@@ -1150,9 +1246,15 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             });
         }
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
+        auto host_tool_dependencies = Vec<HostToolDependencySpec>::make();
         for (const auto& dependency : package.dependencies) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (package_has_host_tools(cpp_dependency.name.as_str())) {
+                host_tool_dependencies.push(HostToolDependencySpec {
+                    .package = cpp_dependency.name.clone(),
+                });
+            }
             if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! selected.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(rstd::format(
@@ -1192,6 +1294,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
         }
         auto dev_dependencies = Vec<DependencySpec>::with_capacity(package.dev_dependencies.len());
+        auto dev_host_tool_dependencies  = Vec<HostToolDependencySpec>::make();
         auto dev_plugin_dependencies     = Vec<CompilerPluginDependencySpec>::make();
         auto dev_proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
         if (development_selected) {
@@ -1210,6 +1313,12 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
                 if (! dependency.is_Cpp()) continue;
                 const auto& cpp_dependency = dependency.as_Cpp().value;
+                if (package_has_host_tools(cpp_dependency.name.as_str())) {
+                    dev_host_tool_dependencies.push(HostToolDependencySpec {
+                        .package = cpp_dependency.name.clone(),
+                    });
+                }
+                if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
                 if (! selected.contains_key(cpp_dependency.name.as_str())) {
                     return adapter_failure<PackageMetadata>(
                         rstd::format("resolved development dependency '{}' is missing",
@@ -1247,6 +1356,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 runtime_resources = rstd::move(manifest_target.as_Binary().resources);
             }
             auto target_dependencies = clone_dependencies(dependencies);
+            auto target_host_tool_dependencies =
+                clone_host_tool_dependencies(host_tool_dependencies);
             auto target_proc_macro_dependencies =
                 clone_proc_macro_dependencies(proc_macro_dependencies);
             auto target_plugin_dependencies = clone_plugin_dependencies(plugin_dependencies);
@@ -1262,6 +1373,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
                 for (const auto& dependency : dev_plugin_dependencies) {
                     target_plugin_dependencies.push(dependency.clone());
+                }
+                for (const auto& dependency : dev_host_tool_dependencies) {
+                    target_host_tool_dependencies.push(dependency.clone());
                 }
             }
             if (kind != lito::package::PackageTargetKind::Library && own_library.is_some()) {
@@ -1290,6 +1404,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .attachments             = rstd::move(attachments),
                 .runtime_resources       = rstd::move(runtime_resources),
                 .dependencies            = rstd::move(target_dependencies),
+                .host_tool_dependencies  = rstd::move(target_host_tool_dependencies),
                 .plugin_dependencies     = rstd::move(target_plugin_dependencies),
                 .proc_macro_dependencies = rstd::move(target_proc_macro_dependencies),
                 .external_dependencies =
@@ -1302,6 +1417,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             for (const auto& test : package.manifest.compile_tests)
                 sources.push(test.source.clone());
             auto compile_dependencies = clone_dependencies(dependencies);
+            auto compile_host_tool_dependencies =
+                clone_host_tool_dependencies(host_tool_dependencies);
             auto compile_proc_macro_dependencies =
                 clone_proc_macro_dependencies(proc_macro_dependencies);
             auto compile_plugin_dependencies = clone_plugin_dependencies(plugin_dependencies);
@@ -1316,6 +1433,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             for (const auto& dependency : dev_plugin_dependencies) {
                 compile_plugin_dependencies.push(dependency.clone());
+            }
+            for (const auto& dependency : dev_host_tool_dependencies) {
+                compile_host_tool_dependencies.push(dependency.clone());
             }
             if (own_library.is_some()) {
                 compile_dependencies.push(DependencySpec {
@@ -1344,6 +1464,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .usage = clone_usage(package.manifest.usage, arguments, interface_arguments, link),
                 .compile_tests           = rstd::move(compile_tests),
                 .dependencies            = rstd::move(compile_dependencies),
+                .host_tool_dependencies  = rstd::move(compile_host_tool_dependencies),
                 .plugin_dependencies     = rstd::move(compile_plugin_dependencies),
                 .proc_macro_dependencies = rstd::move(compile_proc_macro_dependencies),
                 .external_dependencies =
@@ -1577,14 +1698,12 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     });
 }
 
-auto finalize_package(PackageMetadata                 metadata,
-                      Vec<ResolvedTargetSources>      source_sets,
-                      const lito::system::TargetInfo& target_info)
-    -> lito::package::PackageResult<PackageSpec> {
+auto append_package_sources(PackageSpec& package, Vec<ResolvedTargetSources> source_sets)
+    -> lito::package::PackageResult<empty> {
     for (usize index {}; index < source_sets.len(); ++index) {
         for (usize prior {}; prior < index; ++prior) {
             if (source_sets[prior].target == source_sets[index].target) {
-                return adapter_failure<PackageSpec>(rstd::format(
+                return adapter_failure<empty>(rstd::format(
                     "source discovery repeated target '{}::{}::{}'",
                     source_sets[index].target.package.as_str(),
                     lito::package::package_target_kind_name(source_sets[index].target.kind),
@@ -1592,70 +1711,108 @@ auto finalize_package(PackageMetadata                 metadata,
             }
         }
     }
-
-    auto targets = Vec<TargetSpec>::with_capacity(metadata.targets.len());
-    for (auto& target : metadata.targets) {
-        auto source_position = Option<usize> {};
-        for (usize index {}; index < source_sets.len(); ++index) {
-            if (source_sets[index].target == target.id) {
-                source_position = Some(index);
+    for (auto& source_set : source_sets) {
+        auto target_position = Option<TargetId> {};
+        for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+            if (package.targets[target].id == source_set.target) {
+                target_position = Some(target);
                 break;
             }
         }
-        auto source_set = ResolvedSourceSet {};
-        if (source_position.is_some()) {
-            source_set = rstd::move(source_sets[*source_position].sources);
+        if (target_position.is_none()) {
+            return adapter_failure<empty>(
+                rstd::format("source discovery returned unknown target '{}::{}::{}'",
+                             source_set.target.package.as_str(),
+                             lito::package::package_target_kind_name(source_set.target.kind),
+                             source_set.target.name.as_str()));
         }
-        auto sources = Vec<TargetSource>::with_capacity(source_set.sources.len());
-        for (auto& source : source_set.sources) {
-            sources.push(TargetSource {
+        auto& target = package.targets[*target_position];
+        for (auto& source : source_set.sources.sources) {
+            for (const auto& existing : target.sources) {
+                if (existing.path.as_path() == source.canonical_path.as_path()) {
+                    return adapter_failure<empty>(rstd::format(
+                        "source discovery repeated source '{}' for target '{}::{}::{}'",
+                        source.canonical_path.as_path(),
+                        target.id.package.as_str(),
+                        lito::package::package_target_kind_name(target.id.kind),
+                        target.id.name.as_str()));
+                }
+            }
+            target.sources.push(TargetSource {
                 .relative_path   = rstd::move(source.relative_path),
                 .path            = rstd::move(source.canonical_path),
                 .source_root     = rstd::move(source.source_root),
                 .origin_identity = rstd::move(source.origin_identity),
                 .external        = source.external,
+                .generated       = source.generated,
                 .expected_module = rstd::move(source.expected_module),
                 .scan_artifact   = rstd::move(source.scan_artifact),
             });
         }
+    }
+    return Ok(empty {});
+}
+
+auto snapshot_package(const PackageMetadata&          metadata,
+                      Vec<ResolvedTargetSources>      source_sets,
+                      const lito::system::TargetInfo& target_info)
+    -> lito::package::PackageResult<PackageSpec> {
+    auto targets = Vec<TargetSpec>::with_capacity(metadata.targets.len());
+    for (const auto& target : metadata.targets) {
         auto artifact_name =
             output_name(target.artifact_kind, target.artifact_name.as_str(), target_info);
         auto archive_stem = target.artifact_name.clone();
         targets.push(TargetSpec {
-            .id                      = rstd::move(target.id),
-            .package_source_identity = rstd::move(target.package_source_identity),
+            .id                      = target.id.clone(),
+            .package_source_identity = target.package_source_identity.clone(),
             .artifact_kind           = target.artifact_kind,
             .language                = target.language,
             .artifact_name           = rstd::move(artifact_name),
             .link_stdlib             = target.link_stdlib,
             .host_tool               = target.host_tool,
             .archive_stem            = rstd::move(archive_stem),
-            .module_affiliation      = rstd::move(target.source.module),
-            .root                    = rstd::move(target.root),
-            .source_root             = rstd::move(target.source_root),
-            .sources                 = rstd::move(sources),
-            .dependencies            = rstd::move(target.dependencies),
-            .plugin_dependencies     = rstd::move(target.plugin_dependencies),
-            .proc_macro_dependencies = rstd::move(target.proc_macro_dependencies),
-            .external_dependencies   = rstd::move(target.external_dependencies),
-            .generated_artifacts     = rstd::move(target.generated_artifacts),
-            .usage                   = rstd::move(target.usage),
-            .compile_tests           = rstd::move(target.compile_tests),
-            .test_attachment         = rstd::move(target.test_attachment),
-            .compile_metadata        = rstd::move(target.compile_metadata),
+            .module_affiliation      = as<Clone>(target.source.module).clone(),
+            .root                    = target.root.clone(),
+            .source_root             = target.source_root.clone(),
+            .sources                 = Vec<TargetSource>::make(),
+            .dependencies            = clone_dependencies(target.dependencies),
+            .host_tool_dependencies  = clone_host_tool_dependencies(target.host_tool_dependencies),
+            .plugin_dependencies     = clone_plugin_dependencies(target.plugin_dependencies),
+            .proc_macro_dependencies =
+                clone_proc_macro_dependencies(target.proc_macro_dependencies),
+            .external_dependencies = clone_external_dependencies(target.external_dependencies),
+            .generated_artifacts   = clone_generated_artifacts(target.generated_artifacts),
+            .usage                 = clone_usage_requirements(target.usage),
+            .compile_tests         = clone_compile_tests(target.compile_tests),
+            .test_attachment       = clone_test_attachment(target.test_attachment),
+            .compile_metadata      = target.compile_metadata.clone(),
         });
     }
-
-    return Ok(PackageSpec {
-        .name            = rstd::move(metadata.name),
-        .root            = rstd::move(metadata.root),
-        .manifest_path   = rstd::move(metadata.manifest_path),
-        .default_profile = rstd::move(metadata.default_profile),
-        .default_targets = rstd::move(metadata.default_targets),
-        .toolchain       = rstd::move(metadata.toolchain),
-        .profiles        = rstd::move(metadata.profiles),
+    auto profiles = Vec<ProfileSpec>::with_capacity(metadata.profiles.len());
+    for (const auto& profile : metadata.profiles) profiles.push(clone_profile(profile));
+    auto default_targets =
+        Vec<lito::package::PackageTargetId>::with_capacity(metadata.default_targets.len());
+    for (const auto& target : metadata.default_targets) default_targets.push(target.clone());
+    auto result = PackageSpec {
+        .name            = metadata.name.clone(),
+        .root            = metadata.root.clone(),
+        .manifest_path   = metadata.manifest_path.clone(),
+        .default_profile = metadata.default_profile.clone(),
+        .default_targets = rstd::move(default_targets),
+        .toolchain       = metadata.toolchain.clone(),
+        .profiles        = rstd::move(profiles),
         .targets         = rstd::move(targets),
-    });
+    };
+    auto appended = append_package_sources(result, rstd::move(source_sets));
+    if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+    return Ok(rstd::move(result));
+}
+
+auto finalize_package(PackageMetadata                 metadata,
+                      Vec<ResolvedTargetSources>      source_sets,
+                      const lito::system::TargetInfo& target_info)
+    -> lito::package::PackageResult<PackageSpec> {
+    return snapshot_package(metadata, rstd::move(source_sets), target_info);
 }
 
 } // namespace lito::cpp

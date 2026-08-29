@@ -15,6 +15,7 @@ sources = [
   "src/support/source.cppm",
   "src/support/mod.cppm",
   "src/build/compile_executor.cpp",
+  "src/build/action_graph.cpp",
   "src/build/proc_macro.cpp",
   "src/pmacro/consumer.cppm",
   "src/pmacro/generated.cppm",

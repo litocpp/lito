@@ -443,7 +443,7 @@ auto materialize_build_actions(const cpp::PackageSpec&               package,
                                const ClangToolchain&                 toolchain,
                                const cpp::BmiFormatIdentity&         bmi_format,
                                Vec<cpp::PreparedUnit>&               units,
-                               Vec<cpp::ScanResult>                  scans,
+                               const Vec<cpp::ScanResult>&           scans,
                                cpp::ResolvedSemanticBuildGraph       semantics,
                                slice<lito::package::PackageTargetId> selected_targets,
                                BuildResultProjection                 projection)
@@ -511,6 +511,358 @@ auto compile_plan_invocation(CompilePlan& plan, cpp::UnitId unit) -> CompileInvo
     return rstd::addressof(*plan.nodes[unit].invocation);
 }
 
+struct CompileActionSubmission {
+    bool completed {};
+};
+
+struct CompileActionCompletion {
+    cpp::UnitId        unit {};
+    Option<BuildError> error;
+};
+
+struct CompileActionSessionResult {
+    usize                      compiled {};
+    usize                      reused {};
+    Vec<CompileTestExecution>  compile_tests;
+    CompileExecutionStatistics statistics;
+    BuildTimingReport          timing;
+};
+
+class CompileProgressTracker {
+    usize   announced_ {};
+    usize   total_ {};
+    Vec<u8> counted_;
+
+public:
+    CompileProgressTracker(): counted_(Vec<u8>::make()) {}
+
+    auto include(cpp::UnitId unit, usize unit_count) -> void {
+        while (counted_.len() < unit_count) counted_.push(u8 {});
+        if (counted_[unit] != u8 {}) return;
+        counted_[unit] = u8(1);
+        ++total_;
+    }
+
+    auto announce() noexcept -> BuildProgress {
+        ++announced_;
+        return BuildProgress { announced_, total_ };
+    }
+};
+
+class CompileActionSession {
+    const cpp::PackageSpec*              package_ {};
+    Vec<cpp::PreparedUnit>*              units_ {};
+    CompilePlan*                         plan_ {};
+    Vec<Option<CachedArtifactIdentity>>* object_identities_ {};
+    CompileCacheSession*                 cache_ {};
+    ClangCompileExecutor                 compile_;
+    const Option<BuildEventSink>*        observer_ {};
+    CompileExecutor                      executor_;
+    CompileProgressTracker*              progress_ {};
+    Vec<Option<CacheDecision>>           decisions_;
+    Vec<Option<CompileTestExecution>>    compile_tests_;
+    CompileActionSessionResult           result_;
+    rstd::time::Instant                  wall_started_;
+    usize                                in_flight_ {};
+    usize                                capacity_ { usize(1) };
+    bool                                 finished_ {};
+
+    CompileActionSession(const cpp::PackageSpec&              package,
+                         Vec<cpp::PreparedUnit>&              units,
+                         CompilePlan&                         plan,
+                         Vec<Option<CachedArtifactIdentity>>& object_identities,
+                         CompileCacheSession&                 cache,
+                         ClangCompileExecutor                 compile,
+                         const Option<BuildEventSink>&        observer,
+                         CompileExecutor                      executor,
+                         Vec<Option<CacheDecision>>           decisions,
+                         Vec<Option<CompileTestExecution>>    compile_tests,
+                         CompileActionSessionResult           result,
+                         rstd::time::Instant                  wall_started,
+                         usize                                capacity,
+                         CompileProgressTracker&              progress)
+        : package_(rstd::addressof(package)),
+          units_(rstd::addressof(units)),
+          plan_(rstd::addressof(plan)),
+          object_identities_(rstd::addressof(object_identities)),
+          cache_(rstd::addressof(cache)),
+          compile_(compile),
+          observer_(rstd::addressof(observer)),
+          executor_(rstd::move(executor)),
+          progress_(rstd::addressof(progress)),
+          decisions_(rstd::move(decisions)),
+          compile_tests_(rstd::move(compile_tests)),
+          result_(rstd::move(result)),
+          wall_started_(wall_started),
+          capacity_(capacity) {}
+
+public:
+    CompileActionSession(CompileActionSession&&) noexcept                    = default;
+    auto operator=(CompileActionSession&&) noexcept -> CompileActionSession& = delete;
+
+    static auto create(const cpp::PackageSpec&              package,
+                       Vec<cpp::PreparedUnit>&              units,
+                       CompilePlan&                         plan,
+                       const Vec<u8>&                       selection,
+                       Vec<Option<CachedArtifactIdentity>>& object_identities,
+                       CompileCacheSession&                 cache,
+                       ClangCompileExecutor                 compile,
+                       const Option<BuildEventSink>&        observer,
+                       ResolvedCompileExecution             policy,
+                       CompileProgressTracker& progress) -> BuildResult<CompileActionSession> {
+        if (selection.len() != plan.nodes.len() || object_identities.len() != plan.nodes.len()) {
+            return compile_failure<CompileActionSession>(
+                "compile action session inputs have inconsistent lengths"_str);
+        }
+        auto selected_nodes = usize {};
+        for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit)
+            if (selection[unit] != u8 {}) ++selected_nodes;
+        auto jobs = policy.jobs < selected_nodes ? policy.jobs : selected_nodes;
+        if (jobs == usize {}) jobs = usize(1);
+        auto capacity =
+            policy.max_in_flight < selected_nodes ? policy.max_in_flight : selected_nodes;
+        if (capacity == usize {}) capacity = usize(1);
+        auto created = CompileExecutor::create(jobs, capacity);
+        if (created.is_err()) return Err(rstd::move(created).unwrap_err());
+        auto result = CompileActionSessionResult {
+            .compile_tests = Vec<CompileTestExecution>::make(),
+        };
+        auto retained                           = compile_plan_retained_bytes(plan);
+        result.statistics.jobs                  = jobs;
+        result.statistics.max_in_flight         = capacity;
+        result.statistics.plan_nodes            = selected_nodes;
+        result.statistics.plan_retained_bytes   = retained.total;
+        result.statistics.plan_invocation_bytes = retained.invocations;
+        result.statistics.plan_dependency_bytes = retained.dependencies;
+        auto decisions = Vec<Option<CacheDecision>>::with_capacity(plan.nodes.len());
+        auto tests     = Vec<Option<CompileTestExecution>>::with_capacity(plan.nodes.len());
+        for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+            decisions.emplace_back();
+            tests.emplace_back();
+        }
+        auto cache_retained = usize {};
+        for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+            if (selection[unit] == u8 {}) continue;
+            if (plan.nodes[unit].invocation.is_none()) {
+                return compile_failure<CompileActionSession>(
+                    "compile action session contains an invocation that was already consumed"_str);
+            }
+            auto started = rstd::time::Instant::now();
+            auto target  = cpp::project_target(units[unit].unit);
+            auto target_identity =
+                target.is_some()
+                    ? lito::package::package_target_id_text(package.targets[*target].id)
+                    : rstd::format(
+                          "standard-library::{}",
+                          units[unit].unit.owner.as_StandardLibrary().module.logical_name.as_str());
+            auto decision = cache.evaluate(target_identity.as_str(),
+                                           units[unit],
+                                           units[unit].source_content_identity.as_str(),
+                                           *plan.nodes[unit].invocation,
+                                           plan.nodes[unit].dependencies);
+            result.statistics.coordinator_work =
+                result.statistics.coordinator_work.saturating_add(started.elapsed());
+            if (decision.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
+            }
+            ++result.statistics.cache_evaluations;
+            cache_retained += decision->retained_bytes();
+            if (cache_retained > result.statistics.cache_retained_bytes_peak) {
+                result.statistics.cache_retained_bytes_peak = cache_retained;
+            }
+            const auto* test = units[unit].unit.compile_test;
+            if (! decision->current() ||
+                (test != nullptr && test->outcome != lito::manifest::CompileTestOutcome::Success)) {
+                progress.include(unit, plan.nodes.len());
+            }
+            decisions[unit] = Some(rstd::move(decision).unwrap());
+        }
+        return Ok(CompileActionSession(package,
+                                       units,
+                                       plan,
+                                       object_identities,
+                                       cache,
+                                       compile,
+                                       observer,
+                                       rstd::move(created).unwrap(),
+                                       rstd::move(decisions),
+                                       rstd::move(tests),
+                                       rstd::move(result),
+                                       rstd::time::Instant::now(),
+                                       capacity,
+                                       progress));
+    }
+
+    auto has_capacity() const noexcept -> bool { return in_flight_ < capacity_; }
+    auto has_in_flight() const noexcept -> bool { return in_flight_ != usize {}; }
+    auto object_identities() const noexcept -> const Vec<Option<CachedArtifactIdentity>>& {
+        return *object_identities_;
+    }
+
+    auto submit(cpp::UnitId unit) -> BuildResult<CompileActionSubmission> {
+        if (! has_capacity() || unit >= plan_->nodes.len() || decisions_[unit].is_none() ||
+            plan_->nodes[unit].invocation.is_none()) {
+            return compile_failure<CompileActionSubmission>(
+                "compile action is not available for submission"_str);
+        }
+        auto        started        = rstd::time::Instant::now();
+        auto        cache_decision = rstd::move(decisions_[unit]).unwrap_unchecked();
+        auto        target         = cpp::project_target((*units_)[unit].unit);
+        const auto* test           = (*units_)[unit].unit.compile_test;
+        if (cache_decision.current() && test == nullptr) {
+            auto identity = cache_decision.object_identity();
+            if (identity.is_some()) (*object_identities_)[unit] = Some((**identity).clone());
+            ++result_.reused;
+            ++result_.statistics.reused;
+            emit_compile_event(*observer_, *package_, *units_, unit, BuildEventKind::Reuse);
+            result_.statistics.coordinator_work =
+                result_.statistics.coordinator_work.saturating_add(started.elapsed());
+            return Ok(CompileActionSubmission { .completed = true });
+        }
+        if (cache_decision.current() && test != nullptr &&
+            test->outcome == lito::manifest::CompileTestOutcome::Success) {
+            auto execution = evaluate_compile_test(package_->targets[*target].id.package.as_str(),
+                                                   *test,
+                                                   (*units_)[unit].unit.source.as_path(),
+                                                   CompileCommandResult {});
+            auto recorded  = cache_->record_compile_test(
+                cache_decision, (*units_)[unit].unit.compile_test_record->as_path(), execution);
+            if (recorded.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(recorded).unwrap_err()));
+            }
+            compile_tests_[unit] = Some(rstd::move(execution));
+            ++result_.reused;
+            ++result_.statistics.reused;
+            emit_compile_event(*observer_, *package_, *units_, unit, BuildEventKind::Reuse);
+            result_.statistics.coordinator_work =
+                result_.statistics.coordinator_work.saturating_add(started.elapsed());
+            return Ok(CompileActionSubmission { .completed = true });
+        }
+        auto begun =
+            test == nullptr
+                ? cache_->begin_compile(cache_decision)
+                : cache_->begin_compile_test(
+                      cache_decision, (*units_)[unit].unit.compile_test_record->as_path(), *test);
+        if (begun.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(begun).unwrap_err()));
+        }
+        decisions_[unit] = Some(rstd::move(cache_decision));
+        auto invocation  = rstd::move(plan_->nodes[unit].invocation).unwrap_unchecked();
+        auto submitted =
+            executor_.submit(unit,
+                             [compile = compile_, invocation = rstd::move(invocation)]() mutable
+                                 -> ToolchainResult<CompileCommandResult> {
+                                 return compile.execute(invocation);
+                             });
+        if (submitted.is_err()) return Err(rstd::move(submitted).unwrap_err());
+        auto progress = progress_->announce();
+        emit_compile_event(
+            *observer_, *package_, *units_, unit, BuildEventKind::Compile, Some(progress));
+        ++in_flight_;
+        result_.statistics.coordinator_work =
+            result_.statistics.coordinator_work.saturating_add(started.elapsed());
+        return Ok(CompileActionSubmission {});
+    }
+
+    auto recv() -> BuildResult<CompileActionCompletion> {
+        if (! has_in_flight()) {
+            return compile_failure<CompileActionCompletion>(
+                "compile action session has no task in flight"_str);
+        }
+        auto task = executor_.recv();
+        if (task.is_err()) return Err(rstd::move(task).unwrap_err());
+        --in_flight_;
+        auto completed = rstd::move(task).unwrap();
+        auto unit      = completed.node;
+        if (unit >= plan_->nodes.len() || decisions_[unit].is_none()) {
+            return compile_failure<CompileActionCompletion>(
+                "compile task completion does not match a submitted action"_str);
+        }
+        auto started = rstd::time::Instant::now();
+        if (completed.outcome.is_err()) {
+            return Ok(CompileActionCompletion {
+                .unit  = unit,
+                .error = Some(rstd::into<BuildError>(rstd::move(completed.outcome).unwrap_err())),
+            });
+        }
+        auto output   = rstd::move(completed.outcome).unwrap();
+        auto decision = rstd::move(decisions_[unit]).unwrap_unchecked();
+        result_.timing.record(BuildOperation::Compile, output.elapsed);
+        auto        target = cpp::project_target((*units_)[unit].unit);
+        const auto* test   = (*units_)[unit].unit.compile_test;
+        if (test != nullptr) {
+            auto execution = evaluate_compile_test(package_->targets[*target].id.package.as_str(),
+                                                   *test,
+                                                   (*units_)[unit].unit.source.as_path(),
+                                                   rstd::move(output));
+            if (execution.exit_code == i32 {}) {
+                auto committed = cache_->commit_success((*units_)[unit], decision);
+                if (committed.is_err()) {
+                    return Ok(CompileActionCompletion {
+                        .unit  = unit,
+                        .error = Some(rstd::into<BuildError>(rstd::move(committed).unwrap_err())),
+                    });
+                }
+            }
+            auto recorded = cache_->record_compile_test(
+                decision, (*units_)[unit].unit.compile_test_record->as_path(), execution);
+            if (recorded.is_err()) {
+                return Ok(CompileActionCompletion {
+                    .unit  = unit,
+                    .error = Some(rstd::into<BuildError>(rstd::move(recorded).unwrap_err())),
+                });
+            }
+            compile_tests_[unit] = Some(rstd::move(execution));
+            ++result_.compiled;
+        } else {
+            if (output.exit_code != i32 {}) {
+                return Ok(CompileActionCompletion {
+                    .unit  = unit,
+                    .error = Some(BuildError::Toolchain(ToolchainError::Execution(
+                        rstd::format("compile '{}'", (*units_)[unit].unit.source.as_path()),
+                        output.exit_code,
+                        String::make(),
+                        rstd::move(output.standard_error)))),
+                });
+            }
+            auto committed = cache_->commit_success((*units_)[unit], decision);
+            if (committed.is_err()) {
+                return Ok(CompileActionCompletion {
+                    .unit  = unit,
+                    .error = Some(rstd::into<BuildError>(rstd::move(committed).unwrap_err())),
+                });
+            }
+            (*object_identities_)[unit] = rstd::move(committed).unwrap();
+            ++result_.compiled;
+        }
+        result_.statistics.coordinator_work =
+            result_.statistics.coordinator_work.saturating_add(started.elapsed());
+        return Ok(CompileActionCompletion { .unit = unit });
+    }
+
+    auto finish() -> BuildResult<CompileActionSessionResult> {
+        if (has_in_flight()) {
+            return compile_failure<CompileActionSessionResult>(
+                "compile action session still has tasks in flight"_str);
+        }
+        auto executor_statistics = executor_.statistics();
+        executor_.finish();
+        finished_                          = true;
+        result_.statistics.tasks           = executor_statistics.tasks;
+        result_.statistics.max_active      = executor_statistics.max_active;
+        result_.statistics.ready_wait      = executor_statistics.ready_wait;
+        result_.statistics.completion_wait = executor_statistics.completion_wait;
+        result_.statistics.task_work       = executor_statistics.task_work;
+        result_.statistics.wall            = wall_started_.elapsed();
+        for (auto unit = cpp::UnitId {}; unit < compile_tests_.len(); ++unit) {
+            if (compile_tests_[unit].is_some()) {
+                result_.compile_tests.push(rstd::move(compile_tests_[unit]).unwrap_unchecked());
+            }
+        }
+        return Ok(rstd::move(result_));
+    }
+};
+
 auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
                                     Vec<cpp::PreparedUnit>&             units,
                                     CompilePlan&                        plan,
@@ -532,19 +884,30 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
     auto selected_nodes = usize {};
     for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit)
         if (selection[unit] != u8 {}) ++selected_nodes;
-    auto retained                           = compile_plan_retained_bytes(plan);
-    result.statistics.plan_nodes            = selected_nodes;
-    result.statistics.plan_retained_bytes   = retained.total;
-    result.statistics.plan_invocation_bytes = retained.invocations;
-    result.statistics.plan_dependency_bytes = retained.dependencies;
     if (selected_nodes == usize {}) {
-        result.statistics.jobs          = policy.jobs;
-        result.statistics.max_in_flight = policy.max_in_flight;
+        auto retained                           = compile_plan_retained_bytes(plan);
+        result.statistics.jobs                  = policy.jobs;
+        result.statistics.max_in_flight         = policy.max_in_flight;
+        result.statistics.plan_retained_bytes   = retained.total;
+        result.statistics.plan_invocation_bytes = retained.invocations;
+        result.statistics.plan_dependency_bytes = retained.dependencies;
         return Ok(rstd::move(result));
     }
 
-    auto jobs       = policy.jobs < selected_nodes ? policy.jobs : selected_nodes;
-    auto capacity   = policy.max_in_flight < selected_nodes ? policy.max_in_flight : selected_nodes;
+    auto progress       = CompileProgressTracker {};
+    auto session_result = CompileActionSession::create(package,
+                                                       units,
+                                                       plan,
+                                                       selection,
+                                                       result.object_identities,
+                                                       cache,
+                                                       compile,
+                                                       observer,
+                                                       policy,
+                                                       progress);
+    if (session_result.is_err()) return Err(rstd::move(session_result).unwrap_err());
+    auto session = rstd::move(session_result).unwrap();
+
     auto runtime    = Vec<CompileNodeRuntime>::with_capacity(plan.nodes.len());
     auto errors     = Vec<Option<BuildError>>::with_capacity(plan.nodes.len());
     auto dependents = Vec<Vec<cpp::UnitId>>::with_capacity(plan.nodes.len());
@@ -570,313 +933,72 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
         dependents.push(rstd::move(selected_dependents));
     }
 
-    auto wall_started   = rstd::time::Instant::now();
-    auto compile_total  = usize {};
-    auto cache_retained = usize {};
-    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
-        if (selection[unit] == u8 {}) continue;
-        if (plan.nodes[unit].invocation.is_none()) {
-            return compile_failure<CompileExecutionResult>(
-                "compile selection contains an invocation that was already consumed"_str);
-        }
-        auto started = rstd::time::Instant::now();
-        auto target  = cpp::project_target(units[unit].unit);
-        auto target_identity =
-            target.is_some()
-                ? lito::package::package_target_id_text(package.targets[*target].id)
-                : rstd::format(
-                      "standard-library::{}",
-                      units[unit].unit.owner.as_StandardLibrary().module.logical_name.as_str());
-        auto decision = cache.evaluate(target_identity.as_str(),
-                                       units[unit],
-                                       units[unit].source_content_identity.as_str(),
-                                       *plan.nodes[unit].invocation,
-                                       plan.nodes[unit].dependencies);
-        result.statistics.coordinator_work =
-            result.statistics.coordinator_work.saturating_add(started.elapsed());
-        if (decision.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
-        }
-        ++result.statistics.cache_evaluations;
-        cache_retained += decision->retained_bytes();
-        if (cache_retained > result.statistics.cache_retained_bytes_peak) {
-            result.statistics.cache_retained_bytes_peak = cache_retained;
-        }
-        const auto* test = units[unit].unit.compile_test;
-        if (! decision->current() ||
-            (test != nullptr && test->outcome != lito::manifest::CompileTestOutcome::Success)) {
-            ++compile_total;
-        }
-        runtime[unit].decision = Some(rstd::move(decision).unwrap());
-    }
-
-    auto created = CompileExecutor::create(jobs, capacity);
-    if (created.is_err()) return Err(rstd::move(created).unwrap_err());
-    auto executor          = rstd::move(created).unwrap();
-    auto terminal          = usize {};
-    auto in_flight         = usize {};
-    auto compile_announced = usize {};
+    auto terminal           = usize {};
+    auto runtime_statistics = CompileExecutionStatistics {};
     while (terminal < selected_nodes) {
-        while (in_flight < capacity) {
+        while (session.has_capacity()) {
             auto selected = next_ready(runtime);
             if (selected.is_none()) break;
-            const auto  unit                = *selected;
-            auto&       node                = plan.nodes[unit];
-            auto        target              = cpp::project_target(units[unit].unit);
-            auto        coordinator_started = rstd::time::Instant::now();
-            auto        cache_decision      = rstd::move(runtime[unit].decision).unwrap_unchecked();
-            const auto* test                = units[unit].unit.compile_test;
-            if (cache_decision.current() && test == nullptr) {
-                auto object_identity = cache_decision.object_identity();
-                if (object_identity.is_some()) {
-                    result.object_identities[unit] = Some((**object_identity).clone());
-                }
-                ++result.reused;
-                ++result.statistics.reused;
-                emit_compile_event(observer, package, units, unit, BuildEventKind::Reuse);
-                auto succeeded = succeed_node(unit, dependents, runtime, terminal);
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
-                if (succeeded.is_err()) {
-                    executor.cancel();
-                    executor.finish();
-                    return Err(rstd::move(succeeded).unwrap_err());
-                }
-                continue;
-            }
-            if (cache_decision.current() && test != nullptr &&
-                test->outcome == lito::manifest::CompileTestOutcome::Success) {
-                auto execution = evaluate_compile_test(package.targets[*target].id.package.as_str(),
-                                                       *test,
-                                                       units[unit].unit.source.as_path(),
-                                                       CompileCommandResult {});
-                auto recorded  = cache.record_compile_test(
-                    cache_decision, units[unit].unit.compile_test_record->as_path(), execution);
-                if (recorded.is_err()) {
-                    result.statistics.coordinator_work =
-                        result.statistics.coordinator_work.saturating_add(
-                            coordinator_started.elapsed());
-                    fail_node(unit,
-                              rstd::into<BuildError>(rstd::move(recorded).unwrap_err()),
-                              dependents,
-                              runtime,
-                              errors,
-                              terminal,
-                              result.statistics);
-                    continue;
-                }
-                runtime[unit].compile_test = Some(rstd::move(execution));
-                ++result.reused;
-                ++result.statistics.reused;
-                emit_compile_event(observer, package, units, unit, BuildEventKind::Reuse);
-                auto succeeded = succeed_node(unit, dependents, runtime, terminal);
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
-                if (succeeded.is_err()) {
-                    executor.cancel();
-                    executor.finish();
-                    return Err(rstd::move(succeeded).unwrap_err());
-                }
-                continue;
-            }
-
-            auto begun =
-                test == nullptr
-                    ? cache.begin_compile(cache_decision)
-                    : cache.begin_compile_test(
-                          cache_decision, units[unit].unit.compile_test_record->as_path(), *test);
-            if (begun.is_err()) {
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
+            auto unit            = *selected;
+            runtime[unit].status = CompileNodeStatus::Running;
+            auto submitted       = session.submit(unit);
+            if (submitted.is_err()) {
                 fail_node(unit,
-                          rstd::into<BuildError>(rstd::move(begun).unwrap_err()),
+                          rstd::move(submitted).unwrap_err(),
                           dependents,
                           runtime,
                           errors,
                           terminal,
-                          result.statistics);
+                          runtime_statistics);
                 continue;
             }
-            runtime[unit].status   = CompileNodeStatus::Running;
-            runtime[unit].decision = Some(rstd::move(cache_decision));
-            auto invocation        = rstd::move(node.invocation).unwrap_unchecked();
-            auto submitted =
-                executor.submit(unit,
-                                [compile, invocation = rstd::move(invocation)]() mutable
-                                    -> ToolchainResult<CompileCommandResult> {
-                                    return compile.execute(invocation);
-                                });
-            result.statistics.coordinator_work =
-                result.statistics.coordinator_work.saturating_add(coordinator_started.elapsed());
-            if (submitted.is_err()) {
-                executor.cancel();
-                executor.finish();
-                return Err(rstd::move(submitted).unwrap_err());
-            }
-            ++compile_announced;
-            emit_compile_event(observer,
-                               package,
-                               units,
-                               unit,
-                               BuildEventKind::Compile,
-                               Some(BuildProgress { compile_announced, compile_total }));
-            ++in_flight;
+            if (! submitted->completed) continue;
+            auto succeeded = succeed_node(unit, dependents, runtime, terminal);
+            if (succeeded.is_err()) return Err(rstd::move(succeeded).unwrap_err());
         }
 
-        if (in_flight == usize {}) {
-            if (terminal == selected_nodes) break;
-            executor.cancel();
-            executor.finish();
+        if (session.has_in_flight()) {
+            auto completed = session.recv();
+            if (completed.is_err()) return Err(rstd::move(completed).unwrap_err());
+            if (completed->unit >= runtime.len() ||
+                runtime[completed->unit].status != CompileNodeStatus::Running) {
+                return compile_failure<CompileExecutionResult>(
+                    "compile action completion does not match a running node"_str);
+            }
+            if (completed->error.is_some()) {
+                fail_node(completed->unit,
+                          rstd::move(completed->error).unwrap(),
+                          dependents,
+                          runtime,
+                          errors,
+                          terminal,
+                          runtime_statistics);
+                continue;
+            }
+            auto succeeded = succeed_node(completed->unit, dependents, runtime, terminal);
+            if (succeeded.is_err()) return Err(rstd::move(succeeded).unwrap_err());
+            continue;
+        }
+        if (terminal != selected_nodes) {
             return compile_failure<CompileExecutionResult>(
                 "compile DAG has pending nodes without a ready frontier"_str);
         }
-
-        auto completed = executor.recv();
-        if (completed.is_err()) {
-            executor.cancel();
-            executor.finish();
-            return Err(rstd::move(completed).unwrap_err());
-        }
-        --in_flight;
-        auto task = rstd::move(completed).unwrap();
-        if (task.node >= plan.nodes.len() ||
-            runtime[task.node].status != CompileNodeStatus::Running ||
-            runtime[task.node].decision.is_none()) {
-            executor.cancel();
-            executor.finish();
-            return compile_failure<CompileExecutionResult>(
-                "compile task completion does not match a running node"_str);
-        }
-
-        const auto unit                = task.node;
-        auto       coordinator_started = rstd::time::Instant::now();
-        if (task.outcome.is_err()) {
-            fail_node(unit,
-                      rstd::into<BuildError>(rstd::move(task.outcome).unwrap_err()),
-                      dependents,
-                      runtime,
-                      errors,
-                      terminal,
-                      result.statistics);
-            result.statistics.coordinator_work =
-                result.statistics.coordinator_work.saturating_add(coordinator_started.elapsed());
-            continue;
-        }
-        auto output   = rstd::move(task.outcome).unwrap();
-        auto decision = rstd::move(runtime[unit].decision).unwrap_unchecked();
-        result.timing.record(BuildOperation::Compile, output.elapsed);
-        auto        target = cpp::project_target(units[unit].unit);
-        const auto* test   = units[unit].unit.compile_test;
-        if (test != nullptr) {
-            auto execution = evaluate_compile_test(package.targets[*target].id.package.as_str(),
-                                                   *test,
-                                                   units[unit].unit.source.as_path(),
-                                                   rstd::move(output));
-            if (execution.exit_code == i32 {}) {
-                auto committed = cache.commit_success(units[unit], decision);
-                if (committed.is_err()) {
-                    fail_node(unit,
-                              rstd::into<BuildError>(rstd::move(committed).unwrap_err()),
-                              dependents,
-                              runtime,
-                              errors,
-                              terminal,
-                              result.statistics);
-                    result.statistics.coordinator_work =
-                        result.statistics.coordinator_work.saturating_add(
-                            coordinator_started.elapsed());
-                    continue;
-                }
-            }
-            auto recorded = cache.record_compile_test(
-                decision, units[unit].unit.compile_test_record->as_path(), execution);
-            if (recorded.is_err()) {
-                fail_node(unit,
-                          rstd::into<BuildError>(rstd::move(recorded).unwrap_err()),
-                          dependents,
-                          runtime,
-                          errors,
-                          terminal,
-                          result.statistics);
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
-                continue;
-            }
-            runtime[unit].compile_test = Some(rstd::move(execution));
-            ++result.compiled;
-        } else {
-            if (output.exit_code != i32 {}) {
-                fail_node(unit,
-                          BuildError::Toolchain(ToolchainError::Execution(
-                              rstd::format("compile '{}'", units[unit].unit.source.as_path()),
-                              output.exit_code,
-                              String::make(),
-                              rstd::move(output.standard_error))),
-                          dependents,
-                          runtime,
-                          errors,
-                          terminal,
-                          result.statistics);
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
-                continue;
-            }
-            auto committed = cache.commit_success(units[unit], decision);
-            if (committed.is_err()) {
-                fail_node(unit,
-                          rstd::into<BuildError>(rstd::move(committed).unwrap_err()),
-                          dependents,
-                          runtime,
-                          errors,
-                          terminal,
-                          result.statistics);
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
-                continue;
-            }
-            result.object_identities[unit] = rstd::move(committed).unwrap();
-            ++result.compiled;
-        }
-        auto succeeded = succeed_node(unit, dependents, runtime, terminal);
-        result.statistics.coordinator_work =
-            result.statistics.coordinator_work.saturating_add(coordinator_started.elapsed());
-        if (succeeded.is_err()) {
-            executor.cancel();
-            executor.finish();
-            return Err(rstd::move(succeeded).unwrap_err());
-        }
     }
 
-    auto executor_statistics = executor.statistics();
-    executor.finish();
-    result.statistics.jobs            = executor_statistics.jobs;
-    result.statistics.max_in_flight   = executor_statistics.max_in_flight;
-    result.statistics.tasks           = executor_statistics.tasks;
-    result.statistics.max_active      = executor_statistics.max_active;
-    result.statistics.ready_wait      = executor_statistics.ready_wait;
-    result.statistics.completion_wait = executor_statistics.completion_wait;
-    result.statistics.task_work       = executor_statistics.task_work;
-    result.statistics.wall            = wall_started.elapsed();
-
-    for (auto unit = cpp::UnitId {}; unit < runtime.len(); ++unit) {
-        if (runtime[unit].compile_test.is_some()) {
-            result.compile_tests.push(rstd::move(runtime[unit].compile_test).unwrap_unchecked());
-        }
-    }
+    auto finished = session.finish();
+    if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
+    result.compiled      = finished->compiled;
+    result.reused        = finished->reused;
+    result.compile_tests = rstd::move(finished->compile_tests);
+    result.statistics    = finished->statistics;
+    result.statistics.failed += runtime_statistics.failed;
+    result.statistics.blocked += runtime_statistics.blocked;
+    result.timing = rstd::move(finished->timing);
     for (auto unit = cpp::UnitId {}; unit < errors.len(); ++unit) {
-        if (errors[unit].is_some()) {
-            return Err(rstd::move(errors[unit]).unwrap_unchecked());
-        }
+        if (errors[unit].is_some()) return Err(rstd::move(errors[unit]).unwrap_unchecked());
     }
     return Ok(rstd::move(result));
 }
-
 auto execute_compile_plan(const cpp::PackageSpec&       package,
                           Vec<cpp::PreparedUnit>&       units,
                           CompilePlan                   plan,

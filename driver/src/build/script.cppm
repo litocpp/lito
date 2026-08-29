@@ -11,6 +11,7 @@ import luato;
 import lito.core;
 import :build.event;
 import :build.artifact;
+import :build.action_graph;
 import lito.cpp;
 import lito.toolchain;
 import :build.layout;
@@ -30,7 +31,7 @@ namespace lito
 
 using Json = rstd::json::Value;
 
-constexpr auto build_host_api_identity = "lito:build-host-api:v2"_str;
+constexpr auto build_host_api_identity = "lito:build-host-api:v3"_str;
 
 constexpr auto build_host_lua_api = R"lua(local native_external_source = lito._external_source
 local native_external_source_file = lito._external_source_file
@@ -603,9 +604,63 @@ auto action_file_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String>
     return Ok(licrypto::sha256_hex(data->as_slice()));
 }
 
+auto action_directory_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String> {
+    auto opened = rstd::fs::read_dir(path);
+    if (opened.is_err()) {
+        return script_io_failure<String>(
+            "enumerate build-tool action directory"_str, path, rstd::move(opened).unwrap_err());
+    }
+    auto records = Vec<String>::make();
+    auto entries = rstd::move(opened).unwrap();
+    for (auto item : entries) {
+        if (item.is_err()) {
+            return script_io_failure<String>(
+                "enumerate build-tool action directory"_str, path, rstd::move(item).unwrap_err());
+        }
+        auto entry = rstd::move(item).unwrap();
+        auto type  = entry.file_type();
+        if (type.is_err()) {
+            auto entry_path = entry.path();
+            return script_io_failure<String>("inspect build-tool action directory entry"_str,
+                                             entry_path.as_path(),
+                                             rstd::move(type).unwrap_err());
+        }
+        auto kind = type->is_file()      ? "file"_str
+                    : type->is_dir()     ? "directory"_str
+                    : type->is_symlink() ? "symlink"_str
+                                         : "other"_str;
+        auto name = entry.file_name().as_os_str().to_string_lossy();
+        records.push(rstd::format("{}:{}:{}", kind.len(), kind, name.as_str()));
+    }
+    rstd::slice_::sort_unstable(records.as_mut_slice().as_mut_ref());
+    auto identity = String::make("build-tool-directory-v1"_str);
+    for (const auto& record : records) {
+        identity.push_ascii('\n');
+        identity.push_str(record.as_str());
+    }
+    return Ok(licrypto::sha256_hex(identity.as_str()));
+}
+
+enum class ActionDependencyKind
+{
+    File,
+    Directory,
+};
+
+auto action_dependency_kind_name(ActionDependencyKind kind) noexcept -> ref<str> {
+    return kind == ActionDependencyKind::File ? "file"_str : "directory"_str;
+}
+
+auto action_dependency_digest(ref<rstd::path::Path> path, ActionDependencyKind kind)
+    -> BuildScriptResult<String> {
+    return kind == ActionDependencyKind::File ? action_file_digest(path)
+                                              : action_directory_digest(path);
+}
+
 struct ActionDependency {
-    PathBuf path;
-    String  digest;
+    PathBuf              path;
+    ActionDependencyKind kind { ActionDependencyKind::File };
+    String               digest;
 };
 
 auto make_depfile_paths(ref<str> text, ref<rstd::path::Path> working_directory)
@@ -703,9 +758,11 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
                 rstd::move(canonical).unwrap_err());
         }
         auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
-        if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
+        if (metadata.is_err() || metadata->is_symlink() ||
+            (! metadata->is_file() && ! metadata->is_dir())) {
             return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(), String::make("depfile dependency is not a regular file"_str)));
+                canonical->clone(),
+                String::make("depfile dependency is not a regular file or directory"_str)));
         }
         auto allowed = false;
         for (const auto& root : allowed_roots) {
@@ -733,9 +790,12 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
             }
         }
         if (duplicate) continue;
-        auto digest = rstd_try(action_file_digest(canonical->as_path()));
+        auto kind =
+            metadata->is_file() ? ActionDependencyKind::File : ActionDependencyKind::Directory;
+        auto digest = rstd_try(action_dependency_digest(canonical->as_path(), kind));
         result.push(ActionDependency {
             .path   = rstd::move(canonical).unwrap(),
+            .kind   = kind,
             .digest = rstd::move(digest),
         });
     }
@@ -764,7 +824,7 @@ auto action_receipt_matches(ref<rstd::path::Path> receipt,
     auto version           = parsed->get("version"_str);
     auto recorded_identity = parsed->get("identity"_str);
     auto recorded_outputs  = parsed->get("outputs"_str);
-    if (version.is_none() || (**version).as_i64() != Some(i64(2)) || recorded_identity.is_none() ||
+    if (version.is_none() || (**version).as_i64() != Some(i64(3)) || recorded_identity.is_none() ||
         (**recorded_identity).as_str() != Some(identity) || recorded_outputs.is_none() ||
         (**recorded_outputs).as_array().is_none() ||
         (**(**recorded_outputs).as_array()).len() != outputs.len()) {
@@ -791,13 +851,19 @@ auto action_receipt_matches(ref<rstd::path::Path> receipt,
     if (expects_dependencies && dependencies.is_empty()) return Ok(false);
     for (const auto& entry : dependencies) {
         auto path   = entry.get("path"_str);
+        auto kind   = entry.get("kind"_str);
         auto digest = entry.get("sha256"_str);
-        if (path.is_none() || (**path).as_str().is_none() || digest.is_none() ||
-            (**digest).as_str().is_none()) {
+        if (path.is_none() || (**path).as_str().is_none() || kind.is_none() ||
+            (**kind).as_str().is_none() || digest.is_none() || (**digest).as_str().is_none()) {
             return Ok(false);
         }
+        auto dependency_kind = ActionDependencyKind::File;
+        if (*(**kind).as_str() == "directory"_str)
+            dependency_kind = ActionDependencyKind::Directory;
+        else if (*(**kind).as_str() != "file"_str)
+            return Ok(false);
         auto dependency_path = PathBuf::from(String::make(*(**path).as_str()));
-        auto actual          = action_file_digest(dependency_path.as_path());
+        auto actual          = action_dependency_digest(dependency_path.as_path(), dependency_kind);
         if (actual.is_err() || actual->as_str() != *(**digest).as_str()) return Ok(false);
     }
     return Ok(true);
@@ -817,7 +883,7 @@ auto action_receipt_text(ref<str>                     identity,
     }
     auto document = rstd::json::Map::make();
     document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(2))));
+                    Json::Number(rstd::json::Number::from_u64(u64(3))));
     document.insert(String::make("identity"_str), Json::String(String::make(identity)));
     document.insert(String::make("outputs"_str), Json::Array(rstd::move(entries)));
     auto dependency_entries = rstd::json::Array::with_capacity(dependencies.len());
@@ -825,6 +891,8 @@ auto action_receipt_text(ref<str>                     identity,
         auto item = rstd::json::Map::make();
         item.insert(String::make("path"_str),
                     Json::String(dependency.path.as_path().to_string_lossy()));
+        item.insert(String::make("kind"_str),
+                    Json::String(String::make(action_dependency_kind_name(dependency.kind))));
         item.insert(String::make("sha256"_str), Json::String(dependency.digest.clone()));
         dependency_entries.push(Json::Object(rstd::move(item)));
     }
@@ -901,11 +969,13 @@ struct ResolvedExternalSourceFile {
 };
 
 struct ResolvedActionTool {
-    String  package;
-    String  alias;
-    String  identity;
-    String  digest;
-    PathBuf executable;
+    String                                 package;
+    String                                 alias;
+    String                                 identity;
+    String                                 digest;
+    PathBuf                                executable;
+    Option<lito::package::PackageTargetId> target;
+    Option<BuildArtifactId>                artifact;
 };
 
 struct ResolvedActionInputRoot {
@@ -927,7 +997,7 @@ struct RegisteredAction {
     String                       identity;
     String                       label;
     PathBuf                      working_directory;
-    PathBuf                      executable;
+    Option<ResolvedActionTool>   tool;
     Vec<ResolvedActionTool>      tools;
     Vec<ResolvedActionInputRoot> input_roots;
     Vec<String>                  arguments;
@@ -987,6 +1057,11 @@ struct ToolActionOutcome {
     Vec<luato::OpaqueHandle> outputs;
 };
 
+struct PackageHostToolHandle {
+    String                         package;
+    lito::package::PackageTargetId target;
+};
+
 struct GeneratedActionWorkerResult {
     usize                    action {};
     BuildScriptResult<empty> outcome;
@@ -1004,7 +1079,7 @@ public:
                       Vec<String>                       packages,
                       BuildOutputRegistry&              outputs,
                       const ClangToolchain&             toolchain,
-                      const ResolvedHostBuildTools&     tools,
+                      ResolvedHostBuildTools            tools,
                       const TargetInfo&                 target_info,
                       const ResolvedProcessEnvironment& environment,
                       const Option<BuildEventSink>&     observer)
@@ -1018,15 +1093,15 @@ public:
           packages_(rstd::move(packages)),
           output_registry_(rstd::addressof(outputs)),
           toolchain_(rstd::addressof(toolchain)),
-          tools_(rstd::addressof(tools)),
+          tools_(rstd::move(tools)),
           target_info_(rstd::addressof(target_info)),
           environment_(rstd::addressof(environment)),
           observer_(rstd::addressof(observer)) {}
 
     auto tool(ref<str> alias) const -> BuildScriptResult<luato::OpaqueHandle> {
         auto identity = default_package_.is_some()
-                            ? tools_->identity(default_package_->as_str(), alias)
-                            : tools_->identity(alias);
+                            ? tools_.identity(default_package_->as_str(), alias)
+                            : tools_.identity(alias);
         if (identity == nullptr) {
             return action_failure<luato::OpaqueHandle>(
                 BuildToolActionError::UnknownTool(String::make(alias)));
@@ -1198,6 +1273,48 @@ public:
             "external dependency '{}' has no host tool '{}'", dependency->alias.as_str(), name));
     }
 
+    auto host_tool(luato::OpaqueHandle target_handle, ref<str> package, ref<str> name)
+        -> BuildScriptResult<luato::OpaqueHandle> {
+        auto target = target_index(target_handle);
+        if (target.is_none()) {
+            return action_request_failure<luato::OpaqueHandle>(
+                "target handle does not belong to this build script"_str);
+        }
+        auto allowed = false;
+        for (const auto& dependency : metadata_->targets[*target].host_tool_dependencies) {
+            if (dependency.package == package) {
+                allowed = true;
+                break;
+            }
+        }
+        if (! allowed) {
+            return action_request_failure<luato::OpaqueHandle>(
+                rstd::format("target '{}::{}' has no host-tool dependency '{}'",
+                             metadata_->targets[*target].id.package.as_str(),
+                             metadata_->targets[*target].id.name.as_str(),
+                             package));
+        }
+        const cpp::ResolvedTarget* provider = nullptr;
+        for (const auto& candidate : metadata_->targets) {
+            if (candidate.id.package == package && candidate.id.name == name &&
+                candidate.host_tool) {
+                provider = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (provider == nullptr) {
+            return action_request_failure<luato::OpaqueHandle>(
+                rstd::format("host-tool dependency '{}' has no target '{}'", package, name));
+        }
+        auto bound  = Box<PackageHostToolHandle>::make(PackageHostToolHandle {
+            .package = metadata_->targets[*target].id.package.clone(),
+            .target  = provider->id.clone(),
+        });
+        auto handle = luato::OpaqueHandle { .identity = rstd::addressof(*bound) };
+        package_host_tool_handles_.push(rstd::move(bound));
+        return Ok(handle);
+    }
+
     auto external_dependency_info(luato::OpaqueHandle dependency_handle) const
         -> BuildScriptResult<luato::Table> {
         for (const auto& target : metadata_->targets) {
@@ -1286,6 +1403,16 @@ public:
         if (metadata_->targets[*target].id.package != output->package.as_str()) {
             return action_request_failure<bool>(
                 "generated output and target belong to different packages"_str);
+        }
+        if (metadata_->targets[*target].language != lito::manifest::PackageLanguage::Cpp) {
+            return action_request_failure<bool>(
+                "generated compile sources require a C++ target"_str);
+        }
+        auto extension = output->relative.as_path().extension();
+        if (extension.is_none() || extension->to_str() != Some("cpp"_str)) {
+            return action_request_failure<bool>(
+                rstd::format("generated compile source '{}' must use the '.cpp' extension",
+                             output->relative.as_path()));
         }
         return Ok(cpp::add_generated_source(metadata_->targets[*target], output->relative.clone()));
     }
@@ -1642,6 +1769,8 @@ public:
         lua_state_ = rstd::addressof(state);
     }
 
+    auto clear_lua_state() noexcept -> void { lua_state_ = nullptr; }
+
     auto finalize_module_identity() -> BuildScriptResult<empty> {
         auto closure = String::make("lito-module-closure-v2"_str);
         closure.push_str("\nentry:"_str);
@@ -1658,18 +1787,75 @@ public:
             closure.push_str("\nmodule:"_str);
             closure.push_str(module.as_str());
         }
-        for (auto& action : actions_) {
-            action.identity = licrypto::sha256_hex(
-                rstd::format("{}\n{}", action.identity.as_str(), closure.as_str()).as_str());
-        }
-        for (auto& output : generated_outputs_) {
-            if (output->producer >= actions_.len()) {
-                return action_request_failure<empty>(
-                    "generated output refers to an unknown producer"_str);
+        return refresh_action_identities(closure.as_str());
+    }
+
+    auto host_tool_targets() const -> Vec<lito::package::PackageTargetId> {
+        auto       result = Vec<lito::package::PackageTargetId>::make();
+        const auto append = [&result](const ResolvedActionTool& tool) {
+            if (tool.target.is_none()) return;
+            for (const auto& existing : result) {
+                if (existing == *tool.target) return;
             }
-            output->action_identity = actions_[output->producer].identity.clone();
+            result.push(tool.target->clone());
+        };
+        for (const auto& action : actions_) {
+            if (action.tool.is_some()) append(*action.tool);
+            for (const auto& tool : action.tools) append(tool);
         }
-        return Ok(empty {});
+        return result;
+    }
+
+    auto bind_host_tools(const ResolvedPackageHostTools& tools) -> BuildScriptResult<empty> {
+        auto       closure = String::make("lito-package-host-tools-v1"_str);
+        const auto bind = [&tools, &closure](ResolvedActionTool& tool) -> BuildScriptResult<empty> {
+            if (tool.target.is_none()) return Ok(empty {});
+            auto artifact = tools.get(*tool.target);
+            if (artifact.is_none()) {
+                return action_request_failure<empty>(
+                    rstd::format("host-tool target '{}' is not ready",
+                                 lito::package::package_target_id_text(*tool.target).as_str()));
+            }
+            auto digest     = rstd_try(action_file_digest((**artifact).executable.as_path()));
+            tool.identity   = (**artifact).identity.clone();
+            tool.digest     = rstd::move(digest);
+            tool.executable = (**artifact).executable.clone();
+            tool.artifact   = (**artifact).artifact;
+            closure.push_str("\ntarget:"_str);
+            closure.push_str(lito::package::package_target_id_text(*tool.target).as_str());
+            closure.push_ascii(':');
+            closure.push_str(tool.identity.as_str());
+            closure.push_ascii(':');
+            closure.push_str(tool.digest.as_str());
+            return Ok(empty {});
+        };
+        auto bound = false;
+        for (auto& action : actions_) {
+            if (action.tool.is_some() && action.tool->target.is_some()) {
+                rstd_try(bind(*action.tool));
+                bound = true;
+            }
+            for (auto& tool : action.tools) {
+                if (tool.target.is_none()) continue;
+                rstd_try(bind(tool));
+                bound = true;
+            }
+        }
+        return bound ? refresh_action_identities(closure.as_str()) : Ok(empty {});
+    }
+
+    void synchronize_generated_identities(cpp::PackageSpec& package,
+                                          cpp::PackagePlan& plan) const noexcept {
+        for (const auto& replacement : identity_replacements_) {
+            if (replacement.target >= package.targets.len() ||
+                replacement.target >= plan.contexts.len()) {
+                continue;
+            }
+            cpp::replace_generated_artifact_identity(package.targets[replacement.target],
+                                                     plan.contexts[replacement.target],
+                                                     replacement.previous.as_str(),
+                                                     replacement.replacement.as_str());
+        }
     }
 
     auto run(const luato::Table& request) -> BuildScriptResult<ToolActionOutcome> {
@@ -2000,7 +2186,7 @@ public:
             .identity                 = identity.clone(),
             .label                    = rstd::move(primary_tool.alias),
             .working_directory        = rstd::move(working_directory).unwrap(),
-            .executable               = rstd::move(primary_tool.executable),
+            .tool                     = Some(rstd::move(primary_tool)),
             .tools                    = rstd::move(secondary_tools),
             .input_roots              = rstd::move(input_roots),
             .arguments                = rstd::move(arguments),
@@ -2014,42 +2200,150 @@ public:
             make_outcome(false, package->as_str(), output_paths, identity.as_str(), producer));
     }
 
-    auto execute(usize jobs) -> BuildScriptResult<empty> {
+    auto publish_actions(BuildActionGraph& graph, const ExecutionDomainId& domain)
+        -> BuildScriptResult<Vec<BuildActionId>> {
+        auto outputs = Vec<Vec<BuildArtifactId>>::with_capacity(actions_.len());
+        for (const auto& action : actions_) {
+            auto generated = layout_->generated_package_directory(action.package.as_str());
+            if (generated.is_err()) {
+                return script_failure<Vec<BuildActionId>>(
+                    rstd::format("{}", generated.unwrap_err()));
+            }
+            auto action_outputs = Vec<BuildArtifactId>::with_capacity(action.outputs.len());
+            for (const auto& output : action.outputs) {
+                auto artifact = graph.add_artifact(BuildArtifactSpec {
+                    .identity =
+                        rstd::format("generated:{}:{}", action.identity.as_str(), output.as_path()),
+                    .domain = domain.clone(),
+                    .kind   = BuildArtifactKind::Generated,
+                    .path   = Some(generated->join(output.as_path())),
+                });
+                if (artifact.is_err()) {
+                    return script_failure<Vec<BuildActionId>>(
+                        rstd::format("{}", artifact.unwrap_err()));
+                }
+                action_outputs.emplace_back(*artifact);
+            }
+            outputs.push(rstd::move(action_outputs));
+        }
+
+        auto action_ids = Vec<BuildActionId>::with_capacity(actions_.len());
+        for (usize index {}; index < actions_.len(); ++index) {
+            const auto& action = actions_[index];
+            auto        inputs = Vec<BuildArtifactId>::make();
+            const auto  append_tool =
+                [&](const ResolvedActionTool& tool) -> BuildScriptResult<empty> {
+                if (tool.artifact.is_some()) {
+                    inputs.emplace_back(*tool.artifact);
+                    return Ok(empty {});
+                }
+                auto artifact = graph.add_artifact(BuildArtifactSpec {
+                    .identity        = rstd::format("tool:{}:{}:{}",
+                                                    tool.identity.as_str(),
+                                                    tool.digest.as_str(),
+                                                    tool.executable.as_path()),
+                    .domain          = domain.clone(),
+                    .kind            = BuildArtifactKind::Executable,
+                    .path            = Some(tool.executable.clone()),
+                    .initially_ready = true,
+                });
+                if (artifact.is_err()) {
+                    return script_failure<empty>(rstd::format("{}", artifact.unwrap_err()));
+                }
+                inputs.emplace_back(*artifact);
+                return Ok(empty {});
+            };
+            if (action.tool.is_some()) rstd_try(append_tool(*action.tool));
+            for (const auto& tool : action.tools) rstd_try(append_tool(tool));
+            for (const auto& root : action.input_roots) {
+                auto artifact = graph.add_artifact(BuildArtifactSpec {
+                    .identity = rstd::format(
+                        "input-root:{}:{}", root.source->identity.as_str(), root.path.as_path()),
+                    .domain          = domain.clone(),
+                    .kind            = BuildArtifactKind::External,
+                    .path            = Some(root.path.clone()),
+                    .initially_ready = true,
+                });
+                if (artifact.is_err()) {
+                    return script_failure<Vec<BuildActionId>>(
+                        rstd::format("{}", artifact.unwrap_err()));
+                }
+                inputs.emplace_back(*artifact);
+            }
+            for (const auto& input : action.inputs) {
+                if (input.producer.is_some()) {
+                    if (*input.producer >= outputs.len()) {
+                        return action_request_failure<Vec<BuildActionId>>(
+                            "generated action input refers to an unknown producer"_str);
+                    }
+                    auto producer_root = layout_->generated_package_directory(
+                        actions_[*input.producer].package.as_str());
+                    if (producer_root.is_err()) {
+                        return script_failure<Vec<BuildActionId>>(
+                            rstd::format("{}", producer_root.unwrap_err()));
+                    }
+                    auto matched = Option<BuildArtifactId> {};
+                    for (usize output {}; output < actions_[*input.producer].outputs.len();
+                         ++output) {
+                        if (producer_root->join(actions_[*input.producer].outputs[output].as_path())
+                                .as_path() == input.path.as_path()) {
+                            matched = Some(outputs[*input.producer][output]);
+                            break;
+                        }
+                    }
+                    if (matched.is_none()) {
+                        return action_request_failure<Vec<BuildActionId>>(
+                            "generated action input does not match its producer output"_str);
+                    }
+                    inputs.emplace_back(*matched);
+                    continue;
+                }
+                auto artifact = graph.add_artifact(BuildArtifactSpec {
+                    .identity =
+                        rstd::format("input:{}:{}", input.digest.as_str(), input.path.as_path()),
+                    .domain          = domain.clone(),
+                    .kind            = BuildArtifactKind::External,
+                    .path            = Some(input.path.clone()),
+                    .initially_ready = true,
+                });
+                if (artifact.is_err()) {
+                    return script_failure<Vec<BuildActionId>>(
+                        rstd::format("{}", artifact.unwrap_err()));
+                }
+                inputs.emplace_back(*artifact);
+            }
+            auto kind = action.kind == RegisteredActionKind::Process ? BuildActionKind::RunTool
+                        : action.kind == RegisteredActionKind::Write ? BuildActionKind::Write
+                        : action.kind == RegisteredActionKind::Copy  ? BuildActionKind::Copy
+                                                                     : BuildActionKind::Transform;
+            auto registered = graph.add_action(BuildActionSpec {
+                .identity = action.identity.clone(),
+                .domain   = domain.clone(),
+                .kind     = kind,
+                .inputs   = rstd::move(inputs),
+                .outputs  = outputs[index].clone(),
+            });
+            if (registered.is_err()) {
+                return script_failure<Vec<BuildActionId>>(
+                    rstd::format("{}", registered.unwrap_err()));
+            }
+            action_ids.emplace_back(*registered);
+        }
+        auto valid = graph.validate();
+        if (valid.is_err()) {
+            return script_failure<Vec<BuildActionId>>(rstd::format("{}", valid.unwrap_err()));
+        }
+        return Ok(rstd::move(action_ids));
+    }
+
+    auto execute(BuildActionGraph& graph, const ExecutionDomainId& domain, usize jobs)
+        -> BuildScriptResult<empty> {
         if (jobs == usize {}) {
             return action_request_failure<empty>(
                 "generated action jobs must be greater than zero"_str);
         }
         if (actions_.is_empty()) return Ok(empty {});
-        enum class Status
-        {
-            Pending,
-            Ready,
-            Running,
-            Complete,
-        };
-        auto prerequisites = Vec<Vec<usize>>::with_capacity(actions_.len());
-        auto dependents    = Vec<Vec<usize>>::with_capacity(actions_.len());
-        for (usize index {}; index < actions_.len(); ++index) {
-            prerequisites.emplace_back();
-            dependents.emplace_back();
-        }
-        for (usize index {}; index < actions_.len(); ++index) {
-            for (const auto& input : actions_[index].inputs) {
-                if (input.producer.is_none()) continue;
-                if (*input.producer >= index) {
-                    return action_request_failure<empty>(
-                        "generated action graph contains a forward or cyclic dependency"_str);
-                }
-                auto repeated = false;
-                for (auto dependency : prerequisites[index]) {
-                    if (dependency == *input.producer) repeated = true;
-                }
-                if (repeated) continue;
-                prerequisites[index].emplace_back(*input.producer);
-                dependents[*input.producer].emplace_back(index);
-            }
-        }
-
+        auto published    = rstd_try(publish_actions(graph, domain));
         auto worker_count = jobs < actions_.len() ? jobs : actions_.len();
         auto pool         = rstd::thread::ThreadPoolBuilder::make()
                                 .worker_count(worker_count)
@@ -2070,28 +2364,27 @@ public:
                                             rstd::move(task_set).unwrap_err_unchecked());
         }
         auto tasks     = rstd::move(task_set).unwrap_unchecked();
-        auto status    = Vec<Status>::with_capacity(actions_.len());
-        auto remaining = Vec<usize>::with_capacity(actions_.len());
-        for (const auto& values : prerequisites) {
-            remaining.push(values.len());
-            status.push(values.is_empty() ? Status::Ready : Status::Pending);
-        }
-
         auto completed = usize {};
         auto in_flight = usize {};
         while (completed < actions_.len()) {
             while (in_flight < worker_count) {
                 auto selected = Option<usize> {};
-                for (usize index {}; index < status.len(); ++index) {
-                    if (status[index] == Status::Ready) {
+                for (usize index {}; index < published.len(); ++index) {
+                    if ((**graph.action(published[index])).state == BuildActionState::Ready) {
                         selected = Some(index);
                         break;
                     }
                 }
                 if (selected.is_none()) break;
-                auto index    = *selected;
-                status[index] = Status::Running;
-                auto session  = this;
+                auto index  = *selected;
+                auto marked = graph.mark_running(published[index]);
+                if (marked.is_err()) {
+                    tasks.cancel_pending();
+                    tasks.close();
+                    rstd::move(workers).join();
+                    return script_failure<empty>(rstd::format("{}", marked.unwrap_err()));
+                }
+                auto session = this;
                 auto submitted =
                     tasks.try_submit([session, index]() -> GeneratedActionWorkerResult {
                         return GeneratedActionWorkerResult {
@@ -2140,32 +2433,28 @@ public:
             }
             auto result = rstd::move(value).unwrap_unchecked();
             --in_flight;
-            if (result.outcome.is_err()) {
-                tasks.cancel_pending();
-                tasks.close();
-                rstd::move(workers).join();
-                return Err(rstd::move(result.outcome).unwrap_err());
-            }
-            if (result.action >= status.len() || status[result.action] != Status::Running) {
+            if (result.action >= published.len()) {
                 tasks.cancel_pending();
                 tasks.close();
                 rstd::move(workers).join();
                 return action_request_failure<empty>(
                     "generated action completion does not match a running action"_str);
             }
-            status[result.action] = Status::Complete;
-            ++completed;
-            for (auto dependent : dependents[result.action]) {
-                if (remaining[dependent] == usize {}) {
-                    tasks.cancel_pending();
-                    tasks.close();
-                    rstd::move(workers).join();
-                    return action_request_failure<empty>(
-                        "generated action prerequisite count underflow"_str);
-                }
-                --remaining[dependent];
-                if (remaining[dependent] == usize {}) status[dependent] = Status::Ready;
+            if (result.outcome.is_err()) {
+                static_cast<void>(graph.mark_failed(published[result.action]));
+                tasks.cancel_pending();
+                tasks.close();
+                rstd::move(workers).join();
+                return Err(rstd::move(result.outcome).unwrap_err());
             }
+            auto marked = graph.mark_succeeded(published[result.action]);
+            if (marked.is_err()) {
+                tasks.cancel_pending();
+                tasks.close();
+                rstd::move(workers).join();
+                return script_failure<empty>(rstd::format("{}", marked.unwrap_err()));
+            }
+            ++completed;
         }
         tasks.close();
         rstd::move(workers).join();
@@ -2173,6 +2462,45 @@ public:
     }
 
 private:
+    auto refresh_action_identities(ref<str> closure) -> BuildScriptResult<empty> {
+        auto previous = Vec<String>::with_capacity(actions_.len());
+        for (auto& action : actions_) {
+            previous.push(action.identity.clone());
+            action.identity = licrypto::sha256_hex(
+                rstd::format("{}\n{}", action.identity.as_str(), closure).as_str());
+        }
+        for (auto& action : actions_) {
+            for (auto& input : action.inputs) {
+                if (input.producer.is_none() || *input.producer >= actions_.len()) continue;
+                replace_all(input.digest,
+                            previous[*input.producer].as_str(),
+                            actions_[*input.producer].identity.as_str());
+            }
+        }
+        for (auto& output : generated_outputs_) {
+            if (output->producer >= actions_.len()) {
+                return action_request_failure<empty>(
+                    "generated output refers to an unknown producer"_str);
+            }
+            output->action_identity = actions_[output->producer].identity.clone();
+        }
+        for (auto target = cpp::TargetId {}; target < metadata_->targets.len(); ++target) {
+            for (usize action {}; action < actions_.len(); ++action) {
+                if (cpp::replace_generated_artifact_identity(metadata_->targets[target],
+                                                             target_plan_->contexts[target],
+                                                             previous[action].as_str(),
+                                                             actions_[action].identity.as_str())) {
+                    identity_replacements_.push(GeneratedIdentityReplacement {
+                        .target      = target,
+                        .previous    = previous[action].clone(),
+                        .replacement = actions_[action].identity.clone(),
+                    });
+                }
+            }
+        }
+        return Ok(empty {});
+    }
+
     auto current_action_dependencies(const RegisteredAction& action) const
         -> BuildScriptResult<Vec<ActionDependency>> {
         auto result = Vec<ActionDependency>::with_capacity(action.inputs.len());
@@ -2191,6 +2519,7 @@ private:
             }
             result.push(ActionDependency {
                 .path   = rstd::move(canonical).unwrap(),
+                .kind   = ActionDependencyKind::File,
                 .digest = rstd_try(action_file_digest(input.path.as_path())),
             });
         }
@@ -2219,7 +2548,11 @@ private:
                                    ref<rstd::path::Path>   staging) const
         -> BuildScriptResult<Vec<String>> {
         auto invocation = Vec<String>::make();
-        invocation.push(action.executable.as_path().to_string_lossy());
+        if (action.tool.is_none() || action.tool->executable.is_empty()) {
+            return action_request_failure<Vec<String>>(
+                "build-tool action executable artifact is not ready"_str);
+        }
+        invocation.push(action.tool->executable.as_path().to_string_lossy());
         auto replaced_output = false;
         for (const auto& original : action.arguments) {
             auto argument = original.clone();
@@ -2570,7 +2903,7 @@ private:
 
     auto resolve_action_tool(luato::OpaqueHandle handle) const
         -> BuildScriptResult<ResolvedActionTool> {
-        auto resolved = tools_->from_identity(handle.identity);
+        auto resolved = tools_.from_identity(handle.identity);
         if (resolved.is_some()) {
             auto digest = rstd_try(action_file_digest((**resolved).executable.as_path()));
             return Ok(ResolvedActionTool {
@@ -2595,6 +2928,18 @@ private:
                     });
                 }
             }
+        }
+        for (const auto& binding : package_host_tool_handles_) {
+            if (rstd::addressof(*binding) != handle.identity) continue;
+            return Ok(ResolvedActionTool {
+                .package = binding->package.clone(),
+                .alias   = rstd::format(
+                    "{}:{}", binding->target.package.as_str(), binding->target.name.as_str()),
+                .identity =
+                    rstd::format("package-host-tool:{}",
+                                 lito::package::package_target_id_text(binding->target).as_str()),
+                .target = Some(binding->target.clone()),
+            });
         }
         return action_request_failure<ResolvedActionTool>(
             "tool handle does not belong to this build script"_str);
@@ -2783,7 +3128,7 @@ private:
     Vec<String>                       packages_;
     BuildOutputRegistry*              output_registry_ {};
     const ClangToolchain*             toolchain_ {};
-    const ResolvedHostBuildTools*     tools_ {};
+    ResolvedHostBuildTools            tools_;
     const TargetInfo*                 target_info_ {};
     const ResolvedProcessEnvironment* environment_ {};
     const Option<BuildEventSink>*     observer_ {};
@@ -2792,6 +3137,15 @@ private:
     Vec<Box<GeneratedActionOutput>>   generated_outputs_ = Vec<Box<GeneratedActionOutput>>::make();
     Vec<Box<ResolvedExternalSourceFile>> external_source_files_ =
         Vec<Box<ResolvedExternalSourceFile>>::make();
+    Vec<Box<PackageHostToolHandle>> package_host_tool_handles_ =
+        Vec<Box<PackageHostToolHandle>>::make();
+    struct GeneratedIdentityReplacement {
+        cpp::TargetId target {};
+        String        previous;
+        String        replacement;
+    };
+    Vec<GeneratedIdentityReplacement> identity_replacements_ =
+        Vec<GeneratedIdentityReplacement>::make();
 };
 
 auto binding_error(BuildScriptError error) -> luato::Error {
@@ -2926,6 +3280,20 @@ auto external_tool_callback(ToolActionSession& session, luato::CallFrame& frame)
     if (dependency.is_err()) return Err(rstd::move(dependency).unwrap_err_unchecked());
     if (name.is_err()) return Err(rstd::move(name).unwrap_err_unchecked());
     auto tool = session.external_tool(*dependency, name->as_str());
+    if (tool.is_err()) return Err(binding_error(rstd::move(tool).unwrap_err()));
+    frame.push(*tool);
+    return Ok(usize(1));
+}
+
+auto host_tool_callback(ToolActionSession& session, luato::CallFrame& frame)
+    -> luato::BindingResult {
+    auto target  = frame.required<luato::OpaqueHandle>(usize {});
+    auto package = frame.required<String>(usize(1));
+    auto name    = frame.required<String>(usize(2));
+    if (target.is_err()) return Err(rstd::move(target).unwrap_err_unchecked());
+    if (package.is_err()) return Err(rstd::move(package).unwrap_err_unchecked());
+    if (name.is_err()) return Err(rstd::move(name).unwrap_err_unchecked());
+    auto tool = session.host_tool(*target, package->as_str(), name->as_str());
     if (tool.is_err()) return Err(binding_error(rstd::move(tool).unwrap_err()));
     frame.push(*tool);
     return Ok(usize(1));
@@ -3071,7 +3439,8 @@ auto transform_callback(ToolActionSession& session, luato::CallFrame& frame)
 }
 
 auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
-                                  cpp::ResolvedNativeTargetPlan&    target_plan,
+                                  cpp::PackageSpec&                 package,
+                                  Vec<cpp::CompileContext>&         contexts,
                                   const BuildLayout&                layout,
                                   const cpp::SourceTargetSelection& selection)
     -> BuildScriptResult<empty> {
@@ -3123,10 +3492,18 @@ auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
             }
             auto include = rstd::move(canonical).unwrap();
             if (! repeated) target.usage.private_include_directories.push(include.clone());
-            cpp::add_private_include_directory(target_plan.contexts[target_id],
-                                               rstd::move(include));
+            auto package_repeated = false;
+            for (const auto& existing :
+                 package.targets[target_id].usage.private_include_directories) {
+                if (existing.as_path() == include.as_path()) package_repeated = true;
+            }
+            if (! package_repeated) {
+                package.targets[target_id].usage.private_include_directories.push(include.clone());
+            }
+            cpp::add_private_include_directory(contexts[target_id], rstd::move(include));
         }
         target.usage.private_include_directory_requirements.clear();
+        package.targets[target_id].usage.private_include_directory_requirements.clear();
     }
     return Ok(empty {});
 }
@@ -3156,6 +3533,86 @@ struct BuildScriptInvocation {
     PathBuf        root;
     Option<String> package;
     Vec<String>    packages;
+};
+
+void merge_build_script_report(BuildScriptReport& total, BuildScriptReport report);
+
+struct DeclaredBuildScriptInvocation {
+    ToolActionSession    actions;
+    ConfigureSession     configure;
+    String               owner;
+    PathBuf              script;
+    rstd::time::Duration elapsed;
+};
+
+class BuildScriptDeclaration {
+public:
+    static auto make(const Option<BuildEventSink>& observer) -> BuildScriptDeclaration {
+        return BuildScriptDeclaration(observer);
+    }
+
+    auto output_registry() noexcept -> BuildOutputRegistry& { return *outputs_; }
+
+    void push(DeclaredBuildScriptInvocation invocation) {
+        invocations_.push(rstd::move(invocation));
+    }
+
+    auto host_tool_targets() const -> Vec<lito::package::PackageTargetId> {
+        auto result = Vec<lito::package::PackageTargetId>::make();
+        for (const auto& invocation : invocations_) {
+            auto targets = invocation.actions.host_tool_targets();
+            for (auto& target : targets) {
+                auto repeated = false;
+                for (const auto& existing : result) {
+                    if (existing == target) repeated = true;
+                }
+                if (! repeated) result.push(rstd::move(target));
+            }
+        }
+        return result;
+    }
+
+    auto execute(const ResolvedPackageHostTools& tools,
+                 cpp::PackageSpec&               package,
+                 cpp::PackagePlan&               plan,
+                 BuildActionGraph&               graph,
+                 const ExecutionDomainId&        domain,
+                 usize                           jobs) -> BuildScriptResult<BuildScriptReport> {
+        auto report = BuildScriptReport {};
+        for (auto& invocation : invocations_) {
+            rstd_try(invocation.actions.bind_host_tools(tools));
+            invocation.actions.synchronize_generated_identities(package, plan);
+            rstd_try(invocation.actions.execute(graph, domain, jobs));
+            invocation.configure.report().executed = true;
+            invocation.configure.report().elapsed  = invocation.elapsed;
+            auto finished                          = rstd_try(invocation.configure.finish());
+            finished.executions.push(BuildScriptExecution {
+                .owner   = invocation.owner.clone(),
+                .script  = invocation.script.clone(),
+                .elapsed = invocation.elapsed,
+            });
+            if (observer_.is_some() && observer_->notify != nullptr) {
+                for (const auto& file : finished.files) {
+                    auto kind = file.write == rstd::fs::WriteOutcome::Unchanged
+                                    ? BuildEventKind::ConfigureReuse
+                                    : BuildEventKind::Configure;
+                    observer_->notify(
+                        observer_->context,
+                        BuildEvent { kind, "lito.configure_file"_str, file.output.as_path() });
+                }
+            }
+            merge_build_script_report(report, rstd::move(finished));
+        }
+        return Ok(rstd::move(report));
+    }
+
+private:
+    explicit BuildScriptDeclaration(const Option<BuildEventSink>& observer)
+        : outputs_(Box<BuildOutputRegistry>::make()), observer_(observer) {}
+
+    Box<BuildOutputRegistry>           outputs_;
+    Vec<DeclaredBuildScriptInvocation> invocations_;
+    Option<BuildEventSink>             observer_;
 };
 
 auto build_script_exists(ref<rstd::path::Path> script) -> BuildScriptResult<bool> {
@@ -3196,7 +3653,8 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                      lito::tools::ToolResolver&               resolver,
                                      const ResolvedProcessEnvironment&        environment,
                                      const lito::source::PackageSourceConfig& sources,
-                                     usize jobs) -> BuildScriptResult<BuildScriptReport> {
+                                     usize                                    jobs)
+    -> BuildScriptResult<DeclaredBuildScriptInvocation> {
     auto default_package = as<Clone>(invocation.package).clone();
     auto session         = ConfigureSession::create(metadata,
                                                     layout,
@@ -3232,7 +3690,7 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                              rstd::move(action_packages),
                                              output_registry,
                                              toolchain,
-                                             tools,
+                                             rstd::move(tools),
                                              target_info,
                                              environment,
                                              observer);
@@ -3269,19 +3727,21 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
     module.set(String::make("profile"_str), String::make(profile));
     auto project_root = metadata.root.as_path().to_str();
     if (project_root.is_none()) {
-        return script_failure<BuildScriptReport>("project root is not valid UTF-8"_str);
+        return script_failure<DeclaredBuildScriptInvocation>("project root is not valid UTF-8"_str);
     }
     module.set(String::make("project_root"_str), String::make(*project_root));
     if (invocation.package.is_some()) {
         auto package_root = invocation.root.as_path().to_str();
         if (package_root.is_none()) {
-            return script_failure<BuildScriptReport>("package root is not valid UTF-8"_str);
+            return script_failure<DeclaredBuildScriptInvocation>(
+                "package root is not valid UTF-8"_str);
         }
         auto generated =
             rstd_try(layout.create_generated_package_directory(invocation.package->as_str()));
         auto generated_root = generated.as_path().to_str();
         if (generated_root.is_none()) {
-            return script_failure<BuildScriptReport>("generated root is not valid UTF-8"_str);
+            return script_failure<DeclaredBuildScriptInvocation>(
+                "generated root is not valid UTF-8"_str);
         }
         module.set(String::make("package"_str), invocation.package->clone());
         module.set(String::make("package_root"_str), String::make(*package_root));
@@ -3328,6 +3788,12 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
         usize(2),
         [&actions](luato::CallFrame& frame) -> luato::BindingResult {
             return external_tool_callback(actions, frame);
+        }));
+    module.add(luato::NativeFunctionSpec::make(
+        String::make("host_tool"_str),
+        usize(3),
+        [&actions](luato::CallFrame& frame) -> luato::BindingResult {
+            return host_tool_callback(actions, frame);
         }));
     module.add(luato::NativeFunctionSpec::make(
         String::make("external_dependency_info"_str),
@@ -3438,27 +3904,14 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
     }
     auto finalized = actions.finalize_module_identity();
     if (finalized.is_err()) return Err(rstd::move(finalized).unwrap_err());
-    auto generated = actions.execute(jobs);
-    if (generated.is_err()) return Err(rstd::move(generated).unwrap_err());
-    configure.report().executed = true;
-    configure.report().elapsed  = executed->elapsed;
-    auto finished               = configure.finish();
-    if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
-    finished->executions.push(BuildScriptExecution {
-        .owner   = invocation.owner.clone(),
-        .script  = invocation.script.clone(),
-        .elapsed = executed->elapsed,
+    actions.clear_lua_state();
+    return Ok(DeclaredBuildScriptInvocation {
+        .actions   = rstd::move(actions),
+        .configure = rstd::move(configure),
+        .owner     = invocation.owner.clone(),
+        .script    = invocation.script.clone(),
+        .elapsed   = executed->elapsed,
     });
-    if (observer.is_some() && observer->notify != nullptr) {
-        for (const auto& file : finished->files) {
-            auto kind = file.write == rstd::fs::WriteOutcome::Unchanged
-                            ? BuildEventKind::ConfigureReuse
-                            : BuildEventKind::Configure;
-            observer->notify(observer->context,
-                             BuildEvent { kind, "lito.configure_file"_str, file.output.as_path() });
-        }
-    }
-    return finished;
 }
 
 void merge_build_script_report(BuildScriptReport& total, BuildScriptReport report) {
@@ -3479,20 +3932,20 @@ auto package_has_script(const Vec<String>& packages, ref<str> package) noexcept 
     return false;
 }
 
-auto execute_build_script(cpp::PackageMetadata&                    metadata,
-                          cpp::ResolvedNativeTargetPlan&           target_plan,
-                          const BuildLayout&                       layout,
-                          ref<str>                                 profile,
-                          const Vec<String>&                       selected_packages,
-                          const cpp::SourceTargetSelection&        selection,
-                          const Option<BuildEventSink>&            observer,
-                          const HostInfo&                          host,
-                          const TargetInfo&                        target_info,
-                          const ClangToolchain&                    toolchain,
-                          lito::tools::ToolResolver&               resolver,
-                          const ResolvedProcessEnvironment&        environment,
-                          const lito::source::PackageSourceConfig& sources,
-                          usize jobs) -> BuildScriptResult<BuildScriptReport> {
+auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
+                            cpp::ResolvedNativeTargetPlan&           target_plan,
+                            const BuildLayout&                       layout,
+                            ref<str>                                 profile,
+                            const Vec<String>&                       selected_packages,
+                            const cpp::SourceTargetSelection&        selection,
+                            const Option<BuildEventSink>&            observer,
+                            const HostInfo&                          host,
+                            const TargetInfo&                        target_info,
+                            const ClangToolchain&                    toolchain,
+                            lito::tools::ToolResolver&               resolver,
+                            const ResolvedProcessEnvironment&        environment,
+                            const lito::source::PackageSourceConfig& sources,
+                            usize jobs) -> BuildScriptResult<BuildScriptDeclaration> {
     auto invocations       = Vec<BuildScriptInvocation>::make();
     auto scripted_packages = Vec<String>::make();
     auto workspace_script  = false;
@@ -3555,26 +4008,25 @@ auto execute_build_script(cpp::PackageMetadata&                    metadata,
                 }
             }
             if (expected.is_some()) {
-                return script_failure<BuildScriptReport>(rstd::format(
+                return script_failure<BuildScriptDeclaration>(rstd::format(
                     "generated build inputs for package '{}' require build script '{}'",
                     candidate.id.package.as_str(),
                     *expected));
             }
-            return script_failure<BuildScriptReport>(rstd::format(
+            return script_failure<BuildScriptDeclaration>(rstd::format(
                 "generated build inputs for package '{}' have no local build-script owner",
                 candidate.id.package.as_str()));
         }
     }
 
-    auto output_registry = BuildOutputRegistry {};
-    auto report          = BuildScriptReport {};
+    auto declaration = BuildScriptDeclaration::make(observer);
     for (auto& invocation : invocations) {
         auto result = execute_build_script_invocation(metadata,
                                                       target_plan,
                                                       layout,
                                                       profile,
                                                       rstd::move(invocation),
-                                                      output_registry,
+                                                      declaration.output_registry(),
                                                       observer,
                                                       host,
                                                       target_info,
@@ -3584,11 +4036,18 @@ auto execute_build_script(cpp::PackageMetadata&                    metadata,
                                                       sources,
                                                       jobs);
         if (result.is_err()) return Err(rstd::move(result).unwrap_err());
-        merge_build_script_report(report, rstd::move(result).unwrap());
+        declaration.push(rstd::move(result).unwrap());
     }
-    auto materialized = materialize_generated_inputs(metadata, target_plan, layout, selection);
-    if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
-    return Ok(rstd::move(report));
+    return Ok(rstd::move(declaration));
+}
+
+auto materialize_build_script_inputs(cpp::PackageMetadata&             metadata,
+                                     cpp::PackageSpec&                 package,
+                                     Vec<cpp::CompileContext>&         contexts,
+                                     const BuildLayout&                layout,
+                                     const cpp::SourceTargetSelection& selection)
+    -> BuildScriptResult<empty> {
+    return materialize_generated_inputs(metadata, package, contexts, layout, selection);
 }
 
 } // namespace lito

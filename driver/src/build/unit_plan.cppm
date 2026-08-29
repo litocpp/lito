@@ -21,22 +21,29 @@ struct PreparedBuildUnits {
     Vec<cpp::ScanResult>          scans;
 };
 
-auto prepare_build_units(cpp::PackageSpec&       package,
-                         const cpp::PackagePlan& package_plan,
-                         const BuildLayout&      layout,
-                         const ClangToolchain&   toolchain) -> BuildResult<PreparedBuildUnits> {
-    auto result = PreparedBuildUnits {
-        .target_units   = Vec<Vec<cpp::UnitId>>::with_capacity(package.targets.len()),
-        .owned_contexts = Vec<Box<cpp::CompileContext>>::make(),
-        .units          = Vec<cpp::PreparedUnit>::make(),
-        .scans          = Vec<cpp::ScanResult>::make(),
-    };
-    for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
-        result.target_units.emplace_back();
+auto append_build_units(PreparedBuildUnits&       result,
+                        cpp::PackageSpec&         package,
+                        const cpp::PackagePlan&   package_plan,
+                        const Vec<cpp::TargetId>& targets,
+                        const BuildLayout&        layout,
+                        const ClangToolchain&     toolchain) -> BuildResult<empty> {
+    if (result.target_units.is_empty()) {
+        result.target_units.reserve(package.targets.len());
+        for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
+            result.target_units.emplace_back();
+        }
+    } else if (result.target_units.len() != package.targets.len()) {
+        return Err(BuildError::Message(
+            String::make("prepared build units do not match package targets"_str)));
     }
-    for (auto target : package_plan.target_order) {
+    for (auto target : targets) {
+        if (target >= package.targets.len()) {
+            return Err(BuildError::Message(
+                String::make("build unit target selection does not match package"_str)));
+        }
         auto& target_spec = package.targets[target];
         for (auto& source : target_spec.sources) {
+            if (source.scan_artifact.is_none()) continue;
             const auto* compile_test = static_cast<const cpp::ResolvedCompileTestCase*>(nullptr);
             const auto* context      = rstd::addressof(package_plan.contexts[target]);
             if (target_spec.artifact_kind == cpp::ArtifactKind::CompileTest) {
@@ -76,6 +83,14 @@ auto prepare_build_units(cpp::PackageSpec&       package,
                 compile_test_record = Some(rstd::move(record).unwrap());
             }
 
+            auto artifact = source.scan_artifact.take().unwrap();
+            if (artifact.context_identity.as_str() != context->scan_id.as_str()) {
+                return Err(BuildError::Message(rstd::format(
+                    "source '{}' scan context '{}' does not match compile context '{}'",
+                    source.path.as_path(),
+                    artifact.context_identity.as_str(),
+                    context->scan_id.as_str())));
+            }
             auto id       = result.units.len();
             auto prepared = toolchain.prepare(
                 cpp::UnitSpec {
@@ -101,18 +116,7 @@ auto prepare_build_units(cpp::PackageSpec&       package,
             if (prepared.is_err()) {
                 return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
             }
-            auto unit = rstd::move(prepared).unwrap();
-            if (source.scan_artifact.is_none()) {
-                return Err(BuildError::Message(
-                    rstd::format("source '{}' reached build unit preparation without scan facts",
-                                 source.path.as_path())));
-            }
-            auto artifact = rstd::move(source.scan_artifact).unwrap();
-            if (artifact.context_identity.as_str() != context->scan_id.as_str()) {
-                return Err(BuildError::Message(
-                    rstd::format("source '{}' scan context does not match its compile context",
-                                 source.path.as_path())));
-            }
+            auto unit                    = rstd::move(prepared).unwrap();
             auto bound                   = cpp::bind_scan(rstd::move(artifact), id);
             unit.source_content_identity = rstd::move(bound.source_content_identity);
             result.units.push(rstd::move(unit));
@@ -120,6 +124,22 @@ auto prepare_build_units(cpp::PackageSpec&       package,
             result.target_units[target].emplace_back(id);
         }
     }
+    return Ok(empty {});
+}
+
+auto prepare_build_units(cpp::PackageSpec&       package,
+                         const cpp::PackagePlan& package_plan,
+                         const BuildLayout&      layout,
+                         const ClangToolchain&   toolchain) -> BuildResult<PreparedBuildUnits> {
+    auto result = PreparedBuildUnits {
+        .target_units   = Vec<Vec<cpp::UnitId>>::make(),
+        .owned_contexts = Vec<Box<cpp::CompileContext>>::make(),
+        .units          = Vec<cpp::PreparedUnit>::make(),
+        .scans          = Vec<cpp::ScanResult>::make(),
+    };
+    auto appended = append_build_units(
+        result, package, package_plan, package_plan.target_order, layout, toolchain);
+    if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
     return Ok(rstd::move(result));
 }
 

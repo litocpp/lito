@@ -90,6 +90,7 @@ struct ResolvedTarget {
     Vec<lito::manifest::TestAttachmentManifest>  attachments;
     Vec<lito::manifest::RuntimeResourceManifest> runtime_resources;
     Vec<DependencySpec>                          dependencies;
+    Vec<HostToolDependencySpec>                  host_tool_dependencies;
     Vec<CompilerPluginDependencySpec>            plugin_dependencies;
     Vec<ProcMacroDependencySpec>                 proc_macro_dependencies;
     Vec<ResolvedExternalDependency>              external_dependencies;
@@ -134,6 +135,16 @@ auto add_generated_include_directory(ResolvedTarget& target, PathBuf path) -> bo
             .path = rstd::move(path),
         });
     return true;
+}
+
+auto has_generated_compile_inputs(const ResolvedTarget& target) noexcept -> bool {
+    for (const auto& group : target.source_groups) {
+        if (group.generated && ! group.sources.is_empty()) return true;
+    }
+    for (const auto& requirement : target.usage.private_include_directory_requirements) {
+        if (requirement.root == lito::dependency::IncludeDirectoryRoot::Generated) return true;
+    }
+    return false;
 }
 
 auto add_generated_artifact(ResolvedTarget&       target,

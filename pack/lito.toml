@@ -10,6 +10,7 @@ archive = "lito.pack"
 [[bin]]
 module = "lito.package_embed"
 name = "lito-package-embed"
+sources = ["src/package_embed.cppm"]
 host-tool = true
 link-stdlib = false
 

@@ -152,6 +152,7 @@ struct IncrementalScanUnit {
     String                            standard_library_context_identity;
     bool                              cpp { false };
     bool                              complete { false };
+    bool                              provider_allowed { true };
     Option<frontend::ProvidedModule>  provided;
     Vec<IncrementalModuleRequirement> requirements;
     Vec<HeaderArtifactId>             header_inputs;
@@ -228,7 +229,11 @@ public:
     auto register_project_unit(TargetId              target,
                                ref<rstd::path::Path> source,
                                ref<str>              context_identity,
-                               ref<str> standard_library_context_identity) -> DiscoveryUnitId;
+                               ref<str>              standard_library_context_identity,
+                               bool                  provider_allowed = true) -> DiscoveryUnitId;
+
+    auto contains_completed_project_unit(TargetId target, ref<rstd::path::Path> source) const
+        -> bool;
 
     auto complete(DiscoveryUnitId unit, const SourceScanArtifact& artifact)
         -> Result<empty, String>;
@@ -239,6 +244,8 @@ public:
 
     auto finalize(const Vec<PreparedUnit>& units,
                   const Vec<ScanResult>& scans) && -> Result<IncrementalSemanticScanGraph, String>;
+    auto snapshot(const Vec<PreparedUnit>& units, const Vec<ScanResult>& scans) const
+        -> Result<IncrementalSemanticScanGraph, String>;
 
 private:
     struct TargetState {
@@ -270,6 +277,7 @@ private:
         -> Result<HeaderArtifactId, String>;
     auto bind_provider(ref<str> key, DiscoveryUnitId provider) -> void;
     auto clone_unit(const IncrementalScanUnit& unit) const -> IncrementalScanUnit;
+    auto clone_builder() const -> SemanticScanGraphBuilder;
 
     const HeaderOwnershipIndex*    ownership_ {};
     Vec<TargetState>               targets_;
@@ -395,8 +403,8 @@ auto SemanticScanGraphBuilder::provider_key(ref<str> logical_name, ref<str> cont
 auto SemanticScanGraphBuilder::register_project_unit(TargetId              target,
                                                      ref<rstd::path::Path> source,
                                                      ref<str>              context_identity,
-                                                     ref<str> standard_library_context_identity)
-    -> DiscoveryUnitId {
+                                                     ref<str> standard_library_context_identity,
+                                                     bool     provider_allowed) -> DiscoveryUnitId {
     auto key      = unit_key(target, source);
     auto existing = unit_index_.get(key.as_str());
     if (existing.is_some()) return **existing;
@@ -407,6 +415,7 @@ auto SemanticScanGraphBuilder::register_project_unit(TargetId              targe
         .source           = PathBuf::from(source),
         .context_identity = String::make(context_identity),
         .standard_library_context_identity = String::make(standard_library_context_identity),
+        .provider_allowed                  = provider_allowed,
     });
     unit_index_.insert(rstd::move(key), unit);
     if (targets_[target].sealed) {
@@ -417,6 +426,13 @@ auto SemanticScanGraphBuilder::register_project_unit(TargetId              targe
     ++pending_;
     if (pending_ > pending_peak_) pending_peak_ = pending_;
     return unit;
+}
+
+auto SemanticScanGraphBuilder::contains_completed_project_unit(TargetId              target,
+                                                               ref<rstd::path::Path> source) const
+    -> bool {
+    auto existing = unit_index_.get(unit_key(target, source).as_str());
+    return existing.is_some() && units_[**existing].complete;
 }
 
 auto SemanticScanGraphBuilder::bind_provider(ref<str> key, DiscoveryUnitId provider) -> void {
@@ -485,6 +501,12 @@ auto SemanticScanGraphBuilder::complete(DiscoveryUnitId unit, const SourceScanAr
     if (node.context_identity != artifact.context_identity.as_str()) {
         return Err(
             rstd::format("scan graph unit '{}' has a mismatched context", node.source.as_path()));
+    }
+    if (! node.provider_allowed && artifact.language.is_Cpp() &&
+        artifact.language.as_Cpp().facts.provided.is_some()) {
+        return Err(rstd::format("generated source '{}' cannot provide module '{}'",
+                                node.source.as_path(),
+                                artifact.language.as_Cpp().facts.provided->logical_name.as_str()));
     }
     node.cpp           = artifact.language.is_Cpp();
     const auto& common = artifact.language.is_C() ? artifact.language.as_C().facts.common
@@ -641,10 +663,77 @@ auto SemanticScanGraphBuilder::clone_unit(const IncrementalScanUnit& unit) const
         .standard_library_context_identity = unit.standard_library_context_identity.clone(),
         .cpp                               = unit.cpp,
         .complete                          = unit.complete,
+        .provider_allowed                  = unit.provider_allowed,
         .provided      = unit.provided.is_some() ? Some(as<Clone>(*unit.provided).clone()) : None(),
         .requirements  = rstd::move(requirements),
         .header_inputs = unit.header_inputs.clone(),
     };
+}
+
+auto SemanticScanGraphBuilder::clone_builder() const -> SemanticScanGraphBuilder {
+    auto targets = Vec<TargetState>::with_capacity(targets_.len());
+    for (const auto& target : targets_) {
+        targets.push(TargetState {
+            .identity = target.identity.clone(),
+            .pending  = target.pending,
+            .selected = target.selected,
+            .sealed   = target.sealed,
+        });
+    }
+    auto reverse = Vec<Vec<TargetId>>::with_capacity(reverse_importers_.len());
+    for (const auto& importers : reverse_importers_) reverse.push(importers.clone());
+    auto result = SemanticScanGraphBuilder(
+        *ownership_, rstd::move(targets), rstd::move(reverse), owned_domains_.clone());
+    result.units_.reserve(units_.len());
+    for (const auto& unit : units_) result.units_.push(clone_unit(unit));
+    for (auto unit = DiscoveryUnitId {}; unit < result.units_.len(); ++unit) {
+        const auto& node = result.units_[unit];
+        if (node.target.is_some()) {
+            result.unit_index_.insert(result.unit_key(*node.target, node.source.as_path()), unit);
+        }
+        if (node.provided.is_none()) continue;
+        auto key      = node.target.is_some()
+                            ? rstd::format("project:{}", node.provided->logical_name.as_str())
+                            : result.provider_key(node.provided->logical_name.as_str(),
+                                                  node.standard_library_context_identity.as_str());
+        auto existing = result.providers_.get_mut(key.as_str());
+        if (existing.is_some()) {
+            (**existing).emplace_back(unit);
+        } else {
+            auto providers = Vec<DiscoveryUnitId>::make();
+            providers.emplace_back(unit);
+            result.providers_.insert(rstd::move(key), rstd::move(providers));
+        }
+    }
+    result.headers_.reserve(headers_.len());
+    for (const auto& header : headers_) {
+        auto paths = Vec<PathBuf>::with_capacity(header.paths.len());
+        for (const auto& path : header.paths) paths.push(path.clone());
+        result.headers_.push(IncrementalHeaderArtifact {
+            .physical_identity = header.physical_identity.clone(),
+            .paths             = rstd::move(paths),
+            .classification =
+                HeaderClassification {
+                    .owner  = as<Clone>(header.classification.owner).clone(),
+                    .access = as<Clone>(header.classification.access).clone(),
+                },
+            .consumers = header.consumers.clone(),
+        });
+        result.header_index_.insert(header.physical_identity.clone(),
+                                    result.headers_.len() - usize(1));
+    }
+    result.pending_         = pending_;
+    result.pending_peak_    = pending_peak_;
+    result.unresolved_      = unresolved_;
+    result.unresolved_peak_ = unresolved_peak_;
+    result.reactivations_   = reactivations_;
+    return result;
+}
+
+auto SemanticScanGraphBuilder::snapshot(const Vec<PreparedUnit>& units,
+                                        const Vec<ScanResult>&   scans) const
+    -> Result<IncrementalSemanticScanGraph, String> {
+    return rstd::move(clone_builder()).finalize(units, scans);
 }
 
 auto SemanticScanGraphBuilder::finalize(

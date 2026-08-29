@@ -230,10 +230,11 @@ struct ImportOwnerCandidate {
     cpp::ResolvedSource source;
 };
 
-auto discovery_compile_context(const cpp::PackageMetadata&          package,
-                               const cpp::ResolvedNativeTargetPlan& plan,
-                               cpp::TargetId                        target,
-                               ref<rstd::path::Path>                relative_source)
+template<typename Plan>
+auto discovery_compile_context(const cpp::PackageMetadata& package,
+                               const Plan&                 plan,
+                               cpp::TargetId               target,
+                               ref<rstd::path::Path>       relative_source)
     -> BuildResult<Option<cpp::CompileContext>> {
     const auto& resolved_target = package.targets[target];
     if (resolved_target.artifact_kind != cpp::ArtifactKind::CompileTest) return Ok(None());
@@ -255,11 +256,12 @@ auto discovery_compile_context(const cpp::PackageMetadata&          package,
     return Ok(Some(rstd::move(context).unwrap()));
 }
 
-auto convention_import_owner(const cpp::PackageMetadata&          package,
-                             const cpp::ResolvedNativeTargetPlan& plan,
-                             cpp::TargetId                        importer,
-                             ref<str>                             logical_name,
-                             FrontendAnalysisService&             analysis_service)
+template<typename Plan>
+auto convention_import_owner(const cpp::PackageMetadata& package,
+                             const Plan&                 plan,
+                             cpp::TargetId               importer,
+                             ref<str>                    logical_name,
+                             FrontendAnalysisService&    analysis_service)
     -> BuildResult<Option<ImportOwner>> {
     auto candidates       = Vec<ImportOwnerCandidate>::make();
     auto highest_priority = usize {};
@@ -355,7 +357,16 @@ auto convention_import_owner(const cpp::PackageMetadata&          package,
 namespace lito
 {
 
-static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target)
+constexpr auto includes_existing(SourceDiscoveryScope scope) noexcept -> bool {
+    return scope != SourceDiscoveryScope::Generated;
+}
+
+constexpr auto includes_generated(SourceDiscoveryScope scope) noexcept -> bool {
+    return scope != SourceDiscoveryScope::Existing;
+}
+
+static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
+                                           SourceDiscoveryScope       scope)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
     auto       owners  = StringMap::make();
     auto       entries = Vec<SourceEntry>::make();
@@ -363,7 +374,8 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target)
                              const PathBuf&        declared,
                              ref<str>              group,
                              ref<str>              identity,
-                             bool                  external) -> cpp::SourceDiscoveryResult<empty> {
+                             bool                  external,
+                             bool                  generated) -> cpp::SourceDiscoveryResult<empty> {
         auto resolved = resolve_declared_source(root, declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto       source = rstd::move(resolved).unwrap();
@@ -402,6 +414,7 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target)
         source.source_root     = PathBuf::from(root);
         source.origin_identity = String::make(identity);
         source.external        = external;
+        source.generated       = generated;
         owners.insert(source_key.clone(), String::make(owner));
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
@@ -411,18 +424,26 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target)
         return Err(rstd::move(local_identity_result).unwrap_err());
     }
     auto local_identity = rstd::move(local_identity_result).unwrap();
-    for (const auto& declared : target.source.declared_sources) {
-        auto appended =
-            append(target.source_root.as_path(), declared, ""_str, local_identity.as_str(), false);
-        if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+    if (includes_existing(scope)) {
+        for (const auto& declared : target.source.declared_sources) {
+            auto appended = append(target.source_root.as_path(),
+                                   declared,
+                                   ""_str,
+                                   local_identity.as_str(),
+                                   false,
+                                   false);
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
     }
     for (const auto& group : target.source_groups) {
+        if (group.generated ? ! includes_generated(scope) : ! includes_existing(scope)) continue;
         for (const auto& declared : group.sources) {
             auto appended = append(group.root.as_path(),
                                    declared,
                                    group.name.as_str(),
                                    group.identity.as_str(),
-                                   group.external);
+                                   group.external,
+                                   group.generated);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
@@ -442,7 +463,7 @@ namespace lito
 
 auto discover_explicit_sources(const cpp::ResolvedTarget& target)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
-    return discover_explicit_sources_impl(target);
+    return discover_explicit_sources_impl(target, SourceDiscoveryScope::Existing);
 }
 
 auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
@@ -570,13 +591,17 @@ auto resolve_source_target(const cpp::PackageMetadata&          package,
 namespace lito
 {
 
-auto discover_sources(const cpp::PackageMetadata&          package,
-                      const cpp::ResolvedNativeTargetPlan& plan,
-                      cpp::SemanticScanGraphBuilder&       graph,
-                      FrontendAnalysisService&             analysis_service,
-                      const Option<BuildEventSink>&        observer,
-                      usize                                jobs,
-                      usize max_in_flight) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
+template<typename Plan>
+auto discover_sources(const cpp::PackageMetadata&    package,
+                      const Plan&                    plan,
+                      const Vec<cpp::TargetId>&      selected_targets,
+                      cpp::SemanticScanGraphBuilder& graph,
+                      FrontendAnalysisService&       analysis_service,
+                      const Option<BuildEventSink>&  observer,
+                      usize                          jobs,
+                      usize                          max_in_flight,
+                      bool                           finish,
+                      SourceDiscoveryScope scope) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
     auto discovered = Vec<Vec<cpp::ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
@@ -586,10 +611,10 @@ auto discover_sources(const cpp::PackageMetadata&          package,
     auto name_paths = StringMap::make();
     auto queued     = StringSet::make();
 
-    for (auto target : plan.target_order) {
+    for (auto target : selected_targets) {
         const auto& resolved_target = package.targets[target];
         if (resolved_target.source.discovery == lito::manifest::SourceDiscoveryMode::Explicit) {
-            auto explicit_sources = discover_explicit_sources(resolved_target);
+            auto explicit_sources = discover_explicit_sources_impl(resolved_target, scope);
             if (explicit_sources.is_err()) {
                 return Err(rstd::into<BuildError>(rstd::move(explicit_sources).unwrap_err()));
             }
@@ -603,25 +628,58 @@ auto discover_sources(const cpp::PackageMetadata&          package,
             }
             continue;
         }
-        auto entry = cpp::module_entry_source(resolved_target);
-        if (entry.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(entry).unwrap_err()));
-        }
-        auto enqueued = enqueue_candidate(
-            target, rstd::move(entry).unwrap(), true, path_names, name_paths, queued, queue);
-        if (enqueued.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
-        }
-        for (const auto& declared : resolved_target.source.declared_sources) {
-            auto resolved =
-                resolve_declared_source(resolved_target.source_root.as_path(), declared.as_path());
-            if (resolved.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+        if (includes_existing(scope)) {
+            auto entry = cpp::module_entry_source(resolved_target);
+            if (entry.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(entry).unwrap_err()));
             }
-            enqueued = enqueue_candidate(
-                target, rstd::move(resolved).unwrap(), true, path_names, name_paths, queued, queue);
+            auto enqueued = enqueue_candidate(
+                target, rstd::move(entry).unwrap(), true, path_names, name_paths, queued, queue);
             if (enqueued.is_err()) {
                 return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+            }
+            for (const auto& declared : resolved_target.source.declared_sources) {
+                auto resolved = resolve_declared_source(resolved_target.source_root.as_path(),
+                                                        declared.as_path());
+                if (resolved.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+                }
+                enqueued = enqueue_candidate(target,
+                                             rstd::move(resolved).unwrap(),
+                                             true,
+                                             path_names,
+                                             name_paths,
+                                             queued,
+                                             queue);
+                if (enqueued.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                }
+            }
+        }
+        if (includes_generated(scope)) {
+            for (const auto& group : resolved_target.source_groups) {
+                if (! group.generated) continue;
+                for (const auto& declared : group.sources) {
+                    auto resolved =
+                        resolve_declared_source(group.root.as_path(), declared.as_path());
+                    if (resolved.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+                    }
+                    auto source       = rstd::move(resolved).unwrap();
+                    auto virtual_root = PathBuf::from("source-groups"_str);
+                    virtual_root.push(PathBuf::from(group.name.as_str()).as_path());
+                    virtual_root.push(source.relative_path.as_path());
+                    source.relative_path   = rstd::move(virtual_root);
+                    source.generated       = true;
+                    source.source_root     = group.root.clone();
+                    source.origin_identity = group.identity.clone();
+                    source.external        = group.external;
+                    auto enqueued          = enqueue_candidate(
+                        target, rstd::move(source), false, path_names, name_paths, queued, queue);
+                    if (enqueued.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                    }
+                }
             }
         }
     }
@@ -653,7 +711,8 @@ auto discover_sources(const cpp::PackageMetadata&          package,
                 graph.register_project_unit(candidate.target,
                                             candidate.source.canonical_path.as_path(),
                                             context.scan_id.as_str(),
-                                            context.id.as_str());
+                                            context.id.as_str(),
+                                            ! candidate.source.generated);
             if (candidate.source.scan_artifact.is_some()) {
                 prepared.push(None());
                 continue;
@@ -824,15 +883,19 @@ auto discover_sources(const cpp::PackageMetadata&          package,
                     }
                     if (owner->is_none()) continue;
                     auto resolved_owner = rstd::move(owner).unwrap().unwrap();
-                    auto enqueued       = enqueue_candidate(resolved_owner.target,
-                                                            rstd::move(resolved_owner.source),
-                                                            true,
-                                                            path_names,
-                                                            name_paths,
-                                                            queued,
-                                                            next);
-                    if (enqueued.is_err()) {
-                        return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                    if (! graph.contains_completed_project_unit(
+                            resolved_owner.target,
+                            resolved_owner.source.canonical_path.as_path())) {
+                        auto enqueued = enqueue_candidate(resolved_owner.target,
+                                                          rstd::move(resolved_owner.source),
+                                                          true,
+                                                          path_names,
+                                                          name_paths,
+                                                          queued,
+                                                          next);
+                        if (enqueued.is_err()) {
+                            return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                        }
                     }
                 }
             }
@@ -868,26 +931,31 @@ auto discover_sources(const cpp::PackageMetadata&          package,
                 graph.register_project_unit(candidate.target,
                                             candidate.source.canonical_path.as_path(),
                                             context.scan_id.as_str(),
-                                            context.id.as_str());
+                                            context.id.as_str(),
+                                            ! candidate.source.generated);
         }
-        auto released = graph.seal_ready_targets();
-        for (const auto& domain : released) {
-            analysis_service.release_header_domain(domain.as_str());
+        if (finish) {
+            auto released = graph.seal_ready_targets();
+            for (const auto& domain : released) {
+                analysis_service.release_header_domain(domain.as_str());
+            }
         }
         queue = rstd::move(next);
     }
     scan_executor.finish();
     analysis_service.profiler().record_execution(scan_executor.statistics());
-    auto released = graph.finish_discovery();
-    if (released.is_err()) {
-        return Err(BuildError::Message(rstd::move(released).unwrap_err()));
-    }
-    for (const auto& domain : *released) {
-        analysis_service.release_header_domain(domain.as_str());
+    if (finish) {
+        auto released = graph.finish_discovery();
+        if (released.is_err()) {
+            return Err(BuildError::Message(rstd::move(released).unwrap_err()));
+        }
+        for (const auto& domain : *released) {
+            analysis_service.release_header_domain(domain.as_str());
+        }
     }
 
-    auto result = Vec<cpp::ResolvedTargetSources>::with_capacity(plan.target_order.len());
-    for (auto target : plan.target_order) {
+    auto result = Vec<cpp::ResolvedTargetSources>::with_capacity(selected_targets.len());
+    for (auto target : selected_targets) {
         auto sorted = sort_sources(rstd::move(discovered[target]));
         if (sorted.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(sorted).unwrap_err()));
@@ -912,7 +980,62 @@ auto discover_package_sources(const cpp::PackageMetadata&          package,
                               const Option<BuildEventSink>&        observer,
                               usize                                jobs,
                               usize max_in_flight) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
-    return discover_sources(package, plan, graph, analysis_service, observer, jobs, max_in_flight);
+    return discover_sources(package,
+                            plan,
+                            plan.target_order,
+                            graph,
+                            analysis_service,
+                            observer,
+                            jobs,
+                            max_in_flight,
+                            true,
+                            SourceDiscoveryScope::All);
+}
+
+auto discover_package_source_selection(const cpp::PackageMetadata&          package,
+                                       const cpp::ResolvedNativeTargetPlan& plan,
+                                       const Vec<cpp::TargetId>&            targets,
+                                       cpp::SemanticScanGraphBuilder&       graph,
+                                       FrontendAnalysisService&             analysis_service,
+                                       const Option<BuildEventSink>&        observer,
+                                       usize                                jobs,
+                                       usize                                max_in_flight,
+                                       bool                                 finish,
+                                       SourceDiscoveryScope                 scope)
+    -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
+    return discover_sources(package,
+                            plan,
+                            targets,
+                            graph,
+                            analysis_service,
+                            observer,
+                            jobs,
+                            max_in_flight,
+                            finish,
+                            scope);
+}
+
+auto discover_package_source_selection(const cpp::PackageMetadata&    package,
+                                       const cpp::PackagePlan&        plan,
+                                       const Vec<cpp::TargetId>&      targets,
+                                       cpp::SemanticScanGraphBuilder& graph,
+                                       FrontendAnalysisService&       analysis_service,
+                                       const Option<BuildEventSink>&  observer,
+                                       usize                          jobs,
+                                       usize                          max_in_flight,
+                                       bool                           finish,
+                                       SourceDiscoveryScope           scope)
+    -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
+    return discover_sources(package,
+                            plan,
+                            targets,
+                            graph,
+                            analysis_service,
+                            observer,
+                            jobs,
+                            max_in_flight,
+                            finish,
+                            scope);
 }
 
 } // namespace lito

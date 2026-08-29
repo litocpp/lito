@@ -43,6 +43,7 @@ struct ResolvedPackageSelection {
     Vec<String>                plugin_package_names;
     Vec<String>                proc_macro_provider_names;
     Vec<String>                artifact_processor_package_names;
+    Vec<String>                host_tool_package_names;
     Vec<PackageTargetId>       selected_targets;
     Vec<PackageTargetId>       effective_targets;
     EffectiveLanguageStandards standards;
@@ -153,6 +154,7 @@ struct SelectedPackageClosure {
     Vec<String> plugins;
     Vec<String> providers;
     Vec<String> processors;
+    Vec<String> tools;
 };
 
 auto selected_closure(const ResolvedPackageGraph& graph,
@@ -182,12 +184,11 @@ auto selected_closure(const ResolvedPackageGraph& graph,
     auto       plugins         = StringSet::make();
     auto       providers       = StringSet::make();
     auto       processors      = StringSet::make();
-    const auto host_tool_only  = [&](ref<str> name) noexcept {
+    auto       tools           = StringSet::make();
+    const auto has_host_tool   = [&](ref<str> name) noexcept {
         auto index = indices.get(name);
-        if (index.is_none()) return false;
-        const auto& manifest = graph.packages[**index].manifest;
-        return ! lito::manifest::package_has_library_target(manifest) &&
-               lito::manifest::package_has_host_tool_target(manifest);
+        return index.is_some() &&
+               lito::manifest::package_has_host_tool_target(graph.packages[**index].manifest);
     };
     for (const auto& root : selected_roots) {
         auto has_target   = false;
@@ -253,8 +254,12 @@ auto selected_closure(const ResolvedPackageGraph& graph,
                 pending_host.push(dependency.as_Cpp().value.name.clone());
                 processors.insert(dependency.as_Cpp().value.name.clone(), empty {});
             } else if (dependency.is_Cpp() &&
-                       host_tool_only(dependency.as_Cpp().value.name.as_str())) {
-                continue;
+                       has_host_tool(dependency.as_Cpp().value.name.as_str())) {
+                tools.insert(dependency.as_Cpp().value.name.clone(), empty {});
+                if (host)
+                    pending_host.push(dependency.as_Cpp().value.name.clone());
+                else
+                    pending_target.push(dependency.as_Cpp().value.name.clone());
             } else if (host) {
                 pending_host.push(String::make(resolved_dependency_name(dependency)));
             } else {
@@ -269,6 +274,10 @@ auto selected_closure(const ResolvedPackageGraph& graph,
                 } else if (dependency.is_Pmacro()) {
                     pending_host.push(dependency.as_Pmacro().value.name.clone());
                     providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
+                } else if (dependency.is_Cpp() &&
+                           has_host_tool(dependency.as_Cpp().value.name.as_str())) {
+                    tools.insert(dependency.as_Cpp().value.name.clone(), empty {});
+                    pending_target.push(dependency.as_Cpp().value.name.clone());
                 } else {
                     pending_target.push(String::make(resolved_dependency_name(dependency)));
                 }
@@ -303,14 +312,17 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         if (processors.contains_key(package.manifest.name.as_str())) {
             result.processors.push(package.manifest.name.clone());
         }
+        if (tools.contains_key(package.manifest.name.as_str())) {
+            result.tools.push(package.manifest.name.clone());
+        }
     }
     return Ok(rstd::move(result));
 }
 
 auto effective_compile_targets(const ResolvedPackageGraph& graph,
                                const Vec<String>&          selected_packages,
-                               const Vec<PackageTargetId>& selected_targets)
-    -> Vec<PackageTargetId> {
+                               const Vec<PackageTargetId>& selected_targets,
+                               const Vec<String>& host_tool_packages) -> Vec<PackageTargetId> {
     auto result =
         Vec<PackageTargetId>::with_capacity(selected_targets.len() + selected_packages.len());
     const auto append = [&](PackageTargetId target) -> void {
@@ -337,6 +349,21 @@ auto effective_compile_targets(const ResolvedPackageGraph& graph,
                 .name    = String::make(lito::manifest::package_target_name(target)),
             });
             break;
+        }
+        auto host_tool_package = false;
+        for (const auto& name : host_tool_packages) {
+            if (name == package.manifest.name.as_str()) host_tool_package = true;
+        }
+        if (! host_tool_package) continue;
+        for (const auto& target : package.manifest.targets) {
+            if (! target.is_Binary() || ! lito::manifest::package_target_is_host_tool(target)) {
+                continue;
+            }
+            append(PackageTargetId {
+                .package = package.manifest.name.clone(),
+                .kind    = PackageTargetKind::Binary,
+                .name    = String::make(lito::manifest::package_target_name(target)),
+            });
         }
     }
     return result;
@@ -530,8 +557,8 @@ auto resolve_package_selection_with_environment_impl(
             selected_target.kind != PackageTargetKind::ProcMacro)
             target_selected_targets.push(selected_target.clone());
     }
-    auto effective_targets =
-        effective_compile_targets(graph, selected_packages->target, target_selected_targets);
+    auto effective_targets = effective_compile_targets(
+        graph, selected_packages->target, target_selected_targets, selected_packages->tools);
     return Ok(ResolvedPackageSelection {
         .graph                            = rstd::move(graph),
         .selected_root_names              = rstd::move(selected_roots),
@@ -541,6 +568,7 @@ auto resolve_package_selection_with_environment_impl(
         .plugin_package_names             = rstd::move(selected_packages->plugins),
         .proc_macro_provider_names        = rstd::move(selected_packages->providers),
         .artifact_processor_package_names = rstd::move(selected_packages->processors),
+        .host_tool_package_names          = rstd::move(selected_packages->tools),
         .selected_targets                 = rstd::move(target_selected_targets),
         .effective_targets                = rstd::move(effective_targets),
         .standards                        = rstd::move(standards).unwrap(),
@@ -567,6 +595,10 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     for (const auto& name : selection.artifact_processor_package_names) {
         processors.insert(name.clone(), empty {});
     }
+    auto tools = StringSet::make();
+    for (const auto& name : selection.host_tool_package_names) {
+        tools.insert(name.clone(), empty {});
+    }
     auto selected_targets  = Vec<PackageTargetId>::make();
     auto effective_targets = Vec<PackageTargetId>::make();
     for (const auto& package : selection.graph.packages) {
@@ -581,21 +613,52 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
             const auto is_processor = processors.contains_key(package.manifest.name.as_str()) &&
                                       kind == PackageTargetKind::Binary &&
                                       lito::manifest::package_target_is_host_tool(target);
-            if (! is_provider && ! is_plugin && ! is_processor && ! is_library) continue;
+            const auto is_tool      = tools.contains_key(package.manifest.name.as_str()) &&
+                                      kind == PackageTargetKind::Binary &&
+                                      lito::manifest::package_target_is_host_tool(target);
+            if (! is_provider && ! is_plugin && ! is_processor && ! is_tool && ! is_library)
+                continue;
             auto id = PackageTargetId {
                 .package = package.manifest.name.clone(),
                 .kind    = kind,
                 .name    = String::make(lito::manifest::package_target_name(target)),
             };
-            if (is_provider || is_plugin || is_processor) selected_targets.push(id.clone());
+            if (is_provider || is_plugin || is_processor || is_tool)
+                selected_targets.push(id.clone());
             effective_targets.push(rstd::move(id));
         }
     }
-    if (selected_targets.len() != selection.proc_macro_provider_names.len() +
-                                      selection.plugin_package_names.len() +
-                                      selection.artifact_processor_package_names.len()) {
-        return package_selection_failure<ResolvedPackageSelection>(
-            "plugin host selection is missing a plugin or provider target"_str);
+    const auto has_selected = [&selected_targets](ref<str> name, PackageTargetKind kind) noexcept {
+        for (const auto& target : selected_targets) {
+            if (target.package == name && target.kind == kind) return true;
+        }
+        return false;
+    };
+    for (const auto& name : selection.plugin_package_names) {
+        if (! has_selected(name.as_str(), PackageTargetKind::Plugin)) {
+            return package_selection_failure<ResolvedPackageSelection>(rstd::format(
+                "host selection is missing plugin target for package '{}'", name.as_str()));
+        }
+    }
+    for (const auto& name : selection.proc_macro_provider_names) {
+        if (! has_selected(name.as_str(), PackageTargetKind::ProcMacro)) {
+            return package_selection_failure<ResolvedPackageSelection>(rstd::format(
+                "host selection is missing pmacro target for package '{}'", name.as_str()));
+        }
+    }
+    for (const auto& name : selection.artifact_processor_package_names) {
+        if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
+            return package_selection_failure<ResolvedPackageSelection>(
+                rstd::format("host selection is missing artifact processor target for package '{}'",
+                             name.as_str()));
+        }
+    }
+    for (const auto& name : selection.host_tool_package_names) {
+        if (! host.contains_key(name.as_str())) continue;
+        if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
+            return package_selection_failure<ResolvedPackageSelection>(rstd::format(
+                "host selection is missing host-tool target for package '{}'", name.as_str()));
+        }
     }
     auto standards =
         resolve_effective_language_standards(selection.graph, selection.host_package_names);
@@ -610,6 +673,12 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
         if (! plugins.contains_key(name.as_str()) && ! providers.contains_key(name.as_str()))
             selection.selected_root_names.push(name.clone());
     }
+    for (const auto& name : selection.host_tool_package_names) {
+        if (! host.contains_key(name.as_str())) continue;
+        if (! plugins.contains_key(name.as_str()) && ! providers.contains_key(name.as_str()) &&
+            ! processors.contains_key(name.as_str()))
+            selection.selected_root_names.push(name.clone());
+    }
     selection.install_package_names.clear();
     selection.selected_package_names = rstd::move(selection.host_package_names);
     selection.selected_targets       = rstd::move(selected_targets);
@@ -619,6 +688,7 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     selection.plugin_package_names.clear();
     selection.proc_macro_provider_names.clear();
     selection.artifact_processor_package_names.clear();
+    selection.host_tool_package_names.clear();
     return Ok(rstd::move(selection));
 }
 

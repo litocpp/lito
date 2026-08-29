@@ -24,6 +24,7 @@ struct ResolvedSource {
     PathBuf                    source_root;
     String                     origin_identity;
     bool                       external { false };
+    bool                       generated { false };
     SourceOrigin               origin { SourceOrigin::Explicit };
     bool                       module_companion { false };
     bool                       module_context_required { false };

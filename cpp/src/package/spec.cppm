@@ -34,6 +34,7 @@ struct TargetSpec {
     PathBuf                            source_root;
     Vec<TargetSource>                  sources;
     Vec<DependencySpec>                dependencies;
+    Vec<HostToolDependencySpec>        host_tool_dependencies;
     Vec<CompilerPluginDependencySpec>  plugin_dependencies;
     Vec<ProcMacroDependencySpec>       proc_macro_dependencies;
     Vec<ResolvedExternalDependency>    external_dependencies;

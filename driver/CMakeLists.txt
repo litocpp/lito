@@ -26,6 +26,8 @@ target_sources(
          CXX_MODULES
          FILES
          src/dependency/preparation.cppm
+         src/build/action_graph.cppm
+         src/build/native_action_graph.cppm
          src/build/artifact.cppm
          src/build/artifact_processor.cppm
          src/build/artifact_processor_error.cppm

@@ -60,12 +60,12 @@ lito_embed_package(
   libxml2 "${PROJECT_SOURCE_DIR}/data/sdk/libxml2/2.13.8-minimal-elf-v1")
 file(
   GENERATE
-  OUTPUT "${lito_builtin_directory}/packages.inc"
+  OUTPUT "${lito_builtin_directory}/packages.cpp"
   CONTENT
-    "${lito_builtin_definitions}\nconst PackageInput PACKAGES[] = {\n${lito_builtin_entries}};\n"
+    "module lito.executable;\n\nimport rstd;\nimport lito.core;\nimport :builtin_packages;\n\nusing namespace rstd::prelude;\nusing namespace rstd::literals;\n\nnamespace\n{\n\nstruct PackageInput {\n    ref<str> id;\n    lito::registry::EmbeddedPackageInput input;\n};\n\ntemplate<rstd::size_t ArchiveSize, rstd::size_t DescriptorSize>\nauto package_input(ref<str> id,\n                   const unsigned char (&archive)[ArchiveSize],\n                   const unsigned char (&descriptor)[DescriptorSize]) -> PackageInput {\n    return PackageInput {\n        .id = id,\n        .input = lito::registry::EmbeddedPackageInput {\n            .archive = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(archive), usize(ArchiveSize)),\n            .descriptor = slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(descriptor), usize(DescriptorSize)),\n        },\n    };\n}\n\n${lito_builtin_definitions}\nconst PackageInput PACKAGES[] = {\n${lito_builtin_entries}};\n\nauto resolve_package(void*, ref<str> id) noexcept -> Option<lito::registry::EmbeddedPackageInput> {\n    for (const auto& package : PACKAGES) {\n        if (package.id == id) {\n            return Some(lito::registry::EmbeddedPackageInput {\n                .archive = package.input.archive,\n                .descriptor = package.input.descriptor,\n            });\n        }\n    }\n    return None();\n}\n\n} // namespace\n\nauto lito_embedded_packages() noexcept -> lito::registry::EmbeddedPackageProvider {\n    return lito::registry::EmbeddedPackageProvider { .resolve = resolve_package };\n}\n"
 )
+target_sources(lito PRIVATE "${lito_builtin_directory}/packages.cpp")
 add_custom_target(lito-builtin-packages DEPENDS ${lito_builtin_outputs})
 add_dependencies(lito lito-builtin-packages)
-target_include_directories(lito PRIVATE "${lito_builtin_root}")
 
 install(TARGETS lito RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

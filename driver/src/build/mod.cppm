@@ -2,6 +2,7 @@ export module lito.driver:build;
 
 import rstd;
 export import :build.event;
+export import :build.action_graph;
 export import :build.request;
 export import :build.artifact;
 export import :build.artifact_processor_error;

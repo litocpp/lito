@@ -53,6 +53,16 @@ struct CompilerPluginDependencySpec {
     }
 };
 
+struct HostToolDependencySpec {
+    String package;
+
+    auto clone() const -> HostToolDependencySpec {
+        return HostToolDependencySpec {
+            .package = package.clone(),
+        };
+    }
+};
+
 struct TransformedSource {
     PathBuf         logical_path;
     PathBuf         physical_path;
@@ -68,6 +78,7 @@ struct TargetSource {
     PathBuf                    source_root;
     String                     origin_identity;
     bool                       external { false };
+    bool                       generated { false };
     Option<String>             expected_module;
     Option<SourceScanArtifact> scan_artifact;
     Option<TransformedSource>  transformed;

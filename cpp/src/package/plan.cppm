@@ -515,8 +515,8 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
     return result;
 }
 
-auto resolve_header_ownership(const PackageMetadata&          package,
-                              const ResolvedNativeTargetPlan& plan,
+auto resolve_header_ownership(const PackageMetadata&  package,
+                              slice<TargetId>         targets,
                               Vec<ResolvedHeaderRoot> toolchain_roots) -> HeaderOwnershipIndex {
     auto roots       = rstd::move(toolchain_roots);
     auto append_root = [&](ref<rstd::path::Path> path,
@@ -537,7 +537,7 @@ auto resolve_header_ownership(const PackageMetadata&          package,
             .provenance = rstd::move(provenance),
         });
     };
-    for (auto target : plan.target_order) {
+    for (auto target : targets) {
         const auto& resolved = package.targets[target];
         for (const auto& root : resolved.usage.public_include_directories) {
             append_root(
@@ -667,6 +667,40 @@ auto add_generated_artifact_identity(CompileContext& context, ref<str> identity)
     context.external_identities.push(String::make(identity));
     refresh_compile_context_identity(context);
     return true;
+}
+
+template<typename Target>
+auto replace_generated_artifact_identity_impl(Target&         target,
+                                              CompileContext& context,
+                                              ref<str>        previous,
+                                              ref<str>        replacement) -> bool {
+    auto changed = false;
+    for (auto& artifact : target.generated_artifacts) {
+        if (artifact.action_identity != previous) continue;
+        artifact.action_identity = String::make(replacement);
+        changed                  = true;
+    }
+    for (auto& identity : context.external_identities) {
+        if (identity != previous) continue;
+        identity = String::make(replacement);
+        changed  = true;
+    }
+    if (changed) refresh_compile_context_identity(context);
+    return changed;
+}
+
+auto replace_generated_artifact_identity(ResolvedTarget& target,
+                                         CompileContext& context,
+                                         ref<str>        previous,
+                                         ref<str>        replacement) -> bool {
+    return replace_generated_artifact_identity_impl(target, context, previous, replacement);
+}
+
+auto replace_generated_artifact_identity(TargetSpec&     target,
+                                         CompileContext& context,
+                                         ref<str>        previous,
+                                         ref<str>        replacement) -> bool {
+    return replace_generated_artifact_identity_impl(target, context, previous, replacement);
 }
 
 auto compile_test_context(const CompileContext& base, const ResolvedCompileTestCase& test)
@@ -806,6 +840,27 @@ auto resolve_source_selection(const PackageMetadata&                     package
         }
         auto visited = visit_target(package, *found, colors, target_order);
         if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
+    }
+    for (auto cursor = usize {}; cursor < target_order.len(); ++cursor) {
+        const auto consumer = target_order[cursor];
+        for (const auto& dependency : package.targets[consumer].host_tool_dependencies) {
+            auto found = false;
+            for (auto provider = TargetId {}; provider < package.targets.len(); ++provider) {
+                const auto& candidate = package.targets[provider];
+                if (candidate.id.package != dependency.package.as_str() || ! candidate.host_tool) {
+                    continue;
+                }
+                found        = true;
+                auto visited = visit_target(package, provider, colors, target_order);
+                if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
+            }
+            if (! found) {
+                return plan_failure<SourceTargetSelection>(rstd::format(
+                    "target '{}' has host-tool dependency '{}' without a host-tool target",
+                    target_text(package.targets[consumer].id).as_str(),
+                    dependency.package.as_str()));
+            }
+        }
     }
 
     auto selected_targets = Vec<TargetId>::with_capacity(selected_identities.len());
@@ -1224,7 +1279,7 @@ auto resolve_native_targets(const PackageMetadata& package,
     return resolve_native_targets(package, rstd::move(selection).unwrap());
 }
 
-auto finalize_package_plan(const PackageSpec& package, ResolvedNativeTargetPlan discovery)
+auto snapshot_package_plan(const PackageSpec& package, const ResolvedNativeTargetPlan& discovery)
     -> lito::package::PackageResult<PackagePlan> {
     if (discovery.profile >= package.profiles.len() ||
         discovery.target_identities.len() != package.targets.len()) {
@@ -1237,17 +1292,49 @@ auto finalize_package_plan(const PackageSpec& package, ResolvedNativeTargetPlan 
                 "source discovery target order changed during finalization"_str);
         }
     }
+    auto contexts = Vec<CompileContext>::with_capacity(discovery.contexts.len());
+    for (const auto& context : discovery.contexts) contexts.push(context.clone());
+    const auto clone_targets = [](const Vec<Vec<TargetId>>& source) {
+        auto result = Vec<Vec<TargetId>>::with_capacity(source.len());
+        for (const auto& targets : source) result.push(targets.clone());
+        return result;
+    };
+    auto link_inputs = Vec<Vec<PlannedLinkInput>>::with_capacity(discovery.link_inputs.len());
+    for (const auto& inputs : discovery.link_inputs) {
+        auto cloned = Vec<PlannedLinkInput>::with_capacity(inputs.len());
+        for (const auto& input : inputs) {
+            if (input.is_Target())
+                cloned.push(PlannedLinkInput::Target(input.as_Target().target));
+            else
+                cloned.push(PlannedLinkInput::External(input.as_External().arguments.clone()));
+        }
+        link_inputs.push(rstd::move(cloned));
+    }
+    auto link_requirements =
+        Vec<lito::link::Requirements>::with_capacity(discovery.link_requirements.len());
+    for (const auto& requirements : discovery.link_requirements) {
+        link_requirements.push(requirements.clone());
+    }
+    auto linker_options = Vec<Vec<String>>::with_capacity(discovery.linker_options.len());
+    for (const auto& options : discovery.linker_options) {
+        linker_options.push(as<Clone>(options).clone());
+    }
     return Ok(PackagePlan {
         .package           = rstd::addressof(package),
         .profile           = rstd::addressof(package.profiles[discovery.profile]),
-        .target_order      = rstd::move(discovery.target_order),
-        .contexts          = rstd::move(discovery.contexts),
-        .public_targets    = rstd::move(discovery.public_targets),
-        .visible_targets   = rstd::move(discovery.visible_targets),
-        .link_inputs       = rstd::move(discovery.link_inputs),
-        .link_requirements = rstd::move(discovery.link_requirements),
-        .linker_options    = rstd::move(discovery.linker_options),
+        .target_order      = discovery.target_order.clone(),
+        .contexts          = rstd::move(contexts),
+        .public_targets    = clone_targets(discovery.public_targets),
+        .visible_targets   = clone_targets(discovery.visible_targets),
+        .link_inputs       = rstd::move(link_inputs),
+        .link_requirements = rstd::move(link_requirements),
+        .linker_options    = rstd::move(linker_options),
     });
+}
+
+auto finalize_package_plan(const PackageSpec& package, ResolvedNativeTargetPlan discovery)
+    -> lito::package::PackageResult<PackagePlan> {
+    return snapshot_package_plan(package, discovery);
 }
 
 } // namespace lito::cpp

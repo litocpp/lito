@@ -9,6 +9,7 @@ import lito.tools;
 import rstd.json;
 import lito.core;
 import :build.event;
+import :build.action_graph;
 import :build.layout;
 import :build.host_tool_error;
 import :source;
@@ -251,6 +252,41 @@ public:
 
 private:
     Vec<Box<ResolvedHostBuildTool>> tools_;
+};
+
+struct ResolvedPackageHostTool {
+    lito::package::PackageTargetId target;
+    PathBuf                        executable;
+    String                         identity;
+    Option<BuildArtifactId>        artifact;
+};
+
+class ResolvedPackageHostTools {
+public:
+    auto get(ref<str> package, ref<str> name) const noexcept
+        -> Option<ref<ResolvedPackageHostTool>> {
+        for (const auto& tool : tools_) {
+            if (tool->target.package == package && tool->target.name == name) {
+                return Some(ref<ResolvedPackageHostTool>::from_raw_parts(rstd::addressof(*tool)));
+            }
+        }
+        return None();
+    }
+
+    auto get(const lito::package::PackageTargetId& target) const noexcept
+        -> Option<ref<ResolvedPackageHostTool>> {
+        for (const auto& tool : tools_) {
+            if (tool->target == target) {
+                return Some(ref<ResolvedPackageHostTool>::from_raw_parts(rstd::addressof(*tool)));
+            }
+        }
+        return None();
+    }
+
+    void push(Box<ResolvedPackageHostTool> tool) { tools_.push(rstd::move(tool)); }
+
+private:
+    Vec<Box<ResolvedPackageHostTool>> tools_;
 };
 
 auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,

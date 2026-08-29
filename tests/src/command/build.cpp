@@ -447,6 +447,110 @@ auto main() -> int {
     EXPECT_EQ(summary->compiled, usize(3));
 }
 
+TEST_F(BuildCommand, BuildScriptRunsDependencyHostToolTarget) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "package-host-tool-workspace"
+members = ["app", "tool"]
+
+[workspace.package]
+version = "0.1.0"
+
+[workspace.dependencies.fixture-host-tool]
+path = "tool"
+)toml"_str },
+        { "tool/lito.toml"_str, R"toml([package]
+name = "fixture-host-tool"
+version = { workspace = true }
+
+[[bin]]
+name = "fixture-generate-header"
+host-tool = true
+link-stdlib = false
+sources = ["src/main.cpp"]
+)toml"_str },
+        { "tool/src/main.cpp"_str, R"cpp(#include <stdio.h>
+
+auto main(int argc, char** argv) -> int {
+    if (argc != 2) return 2;
+    auto* output = fopen(argv[1], "wb");
+    if (output == nullptr) return 3;
+    auto result = fputs(
+        "auto generated_value() noexcept -> int { return 42; }\n", output);
+    return fclose(output) == 0 && result >= 0 ? 0 : 4;
+}
+)cpp"_str },
+        { "app/lito.toml"_str, R"toml([package]
+name = "fixture-host-tool-app"
+version = { workspace = true }
+
+[[bin]]
+name = "fixture-host-tool-app"
+link-stdlib = false
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-host-tool]
+workspace = true
+visibility = "private"
+)toml"_str },
+        { "app/build.lua"_str, R"lua(local target = lito.target({
+  kind = "bin",
+  name = "fixture-host-tool-app",
+})
+local tool = lito.host_tool(target, "fixture-host-tool", "fixture-generate-header")
+local generated = lito.run({
+  tool = tool,
+  cwd = ".",
+  args = { "@OUTPUT:1@" },
+  inputs = { "src/main.cpp" },
+  outputs = { "src/generated.cpp" },
+})
+lito.target_add_generated_source(target, generated.outputs[1])
+)lua"_str },
+        { "app/src/main.cpp"_str, R"cpp(auto generated_value() noexcept -> int;
+
+auto main() -> int {
+    return generated_value() == 42 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("package-host-tool"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("package-host-tool"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-host-tool-app"_str));
+    auto progress    = CompileProgressCapture {};
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(progress),
+        .notify  = capture_compile_progress,
+    });
+    auto first       = lito::build(request);
+    if (first.is_err()) {
+        auto message = error_chain_text(first.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(first->script.executed);
+    EXPECT_EQ(first->compiled, usize(3));
+    EXPECT_FALSE(progress.missing);
+    ASSERT_EQ(progress.values.len(), usize(3));
+    for (auto index = usize {}; index < progress.values.len(); ++index) {
+        EXPECT_EQ(progress.values[index].current, index + usize(1));
+    }
+    EXPECT_EQ(progress.values[usize(2)].current, usize(3));
+    EXPECT_EQ(progress.values[usize(2)].total, usize(3));
+    ASSERT_EQ(first->product.artifacts.len(), usize(1));
+    EXPECT_EQ(first->product.artifacts[usize {}].target.package.as_str(),
+              "fixture-host-tool-app"_str);
+    auto generated = output.join(
+        PathBuf::from("generated/fixture-host-tool-app/src/generated.cpp"_str).as_path());
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+
+    auto second = lito::build(request);
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(second->compiled, usize {});
+}
+
 TEST_F(BuildCommand, BuildScriptGeneratedActionsPublishDependencyOrderedSources) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]
@@ -503,6 +607,81 @@ export auto generated_answer() noexcept -> int;
     ASSERT_TRUE(second.is_ok());
     EXPECT_EQ(second->compiled, usize {});
     EXPECT_EQ(second->frontend.persistent_scan_hits, usize(2));
+}
+
+TEST_F(BuildCommand, BuildScriptRejectsGeneratedModuleSourceExtension) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-generated-module-extension"
+version = "0.1.0"
+
+[lib]
+name = "fixture-generated-module-extension"
+module = "fixture.generated.extension"
+archive = "fixture_generated_extension"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({
+  kind = "lib",
+  name = "fixture-generated-module-extension",
+})
+local generated = lito.write({
+  output = "src/generated.cppm",
+  content = "export module fixture.generated.provider;\n",
+})
+lito.target_add_generated_source(target, generated.output)
+)lua"_str },
+        { "src/lib.cppm"_str, R"cpp(export module fixture.generated.extension;
+)cpp"_str },
+    };
+    auto project = materialize("generated-module-extension"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("generated-module-extension"_str);
+    auto request = build_request(project->root.as_path(),
+                                 output.as_path(),
+                                 strings("fixture-generated-module-extension"_str));
+    auto result  = lito::build(request);
+    ASSERT_TRUE(result.is_err());
+    auto message = error_chain_text(result.unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("must use the '.cpp' extension"_str));
+}
+
+TEST_F(BuildCommand, BuildScriptRejectsGeneratedModuleProvider) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-generated-module-provider"
+version = "0.1.0"
+
+[lib]
+name = "fixture-generated-module-provider"
+module = "fixture.generated.owner"
+archive = "fixture_generated_provider"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({
+  kind = "lib",
+  name = "fixture-generated-module-provider",
+})
+local generated = lito.write({
+  output = "src/generated.cpp",
+  content = "export module fixture.generated.provider;\n",
+})
+lito.target_add_generated_source(target, generated.output)
+)lua"_str },
+        { "src/lib.cppm"_str, R"cpp(export module fixture.generated.owner;
+)cpp"_str },
+    };
+    auto project = materialize("generated-module-provider"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("generated-module-provider"_str);
+    auto request = build_request(project->root.as_path(),
+                                 output.as_path(),
+                                 strings("fixture-generated-module-provider"_str));
+    auto result  = lito::build(request);
+    ASSERT_TRUE(result.is_err());
+    auto message = error_chain_text(result.unwrap_err());
+    EXPECT_TRUE(
+        message.as_str().contains("cannot provide module 'fixture.generated.provider'"_str));
 }
 
 TEST_F(BuildCommand, BuildScriptConsumesDeclaredExternalSourceObjects) {
