@@ -16,6 +16,12 @@ Confirm the executable and version:
 lito --version
 ```
 
+## Install
+To install Lito, if you are running Unix, run the following in your terminal.  
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://lito.litocpp.org/install.sh | sh
+```
+
 ## Bootstrap from source
 
 The CMake build is Lito's bootstrap path. From a Lito source checkout:

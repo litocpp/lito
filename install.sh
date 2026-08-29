@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
-set -euo pipefail
+set -eu
 
 readonly VERSION="v0.6.3"
 readonly REPOSITORY="https://github.com/litocpp/lito"
@@ -15,7 +15,7 @@ for command in chmod curl install mktemp mv rm rmdir sha256sum tar uname; do
   command -v "$command" >/dev/null 2>&1 || fail "required command '$command' was not found"
 done
 
-[[ "$(uname -s)" == "Linux" ]] || fail "only Linux release archives are available"
+[ "$(uname -s)" = "Linux" ] || fail "only Linux release archives are available"
 
 case "$(uname -m)" in
   x86_64 | amd64) architecture="x86_64" ;;
@@ -32,7 +32,7 @@ checksum_path="${temporary_directory}/${checksum}"
 staged_binary=""
 
 cleanup() {
-  if [[ -n "$staged_binary" && -f "$staged_binary" ]]; then
+  if [ -n "$staged_binary" ] && [ -f "$staged_binary" ]; then
     rm -f -- "$staged_binary"
   fi
   rm -f -- "$archive_path" "$checksum_path"
@@ -46,14 +46,15 @@ curl --fail --location --proto '=https' --silent --show-error \
 curl --fail --location --proto '=https' --silent --show-error \
   --output "$checksum_path" "${release_url}/${checksum}"
 
-pushd "$temporary_directory" >/dev/null
-sha256sum --check "$checksum"
-popd >/dev/null
+(
+  cd "$temporary_directory"
+  sha256sum --check "$checksum"
+)
 
 install -d "$INSTALL_DIRECTORY"
 staged_binary="$(mktemp "${INSTALL_DIRECTORY}/.lito.install.XXXXXX")"
 tar -xOzf "$archive_path" "lito-linux-${architecture}/bin/lito" >"$staged_binary"
-[[ -s "$staged_binary" ]] || fail "release archive does not contain bin/lito"
+[ -s "$staged_binary" ] || fail "release archive does not contain bin/lito"
 chmod 0755 "$staged_binary"
 mv -f -- "$staged_binary" "${INSTALL_DIRECTORY}/lito"
 staged_binary=""

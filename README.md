@@ -8,11 +8,14 @@ Lito discovers named module sources and drives Clang, LLD, and LLVM tools.
 
 ## Requirements
 
-- LLVM/Clang 22: `clang`, `clang++`, LLD (`ld.lld` or `lld-link`), `llvm-ar`, and `llvm-strip`.
-- A supported C++ standard library: libc++ or libstdc++ on Unix-like targets, and MSVC STL or a
-  separately supplied shared libc++ on Windows MSVC targets.
-- `clang-format` for `lito format`.
-- CMake 4 and Ninja when bootstrapping Lito or building a CMake dependency.
+- LLVM/Clang 22+
+- CMake and Ninja when bootstrapping or building a CMake dependency
+
+## Install
+To install Lito, if you are running Unix, run the following in your terminal.  
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://lito.litocpp.org/install.sh | sh
+```
 
 ## Bootstrap
 
