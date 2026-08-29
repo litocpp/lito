@@ -72,6 +72,18 @@ TEST(System, ClassifiesWindowsTargetEnvironments) {
     EXPECT_EQ(gnu->environment_name(), "gnu"_str);
 }
 
+TEST(System, ComparesTargetAbiWithoutVendorSpelling) {
+    auto clang = lito::system::parse_target_info("x86_64-pc-linux-gnu"_str).unwrap();
+    auto cargo = lito::system::parse_target_info("x86_64-unknown-linux-gnu"_str).unwrap();
+    auto musl  = lito::system::parse_target_info("x86_64-unknown-linux-musl"_str).unwrap();
+    auto arm   = lito::system::parse_target_info("aarch64-unknown-linux-gnu"_str).unwrap();
+
+    EXPECT_TRUE(clang.is_abi_compatible_with(cargo));
+    EXPECT_TRUE(cargo.is_abi_compatible_with(clang));
+    EXPECT_FALSE(clang.is_abi_compatible_with(musl));
+    EXPECT_FALSE(clang.is_abi_compatible_with(arm));
+}
+
 TEST(System, PreservesTargetComponentsAndDerivesPlatforms) {
     struct TargetCase {
         ref<str>                     triple;

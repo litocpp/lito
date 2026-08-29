@@ -167,7 +167,7 @@ auto cargo_target(const lito::tools::cargo::Provider& provider, const BuildPlatf
     const auto  supported = cargo.platform == TargetPlatform::Linux ||
                             cargo.platform == TargetPlatform::Macos ||
                             (cargo.platform == TargetPlatform::Windows && cargo.is_msvc());
-    if (! supported || cargo.triple != lito.triple.as_str()) {
+    if (! supported || ! cargo.is_abi_compatible_with(lito)) {
         return lito::dependency::dependency_failure<String>(
             rstd::format("Cargo host target '{}' does not match Lito target '{}'",
                          provider.host_target.as_str(),

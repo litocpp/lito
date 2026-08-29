@@ -377,6 +377,16 @@ struct TargetInfo {
         return (environment.is_some() && environment->as_str().starts_with("gnu"_str)) ||
                operating_system.as_str().starts_with("mingw"_str);
     }
+
+    auto is_abi_compatible_with(const TargetInfo& other) const noexcept -> bool {
+        if (architecture == Architecture::Unknown || other.architecture == Architecture::Unknown ||
+            platform == TargetPlatform::Unknown || other.platform == TargetPlatform::Unknown ||
+            architecture != other.architecture || platform != other.platform ||
+            environment.is_some() != other.environment.is_some()) {
+            return false;
+        }
+        return environment.is_none() || environment->as_str() == other.environment->as_str();
+    }
 };
 
 struct HostInfo {
