@@ -103,6 +103,7 @@ target_sources(
          src/source/tree.cppm
          src/system/environment.cppm
          src/system/error.cppm
+         src/system/filename.cppm
          src/system/mod.cppm
          src/system/platform.cppm
          src/system/process.cppm

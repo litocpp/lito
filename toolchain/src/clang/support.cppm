@@ -147,6 +147,11 @@ auto append_typed_options(Vec<String>&                  command,
                           const TargetInfo&             target,
                           bool                          semantic_only) -> void {
     command.push(rstd::format("--target={}", target.triple.as_str()));
+    if ((target.architecture == Architecture::Wasm32 ||
+         target.architecture == Architecture::Wasm64) &&
+        target.operating_system == "unknown"_str) {
+        toolchain::command::push_option(command, "-ffreestanding"_str);
+    }
     if (options.common.target.sysroot.is_some()) {
         command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
     }
@@ -185,8 +190,7 @@ auto append_typed_options(Vec<String>&                  command,
     }
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
-    if (target.environment == TargetEnvironment::Msvc &&
-        options.common.microsoft_runtime_library.is_some()) {
+    if (target.is_msvc() && options.common.microsoft_runtime_library.is_some()) {
         command.push(rstd::format("-fms-runtime-lib={}",
                                   lito::compiler::microsoft_runtime_library_name(
                                       *options.common.microsoft_runtime_library)));
@@ -226,6 +230,11 @@ auto append_c_typed_options(Vec<String>&                    command,
                             const TargetInfo&               target,
                             bool                            semantic_only) -> void {
     command.push(rstd::format("--target={}", target.triple.as_str()));
+    if ((target.architecture == Architecture::Wasm32 ||
+         target.architecture == Architecture::Wasm64) &&
+        target.operating_system == "unknown"_str) {
+        toolchain::command::push_option(command, "-ffreestanding"_str);
+    }
     if (options.common.target.sysroot.is_some()) {
         command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
     }
@@ -245,8 +254,7 @@ auto append_c_typed_options(Vec<String>&                    command,
     if (compiler::uses_posix_threads(options.common)) {
         toolchain::command::push_option(command, "-pthread"_str);
     }
-    if (target.environment == TargetEnvironment::Msvc &&
-        options.common.microsoft_runtime_library.is_some()) {
+    if (target.is_msvc() && options.common.microsoft_runtime_library.is_some()) {
         command.push(rstd::format("-fms-runtime-lib={}",
                                   lito::compiler::microsoft_runtime_library_name(
                                       *options.common.microsoft_runtime_library)));

@@ -53,7 +53,7 @@ auto emit_run(const TestRequest& request, const BuiltArtifact& artifact) noexcep
     observer.notify(observer.context,
                     TestEvent {
                         .package           = artifact.target.package.as_str(),
-                        .executable        = artifact.path.as_path(),
+                        .executable        = artifact.primary.path.as_path(),
                         .working_directory = artifact.package_root.as_path(),
                         .arguments         = request.arguments.as_slice(),
                     });

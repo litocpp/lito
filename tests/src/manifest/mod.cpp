@@ -1073,6 +1073,18 @@ name = "fixture-two-library-outputs"
 archive = "fixture"
 artifact = "fixture"
 )toml"_str,
+        R"toml([package]
+name = "fixture-wasm-library-kind"
+[lib]
+name = "fixture-wasm-library-kind"
+kind = "wasm"
+artifact = "fixture"
+)toml"_str,
+        R"toml([package]
+name = "fixture-wasm-target"
+[wasm]
+name = "fixture-wasm-target"
+)toml"_str,
     };
     auto index = usize {};
     for (const auto contents : invalid) {

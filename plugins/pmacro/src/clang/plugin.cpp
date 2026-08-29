@@ -455,6 +455,9 @@ public:
         const auto root = create_stored_stream();
         if (source.empty()) return root;
 
+        auto                  storage = source.str();
+        const llvm::StringRef input(storage);
+
         struct GroupFrame {
             pmacro::host::StreamHandle parent;
             size_t                     token;
@@ -463,10 +466,10 @@ public:
         auto frames  = std::vector<GroupFrame> {};
         auto current = root;
         auto lexer   = clang::Lexer(clang::SourceLocation {},
-                                    compiler_.getLangOpts(),
-                                    source.begin(),
-                                    source.begin(),
-                                    source.end());
+                                  compiler_.getLangOpts(),
+                                  input.begin(),
+                                  input.begin(),
+                                  input.end());
         for (;;) {
             auto token = clang::Token {};
             lexer.LexFromRawLexer(token);
@@ -474,7 +477,7 @@ public:
             if (token.is(clang::tok::comment)) continue;
             const auto* end        = lexer.getBufferLocation();
             const auto* begin      = end - token.getLength();
-            const auto  offset     = static_cast<uint32_t>(begin - source.begin());
+            const auto  offset     = static_cast<uint32_t>(begin - input.begin());
             auto        token_span = pmacro::Span(
                 span.source(), span.begin() + offset, span.begin() + offset + token.getLength());
 

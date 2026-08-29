@@ -557,15 +557,6 @@ class PackageGraphResolver {
         return nullptr;
     }
 
-    auto package_has_library(const lito::manifest::PackageManifest& package) const noexcept
-        -> bool {
-        for (const auto& target : package.targets) {
-            if (lito::manifest::package_target_kind(target) == PackageTargetKind::Library)
-                return true;
-        }
-        return false;
-    }
-
     auto package_has_proc_macro(const lito::manifest::PackageManifest& package) const noexcept
         -> bool {
         for (const auto& target : package.targets) {
@@ -715,10 +706,11 @@ class PackageGraphResolver {
                     declaration.default_features.is_some() ? *declaration.default_features : true,
             }));
         }
-        if (! package_has_library(provider->manifest)) {
+        if (! lito::manifest::package_has_library_target(provider->manifest) &&
+            ! lito::manifest::package_has_host_tool_target(provider->manifest)) {
             return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
                 "dependency '{}' resolves to package '{}' which exposes neither a C/C++ library "
-                "nor a script, plugin or pmacro contract",
+                "nor a host tool, script, plugin or pmacro contract",
                 declaration.name.as_str(),
                 provider->manifest.manifest_path.as_path()));
         }

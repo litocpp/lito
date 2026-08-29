@@ -64,10 +64,83 @@ TEST(System, ClassifiesWindowsTargetEnvironments) {
     ASSERT_TRUE(gnu.is_ok());
     ASSERT_TRUE(mingw.is_ok());
     ASSERT_TRUE(linux.is_ok());
-    EXPECT_EQ(msvc->environment, lito::system::TargetEnvironment::Msvc);
-    EXPECT_EQ(gnu->environment, lito::system::TargetEnvironment::Gnu);
-    EXPECT_EQ(mingw->environment, lito::system::TargetEnvironment::Gnu);
-    EXPECT_EQ(linux->environment, lito::system::TargetEnvironment::Unknown);
+    EXPECT_TRUE(msvc->is_msvc());
+    EXPECT_TRUE(gnu->is_gnu());
+    EXPECT_TRUE(mingw->is_gnu());
+    EXPECT_TRUE(linux->is_gnu());
     EXPECT_EQ(msvc->environment_name(), "msvc"_str);
     EXPECT_EQ(gnu->environment_name(), "gnu"_str);
+}
+
+TEST(System, PreservesTargetComponentsAndDerivesPlatforms) {
+    struct TargetCase {
+        ref<str>                     triple;
+        lito::system::Architecture   architecture;
+        ref<str>                     vendor;
+        ref<str>                     operating_system;
+        Option<ref<str>>             environment;
+        lito::system::TargetPlatform platform;
+        lito::system::TargetFamily   family;
+    };
+    constexpr TargetCase cases[] = {
+        { "x86_64-unknown-linux-gnu"_str,
+          lito::system::Architecture::X86_64,
+          "unknown"_str,
+          "linux"_str,
+          Some("gnu"_str),
+          lito::system::TargetPlatform::Linux,
+          lito::system::TargetFamily::Unix },
+        { "aarch64-unknown-linux-android"_str,
+          lito::system::Architecture::Aarch64,
+          "unknown"_str,
+          "linux"_str,
+          Some("android"_str),
+          lito::system::TargetPlatform::Android,
+          lito::system::TargetFamily::Unix },
+        { "aarch64-apple-darwin"_str,
+          lito::system::Architecture::Aarch64,
+          "apple"_str,
+          "darwin"_str,
+          None(),
+          lito::system::TargetPlatform::Macos,
+          lito::system::TargetFamily::Unix },
+        { "x86_64-pc-windows-msvc"_str,
+          lito::system::Architecture::X86_64,
+          "pc"_str,
+          "windows"_str,
+          Some("msvc"_str),
+          lito::system::TargetPlatform::Windows,
+          lito::system::TargetFamily::Windows },
+        { "wasm32-unknown-unknown"_str,
+          lito::system::Architecture::Wasm32,
+          "unknown"_str,
+          "unknown"_str,
+          None(),
+          lito::system::TargetPlatform::Unknown,
+          lito::system::TargetFamily::Unknown },
+    };
+    for (const auto& item : cases) {
+        auto target = lito::system::parse_target_info(item.triple);
+        ASSERT_TRUE(target.is_ok());
+        EXPECT_EQ(target->triple.as_str(), item.triple);
+        EXPECT_EQ(target->architecture, item.architecture);
+        EXPECT_EQ(target->vendor.as_str(), item.vendor);
+        EXPECT_EQ(target->operating_system.as_str(), item.operating_system);
+        EXPECT_EQ(target->environment.is_some(), item.environment.is_some());
+        if (item.environment.is_some()) {
+            EXPECT_EQ(target->environment->as_str(), *item.environment);
+        }
+        EXPECT_EQ(target->platform, item.platform);
+        EXPECT_EQ(target->family, item.family);
+    }
+}
+
+TEST(System, NamesPluginsForTargetPlatforms) {
+    auto linux   = lito::system::parse_target_info("x86_64-unknown-linux-gnu"_str).unwrap();
+    auto macos   = lito::system::parse_target_info("aarch64-apple-darwin"_str).unwrap();
+    auto windows = lito::system::parse_target_info("x86_64-pc-windows-msvc"_str).unwrap();
+
+    EXPECT_EQ(lito::system::plugin_filename("pmacro"_str, linux).as_str(), "libpmacro.so"_str);
+    EXPECT_EQ(lito::system::plugin_filename("pmacro"_str, macos).as_str(), "libpmacro.dylib"_str);
+    EXPECT_EQ(lito::system::plugin_filename("pmacro"_str, windows).as_str(), "pmacro.dll"_str);
 }

@@ -479,6 +479,24 @@ auto compile_plan_prerequisite_closure(const CompilePlan& plan, const Vec<cpp::U
     return selected;
 }
 
+auto compile_plan_available_prerequisites(const CompilePlan& plan, const Vec<cpp::UnitId>& roots)
+    -> Vec<u8> {
+    auto selected = compile_plan_prerequisite_closure(plan, roots);
+    auto blocked  = Vec<u8>::with_capacity(plan.nodes.len());
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) blocked.push(u8 {});
+    auto pending = roots.clone();
+    while (! pending.is_empty()) {
+        const auto unit = rstd::move(pending.pop()).unwrap_unchecked();
+        if (unit >= plan.nodes.len() || blocked[unit] != u8 {}) continue;
+        blocked[unit] = u8(1);
+        for (auto dependent : plan.nodes[unit].dependents) pending.emplace_back(dependent);
+    }
+    for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
+        if (blocked[unit] != u8 {}) selected[unit] = u8 {};
+    }
+    return selected;
+}
+
 auto compile_plan_remaining_selection(const CompilePlan& plan, const Vec<u8>& completed)
     -> Vec<u8> {
     auto selected = Vec<u8>::with_capacity(plan.nodes.len());

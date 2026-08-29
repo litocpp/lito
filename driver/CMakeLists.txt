@@ -27,6 +27,8 @@ target_sources(
          FILES
          src/dependency/preparation.cppm
          src/build/artifact.cppm
+         src/build/artifact_processor.cppm
+         src/build/artifact_processor_error.cppm
          src/build/compile_executor.cppm
          src/build/documentation.cppm
          src/build/discovery.cppm

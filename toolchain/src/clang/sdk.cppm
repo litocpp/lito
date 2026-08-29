@@ -185,8 +185,7 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
     }
 
     auto cxxflags = rstd_try(query_llvm_config("--cxxflags"_str, "query Clang SDK C++ flags"_str));
-    auto standard_library = target.environment == TargetEnvironment::Msvc
-                                ? lito::config::StandardLibrary::Msvc
+    auto standard_library = target.is_msvc() ? lito::config::StandardLibrary::Msvc
                             : cxxflags.as_str().contains("-stdlib=libc++"_str)
                                 ? lito::config::StandardLibrary::Libcxx
                                 : lito::config::StandardLibrary::Libstdcxx;

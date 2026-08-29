@@ -22,6 +22,12 @@ struct Sdk {
     Option<String> path;
 };
 
+struct Wasm {
+    Option<String> entry;
+    Option<bool>   export_memory;
+    Option<String> processor;
+};
+
 struct Toolchain {
     Option<String> cc;
     Option<String> cxx;
@@ -29,9 +35,12 @@ struct Toolchain {
     Option<String> ar;
     Option<String> os;
     Option<String> arch;
+    Option<String> vendor;
+    Option<String> environment;
     Option<String> standard_library;
     Option<String> standard_library_runtime;
     Option<Sdk>    sdk;
+    Option<Wasm>   wasm;
 };
 
 struct Cargo {
@@ -177,6 +186,24 @@ struct Impl<serde::Deserialize, lito::config::wire::Sdk> {
 };
 
 template<>
+struct Impl<serde::Deserialize, lito::config::wire::Wasm> {
+    template<typename Deserializer>
+    static auto deserialize(Deserializer& deserializer)
+        -> Result<lito::config::wire::Wasm, typename Deserializer::error_type> {
+        auto entry     = serde::OptionalField<String>("entry"_str);
+        auto memory    = serde::OptionalField<bool>("export-memory"_str);
+        auto processor = serde::OptionalField<String>("processor"_str);
+        rstd_try(serde::deserialize_record(
+            deserializer, serde::UnknownFieldPolicy::Reject, entry, memory, processor));
+        return Ok(lito::config::wire::Wasm {
+            .entry         = entry.take(),
+            .export_memory = memory.take(),
+            .processor     = processor.take(),
+        });
+    }
+};
+
+template<>
 struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
@@ -187,9 +214,12 @@ struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
         auto ar      = serde::OptionalField<String>("ar"_str);
         auto os      = serde::OptionalField<String>("os"_str);
         auto arch    = serde::OptionalField<String>("arch"_str);
+        auto vendor  = serde::OptionalField<String>("vendor"_str);
+        auto env     = serde::OptionalField<String>("env"_str);
         auto stdlib  = serde::OptionalField<String>("stdlib"_str);
         auto runtime = serde::OptionalField<String>("stdlib-runtime"_str);
         auto sdk     = serde::OptionalField<lito::config::wire::Sdk>("sdk"_str);
+        auto wasm    = serde::OptionalField<lito::config::wire::Wasm>("wasm"_str);
         rstd_try(serde::deserialize_record(deserializer,
                                            serde::UnknownFieldPolicy::Reject,
                                            cc,
@@ -198,9 +228,12 @@ struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
                                            ar,
                                            os,
                                            arch,
+                                           vendor,
+                                           env,
                                            stdlib,
                                            runtime,
-                                           sdk));
+                                           sdk,
+                                           wasm));
         return Ok(lito::config::wire::Toolchain {
             .cc                       = cc.take(),
             .cxx                      = cxx.take(),
@@ -208,9 +241,12 @@ struct Impl<serde::Deserialize, lito::config::wire::Toolchain> {
             .ar                       = ar.take(),
             .os                       = os.take(),
             .arch                     = arch.take(),
+            .vendor                   = vendor.take(),
+            .environment              = env.take(),
             .standard_library         = stdlib.take(),
             .standard_library_runtime = runtime.take(),
             .sdk                      = sdk.take(),
+            .wasm                     = wasm.take(),
         });
     }
 };

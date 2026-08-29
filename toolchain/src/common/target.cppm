@@ -27,20 +27,6 @@ constexpr auto compile_target_source_name(CompileTargetSource source) noexcept -
     return ""_str;
 }
 
-struct ToolchainTargetInput {
-    lito::system::OperatingSystem os { lito::system::OperatingSystem::Linux };
-    lito::system::Architecture    architecture { lito::system::Architecture::Unknown };
-    CompileTargetSource           source { CompileTargetSource::CompilerDefault };
-
-    auto clone() const -> ToolchainTargetInput {
-        return ToolchainTargetInput {
-            .os           = os,
-            .architecture = architecture,
-            .source       = source,
-        };
-    }
-};
-
 struct CompileTarget {
     lito::system::TargetInfo      info;
     lito::config::StandardLibrary standard_library { lito::config::StandardLibrary::Libstdcxx };
@@ -55,108 +41,88 @@ struct CompileTarget {
     }
 };
 
-auto resolve_toolchain_target_input(const lito::config::ToolchainTargetSelection& selection,
-                                    const lito::system::TargetInfo* compiler_default = nullptr)
-    -> ToolchainResult<ToolchainTargetInput> {
-    if (selection.is_Config()) {
-        return Ok(ToolchainTargetInput {
-            .os           = selection.as_Config().os,
-            .architecture = selection.as_Config().architecture,
-            .source       = CompileTargetSource::Config,
-        });
+auto configured_target_candidate(const lito::config::ToolchainTargetSelection& selection)
+    -> ToolchainResult<String> {
+    if (! selection.is_Config()) {
+        return Err(ToolchainError::Message(
+            String::make("configured target candidate requires a typed target selection"_str)));
     }
-    if (compiler_default == nullptr) {
-        return Err(
-            ToolchainError::Message(String::make("compiler default target was not queried"_str)));
+    const auto& configured = selection.as_Config();
+    auto        candidate  = lito::system::encode_target_candidate(
+        configured.os.as_str(),
+        configured.architecture,
+        configured.vendor.is_some() ? Some(configured.vendor->as_str()) : Option<ref<str>> {},
+        configured.environment.is_some() ? Some(configured.environment->as_str())
+                                         : Option<ref<str>> {});
+    if (candidate.is_err()) {
+        return Err(ToolchainError::Platform(rstd::move(candidate).unwrap_err()));
     }
-    auto os = lito::system::target_operating_system(*compiler_default);
-    if (os.is_err()) return Err(ToolchainError::Platform(rstd::move(os).unwrap_err()));
-    return Ok(ToolchainTargetInput {
-        .os           = rstd::move(os).unwrap(),
-        .architecture = compiler_default->architecture,
-        .source       = CompileTargetSource::CompilerDefault,
-    });
+    return Ok(rstd::move(candidate).unwrap());
 }
 
 auto resolve_standard_library_selection(lito::config::StandardLibrarySelection selection,
-                                        lito::system::OperatingSystem          os)
+                                        const lito::system::TargetInfo&        target)
     -> ToolchainResult<lito::config::StandardLibrary> {
     auto explicit_family = lito::config::explicit_standard_library(selection);
     if (explicit_family.is_some()) return Ok(*explicit_family);
-    switch (os) {
-    case lito::system::OperatingSystem::Linux: return Ok(lito::config::StandardLibrary::Libstdcxx);
-    case lito::system::OperatingSystem::Windows: return Ok(lito::config::StandardLibrary::Msvc);
-    case lito::system::OperatingSystem::Android:
-    case lito::system::OperatingSystem::Macos:
-    case lito::system::OperatingSystem::Freebsd:
-    case lito::system::OperatingSystem::Netbsd:
-    case lito::system::OperatingSystem::Openbsd: return Ok(lito::config::StandardLibrary::Libcxx);
+    using lito::system::TargetPlatform;
+    switch (target.platform) {
+    case TargetPlatform::Linux: return Ok(lito::config::StandardLibrary::Libstdcxx);
+    case TargetPlatform::Windows:
+        return Ok(target.is_msvc() ? lito::config::StandardLibrary::Msvc
+                                   : lito::config::StandardLibrary::Libstdcxx);
+    case TargetPlatform::Android:
+    case TargetPlatform::Macos:
+    case TargetPlatform::Freebsd:
+    case TargetPlatform::Netbsd:
+    case TargetPlatform::Openbsd: return Ok(lito::config::StandardLibrary::Libcxx);
+    case TargetPlatform::Unknown: break;
     }
-    return Err(ToolchainError::Message(
-        String::make("cannot automatically select a C++ standard library"_str)));
+    return Err(ToolchainError::Message(rstd::format(
+        "cannot automatically select a C++ standard library for target '{}'; configure "
+        "toolchain.stdlib explicitly",
+        target.triple.as_str())));
 }
 
-auto target_environment(lito::system::OperatingSystem os,
-                        lito::config::StandardLibrary standard_library)
-    -> ToolchainResult<lito::system::TargetEnvironment> {
-    if (os == lito::system::OperatingSystem::Windows) {
-        if (standard_library == lito::config::StandardLibrary::Libstdcxx) {
-            return Ok(lito::system::TargetEnvironment::Gnu);
-        }
-        return Ok(lito::system::TargetEnvironment::Msvc);
-    }
-    if (standard_library == lito::config::StandardLibrary::Msvc) {
+auto validate_standard_library(const lito::system::TargetInfo& target,
+                               lito::config::StandardLibrary   standard_library)
+    -> ToolchainResult<empty> {
+    if (standard_library == lito::config::StandardLibrary::Msvc && ! target.is_msvc()) {
         return Err(ToolchainError::Message(
-            rstd::format("standard library 'msvc' is unsupported for target operating system '{}'",
-                         lito::system::operating_system_name(os))));
+            rstd::format("standard library 'msvc' requires an MSVC target environment; target is "
+                         "'{}'",
+                         target.triple.as_str())));
     }
-    if ((os == lito::system::OperatingSystem::Android ||
-         os == lito::system::OperatingSystem::Macos) &&
+    if ((target.platform == lito::system::TargetPlatform::Android ||
+         target.platform == lito::system::TargetPlatform::Macos) &&
         standard_library != lito::config::StandardLibrary::Libcxx) {
+        return Err(ToolchainError::Message(rstd::format(
+            "target platform '{}' requires standard library 'libc++'", target.platform_name())));
+    }
+    if (target.is_msvc() && standard_library == lito::config::StandardLibrary::Libstdcxx) {
         return Err(ToolchainError::Message(
-            rstd::format("target operating system '{}' requires standard library 'libc++'",
-                         lito::system::operating_system_name(os))));
+            rstd::format("standard library 'libstdc++' is unsupported for MSVC target '{}'",
+                         target.triple.as_str())));
     }
-    if (os == lito::system::OperatingSystem::Linux) {
-        return Ok(lito::system::TargetEnvironment::Gnu);
-    }
-    return Ok(lito::system::TargetEnvironment::Unknown);
+    return Ok(empty {});
 }
 
-auto resolve_compile_target(const ToolchainTargetInput&   input,
-                            lito::config::StandardLibrary standard_library)
-    -> ToolchainResult<CompileTarget> {
-    auto environment = target_environment(input.os, standard_library);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-    auto info = lito::system::encode_target_info(input.os, input.architecture, *environment);
-    if (info.is_err()) return Err(ToolchainError::Platform(rstd::move(info).unwrap_err()));
+auto resolve_compile_target(lito::system::TargetInfo      target,
+                            lito::config::StandardLibrary standard_library,
+                            CompileTargetSource source) -> ToolchainResult<CompileTarget> {
+    auto valid = validate_standard_library(target, standard_library);
+    if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
     return Ok(CompileTarget {
-        .info             = rstd::move(info).unwrap(),
+        .info             = rstd::move(target),
         .standard_library = standard_library,
-        .source           = input.source,
+        .source           = source,
     });
 }
 
 auto resolve_sdk_compile_target(const lito::system::TargetInfo& target,
                                 lito::config::StandardLibrary   standard_library)
     -> ToolchainResult<CompileTarget> {
-    auto os = lito::system::target_operating_system(target);
-    if (os.is_err()) return Err(ToolchainError::Platform(rstd::move(os).unwrap_err()));
-    auto environment = target_environment(*os, standard_library);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-    if (target.environment != lito::system::TargetEnvironment::Unknown &&
-        target.environment != *environment) {
-        return Err(ToolchainError::Message(
-            rstd::format("SDK target '{}' environment '{}' conflicts with standard library '{}'",
-                         target.triple.as_str(),
-                         target.environment_name(),
-                         lito::config::standard_library_name(standard_library))));
-    }
-    return Ok(CompileTarget {
-        .info             = target.clone(),
-        .standard_library = standard_library,
-        .source           = CompileTargetSource::Sdk,
-    });
+    return resolve_compile_target(target.clone(), standard_library, CompileTargetSource::Sdk);
 }
 
 } // namespace lito

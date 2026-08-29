@@ -173,7 +173,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(loaded->tools.pkg_config.as_path(), PathBuf::from("custom-pkg-config"_str).as_path());
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
     ASSERT_TRUE(loaded->toolchain.target.is_Config());
-    EXPECT_EQ(loaded->toolchain.target.as_Config().os, OperatingSystem::Windows);
+    EXPECT_EQ(loaded->toolchain.target.as_Config().os.as_str(), "windows"_str);
     EXPECT_EQ(loaded->toolchain.target.as_Config().architecture,
               lito::system::Architecture::X86_64);
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Cargo));
@@ -248,6 +248,55 @@ TEST_F(Config, ToolchainOperatingSystemAndArchitectureAreConfiguredTogether) {
         auto loaded = lito::config::load_project_config(project->root.as_path());
         ASSERT_TRUE(loaded.is_err());
         EXPECT_TRUE(error_chain_text(loaded.unwrap_err()).as_str().contains(item.expected));
+    }
+}
+
+TEST_F(Config, BareWasmTargetAndProcessorConfigurationAreTyped) {
+    auto project = config("bare-wasm-target"_str, R"toml([toolchain]
+arch = "wasm32"
+vendor = "unknown"
+os = "unknown"
+env = "unknown"
+stdlib = "libc++"
+
+[toolchain.wasm]
+entry = "none"
+export-memory = false
+processor = "wasm-js-bindgen"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->toolchain.target.is_Config());
+    const auto& target = loaded->toolchain.target.as_Config();
+    EXPECT_EQ(target.architecture, lito::system::Architecture::Wasm32);
+    EXPECT_EQ(target.os.as_str(), "unknown"_str);
+    ASSERT_TRUE(target.vendor.is_some());
+    EXPECT_EQ(target.vendor->as_str(), "unknown"_str);
+    ASSERT_TRUE(target.environment.is_some());
+    EXPECT_EQ(target.environment->as_str(), "unknown"_str);
+    ASSERT_TRUE(loaded->toolchain.wasm.is_some());
+    EXPECT_EQ(loaded->toolchain.wasm->entry, lito::config::WasmEntry::None);
+    EXPECT_FALSE(loaded->toolchain.wasm->export_memory);
+    ASSERT_TRUE(loaded->toolchain.wasm->processor.is_some());
+    EXPECT_EQ(loaded->toolchain.wasm->processor->as_str(), "wasm-js-bindgen"_str);
+
+    constexpr ref<str> invalid[] = {
+        "[toolchain]\nvendor = \"unknown\"\n"_str,
+        "[toolchain]\nenv = \"gnu\"\n"_str,
+        "[toolchain]\narch = \"wasm32\"\nos = \"unknown\"\n"
+        "[toolchain.wasm]\nentry = \"start\"\n"_str,
+        "[toolchain]\narch = \"wasm32\"\nos = \"unknown\"\n"
+        "[toolchain.wasm]\nprocessor = \"Invalid Name\"\n"_str,
+        "[toolchain.wasm]\nunknown = true\n"_str,
+    };
+    auto index = usize {};
+    for (const auto contents : invalid) {
+        auto invalid_project =
+            config(rstd::format("bare-wasm-invalid-{}", index).as_str(), contents);
+        ASSERT_TRUE(invalid_project.is_ok());
+        EXPECT_TRUE(lito::config::load_project_config(invalid_project->root.as_path()).is_err());
+        ++index;
     }
 }
 
@@ -770,7 +819,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("generic-cxx"_str).as_path());
     ASSERT_TRUE(loaded->toolchain.target.is_Config());
-    EXPECT_EQ(loaded->toolchain.target.as_Config().os, OperatingSystem::Linux);
+    EXPECT_EQ(loaded->toolchain.target.as_Config().os.as_str(), "linux"_str);
     EXPECT_EQ(loaded->toolchain.target.as_Config().architecture,
               lito::system::Architecture::X86_64);
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);

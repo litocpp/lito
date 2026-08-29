@@ -1438,6 +1438,13 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
                          recipe.id.as_str(),
                          recipe.target.as_str()));
     }
+    auto archive_input = lito::artifact_file(*archive, lito::ArtifactFileRole::LinkInput);
+    if (archive_input.is_none()) {
+        return sdk_failure<InstalledRuntimeComponent>(
+            rstd::format("embedded SDK recipe '{}' static target '{}' has no link input",
+                         recipe.id.as_str(),
+                         recipe.target.as_str()));
+    }
     const lito::ExternalSourceProvenance* source = nullptr;
     for (const auto& candidate : build->external_source_provenance) {
         if (candidate.package != recipe.package.as_str() ||
@@ -1491,7 +1498,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
         .output = linked_file.clone(),
         .archive =
             lito::LinkArchive {
-                .path = archive->path.clone(),
+                .path = (**archive_input).path.clone(),
                 .mode = lito::LinkArchiveMode::Whole,
             },
         .soname            = component.soname.clone(),

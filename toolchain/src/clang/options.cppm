@@ -54,7 +54,7 @@ inline constexpr auto NO_STANDARD_LIBRARY = "-nostdlib++"_str;
 
 constexpr auto standard_library(lito::config::StandardLibrary   value,
                                 const lito::system::TargetInfo& target) noexcept -> ref<str> {
-    if (target.environment == lito::system::TargetEnvironment::Msvc) return {};
+    if (target.is_msvc()) return {};
     switch (value) {
     case lito::config::StandardLibrary::Libstdcxx: return "-stdlib=libstdc++"_str;
     case lito::config::StandardLibrary::Libcxx: return "-stdlib=libc++"_str;
@@ -67,7 +67,7 @@ constexpr auto standard_library_linker_option(lito::config::StandardLibrary   va
                                               const lito::system::TargetInfo& target,
                                               bool link) noexcept -> ref<str> {
     if (! link) return NO_STANDARD_LIBRARY;
-    if (target.environment == lito::system::TargetEnvironment::Msvc) {
+    if (target.is_msvc()) {
         return value == lito::config::StandardLibrary::Libcxx ? "-lc++"_str : ref<str> {};
     }
     return standard_library(value, target);

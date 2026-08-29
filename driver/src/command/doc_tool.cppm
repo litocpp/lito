@@ -490,7 +490,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
             artifact.target.kind == lito::package::PackageTargetKind::Binary &&
             artifact.target.package.as_str() == "litodoc"_str &&
             artifact.target.name.as_str() == "litodoc"_str) {
-            executable = Some(artifact.path.clone());
+            executable = Some(artifact.primary.path.clone());
         }
     }
     if (executable.is_none()) {

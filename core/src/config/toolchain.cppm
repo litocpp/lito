@@ -204,12 +204,36 @@ class ToolchainTargetSelection : public DefaultInClass<ToolchainTargetSelection,
     RSTD_ENUM(ToolchainTargetSelection,
               (CompilerDefault),
               (Config,
-               (lito::system::OperatingSystem os; lito::system::Architecture architecture;)))
+               (String os; lito::system::Architecture architecture; Option<String> vendor;
+                Option<String>                                                     environment;)))
 
 public:
     auto clone() const -> ToolchainTargetSelection {
         if (is_CompilerDefault()) return CompilerDefault();
-        return Config(as_Config().os, as_Config().architecture);
+        return Config(as_Config().os.clone(),
+                      as_Config().architecture,
+                      as<Clone>(as_Config().vendor).clone(),
+                      as<Clone>(as_Config().environment).clone());
+    }
+};
+
+enum class WasmEntry
+{
+    Main,
+    None,
+};
+
+struct WasmToolchainSpec {
+    WasmEntry      entry { WasmEntry::None };
+    bool           export_memory { true };
+    Option<String> processor;
+
+    auto clone() const -> WasmToolchainSpec {
+        return WasmToolchainSpec {
+            .entry         = entry,
+            .export_memory = export_memory,
+            .processor     = as<Clone>(processor).clone(),
+        };
     }
 };
 
@@ -220,6 +244,7 @@ struct ToolchainSpec {
     PathBuf                       ar;
     Option<ToolchainSdkSelection> sdk;
     ToolchainTargetSelection      target { ToolchainTargetSelection::CompilerDefault() };
+    Option<WasmToolchainSpec>     wasm;
 
     auto clone() const -> ToolchainSpec {
         return ToolchainSpec {
@@ -229,6 +254,7 @@ struct ToolchainSpec {
             .ar     = ar.clone(),
             .sdk    = as<Clone>(sdk).clone(),
             .target = target.clone(),
+            .wasm   = wasm.is_some() ? Some(wasm->clone()) : Option<WasmToolchainSpec> {},
         };
     }
 };
@@ -240,6 +266,7 @@ struct ToolchainOverride {
     Option<PathBuf>                  ar;
     Option<ToolchainSdkSelection>    sdk;
     Option<ToolchainTargetSelection> target;
+    Option<WasmToolchainSpec>        wasm;
 };
 
 auto apply_toolchain_override(ToolchainSpec specification, ToolchainOverride values)
@@ -250,6 +277,7 @@ auto apply_toolchain_override(ToolchainSpec specification, ToolchainOverride val
     if (values.ar.is_some()) specification.ar = rstd::move(values.ar).unwrap();
     if (values.sdk.is_some()) specification.sdk = Some(rstd::move(values.sdk).unwrap());
     if (values.target.is_some()) specification.target = rstd::move(values.target).unwrap();
+    if (values.wasm.is_some()) specification.wasm = Some(rstd::move(values.wasm).unwrap());
     return specification;
 }
 

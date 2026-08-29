@@ -159,8 +159,8 @@ auto start_project_resolution(
         lito::source::SourceMaterializationPolicy::Materialize,
     lito::lock::InvalidLockPolicy            invalid_lock = lito::lock::InvalidLockPolicy::Reject,
     const lito::config::LitoBootstrapConfig* registries   = nullptr,
-    lito::registry::RegistryGraphProvider    registry_provider = {})
-    -> ProjectResult<StartedProjectResolution> {
+    lito::registry::RegistryGraphProvider    registry_provider = {},
+    Option<ref<str>> artifact_processor = None()) -> ProjectResult<StartedProjectResolution> {
     auto lock_session = rstd_try(
         lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git, invalid_lock));
     auto resolution            = lock_session.take_resolution_options();
@@ -210,7 +210,8 @@ auto start_project_resolution(
                                                                         jobs,
                                                                         source_observer(observer),
                                                                         rstd::move(catalog),
-                                                                        registry_provider)
+                                                                        registry_provider,
+                                                                        artifact_processor)
             : lito::package::resolve_existing_package_selection_with_environment(
                   selection,
                   purpose,
@@ -220,7 +221,8 @@ auto start_project_resolution(
                   jobs,
                   source_observer(observer),
                   rstd::move(catalog),
-                  registry_provider);
+                  registry_provider,
+                  artifact_processor);
     if (project.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(project).unwrap_err()));
     }
@@ -247,7 +249,8 @@ auto resolve_project(
     Option<lito::workspace::WorkspaceCatalog>      catalog  = None(),
     lito::lock::InvalidLockPolicy            invalid_lock   = lito::lock::InvalidLockPolicy::Reject,
     const lito::config::LitoBootstrapConfig* registries     = nullptr,
-    lito::registry::RegistryGraphProvider    registry = {}) -> ProjectResult<ProjectResolution> {
+    lito::registry::RegistryGraphProvider    registry       = {},
+    Option<ref<str>> artifact_processor = None()) -> ProjectResult<ProjectResolution> {
     auto started =
         rstd_try(start_project_resolution(selection,
                                           purpose,
@@ -264,7 +267,8 @@ auto resolve_project(
                                           lito::source::SourceMaterializationPolicy::Materialize,
                                           invalid_lock,
                                           registries,
-                                          registry));
+                                          registry,
+                                          artifact_processor));
     auto declared_sources =
         rstd_try(resolve_external_dependency_sources(started.selection.graph,
                                                      rstd::move(started.external),
@@ -531,7 +535,7 @@ auto resolve_acquisition_platform(const config::BuildConfigurationRequest& confi
                                    ? Option<ref<str>> {}
                                    : Some(resolved.target.info.triple.as_str());
         auto selected_platform =
-            resolve_build_platform(host, resolved.target.info, explicit_target, None());
+            resolve_build_platform(host, resolved.compiler_default, explicit_target, None());
         if (selected_platform.is_err()) {
             return Err(ProjectError::Platform(rstd::move(selected_platform).unwrap_err()));
         }
@@ -556,7 +560,7 @@ auto validate_linker_profile(const ClangToolchain&                            to
     const auto& linker = toolchain.linker_identity();
     if (linker.family != LinkerFamily::GnuLd) return Ok(empty {});
     const auto& target = platform.effective_target;
-    if (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str ||
+    if (target.family != TargetFamily::Unix || target.platform == TargetPlatform::Macos ||
         target.triple.as_str() != toolchain.target()) {
         return Err(ProjectError::Message(rstd::format(
             "configured GNU ld is only supported for the host ELF target '{}'; effective target "
@@ -636,7 +640,7 @@ auto resolve_build_context(const lito::config::ProjectBuildOptions& options,
             cpp_target.target.is_some();
         platform = rstd_try(resolve_build_platform(
             host,
-            toolchain.target_info(),
+            toolchain.compiler_default_target_info(),
             explicit_target ? Some(toolchain.target()) : Option<ref<str>> {},
             cpp_target.sysroot.is_some() ? Some(cpp_target.sysroot->value) : Option<ref<str>> {}));
     }
@@ -680,7 +684,8 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              Option<lito::workspace::WorkspaceCatalog>      catalog       = None(),
                              const AndroidCmakeProjection*                  android_cmake = nullptr,
                              const lito::config::LitoBootstrapConfig*       registries    = nullptr,
-                             lito::registry::RegistryGraphProvider          registry      = {})
+                             lito::registry::RegistryGraphProvider          registry      = {},
+                             Option<ref<str>> artifact_processor                          = None())
     -> ProjectResult<ResolvedProjectSession> {
     auto project = rstd_try(resolve_project(selection,
                                             purpose,
@@ -697,7 +702,8 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                                             rstd::move(catalog),
                                             lito::lock::InvalidLockPolicy::Reject,
                                             registries,
-                                            registry));
+                                            registry,
+                                            artifact_processor));
     return Ok(ResolvedProjectSession {
         .project         = rstd::move(project),
         .build_arguments = rstd::move(context.build_arguments),
@@ -745,32 +751,33 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     rstd_try(
         validate_linker_profile(toolchain, resolved_profile, session.platform, project.standards));
     if (resolved_configuration.standard_library == lito::config::StandardLibrary::Msvc &&
-        target.environment != TargetEnvironment::Msvc) {
+        ! target.is_msvc()) {
         return Err(ProjectError::Message(rstd::format(
             "standard library 'msvc' requires a Windows MSVC target; effective target is '{}'",
             target.triple.as_str())));
     }
     if (resolved_configuration.standard_library == lito::config::StandardLibrary::Libstdcxx &&
-        target.environment == TargetEnvironment::Msvc) {
+        target.is_msvc()) {
         return Err(ProjectError::Message(rstd::format(
             "standard library 'libstdc++' is not supported for Windows MSVC target '{}'",
             target.triple.as_str())));
     }
-    if (target.os.as_str() == "android"_str &&
+    if (target.platform == TargetPlatform::Android &&
         resolved_configuration.standard_library != lito::config::StandardLibrary::Libcxx) {
         return Err(ProjectError::Message(
             rstd::format("Android target '{}' only supports standard library 'libc++'",
                          target.triple.as_str())));
     }
-    if (target.os.as_str() != "android"_str && resolved_configuration.standard_library_runtime ==
-                                                   lito::config::StandardLibraryRuntime::Static) {
+    if (target.platform != TargetPlatform::Android &&
+        resolved_configuration.standard_library_runtime ==
+            lito::config::StandardLibraryRuntime::Static) {
         return Err(ProjectError::Message(
             rstd::format("static standard-library runtime is not supported for target '{}'",
                          target.triple.as_str())));
     }
     auto normalize_microsoft_runtime =
         [&target](lito::compiler::CommonCompileOptions& options) -> ProjectResult<empty> {
-        if (target.environment != TargetEnvironment::Msvc) {
+        if (! target.is_msvc()) {
             if (options.microsoft_runtime_library.is_some()) {
                 return Err(ProjectError::Message(rstd::format(
                     "-fms-runtime-lib requires a Windows MSVC target; effective target is '{}'",
@@ -799,7 +806,19 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         return Err(ProjectError::Message(String::make(
             "C and C++ compilation selected different Microsoft runtime libraries"_str)));
     }
+    auto layout = BuildLayout::create(project.graph.root_directory.as_path(),
+                                      requested_output,
+                                      resolved_profile.name.as_str(),
+                                      session.platform.output_key.as_str());
+    if (layout.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(layout).unwrap_err()));
+    }
     if (project.standards.cpp.is_some()) {
+        auto prepared_support = toolchain.prepare_target_cxx_support(
+            resolved_profile.cpp, layout->generated_root().as_path());
+        if (prepared_support.is_err()) {
+            return Err(rstd::into<ProjectError>(rstd::move(prepared_support).unwrap_err()));
+        }
         auto standard_library =
             toolchain.resolve_standard_library(resolved_profile.cpp,
                                                session.platform.effective_target,
@@ -820,13 +839,6 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                             session.platform,
                             project.graph,
                             project.selected_package_names);
-    auto layout = BuildLayout::create(project.graph.root_directory.as_path(),
-                                      requested_output,
-                                      resolved_profile.name.as_str(),
-                                      session.platform.output_key.as_str());
-    if (layout.is_err()) {
-        return Err(rstd::into<ProjectError>(rstd::move(layout).unwrap_err()));
-    }
     for (auto& package : project.graph.packages) {
         auto selected = false;
         for (const auto& name : project.selected_package_names) {
@@ -891,16 +903,18 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   cmake_find_install_prefix));
     auto assets         = rstd::move(external_usage.assets);
     auto provenance     = rstd::move(external_usage.provenance);
-    auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
-                                                            project.selected_package_names,
-                                                            project.selected_targets,
-                                                            project.effective_targets,
-                                                            resolved_configuration,
-                                                            rstd::move(resolved_profile),
-                                                            session.platform,
-                                                            rstd::move(external_usage.usage),
-                                                            rstd::move(external_usage.sources),
-                                                            toolchain.argument_parser());
+    auto host_only_dependencies = project.artifact_processor_package_names.clone();
+    auto metadata = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
+                                                      project.selected_package_names,
+                                                      project.selected_targets,
+                                                      project.effective_targets,
+                                                      host_only_dependencies,
+                                                      resolved_configuration,
+                                                      rstd::move(resolved_profile),
+                                                      session.platform,
+                                                      rstd::move(external_usage.usage),
+                                                      rstd::move(external_usage.sources),
+                                                      toolchain.argument_parser());
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
@@ -1057,6 +1071,8 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     host_request.target                   = config::BuildTargetRequest::Default();
     host_request.toolchain.sdk            = None();
     host_request.toolchain.target         = config::ToolchainTargetSelection::CompilerDefault();
+    host_request.toolchain.wasm           = None();
+    host_request.standard_library         = config::StandardLibrarySelection::Auto;
     host_request.standard_library_runtime = config::StandardLibraryRuntime::Dynamic;
     auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
     auto target_runtimes = Vec<BuiltTargetRuntime>::make();
@@ -1081,7 +1097,14 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
-    auto toolchain              = rstd::move(created).unwrap();
+    auto       toolchain   = rstd::move(created).unwrap();
+    const auto wasm_target = toolchain.target_info().architecture == Architecture::Wasm32 ||
+                             toolchain.target_info().architecture == Architecture::Wasm64;
+    if (configuration.toolchain.wasm.is_some() && ! wasm_target) {
+        return Err(ProjectError::Message(
+            rstd::format("toolchain.wasm requires a WebAssembly target, got '{}'",
+                         toolchain.target_info().triple.as_str())));
+    }
     host_request.global_options = rstd_try(cpp::project_host_profile_options(
         configuration.global_options, toolchain.argument_parser()));
     auto platform               = Option<BuildPlatform> {};
@@ -1118,7 +1141,10 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         rstd::move(catalog),
         cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr,
         registries,
-        registry);
+        registry,
+        configuration.toolchain.wasm.is_some() && configuration.toolchain.wasm->processor.is_some()
+            ? Some(configuration.toolchain.wasm->processor->as_str())
+            : Option<ref<str>> {});
     if (session.is_err()) return Err(rstd::move(session).unwrap_err());
     auto plugin_host = Option<Box<ResolvedPluginBuildProject>> {};
     if (! session->project.selection.host_package_names.is_empty()) {
@@ -1131,21 +1157,26 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         auto host_toolchain = rstd::move(host_created).unwrap();
         auto host_context =
             rstd_try(resolve_build_context(host_request.global_options, host_toolchain));
-        auto host_session   = rstd_try(resolve_project_session(selection,
-                                                               sources,
-                                                               lock,
-                                                               tool_resolver,
-                                                               environment,
-                                                               cmake_build_overrides,
-                                                               locked,
-                                                               purpose,
-                                                               jobs,
-                                                               rstd::move(host_context),
-                                                               observer,
-                                                               None(),
-                                                               nullptr,
-                                                               registries,
-                                                               registry));
+        auto host_session = rstd_try(
+            resolve_project_session(selection,
+                                    sources,
+                                    lock,
+                                    tool_resolver,
+                                    environment,
+                                    cmake_build_overrides,
+                                    locked,
+                                    purpose,
+                                    jobs,
+                                    rstd::move(host_context),
+                                    observer,
+                                    None(),
+                                    nullptr,
+                                    registries,
+                                    registry,
+                                    configuration.toolchain.wasm.is_some() &&
+                                            configuration.toolchain.wasm->processor.is_some()
+                                        ? Some(configuration.toolchain.wasm->processor->as_str())
+                                        : Option<ref<str>> {}));
         auto host_selection = lito::package::resolve_plugin_host_selection(
             rstd::move(host_session.project.selection));
         if (host_selection.is_err()) {

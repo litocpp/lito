@@ -10,6 +10,7 @@ import lito.cpp;
 import :build.event;
 import :build.request;
 import :build.artifact;
+import :build.artifact_processor;
 import :build.documentation;
 import :build.result;
 import :build.error;
@@ -482,7 +483,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     });
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
-    auto finalized   = cpp::finalize_package(rstd::move(metadata), rstd::move(source_sets));
+    auto finalized   = cpp::finalize_package(
+        rstd::move(metadata), rstd::move(source_sets), project.platform.effective_target);
     if (finalized.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(finalized).unwrap_err()));
     }
@@ -752,42 +754,100 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     if (plugin_host.is_some()) {
         auto plugin_action_started = rstd::time::Instant::now();
-        auto macro_roots           = Vec<cpp::UnitId>::make();
-        for (auto unit = cpp::UnitId {}; unit < proc_macro_sources.len(); ++unit) {
-            if (proc_macro_sources[unit] != u8 {}) macro_roots.emplace_back(unit);
-        }
-        prerequisite_selection = compile_plan_prerequisite_closure(actions.compile, macro_roots);
-        for (auto root : macro_roots) prerequisite_selection[root] = u8 {};
-        auto prepared_dependencies =
-            execute_compile_plan_selection(package,
-                                           units,
-                                           actions.compile,
-                                           prerequisite_selection,
-                                           rstd::move(prerequisite_identities),
-                                           cache,
-                                           toolchain.compile_executor(),
-                                           request.observer,
-                                           *compile_execution);
-        if (prepared_dependencies.is_err()) {
-            return Err(rstd::move(prepared_dependencies).unwrap_err());
-        }
-        auto prepared_dependency_result = rstd::move(prepared_dependencies).unwrap();
-        prerequisite_identities         = rstd::move(prepared_dependency_result.object_identities);
-        auto transformed = transform_proc_macro_sources(layout,
-                                                        toolchain,
-                                                        package,
-                                                        package_plan,
-                                                        units,
-                                                        target_units,
-                                                        proc_macro_sources,
-                                                        plugin_host->proc_macro_aggregates);
-        if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
-        if (*transformed) {
-            stage_timing.record(BuildStage::Plugin, initial_plan_elapsed);
+        auto pending_sources       = proc_macro_sources.clone();
+        while (true) {
+            auto pending = false;
+            auto ready   = Vec<cpp::UnitId>::make();
+            for (auto unit = cpp::UnitId {}; unit < pending_sources.len(); ++unit) {
+                if (pending_sources[unit] == u8 {}) continue;
+                pending          = true;
+                auto single_root = Vec<cpp::UnitId>::make();
+                single_root.emplace_back(unit);
+                auto closure = compile_plan_prerequisite_closure(actions.compile, single_root);
+                auto waits_for_source = false;
+                for (auto dependency = cpp::UnitId {}; dependency < pending_sources.len();
+                     ++dependency) {
+                    if (dependency != unit && pending_sources[dependency] != u8 {} &&
+                        closure[dependency] != u8 {}) {
+                        waits_for_source = true;
+                        break;
+                    }
+                }
+                if (! waits_for_source) ready.emplace_back(unit);
+            }
+            if (! pending) break;
+            if (ready.is_empty()) {
+                return build_failure<BuildSummary>(
+                    "proc-macro sources have cyclic expansion dependencies"_str);
+            }
+
+            auto available = compile_plan_available_prerequisites(actions.compile, ready);
+            for (auto unit = cpp::UnitId {}; unit < available.len(); ++unit) {
+                if (prerequisite_selection[unit] != u8 {}) available[unit] = u8 {};
+            }
+            auto prepared_dependencies =
+                execute_compile_plan_selection(package,
+                                               units,
+                                               actions.compile,
+                                               available,
+                                               rstd::move(prerequisite_identities),
+                                               cache,
+                                               toolchain.compile_executor(),
+                                               request.observer,
+                                               *compile_execution);
+            if (prepared_dependencies.is_err()) {
+                return Err(rstd::move(prepared_dependencies).unwrap_err());
+            }
+            auto prepared_dependency_result = rstd::move(prepared_dependencies).unwrap();
+            prerequisite_identities = rstd::move(prepared_dependency_result.object_identities);
+            for (auto unit = cpp::UnitId {}; unit < available.len(); ++unit) {
+                if (available[unit] != u8 {}) prerequisite_selection[unit] = u8(1);
+            }
+
+            auto selected_sources = Vec<u8>::with_capacity(pending_sources.len());
+            for (auto unit = cpp::UnitId {}; unit < pending_sources.len(); ++unit) {
+                selected_sources.push(u8 {});
+            }
+            for (auto unit : ready) {
+                selected_sources[unit] = u8(1);
+                pending_sources[unit]  = u8 {};
+            }
+            auto transformed = transform_proc_macro_sources(layout,
+                                                            toolchain,
+                                                            package,
+                                                            package_plan,
+                                                            units,
+                                                            target_units,
+                                                            selected_sources,
+                                                            plugin_host->proc_macro_aggregates);
+            if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
+            if (! *transformed) continue;
+
+            if (! compile_plan_recorded) {
+                stage_timing.record(BuildStage::CompilePlan, initial_plan_elapsed);
+                compile_plan_recorded = true;
+            }
             auto authoritative_plan_started = rstd::time::Instant::now();
             rstd_try(rebuild_after_source_transformation());
             stage_timing.record(BuildStage::CompilePlan, authoritative_plan_started.elapsed());
-            compile_plan_recorded = true;
+
+            auto transformed_selection = compile_plan_prerequisite_closure(actions.compile, ready);
+            auto transformed_compile =
+                execute_compile_plan_selection(package,
+                                               units,
+                                               actions.compile,
+                                               transformed_selection,
+                                               rstd::move(prerequisite_identities),
+                                               cache,
+                                               toolchain.compile_executor(),
+                                               request.observer,
+                                               *compile_execution);
+            if (transformed_compile.is_err()) {
+                return Err(rstd::move(transformed_compile).unwrap_err());
+            }
+            auto transformed_result = rstd::move(transformed_compile).unwrap();
+            prerequisite_identities = rstd::move(transformed_result.object_identities);
+            prerequisite_selection  = rstd::move(transformed_selection);
         }
         stage_timing.record(BuildStage::Plugin, plugin_action_started.elapsed());
     }
@@ -1005,7 +1065,71 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     stage_timing.record(BuildStage::CompileCacheFinish, cache_finish_started.elapsed());
 
-    auto artifacts = Vec<BuiltArtifact>::make();
+    auto                 artifacts                     = Vec<BuiltArtifact>::make();
+    const BuiltArtifact* configured_artifact_processor = nullptr;
+    if (project.configuration.toolchain.wasm.is_some() &&
+        project.configuration.toolchain.wasm->processor.is_some()) {
+        if (plugin_host.is_none()) {
+            return build_failure<BuildSummary>(
+                "configured artifact processor was not built for the host"_str);
+        }
+        const auto& package_name = *project.configuration.toolchain.wasm->processor;
+        for (const auto& candidate : plugin_host->product.artifacts) {
+            if (candidate.target.package != package_name.as_str() ||
+                candidate.kind != cpp::ArtifactKind::Executable) {
+                continue;
+            }
+            if (configured_artifact_processor != nullptr) {
+                return build_failure<BuildSummary>(rstd::format(
+                    "artifact processor package '{}' produced more than one host executable",
+                    package_name.as_str()));
+            }
+            configured_artifact_processor = rstd::addressof(candidate);
+        }
+        if (configured_artifact_processor == nullptr) {
+            return build_failure<BuildSummary>(
+                rstd::format("artifact processor package '{}' did not produce a host executable",
+                             package_name.as_str()));
+        }
+    }
+    const auto selected_product =
+        [&selected_targets](const lito::package::PackageTargetId& target) {
+            for (const auto& selected : selected_targets) {
+                if (selected == target) return true;
+            }
+            return false;
+        };
+    const auto append_target_link_inputs =
+        [&](cpp::TargetId target, Vec<ResolvedLinkInput>& link_inputs) -> BuildResult<empty> {
+        const auto& target_spec = package.targets[target];
+        for (const auto& input : package_plan.link_inputs[target]) {
+            if (input.is_External()) {
+                link_inputs.push(
+                    ResolvedLinkInput::External(input.as_External().arguments.clone()));
+                continue;
+            }
+            auto        dependency      = input.as_Target().target;
+            const auto& dependency_spec = package.targets[dependency];
+            if ((dependency_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary &&
+                 dependency_spec.artifact_kind != cpp::ArtifactKind::SharedLibrary) ||
+                library_paths[dependency].is_none()) {
+                return build_failure<empty>(rstd::format(
+                    "target '{}' depends on unavailable library target '{}'",
+                    lito::package::package_target_id_text(target_spec.id).as_str(),
+                    lito::package::package_target_id_text(dependency_spec.id).as_str()));
+            }
+            if (dependency_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
+                link_inputs.push(
+                    ResolvedLinkInput::SharedLibrary((*library_paths[dependency]).clone()));
+            } else {
+                link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
+                    .path = (*library_paths[dependency]).clone(),
+                    .mode = LinkArchiveMode::Normal,
+                }));
+            }
+        }
+        return Ok(empty {});
+    };
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         if (library_paths[target].is_some()) continue;
@@ -1029,9 +1153,15 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         auto archive_path     = rstd::move(archived).unwrap();
         library_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
-            .target        = target_spec.id.clone(),
-            .kind          = target_spec.artifact_kind,
-            .path          = rstd::move(archive_path),
+            .target = target_spec.id.clone(),
+            .kind   = target_spec.artifact_kind,
+            .format = lito::artifact::Format::Archive,
+            .primary =
+                BuiltArtifactFile {
+                    .role         = ArtifactFileRole::LinkInput,
+                    .path         = rstd::move(archive_path),
+                    .content_type = String::make("application/x-archive"_str),
+                },
             .package_root  = target_spec.root.clone(),
             .link_identity = String::make(),
         });
@@ -1072,32 +1202,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 }));
             }
         }
-        for (const auto& input : package_plan.link_inputs[target]) {
-            if (input.is_External()) {
-                link_inputs.push(
-                    ResolvedLinkInput::External(input.as_External().arguments.clone()));
-                continue;
-            }
-            auto        dependency      = input.as_Target().target;
-            const auto& dependency_spec = package.targets[dependency];
-            if ((dependency_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary &&
-                 dependency_spec.artifact_kind != cpp::ArtifactKind::SharedLibrary) ||
-                library_paths[dependency].is_none()) {
-                return build_failure<BuildSummary>(rstd::format(
-                    "executable target '{}' depends on unavailable "
-                    "library target '{}'",
-                    lito::package::package_target_id_text(target_spec.id).as_str(),
-                    lito::package::package_target_id_text(dependency_spec.id).as_str()));
-            }
-            if (dependency_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
-                link_inputs.push(
-                    ResolvedLinkInput::SharedLibrary((*library_paths[dependency]).clone()));
-            } else {
-                link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
-                    .path = (*library_paths[dependency]).clone(),
-                    .mode = LinkArchiveMode::Normal,
-                }));
-            }
+        auto appended_inputs = append_target_link_inputs(target, link_inputs);
+        if (appended_inputs.is_err()) {
+            return Err(rstd::move(appended_inputs).unwrap_err());
         }
         const RequestedArtifactLinkVariant* install_variant = nullptr;
         if (artifact_link_variants != nullptr)
@@ -1130,6 +1237,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                    target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
             executable_path = layout.benchmark(target_spec.id, target_spec.artifact_name.as_str());
         }
+        const auto process_artifact =
+            configured_artifact_processor != nullptr && selected_product(target_spec.id);
+        if (process_artifact) {
+            executable_path =
+                layout.artifact_processor_raw(target_spec.id, target_spec.artifact_name.as_str());
+        }
         auto target_identity = lito::package::package_target_id_text(target_spec.id);
         emit(request, BuildEventKind::Link, target_identity.as_str(), executable_path.as_path());
         const auto& language_lto = target_spec.language == lito::manifest::PackageLanguage::C
@@ -1149,6 +1262,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             .standard_library_runtime  = project.configuration.standard_library_runtime,
             .microsoft_runtime_library = microsoft_runtime_library,
             .link_standard_library     = target_spec.link_stdlib,
+            .wasm                      = project.configuration.toolchain.wasm.is_some()
+                                             ? Some(project.configuration.toolchain.wasm->clone())
+                                             : Option<lito::config::WasmToolchainSpec> {},
         };
         auto linked = [&] {
             if (target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
@@ -1234,15 +1350,191 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         link_identity.push_str(lito::link::requirements_identity(link_requirements).as_str());
         auto install_link = Option<InstallArtifactLinkPolicy> {};
         if (install_variant != nullptr) install_link = Some(install_variant->policy.clone());
-        artifacts.push(BuiltArtifact {
-            .target        = target_spec.id.clone(),
-            .kind          = target_spec.artifact_kind,
-            .path          = rstd::move(executable_path),
+        auto artifact = BuiltArtifact {
+            .target = target_spec.id.clone(),
+            .kind   = target_spec.artifact_kind,
+            .format = lito::artifact::product_format(
+                target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
+                    ? lito::artifact::ProductKind::SharedLibrary
+                    : lito::artifact::ProductKind::Executable,
+                project.platform.effective_target),
+            .primary =
+                BuiltArtifactFile {
+                    .role         = target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
+                                        ? ArtifactFileRole::LinkInput
+                                        : ArtifactFileRole::Runtime,
+                    .path         = rstd::move(executable_path),
+                    .content_type = String::make("application/octet-stream"_str),
+                },
             .package_root  = target_spec.root.clone(),
             .install_link  = rstd::move(install_link),
             .link_identity = rstd::move(link_identity),
-        });
+        };
         stage_timing.record(BuildStage::Link, link_started.elapsed());
+        if (process_artifact) {
+            emit(request,
+                 BuildEventKind::ArtifactProcess,
+                 target_identity.as_str(),
+                 artifact.primary.path.as_path());
+            auto process_started = rstd::time::Instant::now();
+            auto processed =
+                execute_artifact_processor(rstd::move(artifact),
+                                           *configured_artifact_processor,
+                                           *project.configuration.toolchain.wasm,
+                                           layout,
+                                           process_environment,
+                                           package_plan.profile->name.as_str(),
+                                           project.platform.effective_target.triple.as_str());
+            if (processed.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(processed).unwrap_err()));
+            }
+            auto process_elapsed = process_started.elapsed();
+            build_timing.record(BuildOperation::ArtifactProcess, process_elapsed);
+            stage_timing.record(BuildStage::ArtifactProcess, process_elapsed);
+            if (processed->reused) {
+                emit(request,
+                     BuildEventKind::ArtifactProcessReuse,
+                     target_identity.as_str(),
+                     processed->artifact.primary.path.as_path());
+            }
+            artifact = rstd::move(processed).unwrap().artifact;
+        }
+        artifacts.push(rstd::move(artifact));
+    }
+
+    if (project.configuration.toolchain.wasm.is_some()) {
+        for (auto target : package_plan.target_order) {
+            const auto& target_spec = package.targets[target];
+            if (target_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary ||
+                ! selected_product(target_spec.id)) {
+                continue;
+            }
+            if (library_paths[target].is_none()) {
+                return build_failure<BuildSummary>(rstd::format(
+                    "selected static WebAssembly target '{}' has no archive link input",
+                    lito::package::package_target_id_text(target_spec.id).as_str()));
+            }
+            auto artifact_index = Option<usize> {};
+            for (usize index {}; index < artifacts.len(); ++index) {
+                if (artifacts[index].target != target_spec.id ||
+                    artifacts[index].kind != cpp::ArtifactKind::StaticLibrary) {
+                    continue;
+                }
+                if (artifact_index.is_some()) {
+                    return build_failure<BuildSummary>(rstd::format(
+                        "selected static WebAssembly target '{}' produced duplicate archives",
+                        lito::package::package_target_id_text(target_spec.id).as_str()));
+                }
+                artifact_index = Some(index);
+            }
+            if (artifact_index.is_none()) {
+                return build_failure<BuildSummary>(
+                    rstd::format("selected static WebAssembly target '{}' was not recorded",
+                                 lito::package::package_target_id_text(target_spec.id).as_str()));
+            }
+            auto module_name =
+                lito::artifact::product_name(lito::artifact::ProductKind::SharedLibrary,
+                                             target_spec.archive_stem.as_str(),
+                                             project.platform.effective_target);
+            auto module_path =
+                configured_artifact_processor != nullptr
+                    ? layout.artifact_processor_raw(target_spec.id, module_name.as_str())
+                    : layout.shared_library(target_spec.id, module_name.as_str());
+            auto link_inputs = Vec<ResolvedLinkInput>::make();
+            link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
+                .path = (*library_paths[target]).clone(),
+                .mode = LinkArchiveMode::Whole,
+            }));
+            auto appended_inputs = append_target_link_inputs(target, link_inputs);
+            if (appended_inputs.is_err()) {
+                return Err(rstd::move(appended_inputs).unwrap_err());
+            }
+            const auto& language_lto = target_spec.language == lito::manifest::PackageLanguage::C
+                                           ? package_plan.profile->c.common.codegen.lto
+                                           : package_plan.profile->cpp.common.codegen.lto;
+            const auto& link_lto     = package_plan.profile->link_lto.is_some()
+                                           ? Option<lito::manifest::Lto> {}
+                                           : language_lto;
+            const auto& microsoft_runtime_library =
+                target_spec.language == lito::manifest::PackageLanguage::C
+                    ? package_plan.profile->c.common.microsoft_runtime_library
+                    : package_plan.profile->cpp.common.microsoft_runtime_library;
+            auto link_context = LinkTargetContext {
+                .platform                  = project.platform.clone(),
+                .language                  = target_spec.language,
+                .standard_library          = package_plan.profile->cpp.abi.standard_library,
+                .standard_library_runtime  = project.configuration.standard_library_runtime,
+                .microsoft_runtime_library = microsoft_runtime_library,
+                .link_standard_library     = target_spec.link_stdlib,
+                .wasm                      = Some(project.configuration.toolchain.wasm->clone()),
+            };
+            auto target_identity = lito::package::package_target_id_text(target_spec.id);
+            emit(request, BuildEventKind::Link, target_identity.as_str(), module_path.as_path());
+            auto link_started      = rstd::time::Instant::now();
+            auto link_requirements = package_plan.link_requirements[target].clone();
+            auto linked            = toolchain.link_executable(module_path.as_path(),
+                                                               Vec<PathBuf>::make(),
+                                                               link_inputs,
+                                                               link_context,
+                                                               link_lto,
+                                                               link_requirements,
+                                                               package_plan.linker_options[target],
+                                                               target_spec.root.as_path());
+            if (linked.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(linked).unwrap_err()));
+            }
+            build_timing.record(BuildOperation::Link, *linked);
+            stage_timing.record(BuildStage::Link, link_started.elapsed());
+
+            auto archive_file       = rstd::move(artifacts[*artifact_index].primary);
+            archive_file.publish    = false;
+            auto module_artifact    = rstd::move(artifacts[*artifact_index]);
+            module_artifact.format  = lito::artifact::Format::WebAssembly;
+            module_artifact.primary = BuiltArtifactFile {
+                .role         = ArtifactFileRole::Runtime,
+                .path         = rstd::move(module_path),
+                .content_type = String::make("application/wasm"_str),
+            };
+            auto link_identity = String::make("lito-built-wasm-static-root-v1\n"_str);
+            link_identity.push_str(toolchain.linker_identity().build_identity.as_str());
+            link_identity.push_ascii('\n');
+            link_identity.push_str(project.platform.effective_target.triple.as_str());
+            link_identity.push_ascii('\n');
+            link_identity.push_str(target_identity.as_str());
+            link_identity.push_ascii('\n');
+            link_identity.push_str(target_spec.package_source_identity.as_str());
+            module_artifact.link_identity = rstd::move(link_identity);
+            if (configured_artifact_processor != nullptr) {
+                emit(request,
+                     BuildEventKind::ArtifactProcess,
+                     target_identity.as_str(),
+                     module_artifact.primary.path.as_path());
+                auto process_started = rstd::time::Instant::now();
+                auto processed =
+                    execute_artifact_processor(rstd::move(module_artifact),
+                                               *configured_artifact_processor,
+                                               *project.configuration.toolchain.wasm,
+                                               layout,
+                                               process_environment,
+                                               package_plan.profile->name.as_str(),
+                                               project.platform.effective_target.triple.as_str());
+                if (processed.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(processed).unwrap_err()));
+                }
+                auto process_elapsed = process_started.elapsed();
+                build_timing.record(BuildOperation::ArtifactProcess, process_elapsed);
+                stage_timing.record(BuildStage::ArtifactProcess, process_elapsed);
+                if (processed->reused) {
+                    emit(request,
+                         BuildEventKind::ArtifactProcessReuse,
+                         target_identity.as_str(),
+                         processed->artifact.primary.path.as_path());
+                }
+                module_artifact = rstd::move(processed).unwrap().artifact;
+            }
+            module_artifact.companions.push(rstd::move(archive_file));
+            artifacts[*artifact_index] = rstd::move(module_artifact);
+        }
     }
 
     auto proc_macro_products = build_proc_macro_aggregates(project.configuration,

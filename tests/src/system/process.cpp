@@ -266,9 +266,9 @@ sources = ["src/library.cppm"]
     EXPECT_EQ(artifact_count(*built, lito::cpp::ArtifactKind::SharedLibrary), usize(1));
     for (const auto& artifact : built->product.artifacts) {
         if (artifact.kind != lito::cpp::ArtifactKind::SharedLibrary) continue;
-        EXPECT_EQ(artifact.path.as_path().file_name().unwrap().to_str().unwrap(),
+        EXPECT_EQ(artifact.primary.path.as_path().file_name().unwrap().to_str().unwrap(),
                   "libfixture_primary_shared.so"_str);
-        EXPECT_TRUE(rstd::fs::exists(artifact.path.as_path()).unwrap());
+        EXPECT_TRUE(rstd::fs::exists(artifact.primary.path.as_path()).unwrap());
     }
 }
 

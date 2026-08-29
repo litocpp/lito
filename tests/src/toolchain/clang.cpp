@@ -14,24 +14,27 @@ using namespace lito;
 using namespace lito_test;
 
 TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
-    const auto resolve = [](lito::system::OperatingSystem os) {
-        return resolve_standard_library_selection(lito::config::StandardLibrarySelection::Auto, os);
+    const auto resolve = [](ref<str> triple) {
+        auto target = lito::system::parse_target_info(triple).unwrap();
+        return resolve_standard_library_selection(lito::config::StandardLibrarySelection::Auto,
+                                                  target);
     };
-    auto linux = resolve(lito::system::OperatingSystem::Linux);
+    auto linux = resolve("x86_64-unknown-linux-gnu"_str);
     ASSERT_TRUE(linux.is_ok());
     EXPECT_EQ(*linux, lito::config::StandardLibrary::Libstdcxx);
-    auto android = resolve(lito::system::OperatingSystem::Android);
+    auto android = resolve("aarch64-unknown-linux-android"_str);
     ASSERT_TRUE(android.is_ok());
     EXPECT_EQ(*android, lito::config::StandardLibrary::Libcxx);
-    auto macos = resolve(lito::system::OperatingSystem::Macos);
+    auto macos = resolve("aarch64-apple-darwin"_str);
     ASSERT_TRUE(macos.is_ok());
     EXPECT_EQ(*macos, lito::config::StandardLibrary::Libcxx);
-    auto windows = resolve(lito::system::OperatingSystem::Windows);
+    auto windows = resolve("x86_64-pc-windows-msvc"_str);
     ASSERT_TRUE(windows.is_ok());
     EXPECT_EQ(*windows, lito::config::StandardLibrary::Msvc);
 
+    auto explicit_target = lito::system::parse_target_info("wasm32-unknown-unknown"_str).unwrap();
     auto explicit_selection = resolve_standard_library_selection(
-        lito::config::StandardLibrarySelection::Libcxx, lito::system::OperatingSystem::Linux);
+        lito::config::StandardLibrarySelection::Libcxx, explicit_target);
     ASSERT_TRUE(explicit_selection.is_ok());
     EXPECT_EQ(*explicit_selection, lito::config::StandardLibrary::Libcxx);
 }
@@ -45,78 +48,34 @@ TEST(ToolchainTarget, UsesClangCanonicalArchitectureNamesWithUnknownFallback) {
     EXPECT_EQ(lito::system::parse_target_architecture("amd64"_str), Architecture::X86_64);
     EXPECT_EQ(lito::system::parse_target_architecture("arm64"_str), Architecture::Aarch64);
 
-    auto unknown = lito::system::parse_target_info("future64-linux-gnu"_str);
+    auto unknown = lito::system::parse_target_info("future64-unknown-linux-gnu"_str);
     ASSERT_TRUE(unknown.is_ok());
     EXPECT_EQ(unknown->architecture, Architecture::Unknown);
-    auto encoded = lito::system::encode_target_info(lito::system::OperatingSystem::Linux,
-                                                    Architecture::Unknown,
-                                                    lito::system::TargetEnvironment::Gnu);
+    auto encoded = lito::system::encode_target_candidate(
+        "linux"_str, Architecture::Unknown, None(), Some("gnu"_str));
     EXPECT_TRUE(encoded.is_err());
 }
 
-TEST(ToolchainTarget, MaterializesOperatingSystemArchitectureAndStandardLibrary) {
-    auto architecture = lito::system::Architecture::X86_64;
-    auto target       = resolve_compile_target(
-        ToolchainTargetInput {
-            .os           = lito::system::OperatingSystem::Windows,
-            .architecture = architecture,
-            .source       = CompileTargetSource::Config,
-        },
-        lito::config::StandardLibrary::Msvc);
+TEST(ToolchainTarget, PreservesCanonicalComponentsAndValidatesStandardLibrary) {
+    auto info   = lito::system::parse_target_info("x86_64-pc-windows-msvc"_str).unwrap();
+    auto target = resolve_compile_target(
+        rstd::move(info), lito::config::StandardLibrary::Msvc, CompileTargetSource::Config);
     ASSERT_TRUE(target.is_ok());
-    EXPECT_EQ(target->info.triple.as_str(), "x86_64-windows-msvc"_str);
-    EXPECT_EQ(target->info.environment, lito::system::TargetEnvironment::Msvc);
+    EXPECT_EQ(target->info.triple.as_str(), "x86_64-pc-windows-msvc"_str);
+    EXPECT_EQ(target->info.vendor.as_str(), "pc"_str);
+    EXPECT_EQ(target->info.operating_system.as_str(), "windows"_str);
+    ASSERT_TRUE(target->info.environment.is_some());
+    EXPECT_EQ(target->info.environment->as_str(), "msvc"_str);
     EXPECT_EQ(target->standard_library, lito::config::StandardLibrary::Msvc);
     EXPECT_EQ(target->source, CompileTargetSource::Config);
 
-    struct TargetCase {
-        lito::system::OperatingSystem os;
-        ref<str>                      architecture;
-        lito::config::StandardLibrary standard_library;
-        ref<str>                      triple;
-    };
-    constexpr TargetCase cases[] = {
-        { lito::system::OperatingSystem::Linux,
-          "x86_64"_str,
-          lito::config::StandardLibrary::Libstdcxx,
-          "x86_64-linux-gnu"_str },
-        { lito::system::OperatingSystem::Linux,
-          "aarch64"_str,
-          lito::config::StandardLibrary::Libcxx,
-          "aarch64-linux-gnu"_str },
-        { lito::system::OperatingSystem::Windows,
-          "x86_64"_str,
-          lito::config::StandardLibrary::Libstdcxx,
-          "x86_64-windows-gnu"_str },
-        { lito::system::OperatingSystem::Macos,
-          "aarch64"_str,
-          lito::config::StandardLibrary::Libcxx,
-          "aarch64-apple-darwin"_str },
-    };
-    for (const auto& item : cases) {
-        auto parsed_architecture = lito::system::require_architecture(item.architecture).unwrap();
-        auto resolved            = resolve_compile_target(
-            ToolchainTargetInput {
-                .os           = item.os,
-                .architecture = rstd::move(parsed_architecture),
-                .source       = CompileTargetSource::Config,
-            },
-            item.standard_library);
-        ASSERT_TRUE(resolved.is_ok());
-        EXPECT_EQ(resolved->info.triple.as_str(), item.triple);
-    }
-
+    auto linux   = lito::system::parse_target_info("x86_64-unknown-linux-gnu"_str).unwrap();
     auto invalid = resolve_compile_target(
-        ToolchainTargetInput {
-            .os           = lito::system::OperatingSystem::Linux,
-            .architecture = target->info.architecture,
-            .source       = CompileTargetSource::Config,
-        },
-        lito::config::StandardLibrary::Msvc);
+        rstd::move(linux), lito::config::StandardLibrary::Msvc, CompileTargetSource::Config);
     ASSERT_TRUE(invalid.is_err());
     auto error = invalid.unwrap_err();
     ASSERT_TRUE(error.is_Message());
-    EXPECT_TRUE(error.as_Message().message.as_str().contains("unsupported"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("requires an MSVC"_str));
 }
 
 TEST(ClangToolchain, SelectsLldFrontendFromCompileTarget) {
@@ -133,6 +92,7 @@ TEST(ClangToolchain, SelectsLldFrontendFromCompileTarget) {
         { "aarch64-linux-android"_str, "ld.lld"_str },
         { "x86_64-unknown-freebsd"_str, "ld.lld"_str },
         { "aarch64-apple-darwin"_str, "ld64.lld"_str },
+        { "wasm32-unknown-unknown"_str, "wasm-ld"_str },
     };
     for (const auto& item : cases) {
         auto target = lito::system::parse_target_info(item.triple).unwrap();
@@ -152,7 +112,7 @@ TEST(ClangToolchain, ParsesAndValidatesSupportedTargets) {
     EXPECT_TRUE(targets->validate(wasm, "wasm32-unknown-unknown"_str).is_err());
 }
 
-TEST(ClangToolchain, QueriesDefaultTargetOnlyForCompilerDefaultSelection) {
+TEST(ClangToolchain, QueriesAndCanonicalizesDefaultAndConfiguredTargets) {
 #if RSTD_OS_UNIX
     auto directory = rstd::fs::TempDir::make("lito-clang-target-probe-test"_str);
     ASSERT_TRUE(directory.is_ok());
@@ -167,11 +127,13 @@ TEST(ClangToolchain, QueriesDefaultTargetOnlyForCompilerDefaultSelection) {
     ASSERT_TRUE(rstd::fs::create_dir_all(resource.as_path()).is_ok());
     auto compiler_script =
         rstd::format("#!/bin/sh\n"
-                     "printf '%s\\n' \"$1\" >> '{}'\n"
+                     "printf '%s\\n' \"$*\" >> '{}'\n"
                      "case \"$1\" in\n"
                      "  --version) printf '%s\\n' 'clang version 22.1.8' ;;\n"
                      "  --print-targets) printf '%s\\n' 'Registered Targets:' '  x86-64 - X86' ;;\n"
-                     "  -print-target-triple) printf '%s\\n' 'x86_64-linux-gnu' ;;\n"
+                     "  -print-target-triple) printf '%s\\n' 'x86_64-unknown-linux-gnu' ;;\n"
+                     "  --target=x86_64-unknown-windows) printf '%s\\n' "
+                     "'x86_64-unknown-windows-msvc' ;;\n"
                      "  -print-resource-dir) printf '%s\\n' '{}' ;;\n"
                      "  --help) printf '%s\\n' '-fmodule-output' '-fmodule-file' "
                      "'-fmodules-reduced-bmi' '--precompile ' '--precompile-reduced-bmi' "
@@ -200,12 +162,12 @@ TEST(ClangToolchain, QueriesDefaultTargetOnlyForCompilerDefaultSelection) {
             .ld     = linker.clone(),
             .ar     = archiver.clone(),
             .target = lito::config::ToolchainTargetSelection::Config(
-                lito::system::OperatingSystem::Windows, rstd::move(architecture)),
+                String::make("windows"_str), rstd::move(architecture), None(), None()),
         },
         lito::config::StandardLibrarySelection::Msvc,
         *environment);
     ASSERT_TRUE(explicit_toolchain.is_ok());
-    EXPECT_EQ(explicit_toolchain->target(), "x86_64-windows-msvc"_str);
+    EXPECT_EQ(explicit_toolchain->target(), "x86_64-unknown-windows-msvc"_str);
     EXPECT_EQ(explicit_toolchain->ld_path(), linker.as_path());
     auto explicit_log = rstd::fs::read_to_string(log.as_path());
     ASSERT_TRUE(explicit_log.is_ok());
@@ -213,7 +175,8 @@ TEST(ClangToolchain, QueriesDefaultTargetOnlyForCompilerDefaultSelection) {
     auto explicit_supported = explicit_log->as_str().split_once("--print-targets"_str);
     ASSERT_TRUE(explicit_supported.is_some());
     EXPECT_FALSE(explicit_supported->get<1>().contains("--print-targets"_str));
-    EXPECT_FALSE(explicit_log->as_str().contains("-print-target-triple"_str));
+    EXPECT_TRUE(explicit_log->as_str().contains(
+        "--target=x86_64-unknown-windows -print-target-triple"_str));
 
     ASSERT_TRUE(rstd::fs::write(log.as_path(), ""_str.as_bytes()).is_ok());
     auto compiler_default = ClangToolchain::create(
@@ -226,7 +189,7 @@ TEST(ClangToolchain, QueriesDefaultTargetOnlyForCompilerDefaultSelection) {
         lito::config::StandardLibrarySelection::Auto,
         *environment);
     ASSERT_TRUE(compiler_default.is_ok());
-    EXPECT_EQ(compiler_default->target(), "x86_64-linux-gnu"_str);
+    EXPECT_EQ(compiler_default->target(), "x86_64-unknown-linux-gnu"_str);
     auto default_log = rstd::fs::read_to_string(log.as_path());
     ASSERT_TRUE(default_log.is_ok());
     EXPECT_TRUE(default_log->as_str().contains("--print-targets"_str));

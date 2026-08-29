@@ -287,7 +287,7 @@ sources = ["src/lib.cppm"]
 auto executable(const lito::BuildSummary& summary) -> Option<ref<rstd::path::Path>> {
     for (const auto& artifact : summary.product.artifacts) {
         if (artifact.kind == lito::cpp::ArtifactKind::Executable) {
-            return Some(artifact.path.as_path());
+            return Some(artifact.primary.path.as_path());
         }
     }
     return None();

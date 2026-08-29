@@ -24,6 +24,8 @@ enum class BuildEventKind
     ArchiveReuse,
     Link,
     Strip,
+    ArtifactProcess,
+    ArtifactProcessReuse,
     Configure,
     ConfigureReuse,
     BuildToolFetch,
@@ -85,6 +87,8 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::ArchiveReuse: name = "archive-reuse"_str; break;
         case lito::BuildEventKind::Link: name = "link"_str; break;
         case lito::BuildEventKind::Strip: name = "strip"_str; break;
+        case lito::BuildEventKind::ArtifactProcess: name = "artifact-process"_str; break;
+        case lito::BuildEventKind::ArtifactProcessReuse: name = "artifact-process-reuse"_str; break;
         case lito::BuildEventKind::Configure: name = "configure"_str; break;
         case lito::BuildEventKind::ConfigureReuse: name = "configure-reuse"_str; break;
         case lito::BuildEventKind::BuildToolFetch: name = "build-tool-fetch"_str; break;

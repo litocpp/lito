@@ -130,9 +130,9 @@ sources = ["src/main.cpp"]
         return;
     }
     ASSERT_EQ(result->product.artifacts.len(), usize(1));
-    auto status =
-        rstd::process::Command::make(result->product.artifacts[usize {}].path.as_path().as_os_str())
-            .status();
+    auto status = rstd::process::Command::make(
+                      result->product.artifacts[usize {}].primary.path.as_path().as_os_str())
+                      .status();
     ASSERT_TRUE(status.is_ok());
     EXPECT_TRUE(status->success());
     auto repeated = lito::build(request);
@@ -261,8 +261,8 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     ASSERT_TRUE(installed->product.artifacts[usize {}].install_link.is_some());
     EXPECT_EQ(installed->product.artifacts[usize {}].install_link->identity.as_str(),
               "fixture-install-link-v1"_str);
-    EXPECT_NE(installed->product.artifacts[usize {}].path.as_path(),
-              normal->product.artifacts[usize {}].path.as_path());
+    EXPECT_NE(installed->product.artifacts[usize {}].primary.path.as_path(),
+              normal->product.artifacts[usize {}].primary.path.as_path());
     EXPECT_EQ(installed->compiled, usize {});
     EXPECT_TRUE(installed->reused > usize {});
 }
@@ -1384,7 +1384,7 @@ auto main() -> int {
     for (const auto& artifact : result->product.artifacts) {
         if (artifact.kind != lito::cpp::ArtifactKind::StaticLibrary) continue;
         auto command = rstd::process::Command::make("/nix/opt/llvm/22/bin/llvm-readelf"_str);
-        command.arg("--symbols"_str).arg(artifact.path.as_path().as_os_str());
+        command.arg("--symbols"_str).arg(artifact.primary.path.as_path().as_os_str());
         auto output = command.output();
         ASSERT_TRUE(output.is_ok());
         ASSERT_TRUE(output->status.success());

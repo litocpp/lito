@@ -863,6 +863,14 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
     auto link_inputs       = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
     auto link_requirements = Vec<lito::link::Requirements>::with_capacity(package.targets.len());
     auto linker_options    = Vec<Vec<String>>::with_capacity(package.targets.len());
+    auto compiler_extension_graph = false;
+    for (auto target : target_order) {
+        auto kind = package.targets[target].artifact_kind;
+        if (kind == ArtifactKind::CompilerPlugin || kind == ArtifactKind::ProcMacroProvider) {
+            compiler_extension_graph = true;
+            break;
+        }
+    }
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());
         public_targets.emplace_back();
@@ -1076,6 +1084,10 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                     erase_error(rstd::move(applied).unwrap_err())));
             }
             cpp.options = rstd::move(applied).unwrap();
+            if (compiler_extension_graph) {
+                cpp.options.language.exceptions = false;
+                cpp.options.language.rtti       = false;
+            }
         }
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);

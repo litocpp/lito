@@ -248,7 +248,7 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
         for (const auto& artifact : recipe.artifacts) {
             auto built = rstd_try(artifact_for(product, requirements, artifact.target));
             rstd_try(validate_product_file(
-                product, built->path.as_path(), "completed build artifact"_str));
+                product, built->primary.path.as_path(), "completed build artifact"_str));
             auto production = Option<InstallLinkProduction> {};
             if (built->install_link.is_some()) {
                 production = Some(InstallLinkProduction {
@@ -261,10 +261,31 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                 entries,
                 InstallEntry {
                     .origin          = InstallEntryOrigin::BuildArtifact(artifact.target.clone()),
-                    .payload         = InstallEntryPayload::CopyFile(built->path.clone()),
+                    .payload         = InstallEntryPayload::CopyFile(built->primary.path.clone()),
                     .link_production = rstd::move(production),
                     .relative_destination = artifact.destination.clone(),
                 }));
+            auto destination_parent = artifact.destination.as_path().parent();
+            for (const auto& file : built->companions) {
+                if (! file.publish) continue;
+                rstd_try(validate_product_file(
+                    product, file.path.as_path(), "completed build artifact companion"_str));
+                auto name = file.path.as_path().file_name();
+                if (name.is_none()) {
+                    return materialize_failure<InstallPlan>(rstd::format(
+                        "artifact companion '{}' has no file name", file.path.as_path()));
+                }
+                auto destination = destination_parent.is_some()
+                                       ? PathBuf::from(*destination_parent).join(*name)
+                                       : PathBuf::from(*name);
+                rstd_try(append_entry(
+                    entries,
+                    InstallEntry {
+                        .origin  = InstallEntryOrigin::BuildArtifact(artifact.target.clone()),
+                        .payload = InstallEntryPayload::CopyFile(file.path.clone()),
+                        .relative_destination = rstd::move(destination),
+                    }));
+            }
         }
         for (const auto& requested : recipe.target_runtimes) {
             const BuiltTargetRuntime* resolved = nullptr;

@@ -293,7 +293,7 @@ link-stdlib = false
         }
     }
     ASSERT_NE(archive, nullptr);
-    ASSERT_TRUE(rstd::fs::write(archive->path.as_path(), "damaged"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(archive->primary.path.as_path(), "damaged"_str.as_bytes()).is_ok());
     auto repaired_capture = CompileProgressCapture {};
     request.observer      = Some(lito::BuildEventSink {
         .context = rstd::addressof(repaired_capture),

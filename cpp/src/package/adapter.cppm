@@ -31,7 +31,9 @@ auto make_package_condition_context(const lito::package::ResolvedPackage& packag
                                     const ProfileSpec&                    profile,
                                     const BuildPlatform& platform) -> lito::condition::Context {
     auto context = lito::condition::Context {};
-    context.set_string(String::make("target.os"_str), platform.effective_target.os.clone());
+    context.set_string(String::make("target.os"_str),
+                       String::make(platform.effective_target.platform_name()));
+    context.set_string(String::make("target.vendor"_str), platform.effective_target.vendor.clone());
     context.set_string(String::make("target.family"_str),
                        String::make(platform.effective_target.family_name()));
     context.set_string(String::make("target.environment"_str),
@@ -269,21 +271,21 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
     return Ok(empty {});
 }
 
-auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
-    if (kind != ArtifactKind::StaticLibrary && kind != ArtifactKind::CompilerPlugin &&
-        kind != ArtifactKind::ProcMacroProvider && kind != ArtifactKind::SharedLibrary &&
-        kind != ArtifactKind::TestAttachmentArchive) {
-        return String::make(declared_name);
-    }
-    auto result = String::make("lib"_str);
-    result.push_str(declared_name);
+auto output_name(ArtifactKind kind, ref<str> declared_name, const lito::system::TargetInfo& target)
+    -> String {
+    auto product_kind = lito::artifact::ProductKind::Executable;
     if (kind == ArtifactKind::StaticLibrary || kind == ArtifactKind::CompilerPlugin ||
-        kind == ArtifactKind::ProcMacroProvider) {
-        result.push_str(".a"_str);
+        kind == ArtifactKind::ProcMacroProvider || kind == ArtifactKind::TestAttachmentArchive) {
+        product_kind = lito::artifact::ProductKind::StaticLibrary;
     } else if (kind == ArtifactKind::SharedLibrary) {
-        result.push_str(".so"_str);
-    } else {
-        result.push_str(".test.a"_str);
+        product_kind = lito::artifact::ProductKind::SharedLibrary;
+    }
+    auto result = lito::artifact::product_name(product_kind, declared_name, target);
+    if (kind == ArtifactKind::TestAttachmentArchive) {
+        auto suffix = target.family == lito::system::TargetFamily::Windows ? ".lib"_str : ".a"_str;
+        result.truncate(result.len() - suffix.len());
+        result.push_str(".test"_str);
+        result.push_str(suffix);
     }
     return result;
 }
@@ -983,6 +985,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                   const Vec<String>&                         selected_package_names,
                                   const Vec<lito::package::PackageTargetId>& selected_targets,
                                   const Vec<lito::package::PackageTargetId>& available_targets,
+                                  const Vec<String>&                         host_only_dependencies,
                                   const BuildConfiguration&                  configuration,
                                   ProfileSpec                                profile,
                                   const BuildPlatform&                       platform,
@@ -1000,6 +1003,19 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
 
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
+    const auto is_host_only_dependency =
+        [&host_only_dependencies, &graph, &libraries](ref<str> name) {
+            for (const auto& dependency : host_only_dependencies) {
+                if (dependency == name) return true;
+            }
+            if (libraries.contains_key(name)) return false;
+            for (const auto& package : graph.packages) {
+                if (package.manifest.name == name &&
+                    lito::manifest::package_has_host_tool_target(package.manifest))
+                    return true;
+            }
+            return false;
+        };
 
     auto external_by_package =
         Vec<Vec<ResolvedExternalDependency>>::with_capacity(graph.packages.len());
@@ -1025,9 +1041,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     }
 
     for (const auto& package : graph.packages) {
+        if (! selected.contains_key(package.manifest.name.as_str())) continue;
         for (const auto& dependency : package.dependencies) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(
                     rstd::format("package '{}' depends on package '{}' which does not expose a "
@@ -1039,6 +1057,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.dev_dependencies) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(
                     rstd::format("package '{}' has development dependency '{}' which does not "
@@ -1134,6 +1153,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.dependencies) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! selected.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(rstd::format(
                     "resolved dependency '{}' is missing", cpp_dependency.name.as_str()));
@@ -1557,7 +1577,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     });
 }
 
-auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> source_sets)
+auto finalize_package(PackageMetadata                 metadata,
+                      Vec<ResolvedTargetSources>      source_sets,
+                      const lito::system::TargetInfo& target_info)
     -> lito::package::PackageResult<PackageSpec> {
     for (usize index {}; index < source_sets.len(); ++index) {
         for (usize prior {}; prior < index; ++prior) {
@@ -1596,8 +1618,9 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> sourc
                 .scan_artifact   = rstd::move(source.scan_artifact),
             });
         }
-        auto artifact_name = output_name(target.artifact_kind, target.artifact_name.as_str());
-        auto archive_stem  = target.artifact_name.clone();
+        auto artifact_name =
+            output_name(target.artifact_kind, target.artifact_name.as_str(), target_info);
+        auto archive_stem = target.artifact_name.clone();
         targets.push(TargetSpec {
             .id                      = rstd::move(target.id),
             .package_source_identity = rstd::move(target.package_source_identity),

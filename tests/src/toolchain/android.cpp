@@ -135,7 +135,7 @@ TEST_F(AndroidNdk, FourPublicAbisMapToCanonicalClangTargets) {
         ASSERT_TRUE(target.is_ok());
         EXPECT_EQ(target->clang_target.as_str(), mapping.clang_target);
         EXPECT_EQ(target->library_triple.as_str(), mapping.library_triple);
-        EXPECT_EQ(target->target_info.os.as_str(), "android"_str);
+        EXPECT_EQ(target->target_info.platform, lito::system::TargetPlatform::Android);
         EXPECT_EQ(target->output_key.as_str(), rstd::format("android-{}-api21", mapping.abi));
     }
 

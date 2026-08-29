@@ -309,27 +309,36 @@ enum class TargetFamily
     Unknown,
 };
 
-enum class TargetEnvironment
+enum class TargetPlatform
 {
-    Msvc,
-    Gnu,
+    Linux,
+    Android,
+    Macos,
+    Windows,
+    Freebsd,
+    Netbsd,
+    Openbsd,
     Unknown,
 };
 
 struct TargetInfo {
-    String            triple;
-    Architecture      architecture { Architecture::Unknown };
-    String            os;
-    TargetFamily      family { TargetFamily::Unknown };
-    TargetEnvironment environment { TargetEnvironment::Unknown };
+    String         triple;
+    Architecture   architecture { Architecture::Unknown };
+    String         vendor;
+    String         operating_system;
+    Option<String> environment;
+    TargetFamily   family { TargetFamily::Unknown };
+    TargetPlatform platform { TargetPlatform::Unknown };
 
     auto clone() const -> TargetInfo {
         return TargetInfo {
-            .triple       = triple.clone(),
-            .architecture = architecture,
-            .os           = os.clone(),
-            .family       = family,
-            .environment  = environment,
+            .triple           = triple.clone(),
+            .architecture     = architecture,
+            .vendor           = vendor.clone(),
+            .operating_system = operating_system.clone(),
+            .environment      = as<Clone>(environment).clone(),
+            .family           = family,
+            .platform         = platform,
         };
     }
 
@@ -342,13 +351,31 @@ struct TargetInfo {
         return "unknown"_str;
     }
 
-    auto environment_name() const noexcept -> ref<str> {
-        switch (environment) {
-        case TargetEnvironment::Msvc: return "msvc"_str;
-        case TargetEnvironment::Gnu: return "gnu"_str;
-        case TargetEnvironment::Unknown: return "unknown"_str;
+    auto platform_name() const noexcept -> ref<str> {
+        switch (platform) {
+        case TargetPlatform::Linux: return "linux"_str;
+        case TargetPlatform::Android: return "android"_str;
+        case TargetPlatform::Macos: return "macos"_str;
+        case TargetPlatform::Windows: return "windows"_str;
+        case TargetPlatform::Freebsd: return "freebsd"_str;
+        case TargetPlatform::Netbsd: return "netbsd"_str;
+        case TargetPlatform::Openbsd: return "openbsd"_str;
+        case TargetPlatform::Unknown: return "unknown"_str;
         }
         return "unknown"_str;
+    }
+
+    auto environment_name() const noexcept -> ref<str> {
+        return environment.is_some() ? environment->as_str() : "unknown"_str;
+    }
+
+    auto is_msvc() const noexcept -> bool {
+        return environment.is_some() && environment->as_str().starts_with("msvc"_str);
+    }
+
+    auto is_gnu() const noexcept -> bool {
+        return (environment.is_some() && environment->as_str().starts_with("gnu"_str)) ||
+               operating_system.as_str().starts_with("mingw"_str);
     }
 };
 
@@ -423,9 +450,9 @@ struct TargetPredicate {
             return false;
         };
         return contains(families, target.family_name()) &&
-               contains(operating_systems, target.os.as_str()) &&
+               contains(operating_systems, target.platform_name()) &&
                ! excludes(excluded_families, target.family_name()) &&
-               ! excludes(excluded_operating_systems, target.os.as_str());
+               ! excludes(excluded_operating_systems, target.platform_name());
     }
 };
 
@@ -567,128 +594,124 @@ auto parse_target_architecture(ref<str> value) noexcept -> Architecture {
 
 auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
     if (triple.is_empty()) return platform_failure<TargetInfo>("target triple is empty"_str);
-    auto arch_end = usize {};
-    while (arch_end < triple.len() && triple.as_bytes()[arch_end] != u8('-')) ++arch_end;
-    auto arch = triple.get(usize {}, arch_end);
-    if (arch.is_none() || arch->is_empty()) {
-        return platform_failure<TargetInfo>(
-            rstd::format("target triple '{}' has no architecture", triple));
+    auto architecture_and_rest = triple.split_once("-"_str);
+    if (architecture_and_rest.is_none() || architecture_and_rest->get<0>().is_empty()) {
+        return platform_failure<TargetInfo>(rstd::format(
+            "target triple '{}' must contain architecture, vendor, and operating system", triple));
     }
-    auto architecture = parse_target_architecture(*arch);
-
-    auto os          = String::make("unknown"_str);
-    auto family      = TargetFamily::Unknown;
-    auto environment = TargetEnvironment::Unknown;
-    if (triple.contains("-windows"_str) || triple.contains("-win32"_str) ||
-        triple.contains("-mingw"_str)) {
-        os     = String::make("windows"_str);
-        family = TargetFamily::Windows;
-        if (triple.contains("-msvc"_str)) {
-            environment = TargetEnvironment::Msvc;
-        } else if (triple.contains("-gnu"_str) || triple.contains("-mingw"_str)) {
-            environment = TargetEnvironment::Gnu;
+    auto vendor_and_rest = architecture_and_rest->get<1>().split_once("-"_str);
+    if (vendor_and_rest.is_none() || vendor_and_rest->get<0>().is_empty() ||
+        vendor_and_rest->get<1>().is_empty()) {
+        return platform_failure<TargetInfo>(rstd::format(
+            "target triple '{}' must contain architecture, vendor, and operating system", triple));
+    }
+    auto os_and_environment = vendor_and_rest->get<1>().split_once("-"_str);
+    auto vendor             = vendor_and_rest->get<0>();
+    auto raw_os =
+        os_and_environment.is_some() ? os_and_environment->get<0>() : vendor_and_rest->get<1>();
+    auto environment = Option<String> {};
+    if (os_and_environment.is_some()) {
+        auto raw_environment = os_and_environment->get<1>();
+        if (raw_environment.is_empty() || raw_environment.contains("-"_str)) {
+            return platform_failure<TargetInfo>(
+                rstd::format("target triple '{}' has an invalid environment component", triple));
         }
-    } else if (triple.contains("-android"_str)) {
-        os     = String::make("android"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-linux"_str)) {
-        os     = String::make("linux"_str);
-        family = TargetFamily::Unix;
-        if (triple.contains("-gnu"_str)) environment = TargetEnvironment::Gnu;
-    } else if (triple.contains("-darwin"_str) || triple.contains("-apple"_str)) {
-        os     = String::make("macos"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-freebsd"_str)) {
-        os     = String::make("freebsd"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-netbsd"_str)) {
-        os     = String::make("netbsd"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-openbsd"_str)) {
-        os     = String::make("openbsd"_str);
-        family = TargetFamily::Unix;
+        environment = Some(String::make(raw_environment));
+    } else if ((vendor == "linux"_str &&
+                (raw_os.starts_with("gnu"_str) || raw_os.starts_with("android"_str))) ||
+               (vendor == "windows"_str &&
+                (raw_os.starts_with("msvc"_str) || raw_os.starts_with("gnu"_str)))) {
+        environment = Some(String::make(raw_os));
+        raw_os      = vendor;
+        vendor      = "unknown"_str;
+    }
+
+    auto platform = TargetPlatform::Unknown;
+    auto family   = TargetFamily::Unknown;
+    if (raw_os == "linux"_str && environment.is_some() &&
+        environment->as_str().starts_with("android"_str)) {
+        platform = TargetPlatform::Android;
+        family   = TargetFamily::Unix;
+    } else if (raw_os == "linux"_str) {
+        platform = TargetPlatform::Linux;
+        family   = TargetFamily::Unix;
+    } else if (raw_os.starts_with("windows"_str) || raw_os.starts_with("win32"_str) ||
+               raw_os.starts_with("mingw"_str)) {
+        platform = TargetPlatform::Windows;
+        family   = TargetFamily::Windows;
+    } else if (raw_os.starts_with("darwin"_str)) {
+        platform = TargetPlatform::Macos;
+        family   = TargetFamily::Unix;
+    } else if (raw_os.starts_with("freebsd"_str)) {
+        platform = TargetPlatform::Freebsd;
+        family   = TargetFamily::Unix;
+    } else if (raw_os.starts_with("netbsd"_str)) {
+        platform = TargetPlatform::Netbsd;
+        family   = TargetFamily::Unix;
+    } else if (raw_os.starts_with("openbsd"_str)) {
+        platform = TargetPlatform::Openbsd;
+        family   = TargetFamily::Unix;
     }
     return Ok(TargetInfo {
-        .triple       = String::make(triple),
-        .architecture = architecture,
-        .os           = rstd::move(os),
-        .family       = family,
-        .environment  = environment,
+        .triple           = String::make(triple),
+        .architecture     = parse_target_architecture(architecture_and_rest->get<0>()),
+        .vendor           = String::make(vendor),
+        .operating_system = String::make(raw_os),
+        .environment      = rstd::move(environment),
+        .family           = family,
+        .platform         = platform,
     });
 }
 
 auto target_operating_system(const TargetInfo& target) -> PlatformResult<OperatingSystem> {
-    auto parsed = parse_operating_system(target.os.as_str());
+    auto parsed = parse_operating_system(target.platform_name());
     if (parsed.is_some()) return Ok(*parsed);
     return platform_failure<OperatingSystem>(
         rstd::format("target '{}' has unsupported operating system '{}'",
                      target.triple.as_str(),
-                     target.os.as_str()));
+                     target.operating_system.as_str()));
 }
 
-auto encode_target_info(OperatingSystem     os,
-                        const Architecture& architecture,
-                        TargetEnvironment   environment) -> PlatformResult<TargetInfo> {
+auto encode_target_candidate(ref<str>            os,
+                             const Architecture& architecture,
+                             Option<ref<str>>    vendor,
+                             Option<ref<str>>    environment) -> PlatformResult<String> {
     auto triple = String::make();
     if (architecture == Architecture::Unknown) {
-        return platform_failure<TargetInfo>("cannot encode an unknown target architecture"_str);
+        return platform_failure<String>("cannot encode an unknown target architecture"_str);
+    }
+    const auto valid_component = [](ref<str> value) {
+        return ! value.is_empty() && ! value.contains("-"_str);
+    };
+    if (! valid_component(os)) {
+        return platform_failure<String>(rstd::format("invalid target operating system '{}'", os));
+    }
+    if (vendor.is_some() && ! valid_component(*vendor)) {
+        return platform_failure<String>(rstd::format("invalid target vendor '{}'", *vendor));
+    }
+    if (environment.is_some() && ! valid_component(*environment)) {
+        return platform_failure<String>(
+            rstd::format("invalid target environment '{}'", *environment));
     }
     triple.push_str(architecture_name(architecture));
-    switch (os) {
-    case OperatingSystem::Linux:
-        if (environment != TargetEnvironment::Gnu) {
-            return platform_failure<TargetInfo>(
-                "Linux compile targets require the GNU target environment"_str);
+    triple.push_ascii(u8('-'));
+    triple.push_str(vendor.is_some() ? *vendor : "unknown"_str);
+    if (os == "android"_str) {
+        if (environment.is_some() && ! environment->starts_with("android"_str)) {
+            return platform_failure<String>(
+                "the Android target platform requires an Android environment"_str);
         }
-        triple.push_str("-linux-gnu"_str);
-        break;
-    case OperatingSystem::Android:
-        if (environment != TargetEnvironment::Unknown) {
-            return platform_failure<TargetInfo>(
-                "Android compile targets do not encode a standard target environment"_str);
-        }
-        triple.push_str("-linux-android"_str);
-        break;
-    case OperatingSystem::Macos:
-        if (environment != TargetEnvironment::Unknown) {
-            return platform_failure<TargetInfo>(
-                "macOS compile targets do not encode a standard target environment"_str);
-        }
-        triple.push_str("-apple-darwin"_str);
-        break;
-    case OperatingSystem::Windows:
-        if (environment == TargetEnvironment::Msvc) {
-            triple.push_str("-windows-msvc"_str);
-        } else if (environment == TargetEnvironment::Gnu) {
-            triple.push_str("-windows-gnu"_str);
-        } else {
-            return platform_failure<TargetInfo>(
-                "Windows compile targets require an MSVC or GNU target environment"_str);
-        }
-        break;
-    case OperatingSystem::Freebsd:
-        if (environment != TargetEnvironment::Unknown) {
-            return platform_failure<TargetInfo>(
-                "FreeBSD compile targets do not encode a standard target environment"_str);
-        }
-        triple.push_str("-unknown-freebsd"_str);
-        break;
-    case OperatingSystem::Netbsd:
-        if (environment != TargetEnvironment::Unknown) {
-            return platform_failure<TargetInfo>(
-                "NetBSD compile targets do not encode a standard target environment"_str);
-        }
-        triple.push_str("-unknown-netbsd"_str);
-        break;
-    case OperatingSystem::Openbsd:
-        if (environment != TargetEnvironment::Unknown) {
-            return platform_failure<TargetInfo>(
-                "OpenBSD compile targets do not encode a standard target environment"_str);
-        }
-        triple.push_str("-unknown-openbsd"_str);
-        break;
+        triple.push_str("-linux-"_str);
+        triple.push_str(environment.is_some() ? *environment : "android"_str);
+        return Ok(rstd::move(triple));
     }
-    return parse_target_info(triple.as_str());
+    triple.push_ascii(u8('-'));
+    triple.push_str(os == "macos"_str ? "darwin"_str : os);
+    if (environment.is_some()) {
+        triple.push_ascii(u8('-'));
+        triple.push_str(*environment);
+    }
+    return Ok(rstd::move(triple));
 }
 
 auto detect_host_info() -> PlatformResult<HostInfo> {
@@ -739,7 +762,7 @@ auto resolve_build_platform(const HostInfo&   host,
         effective = rstd::move(parsed).unwrap();
         intent    = BuildTargetIntent::ExplicitTarget;
     } else if (host.architecture != compiler_default.architecture ||
-               host.os != compiler_default.os.as_str()) {
+               host.os != compiler_default.platform_name()) {
         return platform_failure<BuildPlatform>(rstd::format(
             "compiler default target '{}' is not native-compatible with host '{}-{}'; declare "
             "an explicit target/toolchain configuration for cross compilation",
@@ -747,7 +770,10 @@ auto resolve_build_platform(const HostInfo&   host,
             architecture_name(host.architecture),
             host.os.as_str()));
     }
-    auto cross = host.architecture != effective.architecture || host.os != effective.os.as_str();
+    auto cross =
+        intent == BuildTargetIntent::ExplicitTarget
+            ? effective.triple != compiler_default.triple.as_str()
+            : host.architecture != effective.architecture || host.os != effective.platform_name();
     auto output_key = String::make();
     if (intent == BuildTargetIntent::ExplicitTarget) {
         output_key = String::make("target-"_str);

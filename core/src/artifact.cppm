@@ -1,6 +1,7 @@
 export module lito.core:artifact;
 
 import rstd;
+import lito.system;
 
 using namespace rstd::prelude;
 using rstd::path::PathBuf;
@@ -8,6 +9,71 @@ using namespace rstd::literals;
 
 export namespace lito::artifact
 {
+
+enum class ProductKind
+{
+    StaticLibrary,
+    SharedLibrary,
+    Executable,
+};
+
+enum class Format
+{
+    Archive,
+    Elf,
+    PeCoff,
+    MachO,
+    WebAssembly,
+};
+
+auto format_name(Format format) noexcept -> ref<str> {
+    switch (format) {
+    case Format::Archive: return "archive"_str;
+    case Format::Elf: return "elf"_str;
+    case Format::PeCoff: return "pe-coff"_str;
+    case Format::MachO: return "mach-o"_str;
+    case Format::WebAssembly: return "webassembly"_str;
+    }
+    return "unknown"_str;
+}
+
+auto product_format(ProductKind kind, const lito::system::TargetInfo& target) noexcept -> Format {
+    if (kind == ProductKind::StaticLibrary) return Format::Archive;
+    if (target.architecture == lito::system::Architecture::Wasm32 ||
+        target.architecture == lito::system::Architecture::Wasm64)
+        return Format::WebAssembly;
+    if (target.family == lito::system::TargetFamily::Windows) return Format::PeCoff;
+    if (target.platform == lito::system::TargetPlatform::Macos) return Format::MachO;
+    return Format::Elf;
+}
+
+auto product_name(ProductKind kind, ref<str> logical_name, const lito::system::TargetInfo& target)
+    -> String {
+    auto result = String::make();
+    auto format = product_format(kind, target);
+    if (kind == ProductKind::StaticLibrary) {
+        if (target.family != lito::system::TargetFamily::Windows) result.push_str("lib"_str);
+        result.push_str(logical_name);
+        result.push_str(target.family == lito::system::TargetFamily::Windows ? ".lib"_str
+                                                                             : ".a"_str);
+        return result;
+    }
+    if (kind == ProductKind::SharedLibrary && format != Format::PeCoff &&
+        format != Format::WebAssembly)
+        result.push_str("lib"_str);
+    result.push_str(logical_name);
+    if (kind == ProductKind::SharedLibrary) {
+        if (format == Format::PeCoff) result.push_str(".dll"_str);
+        if (format == Format::MachO) result.push_str(".dylib"_str);
+        if (format == Format::Elf) result.push_str(".so"_str);
+        if (format == Format::WebAssembly) result.push_str(".wasm"_str);
+    } else if (format == Format::PeCoff) {
+        result.push_str(".exe"_str);
+    } else if (format == Format::WebAssembly) {
+        result.push_str(".wasm"_str);
+    }
+    return result;
+}
 
 enum class StripMode
 {

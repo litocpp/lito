@@ -42,6 +42,7 @@ struct ResolvedPackageSelection {
     Vec<String>                host_package_names;
     Vec<String>                plugin_package_names;
     Vec<String>                proc_macro_provider_names;
+    Vec<String>                artifact_processor_package_names;
     Vec<PackageTargetId>       selected_targets;
     Vec<PackageTargetId>       effective_targets;
     EffectiveLanguageStandards standards;
@@ -151,12 +152,15 @@ struct SelectedPackageClosure {
     Vec<String> host;
     Vec<String> plugins;
     Vec<String> providers;
+    Vec<String> processors;
 };
 
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>&          selected_roots,
                       const Vec<PackageTargetId>& selected_targets,
-                      const TargetInfo* target) -> PackageSelectionResult<SelectedPackageClosure> {
+                      const TargetInfo*           target,
+                      Option<ref<str>>            artifact_processor)
+    -> PackageSelectionResult<SelectedPackageClosure> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
@@ -171,12 +175,20 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         }
     }
 
-    auto pending_target  = Vec<String>::make();
-    auto pending_host    = Vec<String>::make();
-    auto selected_target = StringSet::make();
-    auto selected_host   = StringSet::make();
-    auto plugins         = StringSet::make();
-    auto providers       = StringSet::make();
+    auto       pending_target  = Vec<String>::make();
+    auto       pending_host    = Vec<String>::make();
+    auto       selected_target = StringSet::make();
+    auto       selected_host   = StringSet::make();
+    auto       plugins         = StringSet::make();
+    auto       providers       = StringSet::make();
+    auto       processors      = StringSet::make();
+    const auto host_tool_only  = [&](ref<str> name) noexcept {
+        auto index = indices.get(name);
+        if (index.is_none()) return false;
+        const auto& manifest = graph.packages[**index].manifest;
+        return ! lito::manifest::package_has_library_target(manifest) &&
+               lito::manifest::package_has_host_tool_target(manifest);
+    };
     for (const auto& root : selected_roots) {
         auto has_target   = false;
         auto has_plugin   = false;
@@ -236,6 +248,13 @@ auto selected_closure(const ResolvedPackageGraph& graph,
                 }
                 pending_host.push(dependency.as_Pmacro().value.name.clone());
                 providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
+            } else if (! host && artifact_processor.is_some() && dependency.is_Cpp() &&
+                       dependency.as_Cpp().value.name.as_str() == **artifact_processor) {
+                pending_host.push(dependency.as_Cpp().value.name.clone());
+                processors.insert(dependency.as_Cpp().value.name.clone(), empty {});
+            } else if (dependency.is_Cpp() &&
+                       host_tool_only(dependency.as_Cpp().value.name.as_str())) {
+                continue;
             } else if (host) {
                 pending_host.push(String::make(resolved_dependency_name(dependency)));
             } else {
@@ -280,6 +299,9 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         }
         if (providers.contains_key(package.manifest.name.as_str())) {
             result.providers.push(package.manifest.name.clone());
+        }
+        if (processors.contains_key(package.manifest.name.as_str())) {
+            result.processors.push(package.manifest.name.clone());
         }
     }
     return Ok(rstd::move(result));
@@ -330,10 +352,11 @@ auto resolve_package_selection_with_environment_impl(
     const TargetInfo*                         target,
     lito::tools::ToolResolver*                tool_resolver,
     const ResolvedProcessEnvironment&         environment,
-    usize                                     jobs     = usize(1),
-    lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
-    lito::registry::RegistryGraphProvider     registry = {})
+    usize                                     jobs               = usize(1),
+    lito::source::SourceEventSink             observer           = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog            = None(),
+    lito::registry::RegistryGraphProvider     registry           = {},
+    Option<ref<str>>                          artifact_processor = None())
     -> PackageSelectionResult<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment_impl(selection.root.as_path(),
                                                                 rstd::move(options),
@@ -483,7 +506,8 @@ auto resolve_package_selection_with_environment_impl(
 
     const auto& closure_roots =
         purpose == PackageSelectionPurpose::Install ? install_packages : selected_roots;
-    auto selected_packages = selected_closure(graph, closure_roots, selected_targets, target);
+    auto selected_packages =
+        selected_closure(graph, closure_roots, selected_targets, target, artifact_processor);
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
     }
@@ -509,16 +533,17 @@ auto resolve_package_selection_with_environment_impl(
     auto effective_targets =
         effective_compile_targets(graph, selected_packages->target, target_selected_targets);
     return Ok(ResolvedPackageSelection {
-        .graph                     = rstd::move(graph),
-        .selected_root_names       = rstd::move(selected_roots),
-        .install_package_names     = rstd::move(install_packages),
-        .selected_package_names    = rstd::move(selected_packages->target),
-        .host_package_names        = rstd::move(selected_packages->host),
-        .plugin_package_names      = rstd::move(selected_packages->plugins),
-        .proc_macro_provider_names = rstd::move(selected_packages->providers),
-        .selected_targets          = rstd::move(target_selected_targets),
-        .effective_targets         = rstd::move(effective_targets),
-        .standards                 = rstd::move(standards).unwrap(),
+        .graph                            = rstd::move(graph),
+        .selected_root_names              = rstd::move(selected_roots),
+        .install_package_names            = rstd::move(install_packages),
+        .selected_package_names           = rstd::move(selected_packages->target),
+        .host_package_names               = rstd::move(selected_packages->host),
+        .plugin_package_names             = rstd::move(selected_packages->plugins),
+        .proc_macro_provider_names        = rstd::move(selected_packages->providers),
+        .artifact_processor_package_names = rstd::move(selected_packages->processors),
+        .selected_targets                 = rstd::move(target_selected_targets),
+        .effective_targets                = rstd::move(effective_targets),
+        .standards                        = rstd::move(standards).unwrap(),
     });
 }
 
@@ -538,29 +563,37 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     for (const auto& name : selection.plugin_package_names) {
         plugins.insert(name.clone(), empty {});
     }
+    auto processors = StringSet::make();
+    for (const auto& name : selection.artifact_processor_package_names) {
+        processors.insert(name.clone(), empty {});
+    }
     auto selected_targets  = Vec<PackageTargetId>::make();
     auto effective_targets = Vec<PackageTargetId>::make();
     for (const auto& package : selection.graph.packages) {
         if (! host.contains_key(package.manifest.name.as_str())) continue;
         for (const auto& target : package.manifest.targets) {
-            const auto kind        = lito::manifest::package_target_kind(target);
-            const auto is_provider = providers.contains_key(package.manifest.name.as_str()) &&
-                                     kind == PackageTargetKind::ProcMacro;
-            const auto is_plugin   = plugins.contains_key(package.manifest.name.as_str()) &&
-                                     kind == PackageTargetKind::Plugin;
-            const auto is_library  = kind == PackageTargetKind::Library;
-            if (! is_provider && ! is_plugin && ! is_library) continue;
+            const auto kind         = lito::manifest::package_target_kind(target);
+            const auto is_provider  = providers.contains_key(package.manifest.name.as_str()) &&
+                                      kind == PackageTargetKind::ProcMacro;
+            const auto is_plugin    = plugins.contains_key(package.manifest.name.as_str()) &&
+                                      kind == PackageTargetKind::Plugin;
+            const auto is_library   = kind == PackageTargetKind::Library;
+            const auto is_processor = processors.contains_key(package.manifest.name.as_str()) &&
+                                      kind == PackageTargetKind::Binary &&
+                                      lito::manifest::package_target_is_host_tool(target);
+            if (! is_provider && ! is_plugin && ! is_processor && ! is_library) continue;
             auto id = PackageTargetId {
                 .package = package.manifest.name.clone(),
                 .kind    = kind,
                 .name    = String::make(lito::manifest::package_target_name(target)),
             };
-            if (is_provider || is_plugin) selected_targets.push(id.clone());
+            if (is_provider || is_plugin || is_processor) selected_targets.push(id.clone());
             effective_targets.push(rstd::move(id));
         }
     }
-    if (selected_targets.len() !=
-        selection.proc_macro_provider_names.len() + selection.plugin_package_names.len()) {
+    if (selected_targets.len() != selection.proc_macro_provider_names.len() +
+                                      selection.plugin_package_names.len() +
+                                      selection.artifact_processor_package_names.len()) {
         return package_selection_failure<ResolvedPackageSelection>(
             "plugin host selection is missing a plugin or provider target"_str);
     }
@@ -573,6 +606,10 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     for (const auto& name : selection.proc_macro_provider_names) {
         if (! plugins.contains_key(name.as_str())) selection.selected_root_names.push(name.clone());
     }
+    for (const auto& name : selection.artifact_processor_package_names) {
+        if (! plugins.contains_key(name.as_str()) && ! providers.contains_key(name.as_str()))
+            selection.selected_root_names.push(name.clone());
+    }
     selection.install_package_names.clear();
     selection.selected_package_names = rstd::move(selection.host_package_names);
     selection.selected_targets       = rstd::move(selected_targets);
@@ -581,6 +618,7 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     selection.host_package_names.clear();
     selection.plugin_package_names.clear();
     selection.proc_macro_provider_names.clear();
+    selection.artifact_processor_package_names.clear();
     return Ok(rstd::move(selection));
 }
 
@@ -591,10 +629,11 @@ auto resolve_package_selection_with_environment(
     const TargetInfo*                         target,
     lito::tools::ToolResolver&                tool_resolver,
     const ResolvedProcessEnvironment&         environment,
-    usize                                     jobs     = usize(1),
-    lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
-    lito::registry::RegistryGraphProvider     registry = {})
+    usize                                     jobs               = usize(1),
+    lito::source::SourceEventSink             observer           = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog            = None(),
+    lito::registry::RegistryGraphProvider     registry           = {},
+    Option<ref<str>>                          artifact_processor = None())
     -> PackageSelectionResult<ResolvedPackageSelection> {
     return resolve_package_selection_with_environment_impl(selection,
                                                            purpose,
@@ -605,7 +644,8 @@ auto resolve_package_selection_with_environment(
                                                            jobs,
                                                            observer,
                                                            rstd::move(catalog),
-                                                           registry);
+                                                           registry,
+                                                           artifact_processor);
 }
 
 auto resolve_existing_package_selection_with_environment(
@@ -614,10 +654,11 @@ auto resolve_existing_package_selection_with_environment(
     lito::source::SourceResolutionOptions     options,
     const TargetInfo&                         target,
     const ResolvedProcessEnvironment&         environment,
-    usize                                     jobs     = usize(1),
-    lito::source::SourceEventSink             observer = {},
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
-    lito::registry::RegistryGraphProvider     registry = {})
+    usize                                     jobs               = usize(1),
+    lito::source::SourceEventSink             observer           = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog            = None(),
+    lito::registry::RegistryGraphProvider     registry           = {},
+    Option<ref<str>>                          artifact_processor = None())
     -> PackageSelectionResult<ResolvedPackageSelection> {
     return resolve_package_selection_with_environment_impl(selection,
                                                            purpose,
@@ -628,7 +669,8 @@ auto resolve_existing_package_selection_with_environment(
                                                            jobs,
                                                            observer,
                                                            rstd::move(catalog),
-                                                           registry);
+                                                           registry,
+                                                           artifact_processor);
 }
 
 auto resolve_package_selection(const PackageSelection& selection,

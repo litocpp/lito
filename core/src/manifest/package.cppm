@@ -104,4 +104,18 @@ auto package_manifest_language(const PackageManifest& manifest) noexcept -> Pack
                                        : PackageLanguage::Cpp;
 }
 
+auto package_has_library_target(const PackageManifest& manifest) noexcept -> bool {
+    for (const auto& target : manifest.targets) {
+        if (package_target_kind(target) == lito::package::PackageTargetKind::Library) return true;
+    }
+    return false;
+}
+
+auto package_has_host_tool_target(const PackageManifest& manifest) noexcept -> bool {
+    for (const auto& target : manifest.targets) {
+        if (package_target_is_host_tool(target)) return true;
+    }
+    return false;
+}
+
 } // namespace lito::manifest

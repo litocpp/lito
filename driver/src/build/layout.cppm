@@ -201,6 +201,22 @@ public:
 
     auto generated_root() const -> PathBuf { return join(output_.as_path(), "generated"_str); }
 
+    auto artifact_processor_raw(const lito::package::PackageTargetId& target,
+                                ref<str>                              filename) const -> PathBuf {
+        auto root      = join(generated_root().as_path(), "artifact-processors"_str);
+        auto raw       = join(root.as_path(), "raw"_str);
+        auto directory = target_directory(raw.as_path(), target);
+        return directory.join(PathBuf::from(filename).as_path());
+    }
+
+    auto artifact_processor_result(const lito::package::PackageTargetId& target,
+                                   ref<str> identity) const -> PathBuf {
+        auto root      = join(generated_root().as_path(), "artifact-processors"_str);
+        auto results   = join(root.as_path(), "results"_str);
+        auto directory = target_directory(results.as_path(), target);
+        return join(directory.as_path(), identity);
+    }
+
     auto proc_macro_root() const -> PathBuf {
         return join(generated_root().as_path(), "proc-macro"_str);
     }

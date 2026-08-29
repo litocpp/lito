@@ -162,13 +162,12 @@ auto cargo_target(const lito::tools::cargo::Provider& provider, const BuildPlatf
                          provider.host_target.as_str(),
                          rstd::move(parsed).unwrap_err()));
     }
-    const auto& cargo = *parsed;
-    const auto& lito  = platform.effective_target;
-    const auto  supported =
-        cargo.os.as_str() == "linux"_str || cargo.os.as_str() == "macos"_str ||
-        (cargo.os.as_str() == "windows"_str && cargo.environment == TargetEnvironment::Msvc);
-    if (! supported || cargo.architecture != lito.architecture || cargo.os != lito.os.as_str() ||
-        cargo.environment != lito.environment) {
+    const auto& cargo     = *parsed;
+    const auto& lito      = platform.effective_target;
+    const auto  supported = cargo.platform == TargetPlatform::Linux ||
+                            cargo.platform == TargetPlatform::Macos ||
+                            (cargo.platform == TargetPlatform::Windows && cargo.is_msvc());
+    if (! supported || cargo.triple != lito.triple.as_str()) {
         return lito::dependency::dependency_failure<String>(
             rstd::format("Cargo host target '{}' does not match Lito target '{}'",
                          provider.host_target.as_str(),

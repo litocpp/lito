@@ -62,7 +62,7 @@ auto artifact_runtime_environment(const BuildSummary&               summary,
     auto directories = Vec<PathBuf>::make();
     for (const auto& artifact : summary.product.artifacts) {
         if (artifact.kind != cpp::ArtifactKind::SharedLibrary) continue;
-        auto parent = artifact.path.as_path().parent();
+        auto parent = artifact.primary.path.as_path().parent();
         if (parent.is_none()) continue;
         auto repeated = false;
         for (const auto& directory : directories) {
@@ -76,12 +76,12 @@ auto artifact_runtime_environment(const BuildSummary&               summary,
     if (directories.is_empty()) return Ok(CommandEnvironment {});
 
     auto variable = "LD_LIBRARY_PATH"_str;
-    if (summary.platform.effective_target.os.as_str() == "windows"_str) {
+    if (summary.platform.effective_target.platform == TargetPlatform::Windows) {
         variable       = "PATH"_str;
         auto inherited = rstd::env::split_paths(environment.child_path());
         for (auto directory : inherited) directories.push(rstd::move(directory));
     } else {
-        if (summary.platform.effective_target.os.as_str() == "macos"_str) {
+        if (summary.platform.effective_target.platform == TargetPlatform::Macos) {
             variable = "DYLD_LIBRARY_PATH"_str;
         }
         auto inherited = rstd::env::var_os(variable);
@@ -108,7 +108,7 @@ auto execute_artifact(const BuiltArtifact&              artifact,
                       const ResolvedProcessEnvironment& environment,
                       const CommandEnvironment&         runtime_environment,
                       ref<str>                          description) -> ArtifactExecution {
-    auto command = rstd::process::Command::make(artifact.path.as_path().as_os_str());
+    auto command = rstd::process::Command::make(artifact.primary.path.as_path().as_os_str());
     for (const auto& argument : arguments) command.arg(argument.as_str());
     command.current_dir(artifact.package_root.as_path());
     apply_command_environment(
@@ -122,17 +122,17 @@ auto execute_artifact(const BuiltArtifact&              artifact,
     if (status.is_err()) {
         return ArtifactExecution {
             .target            = artifact.target.clone(),
-            .executable        = artifact.path.clone(),
+            .executable        = artifact.primary.path.clone(),
             .working_directory = artifact.package_root.clone(),
             .error             = Some(SystemError::Io(rstd::format("execute {}", description),
-                                                      artifact.path.clone(),
+                                                      artifact.primary.path.clone(),
                                                       rstd::move(status).unwrap_err())),
             .elapsed           = elapsed,
         };
     }
     return ArtifactExecution {
         .target            = artifact.target.clone(),
-        .executable        = artifact.path.clone(),
+        .executable        = artifact.primary.path.clone(),
         .working_directory = artifact.package_root.clone(),
         .status            = Some(rstd::move(status).unwrap()),
         .elapsed           = elapsed,

@@ -1264,10 +1264,8 @@ public:
         rstd_try(set(String::make("definitions"_str), lua_string_array(projection->definitions)));
         rstd_try(
             set(String::make("undefinitions"_str), lua_string_array(projection->undefinitions)));
-        rstd_try(
-            set(String::make("compiler_flavor"_str),
-                String::make(target_info_->environment == TargetEnvironment::Msvc ? "msvc"_str
-                                                                                  : "unix"_str)));
+        rstd_try(set(String::make("compiler_flavor"_str),
+                     String::make(target_info_->is_msvc() ? "msvc"_str : "unix"_str)));
         rstd_try(set(String::make("target"_str), target_info_->triple.clone()));
         rstd_try(set(String::make("identity"_str), rstd::move(projection->identity)));
         return Ok(rstd::move(result));

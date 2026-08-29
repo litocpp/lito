@@ -14,6 +14,7 @@ import lito.cpp;
 import :build.layout_error;
 import :build.script_error;
 import :build.product_error;
+import :build.artifact_processor_error;
 
 using namespace rstd::prelude;
 
@@ -36,6 +37,7 @@ class BuildError {
               (Layout, (BuildLayoutError source;)),
               (Script, (BuildScriptError source;)),
               (Product, (BuildProductError source;)),
+              (ArtifactProcessor, (ArtifactProcessorError source;)),
               (Message, (String message;)))
 };
 
@@ -132,6 +134,13 @@ struct Impl<convert::From<lito::BuildProductError>, lito::BuildError> {
 };
 
 template<>
+struct Impl<convert::From<lito::ArtifactProcessorError>, lito::BuildError> {
+    static auto from(lito::ArtifactProcessorError error) -> lito::BuildError {
+        return lito::BuildError::ArtifactProcessor(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::BuildError> : ImplBase<lito::BuildError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -184,6 +193,10 @@ struct Impl<fmt::Display, lito::BuildError> : ImplBase<lito::BuildError> {
             return formatter.write_raw("build product publication failed",
                                        sizeof("build product publication failed") - 1);
         }
+        if (error.is_ArtifactProcessor()) {
+            return formatter.write_raw("build artifact processing failed",
+                                       sizeof("build artifact processing failed") - 1);
+        }
         return formatter.write_str(error.as_Message().message.as_str());
     }
 };
@@ -234,6 +247,9 @@ struct Impl<error::Error, lito::BuildError> : ImplBase<lito::BuildError> {
         }
         if (error.is_Product()) {
             return Some(dyn<error::Error>::from_ref(error.as_Product().source));
+        }
+        if (error.is_ArtifactProcessor()) {
+            return Some(dyn<error::Error>::from_ref(error.as_ArtifactProcessor().source));
         }
         return None();
     }

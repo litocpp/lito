@@ -11,25 +11,99 @@ using namespace rstd::prelude;
 export namespace lito
 {
 
+enum class ArtifactFileRole
+{
+    LinkInput,
+    Runtime,
+    ImportLibrary,
+    JavaScriptModule,
+    TypeScriptDeclaration,
+    DebugInformation,
+    Metadata,
+};
+
+auto artifact_file_role_name(ArtifactFileRole role) noexcept -> ref<str> {
+    using namespace rstd::literals;
+    switch (role) {
+    case ArtifactFileRole::LinkInput: return "link-input"_str;
+    case ArtifactFileRole::Runtime: return "runtime"_str;
+    case ArtifactFileRole::ImportLibrary: return "import-library"_str;
+    case ArtifactFileRole::JavaScriptModule: return "javascript-module"_str;
+    case ArtifactFileRole::TypeScriptDeclaration: return "typescript-declaration"_str;
+    case ArtifactFileRole::DebugInformation: return "debug-information"_str;
+    case ArtifactFileRole::Metadata: return "metadata"_str;
+    }
+    return "unknown"_str;
+}
+
+auto artifact_file_role_from_name(ref<str> value) noexcept -> Option<ArtifactFileRole> {
+    using namespace rstd::literals;
+    if (value == "link-input"_str) return Some(ArtifactFileRole::LinkInput);
+    if (value == "runtime"_str) return Some(ArtifactFileRole::Runtime);
+    if (value == "import-library"_str) return Some(ArtifactFileRole::ImportLibrary);
+    if (value == "javascript-module"_str) return Some(ArtifactFileRole::JavaScriptModule);
+    if (value == "typescript-declaration"_str) return Some(ArtifactFileRole::TypeScriptDeclaration);
+    if (value == "debug-information"_str) return Some(ArtifactFileRole::DebugInformation);
+    if (value == "metadata"_str) return Some(ArtifactFileRole::Metadata);
+    return None();
+}
+
+struct BuiltArtifactFile {
+    ArtifactFileRole role { ArtifactFileRole::Runtime };
+    PathBuf          path;
+    String           content_type;
+    String           content_identity;
+    bool             publish { true };
+
+    auto clone() const -> BuiltArtifactFile {
+        return BuiltArtifactFile {
+            .role             = role,
+            .path             = path.clone(),
+            .content_type     = content_type.clone(),
+            .content_identity = content_identity.clone(),
+            .publish          = publish,
+        };
+    }
+};
+
 struct BuiltArtifact {
     lito::package::PackageTargetId    target;
     cpp::ArtifactKind                 kind { cpp::ArtifactKind::StaticLibrary };
-    PathBuf                           path;
+    lito::artifact::Format            format { lito::artifact::Format::Archive };
+    BuiltArtifactFile                 primary;
+    Vec<BuiltArtifactFile>            companions;
     PathBuf                           package_root;
     Option<InstallArtifactLinkPolicy> install_link;
     String                            link_identity;
 
     auto clone() const -> BuiltArtifact {
+        auto copied = Vec<BuiltArtifactFile>::with_capacity(companions.len());
+        for (const auto& file : companions) copied.push(file.clone());
         return BuiltArtifact {
             .target        = target.clone(),
             .kind          = kind,
-            .path          = path.clone(),
+            .format        = format,
+            .primary       = primary.clone(),
+            .companions    = rstd::move(copied),
             .package_root  = package_root.clone(),
             .install_link  = as<Clone>(install_link).clone(),
             .link_identity = link_identity.clone(),
         };
     }
 };
+
+auto artifact_file(const BuiltArtifact& artifact, ArtifactFileRole role)
+    -> Option<ref<BuiltArtifactFile>> {
+    if (artifact.primary.role == role) {
+        return Some(ref<BuiltArtifactFile>::from_raw_parts(rstd::addressof(artifact.primary)));
+    }
+    for (const auto& file : artifact.companions) {
+        if (file.role == role) {
+            return Some(ref<BuiltArtifactFile>::from_raw_parts(rstd::addressof(file)));
+        }
+    }
+    return None();
+}
 
 struct ProcMacroProviderBinding {
     String package;

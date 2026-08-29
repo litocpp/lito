@@ -430,7 +430,7 @@ sources = ["src/extra.cpp"]
     }
     ASSERT_NE(selected_artifact, nullptr);
     ASSERT_NE(unselected_artifact, nullptr);
-    auto artifact          = selected_artifact->path.clone();
+    auto artifact          = selected_artifact->primary.path.clone();
     auto original_contents = rstd::fs::read(artifact.as_path());
     ASSERT_TRUE(original_contents.is_ok());
     auto original_metadata = rstd::fs::metadata(artifact.as_path());
@@ -513,9 +513,9 @@ version = "0.1.0"
         FAIL();
         return;
     }
-    ASSERT_TRUE(
-        rstd::fs::write(unselected_artifact->path.as_path(), "unselected changed"_str.as_bytes())
-            .is_ok());
+    ASSERT_TRUE(rstd::fs::write(unselected_artifact->primary.path.as_path(),
+                                "unselected changed"_str.as_bytes())
+                    .is_ok());
     auto unselected =
         lito::install(reuse_request(install_root("install-no-build-unselected"_str).as_path()));
     if (unselected.is_err()) {

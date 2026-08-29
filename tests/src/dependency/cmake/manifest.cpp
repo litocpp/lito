@@ -669,7 +669,7 @@ TEST_F(CMakeManifest, BuildPlatformMakesNativeAndExplicitTargetIntentObservable)
     auto compiler_default = pkg_config_target();
     auto host             = lito::system::HostInfo {
         .architecture = compiler_default.architecture,
-        .os           = compiler_default.os.clone(),
+        .os           = String::make(compiler_default.platform_name()),
     };
     auto native = lito::system::resolve_build_platform(host, compiler_default, None());
     ASSERT_TRUE(native.is_ok());

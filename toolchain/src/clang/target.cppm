@@ -118,9 +118,10 @@ private:
 };
 
 struct ClangTargetResolution {
-    PathBuf               compiler;
-    CompileTarget         target;
-    ClangSupportedTargets supported_targets;
+    PathBuf                  compiler;
+    lito::system::TargetInfo compiler_default;
+    CompileTarget            target;
+    ClangSupportedTargets    supported_targets;
 };
 
 auto resolve_clang_target(const lito::config::ToolchainSpec&              specification,
@@ -143,45 +144,88 @@ auto resolve_clang_target(const lito::config::ToolchainSpec&              specif
         toolchain::command::push_option(arguments, option);
         return toolchain::command::tool_output(rstd::move(arguments), description, environment);
     };
+    const auto query_target = [&](ref<str> candidate) -> ToolchainResult<String> {
+        auto arguments = Vec<String>::make();
+        rstd_try(toolchain::command::push_path(arguments, compiler.as_path()));
+        arguments.push(rstd::format("--target={}", candidate));
+        toolchain::command::push_option(arguments, toolchain::clang_options::PRINT_TARGET_TRIPLE);
+        return toolchain::command::tool_output(
+            rstd::move(arguments), "clang++ configured target query"_str, environment);
+    };
 
     auto targets = rstd_try(
         query(toolchain::clang_options::PRINT_TARGETS, "clang++ supported target query"_str));
-    auto supported = rstd_try(ClangSupportedTargets::parse(targets.as_str()));
-    auto target    = Option<CompileTarget> {};
+    auto supported      = rstd_try(ClangSupportedTargets::parse(targets.as_str()));
+    auto default_triple = rstd_try(
+        query(toolchain::clang_options::PRINT_TARGET_TRIPLE, "clang++ default target query"_str));
+    auto parsed_default = lito::system::parse_target_info(default_triple.as_str());
+    if (parsed_default.is_err()) {
+        return Err(ToolchainError::Platform(rstd::move(parsed_default).unwrap_err()));
+    }
+    auto compiler_default = rstd::move(parsed_default).unwrap();
+    auto target           = Option<CompileTarget> {};
     if (sdk_target != nullptr) {
         auto os = lito::system::target_operating_system(*sdk_target);
         if (os.is_err()) return Err(ToolchainError::Platform(rstd::move(os).unwrap_err()));
-        if (specification.target.is_Config() &&
-            (*os != specification.target.as_Config().os ||
-             sdk_target->architecture != specification.target.as_Config().architecture)) {
-            return Err(ToolchainError::Message(
-                rstd::format("configured toolchain target '{}-{}' conflicts with SDK target '{}'",
-                             architecture_name(specification.target.as_Config().architecture),
-                             operating_system_name(specification.target.as_Config().os),
-                             sdk_target->triple.as_str())));
+        if (specification.target.is_Config()) {
+            const auto& configured = specification.target.as_Config();
+            const auto  vendor_matches =
+                configured.vendor.is_none() || configured.vendor->as_str() == sdk_target->vendor;
+            const auto environment_matches =
+                configured.environment.is_none() ||
+                (sdk_target->environment.is_some() &&
+                 configured.environment->as_str() == sdk_target->environment->as_str());
+            if (configured.os.as_str() != sdk_target->platform_name() ||
+                sdk_target->architecture != configured.architecture || ! vendor_matches ||
+                ! environment_matches) {
+                return Err(ToolchainError::Message(rstd::format(
+                    "configured toolchain target '{}-{}' conflicts with SDK target '{}'",
+                    architecture_name(configured.architecture),
+                    configured.os.as_str(),
+                    sdk_target->triple.as_str())));
+            }
         }
-        auto library = rstd_try(resolve_standard_library_selection(standard_library, *os));
+        auto library = rstd_try(resolve_standard_library_selection(standard_library, *sdk_target));
         target       = Some(rstd_try(resolve_sdk_compile_target(*sdk_target, library)));
     } else {
-        auto compiler_default = Option<lito::system::TargetInfo> {};
         if (specification.target.is_CompilerDefault()) {
-            auto triple = rstd_try(query(toolchain::clang_options::PRINT_TARGET_TRIPLE,
-                                         "clang++ default target query"_str));
-            auto parsed = lito::system::parse_target_info(triple.as_str());
+            auto library =
+                rstd_try(resolve_standard_library_selection(standard_library, compiler_default));
+            target = Some(rstd_try(resolve_compile_target(
+                compiler_default.clone(), library, CompileTargetSource::CompilerDefault)));
+        } else {
+            auto candidate = rstd_try(configured_target_candidate(specification.target));
+            auto canonical = rstd_try(query_target(candidate.as_str()));
+            auto parsed    = lito::system::parse_target_info(canonical.as_str());
             if (parsed.is_err()) {
                 return Err(ToolchainError::Platform(rstd::move(parsed).unwrap_err()));
             }
-            compiler_default = Some(rstd::move(parsed).unwrap());
+            auto        info       = rstd::move(parsed).unwrap();
+            const auto& configured = specification.target.as_Config();
+            const auto  vendor_matches =
+                configured.vendor.is_none() || configured.vendor->as_str() == info.vendor;
+            const auto environment_matches =
+                configured.environment.is_none() ||
+                (info.environment.is_some() &&
+                 configured.environment->as_str() == info.environment->as_str());
+            if (configured.architecture != info.architecture ||
+                configured.os.as_str() != info.platform_name() || ! vendor_matches ||
+                ! environment_matches) {
+                return Err(ToolchainError::Message(rstd::format(
+                    "Clang canonical target '{}' does not satisfy configured target '{}-{}'",
+                    info.triple.as_str(),
+                    architecture_name(configured.architecture),
+                    configured.os.as_str())));
+            }
+            auto library = rstd_try(resolve_standard_library_selection(standard_library, info));
+            target       = Some(rstd_try(
+                resolve_compile_target(rstd::move(info), library, CompileTargetSource::Config)));
         }
-        auto input   = rstd_try(resolve_toolchain_target_input(
-            specification.target,
-            compiler_default.is_some() ? rstd::addressof(*compiler_default) : nullptr));
-        auto library = rstd_try(resolve_standard_library_selection(standard_library, input.os));
-        target       = Some(rstd_try(resolve_compile_target(input, library)));
     }
     rstd_try(supported.validate(target->info.architecture, target->info.triple.as_str()));
     return Ok(ClangTargetResolution {
         .compiler          = rstd::move(compiler),
+        .compiler_default  = rstd::move(compiler_default),
         .target            = rstd::move(target).unwrap(),
         .supported_targets = rstd::move(supported),
     });

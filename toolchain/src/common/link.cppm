@@ -42,6 +42,7 @@ struct LinkTargetContext {
     };
     Option<lito::compiler::MicrosoftRuntimeLibrary> microsoft_runtime_library;
     bool                                            link_standard_library { true };
+    Option<lito::config::WasmToolchainSpec>         wasm;
     LinkOutputKind                                  output { LinkOutputKind::Executable };
     Option<String>                                  soname;
 };
@@ -76,8 +77,12 @@ auto linker_family_name(LinkerFamily family) noexcept -> ref<str> {
 }
 
 auto lld_executable_name(const lito::system::TargetInfo& target) noexcept -> ref<str> {
-    if (target.environment == lito::system::TargetEnvironment::Msvc) return "lld-link"_str;
-    if (target.os.as_str() == "macos"_str) return "ld64.lld"_str;
+    if (target.is_msvc()) return "lld-link"_str;
+    if (target.platform == lito::system::TargetPlatform::Macos) return "ld64.lld"_str;
+    if (target.architecture == lito::system::Architecture::Wasm32 ||
+        target.architecture == lito::system::Architecture::Wasm64) {
+        return "wasm-ld"_str;
+    }
     return "ld.lld"_str;
 }
 

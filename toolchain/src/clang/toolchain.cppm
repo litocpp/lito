@@ -94,6 +94,7 @@ private:
             return Err(rstd::move(configured_archiver).unwrap_err());
         }
         auto compiler_path     = rstd::move(target_facts.compiler);
+        auto compiler_default  = Some(rstd::move(target_facts.compiler_default));
         auto c_compiler_path   = rstd::move(configured_c_compiler).unwrap();
         auto archiver_path     = rstd::move(configured_archiver).unwrap();
         auto compile_target    = Some(rstd::move(target_facts.target));
@@ -313,6 +314,7 @@ private:
                                    rstd::move(archiver_identity).unwrap(),
                                    rstd::move(resolved_resource),
                                    rstd::move(identity),
+                                   rstd::move(compiler_default).unwrap(),
                                    rstd::move(compile_target).unwrap(),
                                    rstd::move(supported_targets).unwrap(),
                                    rstd::move(format),
@@ -331,6 +333,7 @@ public:
         return archiver_identity_.executable.as_path();
     }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
+    auto compiler_default_target_info() const -> const TargetInfo& { return compiler_default_; }
     auto target_info() const -> const TargetInfo& { return compile_target_.info; }
     auto compile_target() const -> const CompileTarget& { return compile_target_; }
     auto supported_targets() const -> const ClangSupportedTargets& { return supported_targets_; }
@@ -350,6 +353,274 @@ public:
     }
     auto argument_parser() const noexcept -> const cpp::CppArgumentParser& {
         return argument_parser_;
+    }
+
+    auto prepare_target_cxx_support(cpp::CppCompileOptions& options,
+                                    ref<rstd::path::Path>   generated_root) const
+        -> ToolchainResult<empty> {
+        const auto& target    = compile_target_.info;
+        const auto  bare_wasm = target.architecture == Architecture::Wasm32 &&
+                                target.operating_system == "unknown"_str &&
+                                target.environment.is_none();
+        if (! bare_wasm) return Ok(empty {});
+        if (options.abi.standard_library != lito::config::StandardLibrary::Libcxx) {
+            return failure<empty>(rstd::format(
+                "bare WebAssembly target '{}' requires libc++ headers", target.triple.as_str()));
+        }
+        auto compiler_directory = compiler_.as_path().parent();
+        if (compiler_directory.is_none()) {
+            return failure<empty>(rstd::format("Clang compiler '{}' has no installation directory",
+                                               compiler_.as_path()));
+        }
+        auto include_requested = PathBuf::from(*compiler_directory)
+                                     .join(PathBuf::from("../include/c++/v1"_str).as_path());
+        auto include_directory = rstd::fs::canonicalize(include_requested.as_path());
+        if (include_directory.is_err()) {
+            return Err(ToolchainError::Io(String::make("resolve freestanding libc++ headers"_str),
+                                          rstd::move(include_requested),
+                                          rstd::move(include_directory).unwrap_err()));
+        }
+        auto version_header = include_directory->join(PathBuf::from("version"_str).as_path());
+        auto inspected      = rstd::fs::symlink_metadata(version_header.as_path());
+        if (inspected.is_err()) {
+            return Err(
+                ToolchainError::Io(String::make("inspect freestanding libc++ version header"_str),
+                                   rstd::move(version_header),
+                                   rstd::move(inspected).unwrap_err()));
+        }
+        if (! inspected->is_file() || inspected->is_symlink()) {
+            return failure<empty>(
+                rstd::format("freestanding libc++ version header '{}' is not a regular file",
+                             version_header.as_path()));
+        }
+        auto support_root =
+            PathBuf::from(generated_root)
+                .join(PathBuf::from("toolchain/libcxx/wasm32-unknown-unknown/config-v2/include"_str)
+                          .as_path());
+        auto created = rstd::fs::create_dir_all(support_root.as_path());
+        if (created.is_err()) {
+            return Err(ToolchainError::Io(String::make("create freestanding libc++ support"_str),
+                                          support_root.clone(),
+                                          rstd::move(created).unwrap_err()));
+        }
+        auto config  = support_root.join(PathBuf::from("__config_site"_str).as_path());
+        auto content = "#ifndef _LIBCPP___CONFIG_SITE\n"
+                       "#define _LIBCPP___CONFIG_SITE\n"
+                       "#define _LIBCPP_ABI_VERSION 1\n"
+                       "#define _LIBCPP_ABI_NAMESPACE __1\n"
+                       "#define _LIBCPP_ABI_FORCE_ITANIUM 0\n"
+                       "#define _LIBCPP_ABI_FORCE_MICROSOFT 0\n"
+                       "#define _LIBCPP_HAS_THREADS 0\n"
+                       "#define _LIBCPP_HAS_MONOTONIC_CLOCK 0\n"
+                       "#define _LIBCPP_HAS_TERMINAL 0\n"
+                       "#define _LIBCPP_HAS_MUSL_LIBC 0\n"
+                       "#define _LIBCPP_HAS_THREAD_API_PTHREAD 0\n"
+                       "#define _LIBCPP_HAS_THREAD_API_EXTERNAL 0\n"
+                       "#define _LIBCPP_HAS_THREAD_API_WIN32 0\n"
+                       "#define _LIBCPP_HAS_THREAD_API_C11 0\n"
+                       "#define _LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS 0\n"
+                       "#define _LIBCPP_HAS_FILESYSTEM 0\n"
+                       "#define _LIBCPP_HAS_RANDOM_DEVICE 0\n"
+                       "#define _LIBCPP_HAS_LOCALIZATION 0\n"
+                       "#define _LIBCPP_HAS_UNICODE 0\n"
+                       "#define _LIBCPP_HAS_WIDE_CHARACTERS 0\n"
+                       "#define _LIBCPP_HAS_TIME_ZONE_DATABASE 0\n"
+                       "#define _LIBCPP_INSTRUMENTED_WITH_ASAN 0\n"
+                       "#define _LIBCPP_PSTL_BACKEND_SERIAL\n"
+                       "#define _LIBCPP_HARDENING_MODE_DEFAULT 2\n"
+                       "#define _LIBCPP_ASSERTION_SEMANTIC_DEFAULT 2\n"
+                       "#define _LIBCPP_LIBC_PICOLIBC 0\n"
+                       "#define _LIBCPP_LIBC_NEWLIB 0\n"
+                       "#endif\n"_str;
+        auto written = rstd::fs::write_atomic_if_changed(config.as_path(), content.as_bytes());
+        if (written.is_err()) {
+            return Err(ToolchainError::Io(String::make("write freestanding libc++ config"_str),
+                                          rstd::move(config),
+                                          rstd::move(written).unwrap_err()));
+        }
+        auto c_support =
+            PathBuf::from(generated_root)
+                .join(PathBuf::from("toolchain/libcxx/wasm32-unknown-unknown/c-v2/include"_str)
+                          .as_path());
+        auto mbstate_directory = c_support.join(PathBuf::from("bits/types"_str).as_path());
+        created                = rstd::fs::create_dir_all(mbstate_directory.as_path());
+        if (created.is_err()) {
+            return Err(
+                ToolchainError::Io(String::make("create freestanding libc++ type support"_str),
+                                   rstd::move(mbstate_directory),
+                                   rstd::move(created).unwrap_err()));
+        }
+        auto mbstate = c_support.join(PathBuf::from("bits/types/mbstate_t.h"_str).as_path());
+        auto mbstate_content = "#ifndef LITO_FREESTANDING_MBSTATE_T_H\n"
+                               "#define LITO_FREESTANDING_MBSTATE_T_H\n"
+                               "typedef struct { unsigned long __state[2]; } mbstate_t;\n"
+                               "#endif\n"_str;
+        written = rstd::fs::write_atomic_if_changed(mbstate.as_path(), mbstate_content.as_bytes());
+        if (written.is_err()) {
+            return Err(
+                ToolchainError::Io(String::make("write freestanding libc++ type support"_str),
+                                   rstd::move(mbstate),
+                                   rstd::move(written).unwrap_err()));
+        }
+        struct FreestandingHeader {
+            ref<str> path;
+            ref<str> content;
+        };
+        constexpr FreestandingHeader headers[] = {
+            { "math.h"_str,
+              "#ifndef LITO_FREESTANDING_MATH_H\n"
+              "#define LITO_FREESTANDING_MATH_H\n"
+              "#define FP_NAN 0\n#define FP_INFINITE 1\n#define FP_ZERO 2\n"
+              "#define FP_SUBNORMAL 3\n#define FP_NORMAL 4\n"
+              "#define HUGE_VAL (__builtin_huge_val())\n"
+              "#define HUGE_VALF (__builtin_huge_valf())\n"
+              "#define HUGE_VALL (__builtin_huge_vall())\n"
+              "#define INFINITY (__builtin_inff())\n#define NAN (__builtin_nanf(\"\"))\n"
+              "typedef float float_t; typedef double double_t;\n"
+              "#endif\n"_str },
+            { "string.h"_str,
+              "#ifndef LITO_FREESTANDING_STRING_H\n"
+              "#define LITO_FREESTANDING_STRING_H\n#include <stddef.h>\n"
+              "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"
+              "void* memcpy(void*, const void*, size_t);\n"
+              "void* memmove(void*, const void*, size_t);\n"
+              "void* memset(void*, int, size_t);\n"
+              "int memcmp(const void*, const void*, size_t);\n"
+              "char* strcpy(char*, const char*); char* strncpy(char*, const char*, size_t);\n"
+              "char* strcat(char*, const char*); char* strncat(char*, const char*, size_t);\n"
+              "int strcmp(const char*, const char*); int strncmp(const char*, const char*, "
+              "size_t);\n"
+              "int strcoll(const char*, const char*); size_t strxfrm(char*, const char*, size_t);\n"
+              "size_t strcspn(const char*, const char*); size_t strspn(const char*, const char*);\n"
+              "char* strtok(char*, const char*);\n"
+              "char* strerror(int);\n"
+              "size_t strlen(const char*);\n"
+              "#ifdef __cplusplus\n}\nextern \"C++\" {\n"
+              "inline void* memchr(void* p, int c, size_t n) { return __builtin_memchr(p, c, n); "
+              "}\n"
+              "inline const void* memchr(const void* p, int c, size_t n) { return "
+              "__builtin_memchr(p, c, n); }\n"
+              "inline char* strchr(char* p, int c) { return __builtin_strchr(p, c); }\n"
+              "inline const char* strchr(const char* p, int c) { return __builtin_strchr(p, c); }\n"
+              "inline char* strpbrk(char* p, const char* a) { return __builtin_strpbrk(p, a); }\n"
+              "inline const char* strpbrk(const char* p, const char* a) { return "
+              "__builtin_strpbrk(p, a); }\n"
+              "inline char* strrchr(char* p, int c) { return __builtin_strrchr(p, c); }\n"
+              "inline const char* strrchr(const char* p, int c) { return __builtin_strrchr(p, c); "
+              "}\n"
+              "inline char* strstr(char* p, const char* a) { return __builtin_strstr(p, a); }\n"
+              "inline const char* strstr(const char* p, const char* a) { return "
+              "__builtin_strstr(p, a); }\n"
+              "}\n#define __CORRECT_ISO_CPP_STRING_H_PROTO 1\n"
+              "#else\nvoid* memchr(const void*, int, size_t); char* strchr(const char*, int);\n"
+              "char* strpbrk(const char*, const char*); char* strrchr(const char*, int);\n"
+              "char* strstr(const char*, const char*);\n#endif\n#endif\n"_str },
+            { "stdio.h"_str,
+              "#ifndef LITO_FREESTANDING_STDIO_H\n"
+              "#define LITO_FREESTANDING_STDIO_H\n#include <stddef.h>\n#include <stdarg.h>\n"
+              "#define EOF (-1)\ntypedef struct __lito_FILE FILE; typedef long fpos_t;\n"
+              "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"
+              "int fclose(FILE*); int fflush(FILE*); void setbuf(FILE*, char*);\n"
+              "int setvbuf(FILE*, char*, int, size_t); int fprintf(FILE*, const char*, ...);\n"
+              "int fscanf(FILE*, const char*, ...); int snprintf(char*, size_t, const char*, "
+              "...);\n"
+              "int sprintf(char*, const char*, ...); int sscanf(const char*, const char*, ...);\n"
+              "int vfprintf(FILE*, const char*, va_list); int vfscanf(FILE*, const char*, "
+              "va_list);\n"
+              "int vsscanf(const char*, const char*, va_list);\n"
+              "int vsnprintf(char*, size_t, const char*, va_list);\n"
+              "int vsprintf(char*, const char*, va_list); int fgetc(FILE*);\n"
+              "char* fgets(char*, int, FILE*); int fputc(int, FILE*); int fputs(const char*, "
+              "FILE*);\n"
+              "int getc(FILE*); int putc(int, FILE*); int ungetc(int, FILE*);\n"
+              "size_t fread(void*, size_t, size_t, FILE*);\n"
+              "size_t fwrite(const void*, size_t, size_t, FILE*);\n"
+              "int fgetpos(FILE*, fpos_t*); int fseek(FILE*, long, int);\n"
+              "int fsetpos(FILE*, const fpos_t*); long ftell(FILE*); void rewind(FILE*);\n"
+              "void clearerr(FILE*); int feof(FILE*); int ferror(FILE*); void perror(const "
+              "char*);\n"
+              "FILE* fopen(const char*, const char*); FILE* freopen(const char*, const char*, "
+              "FILE*);\n"
+              "int remove(const char*); int rename(const char*, const char*);\n"
+              "FILE* tmpfile(void); char* tmpnam(char*); int getchar(void);\n"
+              "int scanf(const char*, ...); int vscanf(const char*, va_list);\n"
+              "int printf(const char*, ...); int putchar(int); int puts(const char*);\n"
+              "int vprintf(const char*, va_list);\n"
+              "#ifdef __cplusplus\n}\n#endif\n#endif\n"_str },
+            { "stdlib.h"_str,
+              "#ifndef LITO_FREESTANDING_STDLIB_H\n"
+              "#define LITO_FREESTANDING_STDLIB_H\n#include <stddef.h>\n"
+              "typedef struct { int quot; int rem; } div_t;\n"
+              "typedef struct { long quot; long rem; } ldiv_t;\n"
+              "typedef struct { long long quot; long long rem; } lldiv_t;\n"
+              "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"
+              "void* malloc(size_t); void free(void*); void* realloc(void*, size_t);\n"
+              "void* calloc(size_t, size_t);\n"
+              "double atof(const char*); int atoi(const char*); long atol(const char*);\n"
+              "long long atoll(const char*); double strtod(const char*, char**);\n"
+              "float strtof(const char*, char**); long double strtold(const char*, char**);\n"
+              "long strtol(const char*, char**, int); long long strtoll(const char*, char**, "
+              "int);\n"
+              "unsigned long strtoul(const char*, char**, int);\n"
+              "unsigned long long strtoull(const char*, char**, int);\n"
+              "int rand(void); void srand(unsigned); void abort(void); int atexit(void "
+              "(*)(void));\n"
+              "void exit(int); void _Exit(int); char* getenv(const char*); int system(const "
+              "char*);\n"
+              "void* bsearch(const void*, const void*, size_t, size_t,\n"
+              "int (*)(const void*, const void*));\n"
+              "void qsort(void*, size_t, size_t, int (*)(const void*, const void*));\n"
+              "int abs(int); long labs(long); long long llabs(long long);\n"
+              "div_t div(int, int); ldiv_t ldiv(long, long);\n"
+              "lldiv_t lldiv(long long, long long);\n"
+              "int mblen(const char*, size_t); void* aligned_alloc(size_t, size_t);\n"
+              "int at_quick_exit(void (*)(void)); void quick_exit(int);\n"
+              "#ifdef __cplusplus\n}\n#endif\n#endif\n"_str },
+            { "time.h"_str,
+              "#ifndef LITO_FREESTANDING_TIME_H\n"
+              "#define LITO_FREESTANDING_TIME_H\n#include <stddef.h>\n"
+              "typedef long long time_t; typedef long long clock_t;\n"
+              "struct tm { int tm_sec; int tm_min; int tm_hour; int tm_mday;\n"
+              "int tm_mon; int tm_year; int tm_wday; int tm_yday; int tm_isdst; };\n"
+              "struct timespec { time_t tv_sec; long tv_nsec; };\n"
+              "#define TIME_UTC 1\n"
+              "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"
+              "clock_t clock(void); double difftime(time_t, time_t); time_t mktime(struct tm*);\n"
+              "time_t time(time_t*); char* asctime(const struct tm*); char* ctime(const time_t*);\n"
+              "struct tm* gmtime(const time_t*); struct tm* localtime(const time_t*);\n"
+              "size_t strftime(char*, size_t, const char*, const struct tm*);\n"
+              "int timespec_get(struct timespec*, int);\n"
+              "#ifdef __cplusplus\n}\n#endif\n#endif\n"_str },
+        };
+        for (const auto& header : headers) {
+            auto path = c_support.join(PathBuf::from(header.path).as_path());
+            written = rstd::fs::write_atomic_if_changed(path.as_path(), header.content.as_bytes());
+            if (written.is_err()) {
+                return Err(
+                    ToolchainError::Io(String::make("write freestanding C header support"_str),
+                                       rstd::move(path),
+                                       rstd::move(written).unwrap_err()));
+            }
+        }
+        auto includes = Vec<cpp::CppIncludeDirectory>::with_capacity(
+            options.preprocessor.include_directories.len() + usize(3));
+        includes.push(cpp::CppIncludeDirectory {
+            .path = rstd::move(support_root),
+            .kind = cpp::CppIncludeDirectoryKind::System,
+        });
+        includes.push(cpp::CppIncludeDirectory {
+            .path = rstd::move(include_directory).unwrap(),
+            .kind = cpp::CppIncludeDirectoryKind::System,
+        });
+        includes.push(cpp::CppIncludeDirectory {
+            .path = rstd::move(c_support),
+            .kind = cpp::CppIncludeDirectoryKind::System,
+        });
+        for (auto& include : options.preprocessor.include_directories) {
+            includes.push(rstd::move(include));
+        }
+        options.preprocessor.include_directories = rstd::move(includes);
+        return Ok(empty {});
     }
 
     auto resolve_standard_library(const cpp::CppCompileOptions& options,
@@ -425,7 +696,7 @@ public:
         auto library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                 ? "libc++.so"_str
                                 : "libstdc++.so"_str;
-        if (target.environment == TargetEnvironment::Msvc) {
+        if (target.is_msvc()) {
             library_name = options.abi.standard_library == lito::config::StandardLibrary::Msvc
                                ? "msvcprt.lib"_str
                                : "c++.lib"_str;
@@ -439,7 +710,7 @@ public:
             library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                ? "libc++.dll.a"_str
                                : "libstdc++.dll.a"_str;
-        } else if (target.os.as_str() == "macos"_str) {
+        } else if (target.platform == TargetPlatform::Macos) {
             library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                ? "libc++.dylib"_str
                                : "libstdc++.dylib"_str;
@@ -469,7 +740,7 @@ public:
                              library->standard_error.as_str()));
         }
         auto binary_path_text = trim_ascii(rstd::move(library->standard_output));
-        if (target.environment == TargetEnvironment::Msvc) {
+        if (target.is_msvc()) {
             auto probe_command = Vec<String>::make();
             pushed             = toolchain::command::push_path(probe_command, compiler_.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
@@ -608,7 +879,7 @@ public:
             thread_backend = String::make("pthread"_str);
         } else if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
             thread_backend = String::make("win32"_str);
-        } else if (target.environment == TargetEnvironment::Msvc) {
+        } else if (target.is_msvc()) {
             thread_backend = String::make("win32"_str);
         }
         auto family = lito::config::standard_library_name(*detected_family);
@@ -1230,6 +1501,8 @@ public:
                          ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
         const auto& target                    = context.platform.effective_target;
+        const auto  wasm_target               = target.architecture == Architecture::Wasm32 ||
+                                                target.architecture == Architecture::Wasm64;
         const auto  language                  = context.language;
         const auto  standard_library          = context.standard_library;
         const auto& microsoft_runtime_library = context.microsoft_runtime_library;
@@ -1241,7 +1514,7 @@ public:
                              cpp::cpp_lto_option(*lto)));
         }
         if (linker_identity_.family == LinkerFamily::GnuLd &&
-            (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str ||
+            (target.family != TargetFamily::Unix || target.platform == TargetPlatform::Macos ||
              target.triple.as_str() != compiler_identity_.target.as_str())) {
             return failure<rstd::time::Duration>(rstd::format(
                 "configured GNU ld is only supported for the host ELF target '{}'; requested '{}'",
@@ -1264,8 +1537,39 @@ public:
         }
         pushed = push_clang_lld_selection(command, linker_identity_.executable.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        if (context.wasm.is_some() != wasm_target) {
+            return failure<rstd::time::Duration>(
+                context.wasm.is_some()
+                    ? rstd::format("toolchain.wasm requires a WebAssembly target, got '{}'",
+                                   target.triple.as_str())
+                    : rstd::format("WebAssembly link target '{}' requires toolchain.wasm",
+                                   target.triple.as_str()));
+        }
+        if (wasm_target) {
+            if (target.architecture != Architecture::Wasm32 ||
+                target.operating_system != "unknown"_str || target.environment.is_some()) {
+                return failure<rstd::time::Duration>(
+                    rstd::format("bare WebAssembly output currently requires target "
+                                 "'wasm32-unknown-unknown', got '{}'",
+                                 target.triple.as_str()));
+            }
+            if (! link_requirements.runtime_search_paths.is_empty() ||
+                ! link_requirements.system_libraries.is_empty() ||
+                link_requirements.posix_threads) {
+                return failure<rstd::time::Duration>(
+                    "bare WebAssembly output cannot use native runtime search paths, threads or system libraries"_str);
+            }
+            if (context.wasm->entry == lito::config::WasmEntry::None) {
+                toolchain::command::push_option(command, "-Wl,--no-entry"_str);
+            }
+            toolchain::command::push_option(command, "-nostdlib"_str);
+            if (context.wasm->export_memory) {
+                toolchain::command::push_option(command, "-Wl,--export-memory"_str);
+            }
+        }
         if (context.output == LinkOutputKind::SharedLibrary) {
-            if (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str) {
+            if (! wasm_target &&
+                (target.family != TargetFamily::Unix || target.platform == TargetPlatform::Macos)) {
                 return failure<rstd::time::Duration>(
                     rstd::format("ELF shared-library output is unsupported for target '{}'",
                                  target.triple.as_str()));
@@ -1276,10 +1580,12 @@ public:
                 return failure<rstd::time::Duration>(
                     "ELF shared-library output requires a safe SONAME"_str);
             }
-            toolchain::command::push_option(command, "-shared"_str);
-            command.push(rstd::format("-Wl,-soname,{}", context.soname->as_str()));
+            if (! wasm_target) {
+                toolchain::command::push_option(command, "-shared"_str);
+                command.push(rstd::format("-Wl,-soname,{}", context.soname->as_str()));
+            }
         }
-        if (target.environment == TargetEnvironment::Msvc && microsoft_runtime_library.is_some() &&
+        if (target.is_msvc() && microsoft_runtime_library.is_some() &&
             lito::compiler::microsoft_runtime_library_is_dynamic(*microsoft_runtime_library)) {
             // The GNU clang driver injects libcmt for an MSVC target even when all input objects
             // select the dynamic CRT through -fms-runtime-lib. Suppress only the incompatible
@@ -1295,7 +1601,7 @@ public:
             if (! stdlib_link_option.is_empty()) {
                 toolchain::command::push_option(command, stdlib_link_option);
             }
-            if (context.link_standard_library && target.os.as_str() == "android"_str &&
+            if (context.link_standard_library && target.platform == TargetPlatform::Android &&
                 context.standard_library_runtime == lito::config::StandardLibraryRuntime::Static) {
                 toolchain::command::push_option(command, "-static-libstdc++"_str);
             }
@@ -1334,7 +1640,7 @@ public:
                 if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
                 continue;
             }
-            if (target.os.as_str() == "macos"_str) {
+            if (target.platform == TargetPlatform::Macos) {
                 toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
                 toolchain::command::push_option(command, toolchain::clang_options::FORCE_LOAD);
                 toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
@@ -1354,7 +1660,7 @@ public:
                 command.push(rstd::move(option));
                 continue;
             }
-            if (target.family != TargetFamily::Unix) {
+            if (target.family != TargetFamily::Unix && ! wasm_target) {
                 return failure<rstd::time::Duration>(
                     rstd::format("whole-archive linking is unsupported for target '{}'",
                                  target.triple.as_str()));
@@ -1382,7 +1688,7 @@ public:
                     requirement.source.as_str(),
                     target.triple.as_str()));
             }
-            if (requirement.name.as_str() == "dl"_str && target.os.as_str() == "macos"_str)
+            if (requirement.name.as_str() == "dl"_str && target.platform == TargetPlatform::Macos)
                 continue;
             auto option = target.family == TargetFamily::Windows ? requirement.name.clone()
                                                                  : String::make("-l"_str);
@@ -1438,7 +1744,7 @@ public:
                              linker_family_name(linker_identity_.family)));
         }
         if (compile_target_.info.family != TargetFamily::Unix ||
-            compile_target_.info.os.as_str() == "macos"_str) {
+            compile_target_.info.platform == TargetPlatform::Macos) {
             return failure<ElfSharedLibraryArtifact>(rstd::format(
                 "ELF shared-library linking requires a host ELF target; compiler target is '{}'",
                 compile_target_.info.triple.as_str()));
@@ -1475,7 +1781,7 @@ public:
         if (host.is_err()) {
             return Err(ToolchainError::Platform(rstd::move(host).unwrap_err()));
         }
-        auto platform = resolve_build_platform(*host, compile_target_.info, None());
+        auto platform = resolve_build_platform(*host, compiler_default_, None());
         if (platform.is_err()) {
             return Err(ToolchainError::Platform(rstd::move(platform).unwrap_err()));
         }
@@ -1553,6 +1859,7 @@ private:
                    ArchiverIdentity              archiver_identity,
                    PathBuf                       resource_dir,
                    CompilerIdentity              identity,
+                   TargetInfo                    compiler_default,
                    CompileTarget                 compile_target,
                    ClangSupportedTargets         supported_targets,
                    cpp::BmiFormatIdentity        format,
@@ -1565,6 +1872,7 @@ private:
           archiver_identity_(rstd::move(archiver_identity)),
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
+          compiler_default_(rstd::move(compiler_default)),
           compile_target_(rstd::move(compile_target)),
           supported_targets_(rstd::move(supported_targets)),
           bmi_format_(rstd::move(format)),
@@ -1816,6 +2124,7 @@ private:
     ArchiverIdentity                                              archiver_identity_;
     PathBuf                                                       resource_dir_;
     CompilerIdentity                                              compiler_identity_;
+    TargetInfo                                                    compiler_default_;
     CompileTarget                                                 compile_target_;
     ClangSupportedTargets                                         supported_targets_;
     cpp::BmiFormatIdentity                                        bmi_format_;

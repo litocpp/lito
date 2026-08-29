@@ -89,7 +89,7 @@ auto validate_completed_build_product_file(const CompletedBuildProduct& product,
 namespace lito
 {
 
-inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(5);
+inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(7);
 
 template<typename T>
 auto product_failure(String message) -> BuildProductResult<T> {
@@ -242,6 +242,23 @@ auto parse_artifact_kind(ref<str> value) -> BuildProductResult<cpp::ArtifactKind
         rstd::format("unknown build product artifact kind '{}'", value));
 }
 
+auto parse_artifact_format(ref<str> value) -> BuildProductResult<lito::artifact::Format> {
+    if (value == "archive"_str) return Ok(lito::artifact::Format::Archive);
+    if (value == "elf"_str) return Ok(lito::artifact::Format::Elf);
+    if (value == "pe-coff"_str) return Ok(lito::artifact::Format::PeCoff);
+    if (value == "mach-o"_str) return Ok(lito::artifact::Format::MachO);
+    if (value == "webassembly"_str) return Ok(lito::artifact::Format::WebAssembly);
+    return product_failure<lito::artifact::Format>(
+        rstd::format("unknown build product artifact format '{}'", value));
+}
+
+auto parse_artifact_file_role(ref<str> value) -> BuildProductResult<ArtifactFileRole> {
+    auto parsed = artifact_file_role_from_name(value);
+    if (parsed.is_some()) return Ok(*parsed);
+    return product_failure<ArtifactFileRole>(
+        rstd::format("unknown build product artifact file role '{}'", value));
+}
+
 auto target_json(const lito::package::PackageTargetId& target) -> Json {
     auto result = JsonMap::make();
     result.insert(String::make("package"_str), product_string(target.package.as_str()));
@@ -301,14 +318,58 @@ auto parse_runpath(const Json& value, ref<str> context)
     return Ok(rstd::move(runpath).unwrap());
 }
 
+auto artifact_file_json(const CompletedBuildProduct& product,
+                        const BuiltArtifactFile&     file,
+                        ref<str>                     context) -> BuildProductResult<Json> {
+    auto result = JsonMap::make();
+    result.insert(String::make("role"_str), product_string(artifact_file_role_name(file.role)));
+    result.insert(String::make("path"_str),
+                  rstd_try(product_build_path(product, file.path.as_path(), context)));
+    result.insert(String::make("content-type"_str), product_string(file.content_type.as_str()));
+    result.insert(String::make("content-identity"_str),
+                  product_string(file.content_identity.as_str()));
+    result.insert(String::make("publish"_str), Json::Bool(file.publish));
+    return Ok(Json::Object(rstd::move(result)));
+}
+
+auto parse_artifact_file(const Json& value, ref<rstd::path::Path> base, ref<str> context)
+    -> BuildProductResult<BuiltArtifactFile> {
+    rstd_try(product_known_fields(
+        value,
+        context,
+        { "role"_str, "path"_str, "content-type"_str, "content-identity"_str, "publish"_str }));
+    auto publish_value = rstd_try(product_member(value, "publish"_str, context));
+    auto publish       = publish_value->as_bool();
+    if (publish.is_none()) {
+        return product_failure<BuiltArtifactFile>(
+            rstd::format("{}.publish must be a bool", context));
+    }
+    auto role = rstd_try(product_required_string(value, "role"_str, context));
+    return Ok(BuiltArtifactFile {
+        .role             = rstd_try(parse_artifact_file_role(role.as_str())),
+        .path             = rstd_try(resolve_product_build_path(base, value, "path"_str, context)),
+        .content_type     = rstd_try(product_required_string(value, "content-type"_str, context)),
+        .content_identity = rstd_try(product_required_text(value, "content-identity"_str, context)),
+        .publish          = *publish,
+    });
+}
+
 auto artifact_json(const CompletedBuildProduct& product, const BuiltArtifact& artifact)
     -> BuildProductResult<Json> {
     auto result = JsonMap::make();
     result.insert(String::make("target"_str), target_json(artifact.target));
     result.insert(String::make("kind"_str), product_string(artifact_kind_text(artifact.kind)));
-    result.insert(String::make("path"_str),
-                  rstd_try(product_build_path(
-                      product, artifact.path.as_path(), "build product artifact"_str)));
+    result.insert(String::make("format"_str),
+                  product_string(lito::artifact::format_name(artifact.format)));
+    result.insert(String::make("primary"_str),
+                  rstd_try(artifact_file_json(
+                      product, artifact.primary, "build product artifact primary"_str)));
+    auto companions = JsonArray::with_capacity(artifact.companions.len());
+    for (const auto& file : artifact.companions) {
+        companions.push(
+            rstd_try(artifact_file_json(product, file, "build product artifact companion"_str)));
+    }
+    result.insert(String::make("companions"_str), Json::Array(rstd::move(companions)));
     result.insert(String::make("package-root"_str),
                   rstd_try(product_path(artifact.package_root.as_path())));
     result.insert(String::make("link-identity"_str),
@@ -330,12 +391,22 @@ auto parse_artifact(const Json& value, ref<rstd::path::Path> base, ref<str> cont
                                   context,
                                   { "target"_str,
                                     "kind"_str,
-                                    "path"_str,
+                                    "format"_str,
+                                    "primary"_str,
+                                    "companions"_str,
                                     "package-root"_str,
                                     "link-identity"_str,
                                     "install-link"_str }));
-    auto target_value = rstd_try(product_member(value, "target"_str, context));
-    auto kind_text    = rstd_try(product_required_string(value, "kind"_str, context));
+    auto target_value     = rstd_try(product_member(value, "target"_str, context));
+    auto kind_text        = rstd_try(product_required_string(value, "kind"_str, context));
+    auto format_text      = rstd_try(product_required_string(value, "format"_str, context));
+    auto primary_value    = rstd_try(product_member(value, "primary"_str, context));
+    auto companion_values = rstd_try(product_required_array(value, "companions"_str, context));
+    auto companions       = Vec<BuiltArtifactFile>::with_capacity(companion_values->len());
+    for (const auto& file : *companion_values) {
+        companions.push(
+            rstd_try(parse_artifact_file(file, base, "build product artifact companion"_str)));
+    }
     auto install_link = Option<InstallArtifactLinkPolicy> {};
     auto link_value   = value.get("install-link"_str);
     if (link_value.is_some()) {
@@ -352,9 +423,12 @@ auto parse_artifact(const Json& value, ref<rstd::path::Path> base, ref<str> cont
         });
     }
     return Ok(BuiltArtifact {
-        .target        = rstd_try(parse_target(*target_value, "build product artifact.target"_str)),
-        .kind          = rstd_try(parse_artifact_kind(kind_text.as_str())),
-        .path          = rstd_try(resolve_product_build_path(base, value, "path"_str, context)),
+        .target  = rstd_try(parse_target(*target_value, "build product artifact.target"_str)),
+        .kind    = rstd_try(parse_artifact_kind(kind_text.as_str())),
+        .format  = rstd_try(parse_artifact_format(format_text.as_str())),
+        .primary = rstd_try(
+            parse_artifact_file(*primary_value, base, "build product artifact primary"_str)),
+        .companions    = rstd::move(companions),
         .package_root  = rstd_try(product_required_path(value, "package-root"_str, context)),
         .install_link  = rstd::move(install_link),
         .link_identity = rstd_try(product_required_text(value, "link-identity"_str, context)),
@@ -1006,6 +1080,33 @@ auto validate_product_layout(const CompletedBuildProduct& product) -> BuildProdu
                          product.build_directory.as_path(),
                          product.base_directory.as_path()));
     }
+    for (const auto& artifact : product.artifacts) {
+        if (artifact.primary.content_type.is_empty()) {
+            return product_failure<empty>(
+                rstd::format("artifact '{}' has an empty primary content type",
+                             artifact.primary.path.as_path()));
+        }
+        for (const auto& companion : artifact.companions) {
+            if (companion.content_type.is_empty()) {
+                return product_failure<empty>(rstd::format(
+                    "artifact companion '{}' has an empty content type", companion.path.as_path()));
+            }
+            if (companion.path.as_path() == artifact.primary.path.as_path()) {
+                return product_failure<empty>(
+                    rstd::format("artifact '{}' repeats its primary path as a companion",
+                                 artifact.primary.path.as_path()));
+            }
+            for (const auto& prior : artifact.companions) {
+                if (rstd::addressof(prior) == rstd::addressof(companion)) break;
+                if (prior.path.as_path() == companion.path.as_path()) {
+                    return product_failure<empty>(
+                        rstd::format("artifact '{}' repeats companion path '{}'",
+                                     lito::package::package_target_id_text(artifact.target),
+                                     companion.path.as_path()));
+                }
+            }
+        }
+    }
     for (const auto& set : product.external_assets.sets) {
         for (const auto& entry : set.entries) {
             rstd_try(validate_normal_relative_path(entry.logical_path.as_path(),
@@ -1138,9 +1239,16 @@ auto finalize_completed_build_product(CompletedBuildProduct result)
     for (const auto& artifact : result.artifacts) {
         rstd_try(append_file_stamp(result,
                                    result.install_files,
-                                   artifact.path.as_path(),
+                                   artifact.primary.path.as_path(),
                                    "completed build artifact"_str,
                                    BuildProductFileOwner::Build));
+        for (const auto& file : artifact.companions) {
+            rstd_try(append_file_stamp(result,
+                                       result.install_files,
+                                       file.path.as_path(),
+                                       "completed build artifact companion"_str,
+                                       BuildProductFileOwner::Build));
+        }
     }
     for (const auto& plugin : result.compiler_plugins) {
         rstd_try(append_file_stamp(result,

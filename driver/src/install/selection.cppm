@@ -343,7 +343,7 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                         "install runtime search is only supported for binary target '{}'",
                         lito::package::package_target_id_text(artifact.target)));
                 }
-                if (target.os != "linux"_str) {
+                if (target.platform != lito::system::TargetPlatform::Linux) {
                     return selection_failure<InstallBuildRequirements>(rstd::format(
                         "install runtime search for '{}' requires a Linux target, got '{}'",
                         lito::package::package_target_id_text(artifact.target),

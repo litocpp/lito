@@ -68,6 +68,7 @@ enum class BuildOperation
     Archive,
     Link,
     Strip,
+    ArtifactProcess,
 };
 
 enum class BuildStage
@@ -86,6 +87,7 @@ enum class BuildStage
     CompileCacheFinish,
     Archive,
     Link,
+    ArtifactProcess,
     ProductFinalize,
     ProductPublish,
     Count,
@@ -130,6 +132,7 @@ auto build_operation_label(BuildOperation operation) noexcept -> ref<str> {
     case BuildOperation::Archive: return "build.archive"_str;
     case BuildOperation::Link: return "build.link"_str;
     case BuildOperation::Strip: return "build.strip"_str;
+    case BuildOperation::ArtifactProcess: return "build.artifact-process"_str;
     }
     return "build.unknown"_str;
 }
@@ -150,6 +153,7 @@ auto build_stage_label(BuildStage stage) noexcept -> ref<str> {
     case BuildStage::CompileCacheFinish: return "build.compile-cache-finish"_str;
     case BuildStage::Archive: return "build.archive"_str;
     case BuildStage::Link: return "build.link"_str;
+    case BuildStage::ArtifactProcess: return "build.artifact-process"_str;
     case BuildStage::ProductFinalize: return "build.product-finalize"_str;
     case BuildStage::ProductPublish: return "build.product-publish"_str;
     case BuildStage::Count: break;
@@ -237,7 +241,9 @@ public:
 };
 
 class BuildStageTimingReport {
-    array<BuildOperationTiming, 16> timings_;
+    static constexpr auto STAGE_COUNT = static_cast<rstd::size_t>(BuildStage::Count);
+
+    array<BuildOperationTiming, STAGE_COUNT> timings_;
 
     static auto index(BuildStage stage) noexcept -> usize {
         return usize(static_cast<rstd::size_t>(stage));
@@ -265,7 +271,7 @@ public:
 
     auto attributed() const noexcept -> rstd::time::Duration {
         auto total = rstd::time::Duration {};
-        for (auto index = usize(1); index < usize(16); ++index) {
+        for (auto index = usize(1); index < usize(STAGE_COUNT); ++index) {
             total = total.saturating_add(timings_[index].total);
         }
         return total;
@@ -304,6 +310,7 @@ class BuildTimingReport {
     BuildOperationTiming archive_;
     BuildOperationTiming link_;
     BuildOperationTiming strip_;
+    BuildOperationTiming artifact_process_;
 
     auto timing_mut(BuildOperation operation) noexcept -> BuildOperationTiming& {
         switch (operation) {
@@ -311,6 +318,7 @@ class BuildTimingReport {
         case BuildOperation::Archive: return archive_;
         case BuildOperation::Link: return link_;
         case BuildOperation::Strip: return strip_;
+        case BuildOperation::ArtifactProcess: return artifact_process_;
         }
         return link_;
     }
@@ -328,6 +336,7 @@ public:
         case BuildOperation::Archive: return archive_;
         case BuildOperation::Link: return link_;
         case BuildOperation::Strip: return strip_;
+        case BuildOperation::ArtifactProcess: return artifact_process_;
         }
         return link_;
     }

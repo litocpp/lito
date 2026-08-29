@@ -422,7 +422,10 @@ auto default_toolchain() -> ToolchainSpec {
 auto configured_toolchain_target(const lito::config::wire::Toolchain& value,
                                  const rstd::serde::DataPath&         root)
     -> ConfigResult<Option<ToolchainTargetSelection>> {
-    if (value.os.is_none() && value.arch.is_none()) return Ok(None());
+    if (value.os.is_none() && value.arch.is_none() && value.vendor.is_none() &&
+        value.environment.is_none()) {
+        return Ok(None());
+    }
     if (value.os.is_none()) {
         return config_data_failure<Option<ToolchainTargetSelection>>(
             root.with_field("os"_str), "must be configured together with toolchain.arch"_str);
@@ -431,11 +434,11 @@ auto configured_toolchain_target(const lito::config::wire::Toolchain& value,
         return config_data_failure<Option<ToolchainTargetSelection>>(
             root.with_field("arch"_str), "must be configured together with toolchain.os"_str);
     }
-    auto os = parse_operating_system(value.os->as_str());
-    if (os.is_none()) {
+    auto os = value.os->as_str();
+    if (os != "unknown"_str && parse_operating_system(os).is_none()) {
         return config_data_failure<Option<ToolchainTargetSelection>>(
             root.with_field("os"_str),
-            rstd::format("must be one of {}", operating_system_choices().as_str()));
+            rstd::format("must be 'unknown' or one of {}", operating_system_choices().as_str()));
     }
     auto architecture = require_architecture(value.arch->as_str());
     if (architecture.is_err()) {
@@ -443,7 +446,44 @@ auto configured_toolchain_target(const lito::config::wire::Toolchain& value,
         return config_data_failure<Option<ToolchainTargetSelection>>(root.with_field("arch"_str),
                                                                      error.message());
     }
-    return Ok(Some(ToolchainTargetSelection::Config(*os, rstd::move(architecture).unwrap())));
+    auto candidate = encode_target_candidate(
+        os,
+        *architecture,
+        value.vendor.is_some() ? Some(value.vendor->as_str()) : Option<ref<str>> {},
+        value.environment.is_some() ? Some(value.environment->as_str()) : Option<ref<str>> {});
+    if (candidate.is_err()) {
+        return config_data_failure<Option<ToolchainTargetSelection>>(
+            root.with_field("os"_str), rstd::move(candidate).unwrap_err().message());
+    }
+    return Ok(Some(ToolchainTargetSelection::Config(value.os->clone(),
+                                                    rstd::move(architecture).unwrap(),
+                                                    as<Clone>(value.vendor).clone(),
+                                                    as<Clone>(value.environment).clone())));
+}
+
+auto configured_wasm_toolchain(const Option<lito::config::wire::Wasm>& value)
+    -> ConfigResult<Option<WasmToolchainSpec>> {
+    if (value.is_none()) return Ok(None());
+    auto path  = rstd::serde::DataPath().with_field("toolchain"_str).with_field("wasm"_str);
+    auto entry = WasmEntry::None;
+    if (value->entry.is_some()) {
+        if (value->entry->as_str() == "main"_str) {
+            entry = WasmEntry::Main;
+        } else if (value->entry->as_str() != "none"_str) {
+            return config_data_failure<Option<WasmToolchainSpec>>(path.with_field("entry"_str),
+                                                                  "must be 'main' or 'none'"_str);
+        }
+    }
+    if (value->processor.is_some() &&
+        ! lito::manifest::valid_package_name(value->processor->as_str())) {
+        return config_data_failure<Option<WasmToolchainSpec>>(
+            path.with_field("processor"_str), "must be a valid dependency package name"_str);
+    }
+    return Ok(Some(WasmToolchainSpec {
+        .entry         = entry,
+        .export_memory = value->export_memory.is_some() ? *value->export_memory : true,
+        .processor     = as<Clone>(value->processor).clone(),
+    }));
 }
 
 auto configured_toolchain(const Option<lito::config::wire::Toolchain>& value,
@@ -459,6 +499,7 @@ auto configured_toolchain(const Option<lito::config::wire::Toolchain>& value,
             .ar     = rstd_try(configured_tool_override(value->ar, root.with_field("ar"_str))),
             .sdk    = rstd_try(configured_toolchain_sdk(value->sdk)),
             .target = rstd_try(configured_toolchain_target(*value, root)),
+            .wasm   = rstd_try(configured_wasm_toolchain(value->wasm)),
         }));
 }
 

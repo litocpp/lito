@@ -137,20 +137,6 @@ auto append_unique_option(Vec<String>& output, ref<str> option) -> void {
     output.push(String::make(option));
 }
 
-auto plugin_filename(ref<str> stem, const lito::system::TargetInfo& target) -> String {
-    auto result = String::make();
-    if (target.family != lito::system::TargetFamily::Windows) result.push_str("lib"_str);
-    result.push_str(stem);
-    if (target.family == lito::system::TargetFamily::Windows) {
-        result.push_str(".dll"_str);
-    } else if (target.os == "macos"_str) {
-        result.push_str(".dylib"_str);
-    } else {
-        result.push_str(".so"_str);
-    }
-    return result;
-}
-
 auto provider_target(ref<str> package_name, const cpp::PackageSpec& package)
     -> BuildResult<cpp::TargetId> {
     auto result = Option<cpp::TargetId> {};
@@ -623,7 +609,7 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
     if (provider_targets.is_empty()) {
         return Ok(rstd::move(output));
     }
-    if (platform.effective_target.os == "macos"_str) {
+    if (platform.effective_target.platform == lito::system::TargetPlatform::Macos) {
         return proc_macro_failure<BuiltProcMacroProducts>(
             "proc-macro Clang plugin linking is not yet validated on macOS"_str);
     }
@@ -730,7 +716,8 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
                 rstd::format("{}:{}\n", option.size(), option.as_str()).as_str());
         }
         auto aggregate_identity = licrypto::sha256_hex(aggregate_identity_source.as_str());
-        auto aggregate_name     = plugin_filename("pmacro"_str, platform.effective_target);
+        auto aggregate_name =
+            lito::system::plugin_filename("pmacro"_str, platform.effective_target);
         auto plugin =
             layout.proc_macro_aggregate(aggregate_identity.as_str(), aggregate_name.as_str());
         rstd_try(create_parent(plugin.as_path()));

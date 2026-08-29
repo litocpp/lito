@@ -76,7 +76,7 @@ auto bench(BenchRequest request) -> CommandResult<BenchSummary> {
                 request.observer->notify(request.observer->context,
                                          BenchEvent {
                                              .target            = artifact->target,
-                                             .executable        = artifact->path.as_path(),
+                                             .executable        = artifact->primary.path.as_path(),
                                              .working_directory = artifact->package_root.as_path(),
                                              .arguments         = request.arguments.as_slice(),
                                          });

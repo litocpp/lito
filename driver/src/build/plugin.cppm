@@ -40,21 +40,6 @@ auto plugin_file_digest(ref<rstd::path::Path> path, ref<str> operation) -> Build
     return Ok(licrypto::sha256_hex(data->as_slice()));
 }
 
-auto compiler_plugin_filename(ref<str> stem, const lito::system::TargetInfo& target) -> String {
-    auto result = String::make();
-    if (target.family != lito::system::TargetFamily::Windows) result.push_str("lib"_str);
-    result.push_str(stem);
-    result.push_str("-plugin"_str);
-    if (target.family == lito::system::TargetFamily::Windows) {
-        result.push_str(".dll"_str);
-    } else if (target.os == "macos"_str) {
-        result.push_str(".dylib"_str);
-    } else {
-        result.push_str(".so"_str);
-    }
-    return result;
-}
-
 auto append_plugin_link_input(Vec<ResolvedLinkInput>& inputs,
                               ref<rstd::path::Path>   path,
                               bool                    shared,
@@ -141,8 +126,10 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
                 rstd::format("compiler plugin target '{}' has no support archive",
                              lito::package::package_target_id_text(spec.id).as_str()));
         }
+        auto plugin_stem = spec.archive_stem.clone();
+        plugin_stem.push_str("-plugin"_str);
         auto filename =
-            compiler_plugin_filename(spec.archive_stem.as_str(), platform.effective_target);
+            lito::system::plugin_filename(plugin_stem.as_str(), platform.effective_target);
         auto output = layout.compiler_plugin(spec.id, filename.as_str());
         auto parent = output.as_path().parent();
         if (parent.is_none()) {
