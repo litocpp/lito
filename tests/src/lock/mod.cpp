@@ -183,6 +183,32 @@ checksum = "0000000000000000000000000000000000000000000000000000000000000000"
     EXPECT_EQ(loaded_registry->packages[usize {}].source->as_Registry().package.name.as_str(),
               "fixture-lock"_str);
 
+    constexpr auto legacy_registry_lock = R"toml(version = 1
+
+[[packages]]
+name = "fixture-lock"
+version = "1.0.0"
+source = "registry+https://registry.example/fixture-lock@1.0.0"
+checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+)toml"_str;
+    auto           legacy_registry = project("legacy-registry-checksum"_str, legacy_registry_lock);
+    ASSERT_TRUE(legacy_registry.is_ok());
+    EXPECT_TRUE(lito::lock::load_locked_project(legacy_registry->root.as_path()).is_ok());
+
+    constexpr auto legacy_archive_lock = R"toml(version = 1
+
+[[packages]]
+name = "fixture-lock"
+version = "1.0.0"
+[[packages.externals]]
+name = "archive"
+source = "archive+https://example.invalid/archive.tar.gz"
+checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+)toml"_str;
+    auto           legacy_archive = project("legacy-archive-checksum"_str, legacy_archive_lock);
+    ASSERT_TRUE(legacy_archive.is_ok());
+    EXPECT_TRUE(lito::lock::load_locked_project(legacy_archive->root.as_path()).is_ok());
+
     struct InvalidLockCase {
         ref<str> name;
         ref<str> contents;
@@ -213,8 +239,6 @@ checksum = "1111111111111111111111111111111111111111111111111111111111111111"
 )toml"_str },
         { "archive-without-checksum"_str,
           "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\n"_str },
-        { "archive-checksum-with-prefix"_str,
-          "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\nchecksum = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
         { "registry-without-checksum"_str,
           "version = 1\n[[packages]]\nname = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/fixture-lock@1.0.0\"\n"_str },
         { "git-with-checksum"_str,

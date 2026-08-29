@@ -42,6 +42,7 @@ class SourcePath {
 
 public:
     static auto parse(ref<str> value) -> SourceTreeResult<SourcePath>;
+    static auto from_relative_path(ref<rstd::path::Path> value) -> SourceTreeResult<SourcePath>;
 
     auto as_path() const noexcept -> ref<rstd::path::Path> {
         return ref<rstd::path::Path>(value_.as_str());
@@ -202,6 +203,26 @@ auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourceP
         return invalid_source_path(value, "path escapes its materialization root"_str);
     }
     return Ok(SourcePath(String::make(value)));
+}
+
+auto lito::source::SourcePath::from_relative_path(ref<rstd::path::Path> value)
+    -> SourceTreeResult<SourcePath> {
+    auto portable   = String::make();
+    auto components = value.components();
+    for (auto component : components) {
+        if (! component.is_normal()) {
+            auto path = value.as_os_str().to_string_lossy();
+            return invalid_source_path(path.as_str(), "path must be relative and normalized"_str);
+        }
+        auto text = component.as_os_str().to_str();
+        if (text.is_none()) {
+            auto path = value.as_os_str().to_string_lossy();
+            return invalid_source_path(path.as_str(), "path components must be valid UTF-8"_str);
+        }
+        if (! portable.is_empty()) portable.push_ascii(u8('/'));
+        portable.push_str(*text);
+    }
+    return parse(portable.as_str());
 }
 
 auto source_tree_conflict(ref<str> path, String reason) -> SourceTreeResult<empty> {

@@ -362,14 +362,10 @@ auto portable_path(const PackageManifest& manifest, ref<rstd::path::Path> path, 
         return publish_failure<String>(
             rstd::format("published {} '{}' must be inside package root", owner, path));
     }
-    auto text = relative->to_str();
-    if (text.is_none()) {
-        return publish_failure<String>(rstd::format("published {} path is not valid UTF-8", owner));
-    }
-    auto parsed = lito::source::SourcePath::parse(*text);
+    auto parsed = lito::source::SourcePath::from_relative_path(*relative);
     if (parsed.is_err()) {
         return publish_failure<String>(rstd::format(
-            "published {} path '{}': {}", owner, *text, rstd::move(parsed).unwrap_err()));
+            "published {} path '{}': {}", owner, *relative, rstd::move(parsed).unwrap_err()));
     }
     return Ok(String::make(parsed->as_str()));
 }

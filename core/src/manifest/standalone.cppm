@@ -219,17 +219,13 @@ auto portable_relative_path(const PackageManifest& manifest,
                          requested.as_path(),
                          manifest.root.as_path()));
     }
-    auto text = relative->to_str();
-    if (text.is_none()) {
-        return standalone_failure<String>(
-            manifest, rstd::format("published {} path is not valid UTF-8", context));
-    }
-    auto portable = lito::source::SourcePath::parse(*text);
+    auto portable = lito::source::SourcePath::from_relative_path(*relative);
     if (portable.is_err()) {
-        return standalone_failure<String>(
-            manifest,
-            rstd::format(
-                "published {} path '{}': {}", context, *text, rstd::move(portable).unwrap_err()));
+        return standalone_failure<String>(manifest,
+                                          rstd::format("published {} path '{}': {}",
+                                                       context,
+                                                       *relative,
+                                                       rstd::move(portable).unwrap_err()));
     }
     return Ok(String::make(portable->as_str()));
 }

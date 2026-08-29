@@ -758,6 +758,15 @@ TEST(RegistrySourcePath, PreservesUtf8SpellingWithoutUnicodeCollisionRules) {
     EXPECT_TRUE(ascii.add_text("Src/File.cpp"_str, "duplicate"_str).is_err());
 }
 
+TEST(RegistrySourcePath, EncodesPlatformRelativePathWithPortableSeparators) {
+    auto path = PathBuf::from("src"_str);
+    path.push(PathBuf::from("module"_str).as_path());
+    path.push(PathBuf::from("lib.cppm"_str).as_path());
+    auto portable = lito::source::SourcePath::from_relative_path(path.as_path());
+    ASSERT_TRUE(portable.is_ok());
+    EXPECT_EQ(portable->as_str(), "src/module/lib.cppm"_str);
+}
+
 TEST(RegistryArchive, BuildsAndInspectsDeterministicTarZstd) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());

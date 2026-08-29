@@ -249,9 +249,15 @@ auto reject_checksum(const Option<String>& checksum, rstd::serde::DataPath path)
     return Ok(empty {});
 }
 
+auto lock_sha256_text(ref<str> value) noexcept -> ref<str> {
+    auto legacy = value.strip_prefix("sha256:"_str);
+    return legacy.is_some() ? *legacy : value;
+}
+
 auto parse_sha256_checksum(ref<str> value, rstd::serde::DataPath path)
     -> LockResult<licrypto::Sha256Digest> {
-    auto parsed = lito::parse::parse_sha256(value, lito::parse::Sha256TextMode::Canonical);
+    auto parsed =
+        lito::parse::parse_sha256(lock_sha256_text(value), lito::parse::Sha256TextMode::Canonical);
     if (parsed.is_err()) {
         return lock_data_failure<licrypto::Sha256Digest>(rstd::move(path),
                                                          "SHA-256 checksum is invalid"_str,
@@ -322,20 +328,15 @@ auto parse_locked_source(String                value,
             return lock_data_failure<LockedSource>(path.with_field("source"_str),
                                                    "Registry source coordinate is invalid"_str);
         }
-        auto package_checksum = lito::registry::PackageChecksum::parse(checksum->as_str());
-        if (package_checksum.is_err()) {
-            return lock_data_failure<LockedSource>(
-                path.with_field("checksum"_str),
-                "Registry checksum is invalid"_str,
-                rstd::move(package_checksum).unwrap_err_unchecked());
-        }
+        auto package_checksum = lito::registry::PackageChecksum(
+            rstd_try(parse_sha256_checksum(checksum->as_str(), path.with_field("checksum"_str))));
         return Ok(LockedSource::Registry(
             lito::registry::RegistryPackageId {
                 .registry = rstd::move(registry_id).unwrap_unchecked(),
                 .name     = rstd::move(package_name).unwrap_unchecked(),
             },
             rstd::move(semantic_version).unwrap_unchecked(),
-            rstd::move(package_checksum).unwrap_unchecked()));
+            rstd::move(package_checksum)));
     }
 
     return lock_data_failure<LockedSource>(path.with_field("source"_str),
