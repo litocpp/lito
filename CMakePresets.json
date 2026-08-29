@@ -37,14 +37,12 @@
     {
       "name": "debug",
       "configurePreset": "debug",
-      "targets": ["lito"],
-      "jobs": 2
+      "targets": ["lito"]
     },
     {
       "name": "release",
       "configurePreset": "release",
-      "targets": ["lito"],
-      "jobs": 2
+      "targets": ["lito"]
     }
   ]
 }

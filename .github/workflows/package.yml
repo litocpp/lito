@@ -52,21 +52,17 @@ jobs:
           LITO_ARCH: ${{ matrix.arch }}
         run: |
           test "$(uname -m)" = "$LITO_ARCH"
-          package="lito-linux-$LITO_ARCH"
-          cmake --install build/cmake-package --prefix "dist/$package" --strip
-          "dist/$package/bin/lito" --help >/dev/null
-          tar -C dist -czf "dist/$package.tar.gz" "$package"
-          tar -tzf "dist/$package.tar.gz"
-          cd dist
-          sha256sum "$package.tar.gz" >"$package.tar.gz.sha256"
+          cpack --config build/cmake-package/CPackConfig.cmake -C Release
+          build/cmake-package/cli/lito --help >/dev/null
+          tar -tzf lito-v*-linux-$LITO_ARCH.tar.gz
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: lito-linux-${{ matrix.arch }}
           path: |
-            dist/lito-linux-${{ matrix.arch }}.tar.gz
-            dist/lito-linux-${{ matrix.arch }}.tar.gz.sha256
+            lito-v*-linux-${{ matrix.arch }}.tar.gz
+            lito-v*-linux-${{ matrix.arch }}.tar.gz.sha256
           if-no-files-found: error
 
   windows:
@@ -114,23 +110,17 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $package = "lito-windows-x86_64"
-          $archive = "dist/$package.zip"
-          cmake --install build/cmake-package --prefix "dist/$package" --strip
-          & "dist/$package/bin/lito.exe" --help | Out-Null
-          Compress-Archive -Path "dist/$package" -DestinationPath $archive
-          tar -tf $archive
-
-          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
-          "$hash  $package.zip" | Set-Content -Encoding ascii "$archive.sha256"
+          cpack --config build/cmake-package/CPackConfig.cmake -C Release
+          & "build/cmake-package/cli/lito.exe" --help | Out-Null
+          tar -tf (Get-ChildItem "lito-v*-windows-x86_64.zip").FullName
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: lito-windows-x86_64
           path: |
-            dist/lito-windows-x86_64.zip
-            dist/lito-windows-x86_64.zip.sha256
+            lito-v*-windows-x86_64.zip
+            lito-v*-windows-x86_64.zip.sha256
           if-no-files-found: error
 
   release:

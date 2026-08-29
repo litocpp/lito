@@ -1,3 +1,14 @@
+<release version="0.7.0" date="2026-08-29">
+  <description>
+    <ul>
+      <li>Handle toolchain targets.</li>
+      <li>WebAssembly artifacts.</li>
+      <li>Fetch source bundles.</li>
+      <li>Registry integrity.</li>
+      <li>Proc macro plugins.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.6.3" date="2026-08-26">
   <description>
     <ul>

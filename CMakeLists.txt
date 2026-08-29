@@ -4,7 +4,7 @@ set(CMAKE_LINKER_TYPE LLD)
 
 project(
   lito
-  VERSION 0.6.3
+  VERSION 0.7.0
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
@@ -55,7 +55,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 0ec1bc101ab9088f1e3b4ac7be5c1d5e415da8c1)
+  GIT_TAG 5b163c47dd044012ae69128fe44aa9311011b250)
 
 FetchContent_MakeAvailable(rstd)
 
@@ -98,3 +98,22 @@ endif()
 install(FILES ${licrypto_SOURCE_DIR}/LICENSE-MIT
               ${licrypto_SOURCE_DIR}/LICENSE-APACHE
         DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/licrypto)
+
+string(TOLOWER "${CMAKE_SYSTEM_NAME}" LITO_PACKAGE_SYSTEM)
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" LITO_PACKAGE_PROCESSOR)
+if(LITO_PACKAGE_PROCESSOR STREQUAL "amd64")
+  set(LITO_PACKAGE_PROCESSOR "x86_64")
+elseif(LITO_PACKAGE_PROCESSOR STREQUAL "arm64")
+  set(LITO_PACKAGE_PROCESSOR "aarch64")
+endif()
+
+if(WIN32)
+  set(CPACK_GENERATOR ZIP)
+else()
+  set(CPACK_GENERATOR TGZ)
+endif()
+set(CPACK_PACKAGE_FILE_NAME
+    "lito-v${PROJECT_VERSION}-${LITO_PACKAGE_SYSTEM}-${LITO_PACKAGE_PROCESSOR}")
+set(CPACK_PACKAGE_CHECKSUM SHA256)
+set(CPACK_STRIP_FILES TRUE)
+include(CPack)

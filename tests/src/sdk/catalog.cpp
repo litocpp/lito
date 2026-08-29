@@ -24,10 +24,6 @@ auto rejects_catalog_value(ref<str> pointer, Json value) -> bool {
     return lito::parse_llvm_sdk_catalog(text.as_str()).is_err();
 }
 
-auto catalog_json_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
 auto json_u64(u64 value) -> Json {
     return Json::Number(rstd::json::Number::from_u64(value));
 }
@@ -120,38 +116,35 @@ TEST(LlvmSdkCatalog, VersionsAreCanonicalAndCompareNumerically) {
 
 TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
     EXPECT_TRUE(rejects_catalog_value("/schema"_str, json_u64(u64(2))));
+    EXPECT_TRUE(rejects_catalog_value("/kind"_str, rstd::into<Json>("lito-llvm-sdk-catalog"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/version"_str, rstd::into<Json>("22.01.8"_str)));
     EXPECT_TRUE(
-        rejects_catalog_value("/kind"_str, catalog_json_string("lito-llvm-sdk-catalog"_str)));
-    EXPECT_TRUE(
-        rejects_catalog_value("/releases/0/version"_str, catalog_json_string("22.01.8"_str)));
-    EXPECT_TRUE(rejects_catalog_value("/releases/0/upstream-tag"_str,
-                                      catalog_json_string("llvmorg-22"_str)));
+        rejects_catalog_value("/releases/0/upstream-tag"_str, rstd::into<Json>("llvmorg-22"_str)));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/archive/url"_str,
-                                      catalog_json_string("https://"_str)));
+                                      rstd::into<Json>("https://"_str)));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/archive/url"_str,
-                                      catalog_json_string("http://example.test/a"_str)));
+                                      rstd::into<Json>("http://example.test/a"_str)));
     EXPECT_TRUE(rejects_catalog_value(
         "/releases/0/artifacts/0/archive/sha256"_str,
-        catalog_json_string(
-            "DF0E1ECF16CAF3489A272A5EEA4EEC9B0D82878F6477FA309504F918A0006384"_str)));
+        rstd::into<Json>("DF0E1ECF16CAF3489A272A5EEA4EEC9B0D82878F6477FA309504F918A0006384"_str)));
     EXPECT_TRUE(
         rejects_catalog_value("/releases/0/artifacts/0/archive/size"_str, json_u64(u64 {})));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/archive/root"_str,
-                                      catalog_json_string("../llvm"_str)));
+                                      rstd::into<Json>("../llvm"_str)));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/paths/cc"_str,
-                                      catalog_json_string("../bin/clang"_str)));
+                                      rstd::into<Json>("../bin/clang"_str)));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/paths/cxx"_str,
-                                      catalog_json_string("bin/clang"_str)));
+                                      rstd::into<Json>("bin/clang"_str)));
     EXPECT_TRUE(rejects_catalog_value("/runtime-components/0/recipe"_str,
-                                      catalog_json_string("unknown-recipe"_str)));
+                                      rstd::into<Json>("unknown-recipe"_str)));
     EXPECT_TRUE(rejects_catalog_value("/runtime-components/0/runtime/file"_str,
-                                      catalog_json_string("../libxml2.so.2"_str)));
+                                      rstd::into<Json>("../libxml2.so.2"_str)));
     EXPECT_TRUE(rejects_catalog_value("/runtime-components/0/runtime/soname"_str,
-                                      catalog_json_string("lib/libxml2.so.2"_str)));
+                                      rstd::into<Json>("lib/libxml2.so.2"_str)));
     EXPECT_TRUE(rejects_catalog_value("/runtime-components/0/runtime/links/0"_str,
-                                      catalog_json_string("../libxml2.so.2"_str)));
+                                      rstd::into<Json>("../libxml2.so.2"_str)));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/runtime-components/0"_str,
-                                      catalog_json_string("missing"_str)));
+                                      rstd::into<Json>("missing"_str)));
 
     auto unknown              = catalog_document();
     unknown["unexpected"_str] = Json::Bool(true);
@@ -198,7 +191,7 @@ TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
     ASSERT_TRUE(windows_references.is_some());
     auto windows_values = (**windows_references).as_array_mut();
     ASSERT_TRUE(windows_values.is_some());
-    (**windows_values).push(catalog_json_string("libxml2"_str));
+    (**windows_values).push(rstd::into<Json>("libxml2"_str));
     EXPECT_TRUE(lito::parse_llvm_sdk_catalog(rstd::json::to_string(incompatible_component).as_str())
                     .is_err());
 }
@@ -208,7 +201,7 @@ TEST(LlvmSdkCatalog, ValidationErrorsKeepTheFieldPathAndSource) {
     auto target   = document.pointer_mut("/releases/0/artifacts/0/archive/sha256"_str);
     ASSERT_TRUE(target.is_some());
     **target =
-        catalog_json_string("DF0E1ECF16CAF3489A272A5EEA4EEC9B0D82878F6477FA309504F918A0006384"_str);
+        rstd::into<Json>("DF0E1ECF16CAF3489A272A5EEA4EEC9B0D82878F6477FA309504F918A0006384"_str);
     auto result = lito::parse_llvm_sdk_catalog(rstd::json::to_string(document).as_str());
 
     ASSERT_TRUE(result.is_err());
@@ -263,20 +256,19 @@ TEST(AndroidNdkCatalog, RevisionAndRepositorySchemaAreStrict) {
 
     EXPECT_TRUE(rejects_android_catalog_value("/schema"_str, json_u64(u64(2))));
     EXPECT_TRUE(rejects_android_catalog_value("/kind"_str,
-                                              catalog_json_string("lito-android-ndk-catalog"_str)));
+                                              rstd::into<Json>("lito-android-ndk-catalog"_str)));
     EXPECT_TRUE(
-        rejects_android_catalog_value("/releases/0/revision"_str, catalog_json_string("r29"_str)));
+        rejects_android_catalog_value("/releases/0/revision"_str, rstd::into<Json>("r29"_str)));
     EXPECT_TRUE(rejects_android_catalog_value(
         "/releases/0/artifacts/0/archive/url"_str,
-        catalog_json_string("https://example.test/android-ndk.zip"_str)));
+        rstd::into<Json>("https://example.test/android-ndk.zip"_str)));
     EXPECT_TRUE(rejects_android_catalog_value(
         "/releases/0/artifacts/0/archive/sha256"_str,
-        catalog_json_string(
-            "4ABBBCDC842F3D4879206E9695D52709603E52DD68D3C1FFF04B3B5E7A308ECF"_str)));
+        rstd::into<Json>("4ABBBCDC842F3D4879206E9695D52709603E52DD68D3C1FFF04B3B5E7A308ECF"_str)));
     EXPECT_TRUE(rejects_android_catalog_value("/releases/0/artifacts/0/archive/root"_str,
-                                              catalog_json_string("../ndk"_str)));
+                                              rstd::into<Json>("../ndk"_str)));
     EXPECT_TRUE(rejects_android_catalog_value(
-        "/license/url"_str, catalog_json_string("https://example.test/license"_str)));
+        "/license/url"_str, rstd::into<Json>("https://example.test/license"_str)));
 
     auto duplicate_release = android_catalog_document();
     auto releases          = duplicate_release["releases"_str].as_array_mut();
@@ -317,7 +309,7 @@ TEST(AndroidNdkCatalog, ValidationErrorsKeepTheFieldPathAndSource) {
     auto target   = document.pointer_mut("/releases/0/artifacts/0/archive/sha256"_str);
     ASSERT_TRUE(target.is_some());
     **target =
-        catalog_json_string("4ABBBCDC842F3D4879206E9695D52709603E52DD68D3C1FFF04B3B5E7A308ECF"_str);
+        rstd::into<Json>("4ABBBCDC842F3D4879206E9695D52709603E52DD68D3C1FFF04B3B5E7A308ECF"_str);
     auto result = lito::parse_android_ndk_catalog(rstd::json::to_string(document).as_str());
 
     ASSERT_TRUE(result.is_err());

@@ -2,7 +2,7 @@
 
 set -eu
 
-readonly VERSION="v0.6.3"
+readonly VERSION="v0.7.0"
 readonly REPOSITORY="https://github.com/litocpp/lito"
 readonly INSTALL_DIRECTORY="${HOME}/.local/bin"
 
@@ -23,7 +23,7 @@ case "$(uname -m)" in
   *) fail "unsupported architecture '$(uname -m)'" ;;
 esac
 
-archive="lito-linux-${architecture}.tar.gz"
+archive="lito-${VERSION}-linux-${architecture}.tar.gz"
 checksum="${archive}.sha256"
 release_url="${REPOSITORY}/releases/download/${VERSION}"
 temporary_directory="$(mktemp -d)"
@@ -53,7 +53,7 @@ curl --fail --location --proto '=https' --silent --show-error \
 
 install -d "$INSTALL_DIRECTORY"
 staged_binary="$(mktemp "${INSTALL_DIRECTORY}/.lito.install.XXXXXX")"
-tar -xOzf "$archive_path" "lito-linux-${architecture}/bin/lito" >"$staged_binary"
+tar -xOzf "$archive_path" "lito-${VERSION}-linux-${architecture}/bin/lito" >"$staged_binary"
 [ -s "$staged_binary" ] || fail "release archive does not contain bin/lito"
 chmod 0755 "$staged_binary"
 mv -f -- "$staged_binary" "${INSTALL_DIRECTORY}/lito"

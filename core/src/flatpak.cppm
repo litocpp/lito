@@ -87,10 +87,6 @@ auto flatpak_failure(ref<str> message) -> lito::flatpak::Result<T> {
     return flatpak_failure<T>(String::make(message));
 }
 
-auto json_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
 auto public_http_url(ref<str> value) -> bool {
     auto remainder = value.strip_prefix("https://"_str);
     if (remainder.is_none()) remainder = value.strip_prefix("http://"_str);
@@ -136,7 +132,7 @@ auto append_architectures(Map& object, const Vec<String>& architectures) -> void
     if (architectures.is_empty()) return;
     auto values = Array::with_capacity(architectures.len());
     for (const auto& architecture : architectures) {
-        values.push(json_string(architecture.as_str()));
+        values.push(rstd::into<Json>(architecture.as_str()));
     }
     object.insert(String::make("only-arches"_str), Json::Array(rstd::move(values)));
 }
@@ -233,10 +229,10 @@ auto source_json(const lito::flatpak::Entry& entry) -> lito::flatpak::Result<Jso
         const auto& value = source.as_Git();
         auto        destination =
             rstd_try(path_text(value.destination.as_path(), entry.origin.as_str(), "dest"_str));
-        object.insert(String::make("commit"_str), json_string(value.commit.as_str()));
-        object.insert(String::make("dest"_str), json_string(destination.as_str()));
-        object.insert(String::make("type"_str), json_string("git"_str));
-        object.insert(String::make("url"_str), json_string(value.url.as_str()));
+        object.insert(String::make("commit"_str), rstd::into<Json>(value.commit.as_str()));
+        object.insert(String::make("dest"_str), rstd::into<Json>(destination.as_str()));
+        object.insert(String::make("type"_str), rstd::into<Json>("git"_str));
+        object.insert(String::make("url"_str), rstd::into<Json>(value.url.as_str()));
         append_architectures(object, value.only_arches);
         return Ok(Json::Object(rstd::move(object)));
     }
@@ -244,12 +240,12 @@ auto source_json(const lito::flatpak::Entry& entry) -> lito::flatpak::Result<Jso
         const auto& value = source.as_File();
         auto        destination =
             rstd_try(path_text(value.destination.as_path(), entry.origin.as_str(), "dest"_str));
-        object.insert(String::make("dest"_str), json_string(destination.as_str()));
-        object.insert(String::make("dest-filename"_str), json_string(value.filename.as_str()));
+        object.insert(String::make("dest"_str), rstd::into<Json>(destination.as_str()));
+        object.insert(String::make("dest-filename"_str), rstd::into<Json>(value.filename.as_str()));
         auto sha256 = value.sha256.to_hex();
-        object.insert(String::make("sha256"_str), json_string(sha256.as_str()));
-        object.insert(String::make("type"_str), json_string("file"_str));
-        object.insert(String::make("url"_str), json_string(value.url.as_str()));
+        object.insert(String::make("sha256"_str), rstd::into<Json>(sha256.as_str()));
+        object.insert(String::make("type"_str), rstd::into<Json>("file"_str));
+        object.insert(String::make("url"_str), rstd::into<Json>(value.url.as_str()));
         append_architectures(object, value.only_arches);
         return Ok(Json::Object(rstd::move(object)));
     }
@@ -258,12 +254,12 @@ auto source_json(const lito::flatpak::Entry& entry) -> lito::flatpak::Result<Jso
         auto        destination =
             rstd_try(path_text(value.destination.as_path(), entry.origin.as_str(), "dest"_str));
         object.insert(String::make("archive-type"_str),
-                      json_string(lito::flatpak::archive_type_name(value.archive_type)));
-        object.insert(String::make("dest"_str), json_string(destination.as_str()));
+                      rstd::into<Json>(lito::flatpak::archive_type_name(value.archive_type)));
+        object.insert(String::make("dest"_str), rstd::into<Json>(destination.as_str()));
         auto sha256 = value.sha256.to_hex();
-        object.insert(String::make("sha256"_str), json_string(sha256.as_str()));
-        object.insert(String::make("type"_str), json_string("archive"_str));
-        object.insert(String::make("url"_str), json_string(value.url.as_str()));
+        object.insert(String::make("sha256"_str), rstd::into<Json>(sha256.as_str()));
+        object.insert(String::make("type"_str), rstd::into<Json>("archive"_str));
+        object.insert(String::make("url"_str), rstd::into<Json>(value.url.as_str()));
         append_architectures(object, value.only_arches);
         return Ok(Json::Object(rstd::move(object)));
     }
@@ -271,18 +267,18 @@ auto source_json(const lito::flatpak::Entry& entry) -> lito::flatpak::Result<Jso
         const auto& value = source.as_Inline();
         auto        destination =
             rstd_try(path_text(value.destination.as_path(), entry.origin.as_str(), "dest"_str));
-        object.insert(String::make("contents"_str), json_string(value.contents.as_str()));
-        object.insert(String::make("dest"_str), json_string(destination.as_str()));
-        object.insert(String::make("dest-filename"_str), json_string(value.filename.as_str()));
-        object.insert(String::make("type"_str), json_string("inline"_str));
+        object.insert(String::make("contents"_str), rstd::into<Json>(value.contents.as_str()));
+        object.insert(String::make("dest"_str), rstd::into<Json>(destination.as_str()));
+        object.insert(String::make("dest-filename"_str), rstd::into<Json>(value.filename.as_str()));
+        object.insert(String::make("type"_str), rstd::into<Json>("inline"_str));
         return Ok(Json::Object(rstd::move(object)));
     }
     auto commands = Array::with_capacity(source.as_Shell().commands.len());
     for (const auto& command : source.as_Shell().commands) {
-        commands.push(json_string(command.as_str()));
+        commands.push(rstd::into<Json>(command.as_str()));
     }
     object.insert(String::make("commands"_str), Json::Array(rstd::move(commands)));
-    object.insert(String::make("type"_str), json_string("shell"_str));
+    object.insert(String::make("type"_str), rstd::into<Json>("shell"_str));
     return Ok(Json::Object(rstd::move(object)));
 }
 

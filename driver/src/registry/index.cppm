@@ -210,10 +210,6 @@ auto read_cached_index(ref<rstd::path::Path> record, const RegistryPackageId& pa
     }));
 }
 
-auto json_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
 auto write_cached_index(ref<rstd::path::Path>    record,
                         const RegistryPackageId& package,
                         ref<str>                 body,
@@ -234,15 +230,15 @@ auto write_cached_index(ref<rstd::path::Path>    record,
                          rstd::move(created).unwrap_err()));
     }
     auto document = JsonMap::make();
-    document.insert(String::make("schema"_str), json_string(INDEX_CACHE_SCHEMA));
-    document.insert(String::make("registry"_str), json_string(package.registry.as_str()));
-    document.insert(String::make("package"_str), json_string(package.name.as_str()));
+    document.insert(String::make("schema"_str), rstd::into<Json>(INDEX_CACHE_SCHEMA));
+    document.insert(String::make("registry"_str), rstd::into<Json>(package.registry.as_str()));
+    document.insert(String::make("package"_str), rstd::into<Json>(package.name.as_str()));
     document.insert(String::make("etag"_str),
-                    etag.is_some() ? json_string(etag->as_str()) : Json::Null());
+                    etag.is_some() ? rstd::into<Json>(etag->as_str()) : Json::Null());
     auto now = rstd::time::SystemTime::now().as_unix_time();
     document.insert(String::make("fetched-at-unix-seconds"_str),
-                    json_string(rstd::format("{}", now.seconds).as_str()));
-    document.insert(String::make("body"_str), json_string(body));
+                    rstd::into<Json>(rstd::format("{}", now.seconds).as_str()));
+    document.insert(String::make("body"_str), rstd::into<Json>(body));
     auto text = rstd::json::to_string(Json::Object(rstd::move(document)));
     text.push_ascii(u8('\n'));
     auto written = rstd::fs::write_atomic(record, text.as_str().as_bytes());

@@ -210,10 +210,6 @@ auto canonical_sdk_version(ref<str> value) -> lito::SdkResult<lito::LlvmVersion>
     return Ok(rstd::move(parsed).unwrap());
 }
 
-auto json_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
 auto sdk_known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> lito::SdkResult<empty> {
     return Ok(rstd_try(
@@ -278,60 +274,66 @@ auto descriptor_sha256(ref<str> value, ref<str> context) -> lito::SdkResult<Stri
 
 auto paths_json(const lito::LlvmSdkPaths& paths) -> Json {
     auto value = JsonMap::make();
-    value.insert(String::make("cc"_str), json_string(paths.cc.as_path().to_str().unwrap()));
-    value.insert(String::make("cxx"_str), json_string(paths.cxx.as_path().to_str().unwrap()));
-    value.insert(String::make("linker"_str), json_string(paths.linker.as_path().to_str().unwrap()));
+    value.insert(String::make("cc"_str), rstd::into<Json>(paths.cc.as_path().to_str().unwrap()));
+    value.insert(String::make("cxx"_str), rstd::into<Json>(paths.cxx.as_path().to_str().unwrap()));
+    value.insert(String::make("linker"_str),
+                 rstd::into<Json>(paths.linker.as_path().to_str().unwrap()));
     value.insert(String::make("archiver"_str),
-                 json_string(paths.archiver.as_path().to_str().unwrap()));
-    value.insert(String::make("strip"_str), json_string(paths.strip.as_path().to_str().unwrap()));
-    value.insert(String::make("format"_str), json_string(paths.format.as_path().to_str().unwrap()));
+                 rstd::into<Json>(paths.archiver.as_path().to_str().unwrap()));
+    value.insert(String::make("strip"_str),
+                 rstd::into<Json>(paths.strip.as_path().to_str().unwrap()));
+    value.insert(String::make("format"_str),
+                 rstd::into<Json>(paths.format.as_path().to_str().unwrap()));
     value.insert(String::make("llvm-config"_str),
-                 json_string(paths.llvm_config.as_path().to_str().unwrap()));
-    value.insert(String::make("cmake"_str), json_string(paths.cmake.as_path().to_str().unwrap()));
+                 rstd::into<Json>(paths.llvm_config.as_path().to_str().unwrap()));
+    value.insert(String::make("cmake"_str),
+                 rstd::into<Json>(paths.cmake.as_path().to_str().unwrap()));
     value.insert(String::make("clang-cpp"_str),
-                 json_string(paths.clang_cpp.as_path().to_str().unwrap()));
+                 rstd::into<Json>(paths.clang_cpp.as_path().to_str().unwrap()));
     return Json::Object(rstd::move(value));
 }
 
 auto installed_file_json(const InstalledFileRecord& file) -> Json {
     auto value = JsonMap::make();
-    value.insert(String::make("path"_str), json_string(file.path.as_path().to_str().unwrap()));
+    value.insert(String::make("path"_str), rstd::into<Json>(file.path.as_path().to_str().unwrap()));
     value.insert(String::make("size"_str), Json::Number(rstd::json::Number::from_u64(file.size)));
-    value.insert(String::make("sha256"_str), json_string(file.sha256.to_hex().as_str()));
+    value.insert(String::make("sha256"_str), rstd::into<Json>(file.sha256.to_hex().as_str()));
     return Json::Object(rstd::move(value));
 }
 
 auto installed_component_json(const InstalledRuntimeComponent& component) -> Json {
     auto builder = JsonMap::make();
     builder.insert(String::make("compiler-version"_str),
-                   json_string(component.compiler_version.as_str()));
+                   rstd::into<Json>(component.compiler_version.as_str()));
     builder.insert(String::make("compiler-target"_str),
-                   json_string(component.compiler_target.as_str()));
+                   rstd::into<Json>(component.compiler_target.as_str()));
     builder.insert(String::make("linker-family"_str),
-                   json_string(component.linker_family.as_str()));
+                   rstd::into<Json>(component.linker_family.as_str()));
     builder.insert(String::make("linker-version"_str),
-                   json_string(component.linker_version.as_str()));
+                   rstd::into<Json>(component.linker_version.as_str()));
     builder.insert(String::make("archiver-version"_str),
-                   json_string(component.archiver_version.as_str()));
+                   rstd::into<Json>(component.archiver_version.as_str()));
     builder.insert(String::make("strip-version"_str),
-                   json_string(component.strip_version.as_str()));
+                   rstd::into<Json>(component.strip_version.as_str()));
     builder.insert(String::make("link-identity"_str),
-                   json_string(component.link_identity.as_str()));
+                   rstd::into<Json>(component.link_identity.as_str()));
     auto links = JsonArray::make();
     for (const auto& link : component.links) {
         auto value = JsonMap::make();
-        value.insert(String::make("path"_str), json_string(link.path.as_path().to_str().unwrap()));
+        value.insert(String::make("path"_str),
+                     rstd::into<Json>(link.path.as_path().to_str().unwrap()));
         value.insert(String::make("target"_str),
-                     json_string(link.target.as_path().to_str().unwrap()));
+                     rstd::into<Json>(link.target.as_path().to_str().unwrap()));
         links.push(Json::Object(rstd::move(value)));
     }
     auto value = JsonMap::make();
-    value.insert(String::make("name"_str), json_string(component.name.as_str()));
-    value.insert(String::make("version"_str), json_string(component.version.as_str()));
-    value.insert(String::make("recipe"_str), json_string(component.recipe.as_str()));
-    value.insert(String::make("recipe-digest"_str), json_string(component.recipe_digest.as_str()));
+    value.insert(String::make("name"_str), rstd::into<Json>(component.name.as_str()));
+    value.insert(String::make("version"_str), rstd::into<Json>(component.version.as_str()));
+    value.insert(String::make("recipe"_str), rstd::into<Json>(component.recipe.as_str()));
+    value.insert(String::make("recipe-digest"_str),
+                 rstd::into<Json>(component.recipe_digest.as_str()));
     value.insert(String::make("source-identity"_str),
-                 json_string(component.source_identity.as_str()));
+                 rstd::into<Json>(component.source_identity.as_str()));
     value.insert(String::make("runtime"_str), installed_file_json(component.runtime));
     value.insert(String::make("links"_str), Json::Array(rstd::move(links)));
     value.insert(String::make("license"_str), installed_file_json(component.license));
@@ -378,21 +380,22 @@ auto parse_paths(const Json& value) -> lito::SdkResult<lito::LlvmSdkPaths> {
 
 auto descriptor_json(const InstalledSdkDescriptor& descriptor) -> Json {
     auto host = JsonMap::make();
-    host.insert(String::make("os"_str), json_string(descriptor.host.os.as_str()));
+    host.insert(String::make("os"_str), rstd::into<Json>(descriptor.host.os.as_str()));
     host.insert(String::make("architecture"_str),
-                json_string(lito::system::architecture_name(descriptor.host.architecture)));
+                rstd::into<Json>(lito::system::architecture_name(descriptor.host.architecture)));
 
     auto archive = JsonMap::make();
-    archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
-    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.to_hex().as_str()));
+    archive.insert(String::make("url"_str), rstd::into<Json>(descriptor.url.as_str()));
+    archive.insert(String::make("sha256"_str),
+                   rstd::into<Json>(descriptor.sha256.to_hex().as_str()));
     archive.insert(String::make("size"_str),
                    Json::Number(rstd::json::Number::from_u64(descriptor.size)));
 
     auto certification = JsonMap::make();
     certification.insert(String::make("compiler-version"_str),
-                         json_string(descriptor.certification.compiler_version.as_str()));
+                         rstd::into<Json>(descriptor.certification.compiler_version.as_str()));
     certification.insert(String::make("standard-library"_str),
-                         json_string(lito::config::standard_library_name(
+                         rstd::into<Json>(lito::config::standard_library_name(
                              descriptor.certification.standard_library)));
     certification.insert(String::make("exceptions"_str),
                          Json::Bool(descriptor.certification.exceptions));
@@ -404,8 +407,8 @@ auto descriptor_json(const InstalledSdkDescriptor& descriptor) -> Json {
         components.push(installed_component_json(component));
     }
     root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
-    root.insert(String::make("kind"_str), json_string("lito-llvm-sdk"_str));
-    root.insert(String::make("version"_str), json_string(descriptor.version.as_str()));
+    root.insert(String::make("kind"_str), rstd::into<Json>("lito-llvm-sdk"_str));
+    root.insert(String::make("version"_str), rstd::into<Json>(descriptor.version.as_str()));
     root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
     root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
     root.insert(String::make("paths"_str), paths_json(descriptor.paths));
@@ -868,16 +871,16 @@ struct ActiveStateInspection {
 
 auto active_state_json(const ActiveSdkState& state) -> Json {
     auto host = JsonMap::make();
-    host.insert(String::make("os"_str), json_string(state.host.os.as_str()));
+    host.insert(String::make("os"_str), rstd::into<Json>(state.host.os.as_str()));
     host.insert(String::make("architecture"_str),
-                json_string(lito::system::architecture_name(state.host.architecture)));
+                rstd::into<Json>(lito::system::architecture_name(state.host.architecture)));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("kind"_str), json_string("lito-llvm-sdk-active"_str));
-    root.insert(String::make("version"_str), json_string(state.version.as_str()));
+    root.insert(String::make("kind"_str), rstd::into<Json>("lito-llvm-sdk-active"_str));
+    root.insert(String::make("version"_str), rstd::into<Json>(state.version.as_str()));
     root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
     root.insert(String::make("descriptor-sha256"_str),
-                json_string(state.descriptor_sha256.as_str()));
+                rstd::into<Json>(state.descriptor_sha256.as_str()));
     return Json::Object(rstd::move(root));
 }
 
@@ -2265,39 +2268,40 @@ auto android_descriptor_payload(const AndroidInstalledDescriptor& descriptor) ->
 
 auto android_descriptor_json(const AndroidInstalledDescriptor& descriptor) -> Json {
     auto host = JsonMap::make();
-    host.insert(String::make("os"_str), json_string(descriptor.host.os.as_str()));
+    host.insert(String::make("os"_str), rstd::into<Json>(descriptor.host.os.as_str()));
     host.insert(String::make("architecture"_str),
-                json_string(lito::system::architecture_name(descriptor.host.architecture)));
+                rstd::into<Json>(lito::system::architecture_name(descriptor.host.architecture)));
     auto archive = JsonMap::make();
-    archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
-    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.to_hex().as_str()));
+    archive.insert(String::make("url"_str), rstd::into<Json>(descriptor.url.as_str()));
+    archive.insert(String::make("sha256"_str),
+                   rstd::into<Json>(descriptor.sha256.to_hex().as_str()));
     archive.insert(String::make("size"_str),
                    Json::Number(rstd::json::Number::from_u64(descriptor.size)));
-    archive.insert(String::make("root"_str), json_string(descriptor.root.as_str().unwrap()));
+    archive.insert(String::make("root"_str), rstd::into<Json>(descriptor.root.as_str().unwrap()));
     auto license = JsonMap::make();
-    license.insert(String::make("id"_str), json_string(descriptor.license_id.as_str()));
+    license.insert(String::make("id"_str), rstd::into<Json>(descriptor.license_id.as_str()));
     license.insert(String::make("sha256"_str),
-                   json_string(descriptor.license_sha256.to_hex().as_str()));
+                   rstd::into<Json>(descriptor.license_sha256.to_hex().as_str()));
     auto certification = JsonMap::make();
     certification.insert(String::make("compiler-version"_str),
-                         json_string(descriptor.certification.compiler_version.as_str()));
+                         rstd::into<Json>(descriptor.certification.compiler_version.as_str()));
     certification.insert(String::make("linker-version"_str),
-                         json_string(descriptor.certification.linker_version.as_str()));
+                         rstd::into<Json>(descriptor.certification.linker_version.as_str()));
     certification.insert(String::make("target"_str),
-                         json_string(descriptor.certification.target.as_str()));
+                         rstd::into<Json>(descriptor.certification.target.as_str()));
     certification.insert(String::make("identity"_str),
-                         json_string(descriptor.certification.identity.as_str()));
+                         rstd::into<Json>(descriptor.certification.identity.as_str()));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("kind"_str), json_string("lito-android-ndk-sdk"_str));
-    root.insert(String::make("revision"_str), json_string(descriptor.revision.as_str()));
+    root.insert(String::make("kind"_str), rstd::into<Json>("lito-android-ndk-sdk"_str));
+    root.insert(String::make("revision"_str), rstd::into<Json>(descriptor.revision.as_str()));
     root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
     root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
     root.insert(String::make("license"_str), Json::Object(rstd::move(license)));
     root.insert(String::make("distribution-identity"_str),
-                json_string(descriptor.distribution_identity.as_str()));
+                rstd::into<Json>(descriptor.distribution_identity.as_str()));
     root.insert(String::make("certification"_str), Json::Object(rstd::move(certification)));
-    root.insert(String::make("identity"_str), json_string(descriptor.identity.as_str()));
+    root.insert(String::make("identity"_str), rstd::into<Json>(descriptor.identity.as_str()));
     return Json::Object(rstd::move(root));
 }
 
@@ -2514,16 +2518,16 @@ auto resolve_android_installation(const SdkStoreLayout&         layout,
 
 auto android_active_json(const AndroidActiveState& state) -> Json {
     auto host = JsonMap::make();
-    host.insert(String::make("os"_str), json_string(state.host.os.as_str()));
+    host.insert(String::make("os"_str), rstd::into<Json>(state.host.os.as_str()));
     host.insert(String::make("architecture"_str),
-                json_string(lito::system::architecture_name(state.host.architecture)));
+                rstd::into<Json>(lito::system::architecture_name(state.host.architecture)));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("kind"_str), json_string("lito-android-ndk-active"_str));
-    root.insert(String::make("revision"_str), json_string(state.revision.as_str()));
+    root.insert(String::make("kind"_str), rstd::into<Json>("lito-android-ndk-active"_str));
+    root.insert(String::make("revision"_str), rstd::into<Json>(state.revision.as_str()));
     root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
     root.insert(String::make("descriptor-sha256"_str),
-                json_string(state.descriptor_sha256.as_str()));
+                rstd::into<Json>(state.descriptor_sha256.as_str()));
     return Json::Object(rstd::move(root));
 }
 

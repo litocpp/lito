@@ -159,20 +159,17 @@ auto publish_failure(RegistryPublishErrorKind kind,
     return publish_failure<T>(kind, package, String::make(message));
 }
 
-auto json_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
 auto request_body(const RegistryPublishRequest& request) -> String {
     auto archive = JsonMap::make();
     archive.insert(String::make("checksum"_str),
-                   json_string(request.artifact.checksum.text().as_str()));
-    archive.insert(String::make("size"_str), json_string(request.artifact.size.text().as_str()));
-    archive.insert(String::make("format"_str), json_string(request.artifact.format.as_str()));
+                   rstd::into<Json>(request.artifact.checksum.text().as_str()));
+    archive.insert(String::make("size"_str),
+                   rstd::into<Json>(request.artifact.size.text().as_str()));
+    archive.insert(String::make("format"_str), rstd::into<Json>(request.artifact.format.as_str()));
     auto root = JsonMap::make();
-    root.insert(String::make("registry"_str), json_string(request.package.registry.as_str()));
-    root.insert(String::make("package"_str), json_string(request.package.name.as_str()));
-    root.insert(String::make("version"_str), json_string(request.version.text()));
+    root.insert(String::make("registry"_str), rstd::into<Json>(request.package.registry.as_str()));
+    root.insert(String::make("package"_str), rstd::into<Json>(request.package.name.as_str()));
+    root.insert(String::make("version"_str), rstd::into<Json>(request.version.text()));
     root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }

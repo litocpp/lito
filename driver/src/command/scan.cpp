@@ -42,10 +42,6 @@ auto scan_path(ref<rstd::path::Path> path) -> CommandResult<String> {
     return Ok(String::make(*text));
 }
 
-auto scan_json_string(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
 auto json_path(ref<rstd::path::Path> path) -> CommandResult<Json> {
     auto text = scan_path(path);
     if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -199,10 +195,10 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     if (cpp_facts != nullptr && cpp_facts->provided.is_some()) {
         auto provided = JsonMap::make();
         provided.insert(String::make("logical-name"_str),
-                        scan_json_string(cpp_facts->provided->logical_name.as_str()));
+                        rstd::into<Json>(cpp_facts->provided->logical_name.as_str()));
         provided.insert(String::make("is-interface"_str),
                         Json::Bool(cpp_facts->provided->is_interface));
-        provided.insert(String::make("source-path"_str), scan_json_string(source->as_str()));
+        provided.insert(String::make("source-path"_str), rstd::into<Json>(source->as_str()));
         provides.push(Json::Object(rstd::move(provided)));
     }
 
@@ -216,7 +212,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
             for (const auto& location : imported.import_locations) {
                 auto required = JsonMap::make();
                 required.insert(String::make("logical-name"_str),
-                                scan_json_string(imported.logical_name.as_str()));
+                                rstd::into<Json>(imported.logical_name.as_str()));
                 required.insert(String::make("exported"_str), Json::Bool(imported.exported));
                 auto path = json_path(location.path.as_path());
                 if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -239,7 +235,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         auto path = json_path(input.path.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         auto value = JsonMap::make();
-        value.insert(String::make("digest"_str), scan_json_string(input.digest.as_str()));
+        value.insert(String::make("digest"_str), rstd::into<Json>(input.digest.as_str()));
         value.insert(String::make("length"_str), json_usize(input.length));
         value.insert(String::make("offset"_str), json_usize(input.offset));
         value.insert(String::make("path"_str), rstd::move(path).unwrap());
@@ -250,7 +246,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
 
     auto implementation = Json::Null();
     if (cpp_facts != nullptr && cpp_facts->implementation_module.is_some()) {
-        implementation = scan_json_string(cpp_facts->implementation_module->as_str());
+        implementation = rstd::into<Json>(cpp_facts->implementation_module->as_str());
     }
 
     auto external_macros = JsonArray::with_capacity(common.external_macros.len());
@@ -258,27 +254,27 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         auto value      = JsonMap::make();
         auto definition = Json::Null();
         if (macro.compiler_definition.is_some()) {
-            definition = scan_json_string(macro.compiler_definition->as_str());
+            definition = rstd::into<Json>(macro.compiler_definition->as_str());
         }
         value.insert(String::make("compiler-definition"_str), rstd::move(definition));
         value.insert(String::make("dependency-key"_str),
-                     scan_json_string(macro.dependency_key.as_str()));
-        value.insert(String::make("name"_str), scan_json_string(macro.name.as_str()));
+                     rstd::into<Json>(macro.dependency_key.as_str()));
+        value.insert(String::make("name"_str), rstd::into<Json>(macro.name.as_str()));
         value.insert(String::make("state"_str),
-                     scan_json_string(macro.state == frontend::ExternalMacroState::Defined
+                     rstd::into<Json>(macro.state == frontend::ExternalMacroState::Defined
                                           ? "defined"_str
                                           : "undefined"_str));
         value.insert(String::make("value-identity"_str),
-                     scan_json_string(macro.value_identity.as_str()));
+                     rstd::into<Json>(macro.value_identity.as_str()));
         external_macros.push(Json::Object(rstd::move(value)));
     }
 
     auto document = JsonMap::make();
-    document.insert(String::make("format"_str), scan_json_string("lito-scan"_str));
+    document.insert(String::make("format"_str), rstd::into<Json>("lito-scan"_str));
     document.insert(String::make("version"_str),
                     Json::Number(rstd::json::Number::from_u64(u64(4))));
-    document.insert(String::make("target"_str), scan_json_string(report.target.as_str()));
-    document.insert(String::make("profile"_str), scan_json_string(report.profile.as_str()));
+    document.insert(String::make("target"_str), rstd::into<Json>(report.target.as_str()));
+    document.insert(String::make("profile"_str), rstd::into<Json>(report.profile.as_str()));
     document.insert(String::make("source"_str), Json::String(rstd::move(source).unwrap()));
     document.insert(String::make("provides"_str), Json::Array(rstd::move(provides)));
     document.insert(String::make("implementation-module"_str), rstd::move(implementation));
@@ -287,7 +283,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     document.insert(String::make("embedded-resources"_str), Json::Array(rstd::move(embedded)));
     document.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
     document.insert(String::make("preprocessor-environment"_str),
-                    scan_json_string(common.preprocessor_environment.as_str()));
+                    rstd::into<Json>(common.preprocessor_environment.as_str()));
     document.insert(String::make("input-bytes"_str), json_usize(common.input_bytes));
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(document)),
@@ -310,7 +306,7 @@ auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     if (cpp_facts != nullptr && cpp_facts->provided.is_some()) {
         auto provided = JsonMap::make();
         provided.insert(String::make("logical-name"_str),
-                        scan_json_string(cpp_facts->provided->logical_name.as_str()));
+                        rstd::into<Json>(cpp_facts->provided->logical_name.as_str()));
         provided.insert(String::make("source-path"_str), rstd::move(source).unwrap());
         provided.insert(String::make("is-interface"_str),
                         Json::Bool(cpp_facts->provided->is_interface));
@@ -336,7 +332,7 @@ auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         auto required_modules = JsonArray::with_capacity(required_names.len());
         for (const auto& name : required_names) {
             auto required = JsonMap::make();
-            required.insert(String::make("logical-name"_str), scan_json_string(name.as_str()));
+            required.insert(String::make("logical-name"_str), rstd::into<Json>(name.as_str()));
             required_modules.push(Json::Object(rstd::move(required)));
         }
         rule.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
