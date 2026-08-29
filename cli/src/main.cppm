@@ -33,9 +33,7 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         event.kind != lito::BuildEventKind::CMakeQueryBuild &&
         event.kind != lito::BuildEventKind::CMakeSnapshot &&
         event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link &&
-        event.kind != lito::BuildEventKind::Strip &&
-        event.kind != lito::BuildEventKind::ProductFinalize &&
-        event.kind != lito::BuildEventKind::ProductPublish) {
+        event.kind != lito::BuildEventKind::Strip) {
         return;
     }
     if (context.standard_error) {
