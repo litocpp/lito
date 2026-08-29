@@ -30,7 +30,7 @@ jobs:
 
       - name: Install Litobook
         env:
-          LITOBOOK_URL: https://github.com/litocpp/litodoc/releases/download/v0.1.0/litobook-linux-x86_64.tar.gz
+          LITOBOOK_URL: https://github.com/litocpp/litodoc/releases/download/v0.2.0/litobook-linux-x86_64.tar.gz
         run: |
           archive="$RUNNER_TEMP/litobook-linux-x86_64.tar.gz"
           checksum="$archive.sha256"
