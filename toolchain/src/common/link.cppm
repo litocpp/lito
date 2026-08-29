@@ -139,7 +139,8 @@ auto probe_linker(ref<rstd::path::Path>                           executable,
     first_line = first_line.trim_ascii();
 
     auto family = Option<LinkerFamily> {};
-    if (first_line == "LLD"_str || first_line.starts_with("LLD "_str)) {
+    if (first_line == "LLD"_str || first_line.starts_with("LLD "_str) ||
+        first_line.contains(" LLD "_str) || first_line.ends_with(" LLD"_str)) {
         family = Some(LinkerFamily::Lld);
     } else if (first_line == "GNU ld"_str || first_line.starts_with("GNU ld "_str) ||
                first_line.starts_with("GNU ld ("_str)) {

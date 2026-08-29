@@ -747,6 +747,9 @@ TEST(LinkerIdentity, StrictlyClassifiesLldAndGnuLdVersionSignatures) {
     };
     constexpr SignatureCase cases[] = {
         { "lld"_str, "LLD 22.1.8"_str, Some(lito::LinkerFamily::Lld) },
+        { "ubuntu-lld"_str,
+          "Ubuntu LLD 22.1.8 (compatible with GNU linkers)"_str,
+          Some(lito::LinkerFamily::Lld) },
         { "gnu-ld"_str, "GNU ld (GNU Binutils) 2.47"_str, Some(lito::LinkerFamily::GnuLd) },
         { "gold"_str, "GNU gold (GNU Binutils 2.47) 1.16"_str, None() },
         { "mold"_str, "mold 2.40.0 (compatible with GNU ld)"_str, None() },
