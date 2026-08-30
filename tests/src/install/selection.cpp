@@ -179,11 +179,12 @@ path = "../install-only"
     ASSERT_TRUE(explicit_manifest.is_ok());
     ASSERT_EQ(explicit_manifest->runtime_dependencies.len(), usize(2));
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].name.as_str(), "git-helper"_str);
-    ASSERT_TRUE(explicit_manifest->runtime_dependencies[usize {}].source.is_Git());
-    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].source.as_Git().reference.kind,
-              lito::source::GitReferenceKind::Commit);
+    ASSERT_TRUE(explicit_manifest->runtime_dependencies[usize {}].source.resolution.is_Git());
+    EXPECT_EQ(
+        explicit_manifest->runtime_dependencies[usize {}].source.resolution.as_Git().reference.kind,
+        lito::source::GitReferenceKind::Commit);
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize(1)].name.as_str(), "path-helper"_str);
-    EXPECT_TRUE(explicit_manifest->runtime_dependencies[usize(1)].source.is_Path());
+    EXPECT_TRUE(explicit_manifest->runtime_dependencies[usize(1)].source.resolution.is_Path());
 
     constexpr ProjectFile runtime_files[] = {
         { "lito.toml"_str, R"([workspace]

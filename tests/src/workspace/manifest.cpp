@@ -122,6 +122,7 @@ version = "0.1.0"
 
 [workspace.dependencies.fixture-workspace-inherited-library]
 path = "library"
+version = "0.1.0"
 
 [workspace.external-dependencies.pkg-config.curl]
 module = "libcurl"
@@ -214,7 +215,8 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(document->workspace->dependencies.len(), usize(1));
     ASSERT_EQ(document->workspace->pkg_config_external_dependencies.len(), usize(1));
     ASSERT_EQ(document->workspace->cmake_external_dependencies.len(), usize(1));
-    EXPECT_TRUE(document->workspace->dependencies[usize {}].source.is_Path());
+    EXPECT_TRUE(document->workspace->dependencies[usize {}].source.resolution.is_Path());
+    ASSERT_TRUE(document->workspace->dependencies[usize {}].source.publication.is_some());
     ASSERT_EQ(document->workspace->external_sources.len(), usize(1));
     EXPECT_TRUE(document->workspace->external_sources[usize {}].source.is_Path());
     ASSERT_TRUE(document->workspace->cmake_external_dependencies[usize {}].source.is_some());
@@ -235,6 +237,9 @@ set(LitoFixture_VERSION "1.2.3")
               "fixture-workspace-inherited-library"_str);
     ASSERT_EQ(app.manifest.dependencies.len(), usize(1));
     ASSERT_TRUE(app.manifest.dependencies[usize {}].declaration_root.is_some());
+    ASSERT_TRUE(app.manifest.dependencies[usize {}].source.publication.is_some());
+    EXPECT_EQ(app.manifest.dependencies[usize {}].source.publication->requirement.text(),
+              "0.1.0"_str);
     EXPECT_EQ(app.manifest.dependencies[usize {}].declaration_root->as_path(), directory.as_path());
 
     ASSERT_EQ(app.manifest.pkg_config_external_dependencies.len(), usize(1));

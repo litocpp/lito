@@ -116,33 +116,27 @@ auto registry_identity(const StandaloneManifestOptions& options, ref<str> value)
     return None();
 }
 
-auto package_source_table(const PackageManifest&                        manifest,
-                          const lito::source::PackageSourceRequirement& source,
-                          ref<str>                                      dependency_name,
+auto package_source_table(const PackageManifest&                          manifest,
+                          const lito::source::PackageRegistryRequirement& source,
+                          ref<str>                                        dependency_name,
                           const StandaloneManifestOptions& options) -> ManifestResult<Table> {
-    if (! source.is_Registry()) {
-        return standalone_failure<Table>(
-            manifest,
-            rstd::format("published dependency '{}' must use a Registry source", dependency_name));
-    }
-    const auto& registry = source.as_Registry();
-    if (registry.package.as_str() != dependency_name) {
+    if (source.package.as_str() != dependency_name) {
         return standalone_failure<Table>(
             manifest,
             rstd::format("published dependency '{}' must not rename package '{}'",
                          dependency_name,
-                         registry.package.as_str()));
+                         source.package.as_str()));
     }
     auto table = Table::make();
-    table.insert(String::make("version"_str), string_value(registry.requirement.text()));
-    if (registry.registry.is_some()) {
-        auto identity = registry_identity(options, registry.registry->as_str());
+    table.insert(String::make("version"_str), string_value(source.requirement.text()));
+    if (source.registry.is_some()) {
+        auto identity = registry_identity(options, source.registry->as_str());
         if (identity.is_none()) {
             return standalone_failure<Table>(
                 manifest,
                 rstd::format("published dependency '{}' uses unknown Registry '{}'",
                              dependency_name,
-                             registry.registry->as_str()));
+                             source.registry->as_str()));
         }
         if (! (**identity == options.owner_registry)) {
             table.insert(String::make("registry"_str), string_value((*identity)->as_str()));
@@ -154,9 +148,16 @@ auto package_source_table(const PackageManifest&                        manifest
 auto dependency_table(const PackageManifest&           manifest,
                       const DeclaredDependency&        dependency,
                       bool                             development,
-                      const StandaloneManifestOptions& options) -> ManifestResult<Toml> {
-    auto table = rstd_try(
-        package_source_table(manifest, dependency.source, dependency.name.as_str(), options));
+                      const StandaloneManifestOptions& options) -> ManifestResult<Option<Toml>> {
+    if (dependency.source.publication.is_none()) {
+        if (development) return Ok(Option<Toml> {});
+        return standalone_failure<Option<Toml>>(
+            manifest,
+            rstd::format("published normal dependency '{}' must declare a Registry version",
+                         dependency.name.as_str()));
+    }
+    auto table = rstd_try(package_source_table(
+        manifest, *dependency.source.publication, dependency.name.as_str(), options));
     if (! development && dependency.visibility.is_some()) {
         table.insert(String::make("visibility"_str),
                      string_value(visibility_text(*dependency.visibility)));
@@ -168,7 +169,7 @@ auto dependency_table(const PackageManifest&           manifest,
         table.insert(String::make("default-features"_str),
                      Toml::Boolean(*dependency.default_features));
     }
-    return Ok(Toml::Table(rstd::move(table)));
+    return Ok(Some(Toml::Table(rstd::move(table))));
 }
 
 auto package_dependencies(const PackageManifest&           manifest,
@@ -179,9 +180,12 @@ auto package_dependencies(const PackageManifest&           manifest,
     if (dependencies.is_empty()) return Ok(Option<Toml> {});
     auto table = Table::make();
     for (const auto& dependency : dependencies) {
-        table.insert(dependency.name.clone(),
-                     rstd_try(dependency_table(manifest, dependency, development, options)));
+        auto serialized = rstd_try(dependency_table(manifest, dependency, development, options));
+        if (serialized.is_some()) {
+            table.insert(dependency.name.clone(), rstd::move(serialized).unwrap());
+        }
     }
+    if (table.is_empty()) return Ok(Option<Toml> {});
     return Ok(Some(Toml::Table(rstd::move(table))));
 }
 
@@ -190,9 +194,16 @@ auto runtime_dependencies(const PackageManifest& manifest, const StandaloneManif
     if (manifest.runtime_dependencies.is_empty()) return Ok(Option<Toml> {});
     auto table = Table::make();
     for (const auto& dependency : manifest.runtime_dependencies) {
-        table.insert(dependency.name.clone(),
-                     Toml::Table(rstd_try(package_source_table(
-                         manifest, dependency.source, dependency.name.as_str(), options))));
+        if (dependency.source.publication.is_none()) {
+            return standalone_failure<Option<Toml>>(
+                manifest,
+                rstd::format("published runtime dependency '{}' must declare a Registry version",
+                             dependency.name.as_str()));
+        }
+        table.insert(
+            dependency.name.clone(),
+            Toml::Table(rstd_try(package_source_table(
+                manifest, *dependency.source.publication, dependency.name.as_str(), options))));
     }
     return Ok(Some(Toml::Table(rstd::move(table))));
 }

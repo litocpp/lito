@@ -110,8 +110,7 @@ auto lito::pack_package(PackPackageRequest request)
             .registry_aliases = rstd::move(request.registry.aliases),
         });
     if (standalone.is_err()) {
-        return pack_failure<PackPackageSummary>(rstd::format(
-            "cannot create standalone package manifest: {}", rstd::move(standalone).unwrap_err()));
+        return Err(rstd::into<lito::package::PackageError>(rstd::move(standalone).unwrap_err()));
     }
     auto package = lito::registry::RegistryPackageId {
         .registry = rstd::move(request.registry.owner),

@@ -77,14 +77,14 @@ auto append_dependency(Vec<RegistryDependencyProjection>&        output,
                        const lito::manifest::DeclaredDependency& dependency,
                        RegistryDependencyKind                    kind,
                        const RegistryPackageId& owner) -> RegistryArtifactResult<empty> {
-    if (! dependency.source.is_Registry()) {
+    if (! dependency.source.resolution.is_Registry()) {
         return inspection_failure<empty>(
             RegistryArtifactErrorKind::Manifest,
             owner,
             rstd::format("published dependency '{}' must use a Registry source",
                          dependency.name.as_str()));
     }
-    const auto& source = dependency.source.as_Registry();
+    const auto& source = dependency.source.resolution.as_Registry();
     auto        features =
         dependency.features.is_some() ? dependency.features->clone() : Vec<String>::make();
     output.push(RegistryDependencyProjection {
@@ -109,14 +109,14 @@ auto append_dependency(Vec<RegistryDependencyProjection>&        output,
 auto append_runtime_dependency(Vec<RegistryDependencyProjection>&               output,
                                const lito::manifest::DeclaredRuntimeDependency& dependency,
                                const RegistryPackageId& owner) -> RegistryArtifactResult<empty> {
-    if (! dependency.source.is_Registry()) {
+    if (! dependency.source.resolution.is_Registry()) {
         return inspection_failure<empty>(
             RegistryArtifactErrorKind::Manifest,
             owner,
             rstd::format("published runtime dependency '{}' must use a Registry source",
                          dependency.name.as_str()));
     }
-    const auto& source = dependency.source.as_Registry();
+    const auto& source = dependency.source.resolution.as_Registry();
     output.push(RegistryDependencyProjection {
         .alias = dependency.name.clone(),
         .package =

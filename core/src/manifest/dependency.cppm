@@ -14,9 +14,22 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito::manifest
 {
 
+struct PackageDependencySource {
+    lito::source::PackageSourceRequirement           resolution;
+    Option<lito::source::PackageRegistryRequirement> publication;
+
+    auto clone() const -> PackageDependencySource {
+        return PackageDependencySource {
+            .resolution  = resolution.clone(),
+            .publication = publication.is_some() ? Some(publication->clone())
+                                                 : None<lito::source::PackageRegistryRequirement>(),
+        };
+    }
+};
+
 struct DeclaredDependency {
     String                                         name;
-    lito::source::PackageSourceRequirement         source;
+    PackageDependencySource                        source;
     Option<lito::dependency::DependencyVisibility> visibility;
     Option<Vec<String>>                            features;
     Option<bool>                                   default_features;
@@ -31,9 +44,9 @@ struct WorkspaceDependencyReference {
 };
 
 struct DeclaredRuntimeDependency {
-    String                                 name;
-    lito::source::PackageSourceRequirement source;
-    Option<PathBuf>                        declaration_root;
+    String                  name;
+    PackageDependencySource source;
+    Option<PathBuf>         declaration_root;
 };
 
 struct WorkspaceRuntimeDependencyReference {
@@ -63,8 +76,8 @@ struct WorkspaceCargoExternalDependencyReference {
 };
 
 struct WorkspaceDependencyDefinition {
-    String                                 name;
-    lito::source::PackageSourceRequirement source;
+    String                  name;
+    PackageDependencySource source;
 };
 
 struct WorkspacePkgConfigExternalDependencyDefinition {

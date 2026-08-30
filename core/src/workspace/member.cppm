@@ -96,28 +96,6 @@ auto resolve_workspace_member_authors(lito::manifest::PackageManifest&         m
     return Ok(empty {});
 }
 
-auto clone_package_source(const lito::source::PackageSourceRequirement& source)
-    -> lito::source::PackageSourceRequirement {
-    if (source.is_Path()) {
-        return lito::source::PackageSourceRequirement::Path(source.as_Path().path.clone());
-    }
-    if (source.is_Builtin()) {
-        return lito::source::PackageSourceRequirement::Builtin(source.as_Builtin().id.clone());
-    }
-    if (source.is_Registry()) {
-        return lito::source::PackageSourceRequirement::Registry(
-            source.as_Registry().registry.clone(),
-            source.as_Registry().package.clone(),
-            source.as_Registry().requirement.clone());
-    }
-    return lito::source::PackageSourceRequirement::Git(
-        source.as_Git().url.clone(),
-        lito::source::GitReference {
-            .kind  = source.as_Git().reference.kind,
-            .value = source.as_Git().reference.value.clone(),
-        });
-}
-
 auto clone_pkg_config_requirement(
     const lito::dependency::PkgConfigDependencyRequirement& requirement)
     -> lito::dependency::PkgConfigDependencyRequirement {
@@ -183,7 +161,7 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             }
             dependencies.push(lito::manifest::DeclaredDependency {
                 .name             = reference.name.clone(),
-                .source           = clone_package_source(definition->source),
+                .source           = definition->source.clone(),
                 .visibility       = reference.visibility,
                 .features         = reference.features.is_some() ? Some(reference.features->clone())
                                                                  : Option<Vec<String>> {},
@@ -217,7 +195,7 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
         }
         manifest.runtime_dependencies.push(lito::manifest::DeclaredRuntimeDependency {
             .name             = reference.name.clone(),
-            .source           = clone_package_source(definition->source),
+            .source           = definition->source.clone(),
             .declaration_root = Some(workspace.root.clone()),
         });
     }

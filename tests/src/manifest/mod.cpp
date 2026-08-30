@@ -95,8 +95,9 @@ visibility = "private"
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
     const auto& dependency = loaded->dependencies[usize {}];
     EXPECT_EQ(dependency.name.as_str(), "upstream-package"_str);
-    ASSERT_TRUE(dependency.source.is_Registry());
-    const auto& source = dependency.source.as_Registry();
+    ASSERT_TRUE(dependency.source.resolution.is_Registry());
+    ASSERT_TRUE(dependency.source.publication.is_some());
+    const auto& source = dependency.source.resolution.as_Registry();
     ASSERT_TRUE(source.registry.is_some());
     EXPECT_EQ(source.registry->as_str(), "internal"_str);
     EXPECT_EQ(source.package.as_str(), "upstream-package"_str);
@@ -106,6 +107,79 @@ visibility = "private"
     ASSERT_TRUE(rejected.is_ok());
     EXPECT_TRUE(source.requirement.matches(*matching));
     EXPECT_FALSE(source.requirement.matches(*rejected));
+}
+
+TEST_F(Manifest, LocalDependencyCarriesAnIndependentRegistryRequirement) {
+    auto project = manifest("local-registry-dependency"_str, R"toml([package]
+name = "fixture-local-registry-dependency"
+version = "0.1.0"
+
+[lib]
+name = "fixture-local-registry-dependency"
+module = "fixture.local_registry_dependency"
+archive = "fixture-local-registry-dependency"
+
+[dependencies.upstream-package]
+path = "vendor/upstream"
+version = "^1.4"
+registry = "internal"
+visibility = "private"
+
+[dependencies.git-package]
+git = "https://example.invalid/git-package.git"
+tag = "v2.0.0"
+version = "2.0.0"
+visibility = "private"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(2));
+    const auto& dependency = loaded->dependencies[usize(1)];
+    ASSERT_TRUE(dependency.source.resolution.is_Path());
+    EXPECT_EQ(dependency.source.resolution.as_Path().path.as_path().to_str().unwrap(),
+              "vendor/upstream"_str);
+    ASSERT_TRUE(dependency.source.publication.is_some());
+    EXPECT_EQ(dependency.source.publication->registry->as_str(), "internal"_str);
+    EXPECT_EQ(dependency.source.publication->package.as_str(), "upstream-package"_str);
+    EXPECT_EQ(dependency.source.publication->requirement.text(), "^1.4"_str);
+    const auto& git = loaded->dependencies[usize {}];
+    ASSERT_TRUE(git.source.resolution.is_Git());
+    EXPECT_EQ(git.source.resolution.as_Git().reference.kind, lito::source::GitReferenceKind::Tag);
+    ASSERT_TRUE(git.source.publication.is_some());
+    EXPECT_EQ(git.source.publication->requirement.text(), "2.0.0"_str);
+}
+
+TEST_F(Manifest, PackageDependencySourceCombinationsAreValidated) {
+    constexpr ref<str> invalid_dependencies[] = {
+        "path = \"dependency\"\ngit = \"https://example.invalid/dependency.git\""_str,
+        "builtin = \"dependency\"\nversion = \"0.1.0\""_str,
+        "path = \"dependency\"\nregistry = \"official\""_str,
+    };
+    auto index = usize {};
+    for (auto declaration : invalid_dependencies) {
+        auto contents = rstd::format(R"toml([package]
+name = "fixture-invalid-package-dependency-{}"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-invalid-package-dependency-{}"
+link-stdlib = false
+
+[dependencies.dependency]
+{}
+visibility = "private"
+)toml",
+                                     index,
+                                     index,
+                                     declaration);
+        auto fixture  = rstd::format("invalid-package-dependency-{}", index);
+        auto project  = manifest(fixture.as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        ++index;
+    }
 }
 
 TEST_F(Manifest, StandalonePackageExpandsPublishMetadataAndRegistryAliases) {
@@ -129,9 +203,25 @@ version = "^2.0"
 registry = "official"
 visibility = "public"
 
+[dependencies.local-versioned]
+path = "vendor/local-versioned"
+version = "1.2.0"
+visibility = "private"
+
 [dev-dependencies.other-registry]
 version = "~3.1"
 registry = "community"
+
+[dev-dependencies.local-only]
+path = "vendor/local-only"
+
+[dev-dependencies.git-versioned]
+git = "https://example.invalid/git-versioned.git"
+rev = "v4"
+version = "4.0.0"
+
+[dev-dependencies.builtin-only]
+builtin = "qt"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -160,11 +250,46 @@ registry = "community"
         });
     ASSERT_TRUE(serialized.is_ok());
     EXPECT_TRUE(serialized->as_str().contains("[dependencies.same-registry]"_str));
+    EXPECT_TRUE(serialized->as_str().contains("[dependencies.local-versioned]"_str));
+    EXPECT_TRUE(serialized->as_str().contains("version = \"1.2.0\""_str));
+    EXPECT_FALSE(serialized->as_str().contains("vendor/local-versioned"_str));
+    EXPECT_FALSE(serialized->as_str().contains("local-only"_str));
+    EXPECT_TRUE(serialized->as_str().contains("[dev-dependencies.git-versioned]"_str));
+    EXPECT_FALSE(serialized->as_str().contains("example.invalid/git-versioned"_str));
+    EXPECT_FALSE(serialized->as_str().contains("builtin-only"_str));
     EXPECT_FALSE(serialized->as_str().contains("registry = \"https://registry.example/\""_str));
     EXPECT_TRUE(serialized->as_str().contains("registry = \"https://community.example/\""_str));
 
     auto parsed = rstd::toml::from_str(serialized->as_str());
     ASSERT_TRUE(parsed.is_ok());
+}
+
+TEST_F(Manifest, StandalonePackageRejectsVersionlessNormalLocalDependency) {
+    auto project = manifest("standalone-versionless-normal"_str, R"toml([package]
+name = "fixture-standalone-versionless-normal"
+version = "0.1.0"
+
+[lib]
+name = "fixture-standalone-versionless-normal"
+module = "fixture.standalone_versionless_normal"
+archive = "fixture-standalone-versionless-normal"
+
+[dependencies.local-only]
+path = "vendor/local-only"
+visibility = "private"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_err());
+    auto error = rstd::move(serialized).unwrap_err();
+    EXPECT_TRUE(error_chain_text(error).as_str().contains("must declare a Registry version"_str));
 }
 
 TEST_F(Manifest, PackageFileSetAppliesPortablePatternsAndFixedExcludes) {
@@ -1356,8 +1481,8 @@ builtin = "qt"
     ASSERT_EQ(loaded->script->supports.len(), usize(2));
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
     EXPECT_EQ(loaded->dependencies[usize {}].name.as_str(), "lito-qt"_str);
-    EXPECT_TRUE(loaded->dependencies[usize {}].source.is_Builtin());
-    EXPECT_EQ(loaded->dependencies[usize {}].source.as_Builtin().id.as_str(), "qt"_str);
+    EXPECT_TRUE(loaded->dependencies[usize {}].source.resolution.is_Builtin());
+    EXPECT_EQ(loaded->dependencies[usize {}].source.resolution.as_Builtin().id.as_str(), "qt"_str);
 }
 
 TEST_F(Manifest, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
@@ -1448,7 +1573,7 @@ visibility = "private"
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
-    const auto& source = loaded->dependencies[usize {}].source;
+    const auto& source = loaded->dependencies[usize {}].source.resolution;
     ASSERT_TRUE(source.is_Git());
     EXPECT_EQ(source.as_Git().reference.kind, lito::source::GitReferenceKind::Commit);
     EXPECT_EQ(source.as_Git().reference.value.as_str(),
@@ -1484,10 +1609,10 @@ visibility = "public"
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
     const auto& dependency = loaded->dependencies[usize {}];
-    ASSERT_TRUE(dependency.source.is_Registry());
+    ASSERT_TRUE(dependency.source.resolution.is_Registry());
     EXPECT_EQ(dependency.name.as_str(), "sample"_str);
-    EXPECT_EQ(dependency.source.as_Registry().registry->as_str(), "official"_str);
-    EXPECT_EQ(dependency.source.as_Registry().requirement.text(), "0.4"_str);
+    EXPECT_EQ(dependency.source.resolution.as_Registry().registry->as_str(), "official"_str);
+    EXPECT_EQ(dependency.source.resolution.as_Registry().requirement.text(), "0.4"_str);
     ASSERT_TRUE(dependency.visibility.is_some());
     EXPECT_EQ(*dependency.visibility, lito::dependency::DependencyVisibility::Public);
 

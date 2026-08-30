@@ -32,6 +32,36 @@ class PackageSourceRequirement {
               (Registry,
                (Option<String> registry; lito::registry::RegistryPackageName package;
                 lito::registry::VersionRequirement                           requirement;)))
+
+public:
+    auto clone() const -> PackageSourceRequirement {
+        if (is_Path()) {
+            return PackageSourceRequirement::Path(as_Path().path.clone());
+        }
+        if (is_Builtin()) {
+            return PackageSourceRequirement::Builtin(as_Builtin().id.clone());
+        }
+        if (is_Registry()) {
+            return PackageSourceRequirement::Registry(as_Registry().registry.clone(),
+                                                      as_Registry().package.clone(),
+                                                      as_Registry().requirement.clone());
+        }
+        return PackageSourceRequirement::Git(as_Git().url.clone(), as_Git().reference.clone());
+    }
+};
+
+struct PackageRegistryRequirement {
+    Option<String>                      registry;
+    lito::registry::RegistryPackageName package;
+    lito::registry::VersionRequirement  requirement;
+
+    auto clone() const -> PackageRegistryRequirement {
+        return PackageRegistryRequirement {
+            .registry    = registry.clone(),
+            .package     = package.clone(),
+            .requirement = requirement.clone(),
+        };
+    }
 };
 
 struct ResolvedPackageSource {

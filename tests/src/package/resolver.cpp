@@ -730,6 +730,87 @@ TEST_F(PackageResolver, InvalidDependencyGraphsAreRejectedByResolverOwner) {
     }
 }
 
+TEST_F(PackageResolver, LocalDependencyMustMatchItsRegistryVersionRequirement) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "fixture-local-registry-version"
+members = ["library", "app"]
+default-members = ["app"]
+
+[workspace.dependencies.fixture-local-registry-version-library]
+path = "library"
+version = "=0.1.0"
+)toml"_str },
+        { "library/lito.toml"_str, R"toml([package]
+name = "fixture-local-registry-version-library"
+version = "0.2.0"
+
+[lib]
+name = "fixture-local-registry-version-library"
+module = "fixture.local_registry_version.library"
+archive = "fixture-local-registry-version-library"
+)toml"_str },
+        { "app/lito.toml"_str, R"toml([package]
+name = "fixture-local-registry-version-app"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-local-registry-version-app"
+link-stdlib = false
+
+[dependencies.fixture-local-registry-version-library]
+workspace = true
+visibility = "private"
+)toml"_str },
+    };
+    auto project = materialize("local-registry-version-mismatch"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto resolved = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(resolved.is_err());
+    auto message = rstd::format("{}", rstd::move(resolved).unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("requires Registry version '=0.1.0'"_str));
+    EXPECT_TRUE(message.as_str().contains("has version '0.2.0'"_str));
+}
+
+TEST_F(PackageResolver, GitPatchKeepsTheDeclaredRegistryVersionRequirement) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-patched-registry-version-app"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-patched-registry-version-app"
+link-stdlib = false
+
+[dependencies.fixture-patched-registry-version-library]
+git = "https://example.invalid/patched-registry-version.git"
+version = "0.1.0"
+visibility = "private"
+)toml"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-patched-registry-version-library"
+version = "0.1.0"
+
+[lib]
+name = "fixture-patched-registry-version-library"
+module = "fixture.patched_registry_version.library"
+archive = "fixture-patched-registry-version-library"
+)toml"_str },
+    };
+    auto project = materialize("patched-registry-version"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto options            = lito::source::SourceResolutionOptions {};
+    options.sources.network = lito::source::NetworkPolicy::Offline;
+    options.sources.patches.push(lito::source::GitSourcePatch {
+        .git  = String::make("https://example.invalid/patched-registry-version.git"_str),
+        .path = project->root.join(PathBuf::from("provider"_str).as_path()),
+    });
+    auto resolved =
+        lito::package::resolve_package_graph(project->root.as_path(), rstd::move(options));
+    ASSERT_TRUE(resolved.is_ok());
+    ASSERT_EQ(resolved->packages.len(), usize(2));
+}
+
 TEST_F(PackageResolver, SameNameConflictReportsBothSources) {
     auto tree = package_resolver_same_name_root_tree();
     ASSERT_TRUE(tree.is_ok());
