@@ -830,7 +830,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto toolchain_header_roots = profiler.measure(
         ScanProbe::Environment, [&]() -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
             auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
-            for (auto target : native_target_plan.target_order) {
+            for (auto target : host_selection.target_order) {
                 auto resolved =
                     toolchain.header_roots(native_target_plan.contexts[target],
                                            metadata.targets[target].source_root.as_path());
@@ -849,7 +849,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto header_ownership =
         cpp::resolve_header_ownership(metadata,
-                                      native_target_plan.target_order.as_slice(),
+                                      host_selection.target_order.as_slice(),
                                       rstd::move(toolchain_header_roots).unwrap());
     auto analysis_service = FrontendAnalysisService::make(
         layout, toolchain, header_ownership, frontend_service, scan_cache, profiler);
@@ -859,7 +859,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto existing_source_sets = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_source_selection(metadata,
                                                  native_target_plan,
-                                                 native_target_plan.target_order,
+                                                 host_selection.target_order,
                                                  semantic_scan_graph,
                                                  analysis_service,
                                                  request.observer,
@@ -1079,6 +1079,38 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return resolve_runtime_resources(metadata, layout, selected_targets, request.observer);
     });
     auto runtime_resources = rstd_try(rstd::move(runtime_result));
+
+    auto remaining_existing_targets = Vec<cpp::TargetId>::make();
+    for (auto target : package_plan.target_order) {
+        auto scanned = false;
+        for (auto host_target : host_selection.target_order) {
+            if (host_target == target) {
+                scanned = true;
+                break;
+            }
+        }
+        if (! scanned) remaining_existing_targets.emplace_back(target);
+    }
+    auto remaining_existing_sources = profiler.measure(ScanProbe::Discovery, [&] {
+        return discover_package_source_selection(metadata,
+                                                 package_plan,
+                                                 remaining_existing_targets,
+                                                 semantic_scan_graph,
+                                                 analysis_service,
+                                                 request.observer,
+                                                 execution->jobs,
+                                                 execution->max_in_flight,
+                                                 false,
+                                                 SourceDiscoveryScope::Existing);
+    });
+    if (remaining_existing_sources.is_err()) {
+        return Err(rstd::move(remaining_existing_sources).unwrap_err());
+    }
+    auto appended_existing_sources =
+        cpp::append_package_sources(package, rstd::move(remaining_existing_sources).unwrap());
+    if (appended_existing_sources.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(appended_existing_sources).unwrap_err()));
+    }
 
     auto generated_sources = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_source_selection(metadata,
