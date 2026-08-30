@@ -155,6 +155,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             .name         = source.name.clone(),
             .root         = source.acquired->root.clone(),
             .identity     = source.acquired->identity.clone(),
+            .cacheable    = source.acquired->cacheable,
         });
     }
     if (! acquisition_plan.archives.is_empty()) {
@@ -185,6 +186,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                     .name         = source.name.clone(),
                     .root         = (*fetched)[index].root.clone(),
                     .identity     = (*fetched)[index].identity.clone(),
+                    .cacheable    = (*fetched)[index].cacheable,
                 });
                 continue;
             }
@@ -221,7 +223,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                              binding.source_name->as_str()));
         }
         binding.requirement.source = SelectedCMakeDependencySource::Directory(
-            prepared->root.clone(), prepared->identity.clone(), true);
+            prepared->root.clone(), prepared->identity.clone(), prepared->cacheable);
     }
 
     auto cargo_provider = Option<lito::tools::cargo::Provider> {};

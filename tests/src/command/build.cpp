@@ -1209,6 +1209,93 @@ set_property(TARGET LitoOverrideFixture::fixture PROPERTY
     EXPECT_EQ(events.source_operations, usize {});
 }
 
+TEST_F(BuildCommand, CMakeGitPatchPathRunsIncrementalSourceWorkflow) {
+    auto tree = cmake_package_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto source = materialize("cmake-git-patch-source"_str, *tree);
+    ASSERT_TRUE(source.is_ok());
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-cmake-git-patch"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-cmake-git-patch"
+sources = ["main.cpp"]
+
+[external-sources.fixture]
+git = "https://example.invalid/lito-cmake-git-patch.git"
+commit = "0123456789abcdef0123456789abcdef01234567"
+
+[external-dependencies.cmake.fixture]
+package = "LitoFixture"
+components = ["Core"]
+source = "fixture"
+config-directory = "lib/cmake/LitoFixture"
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)toml"_str },
+        { "main.cpp"_str, R"cpp(int lito_fixture_value();
+
+auto main() -> int {
+    return lito_fixture_value();
+}
+)cpp"_str },
+    };
+    auto project = materialize("cmake-git-patch-build"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("cmake-git-patch-build"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-cmake-git-patch"_str));
+    request.cmake           = fixture_cmake();
+    request.sources.network = lito::source::NetworkPolicy::Offline;
+    request.sources.patches.push(lito::source::GitSourcePatch {
+        .git  = String::make("https://example.invalid/lito-cmake-git-patch.git"_str),
+        .path = source->root.clone(),
+    });
+    auto events      = CMakeOverrideEvents {};
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(events),
+        .notify  = capture_cmake_override_events,
+    });
+
+    auto first = lito::build(request);
+    if (first.is_err()) {
+        auto message = error_chain_text(first.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(events.source_operations > usize {});
+    ASSERT_EQ(first->product.artifacts.len(), usize(1));
+    auto first_status = rstd::process::Command::make(
+                            first->product.artifacts[usize {}].primary.path.as_path().as_os_str())
+                            .status();
+    ASSERT_TRUE(first_status.is_ok());
+    ASSERT_TRUE(first_status->code().is_some());
+    EXPECT_EQ(*first_status->code(), i32(42));
+
+    auto implementation = source->root.join(PathBuf::from("src/fixture.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write_atomic(implementation.as_path(),
+                                       "#include <lito_fixture.hpp>\n"
+                                       "int lito_fixture_value() { return 43; }\n"_str.as_bytes())
+                    .is_ok());
+    events      = CMakeOverrideEvents {};
+    auto second = lito::build(request);
+    if (second.is_err()) {
+        auto message = error_chain_text(second.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(events.source_operations > usize {});
+    ASSERT_EQ(second->product.artifacts.len(), usize(1));
+    auto second_status = rstd::process::Command::make(
+                             second->product.artifacts[usize {}].primary.path.as_path().as_os_str())
+                             .status();
+    ASSERT_TRUE(second_status.is_ok());
+    ASSERT_TRUE(second_status->code().is_some());
+    EXPECT_EQ(*second_status->code(), i32(43));
+}
+
 TEST_F(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {
     auto tree = build_command_tree();
     ASSERT_TRUE(tree.is_ok());

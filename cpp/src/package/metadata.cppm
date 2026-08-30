@@ -45,6 +45,7 @@ struct ExternalSourceRoot {
     String  name;
     PathBuf root;
     String  identity;
+    bool    cacheable;
 };
 
 struct ExternalSourceRootCatalog {
