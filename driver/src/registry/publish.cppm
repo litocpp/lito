@@ -138,7 +138,7 @@ using Json    = rstd::json::Value;
 using JsonMap = rstd::json::Map;
 
 inline constexpr auto PUBLISH_RESPONSE_SCHEMA = "lito.registry.prepare-publish-session.v1"_str;
-inline constexpr auto CURL_TRAILER            = "\nLITO_REGISTRY_PUBLISH_HTTP_V1\n"_str;
+inline constexpr auto CURL_TRAILER            = "LITO_REGISTRY_PUBLISH_HTTP_V1:"_str;
 inline constexpr auto MAXIMUM_RESPONSE_SIZE   = usize(1024 * 1024);
 
 template<typename T>
@@ -816,7 +816,15 @@ auto lito::registry::CurlRegistryPublishTransport::execute(
         }
     }
 
-    auto config = String::make("silent\nshow-error\ngloboff\nproto = \"=https\"\n"_str);
+    auto endpoint = RegistryFixedEndpoint::parse(request.url.as_str());
+    if (endpoint.is_err()) {
+        return publish_failure<RegistryPublishHttpResponse>(
+            RegistryPublishErrorKind::Protocol,
+            package,
+            "Registry publish request URL is not an allowed endpoint"_str);
+    }
+    auto config = String::make("silent\nshow-error\ngloboff\n"_str);
+    config.push_str(rstd::format("proto = \"={}\"\n", endpoint->scheme()).as_str());
     config.push_str("connect-timeout = 30\nmax-time = 300\nmax-filesize = 1048576\n"_str);
     rstd_try(append_curl_config(config, "request"_str, request.method.as_str(), package));
     rstd_try(append_curl_config(config, "url"_str, request.url.as_str(), package));
@@ -849,7 +857,7 @@ auto lito::registry::CurlRegistryPublishTransport::execute(
         rstd_try(append_curl_config(config, "upload-file"_str, *path, package));
     }
     rstd_try(append_curl_config(
-        config, "write-out"_str, "\nLITO_REGISTRY_PUBLISH_HTTP_V1\n%{response_code}"_str, package));
+        config, "write-out"_str, "LITO_REGISTRY_PUBLISH_HTTP_V1:%{response_code}"_str, package));
 
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));

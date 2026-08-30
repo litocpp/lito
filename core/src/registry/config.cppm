@@ -41,14 +41,15 @@ public:
 };
 
 class RegistryFixedEndpoint : public DefaultInClass<RegistryFixedEndpoint, Clone> {
-    lito::parse::HttpsUrl value_;
+    lito::parse::FetchUrl value_;
 
-    explicit RegistryFixedEndpoint(lito::parse::HttpsUrl value): value_(rstd::move(value)) {}
+    explicit RegistryFixedEndpoint(lito::parse::FetchUrl value): value_(rstd::move(value)) {}
 
 public:
     static auto parse(ref<str> value) -> RegistryValueResult<RegistryFixedEndpoint>;
 
     auto as_str() const noexcept -> ref<str> { return value_.as_str(); }
+    auto scheme() const noexcept -> ref<str> { return value_.url()->scheme(); }
     auto clone() const -> RegistryFixedEndpoint { return RegistryFixedEndpoint(value_.clone()); }
 
     friend auto operator==(const RegistryFixedEndpoint& left,
@@ -128,12 +129,36 @@ auto lito::registry::RegistryEndpointTemplate::render(ref<str> value) const -> S
         value_.as_str(), registry_endpoint_placeholder(kind_), value);
 }
 
+auto loopback_api_authority(ref<str> authority) -> bool {
+    constexpr ref<str> hosts[] = { "localhost"_str, "127.0.0.1"_str, "[::1]"_str };
+    for (auto host : hosts) {
+        if (authority == host) return true;
+        if (! authority.starts_with(host) || authority.len() <= host.len() ||
+            authority[host.len()] != u8(':')) {
+            continue;
+        }
+        auto port = authority.get(host.len() + usize(1), authority.len()).unwrap();
+        if (port.is_empty() || port.len() > usize(5)) return false;
+        auto value = u32 {};
+        for (auto byte : port.as_bytes()) {
+            const auto raw = byte.to_primitive();
+            if (raw < '0' || raw > '9') return false;
+            value = value * u32(10) + u32(raw - '0');
+        }
+        return value > u32 {} && value <= u32(65535);
+    }
+    return false;
+}
+
 auto lito::registry::RegistryFixedEndpoint::parse(ref<str> value)
     -> RegistryValueResult<RegistryFixedEndpoint> {
-    auto parsed = lito::parse::HttpsUrl::parse(value);
-    if (parsed.is_err() || parsed->url()->fragment().is_some()) {
+    auto parsed = lito::parse::FetchUrl::parse(value);
+    if (parsed.is_err() || parsed->url()->fragment().is_some() ||
+        (parsed->url()->scheme() != "https"_str &&
+         (parsed->url()->scheme() != "http"_str ||
+          ! loopback_api_authority(parsed->url()->authority())))) {
         return registry_value_failure<RegistryFixedEndpoint>(
-            "registry endpoint must be an absolute HTTPS URL without a fragment"_str);
+            "registry API endpoint must be HTTPS, except HTTP on a loopback address"_str);
     }
     return Ok(RegistryFixedEndpoint(rstd::move(parsed).unwrap()));
 }

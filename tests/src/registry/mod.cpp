@@ -302,6 +302,18 @@ TEST(RegistryIdentity, AcceptsOnlyCanonicalCoordinates) {
     EXPECT_TRUE(lito::registry::RegistryPackageName::parse("lito/codec"_str).is_err());
 }
 
+TEST(RegistryConfig, AllowsHttpOnlyForLoopbackApiEndpoints) {
+    EXPECT_TRUE(
+        lito::registry::RegistryFixedEndpoint::parse("https://registry.example/"_str).is_ok());
+    EXPECT_TRUE(lito::registry::RegistryFixedEndpoint::parse("http://localhost:8080/"_str).is_ok());
+    EXPECT_TRUE(lito::registry::RegistryFixedEndpoint::parse("http://127.0.0.1:8080/"_str).is_ok());
+    EXPECT_TRUE(lito::registry::RegistryFixedEndpoint::parse("http://[::1]:8080/"_str).is_ok());
+    EXPECT_TRUE(
+        lito::registry::RegistryFixedEndpoint::parse("http://registry.example/"_str).is_err());
+    EXPECT_TRUE(
+        lito::registry::RegistryFixedEndpoint::parse("http://localhost.invalid/"_str).is_err());
+}
+
 TEST(RegistryPackageSpec, SeparatesVersionRequirementsFromCliOnlyTags) {
     auto implicit = lito::registry::RegistryPackageSpec::parse("sample"_str);
     ASSERT_TRUE(implicit.is_ok());
