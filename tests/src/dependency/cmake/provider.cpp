@@ -1,7 +1,9 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import rstd.json;
 import rstd.test;
+import licrypto;
 import lito.cpp;
 import lito.core;
 import lito.system;
@@ -17,6 +19,17 @@ using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
 class CMakeProvider : public ProjectFixture {};
+
+struct CMakeEventCounts {
+    usize queries;
+    usize reuses;
+};
+
+auto count_cmake_events(void* context, const lito::tools::cmake::Event& event) noexcept -> void {
+    auto& counts = *static_cast<CMakeEventCounts*>(context);
+    if (! event.completed && event.kind == lito::tools::cmake::EventKind::Query) ++counts.queries;
+    if (event.kind == lito::tools::cmake::EventKind::Reuse) ++counts.reuses;
+}
 
 TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto c_flags   = EnvironmentVariableGuard("CFLAGS"_str, "-DLITO_C_FLAGS_LEAK=1"_str);
@@ -75,6 +88,29 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         return;
     }
     ASSERT_EQ(resolved->len(), usize(1));
+    auto source_key = licrypto::sha256_hex("lito-test-cmake-fixture-v5"_str);
+    source_key.truncate(usize(20));
+    auto state_directory = rstd::format("LitoFixture-{}", source_key);
+    auto state_path      = build_root("cmake-fixture-work"_str)
+                               .join(PathBuf::from(state_directory.as_str()).as_path())
+                               .join(PathBuf::from("state.json"_str).as_path());
+    auto state_text      = rstd::fs::read_to_string(state_path.as_path());
+    ASSERT_TRUE(state_text.is_ok());
+    auto state = rstd::json::from_str(state_text->as_str());
+    ASSERT_TRUE(state.is_ok());
+    auto state_object = state->as_object();
+    ASSERT_TRUE(state_object.is_some());
+    EXPECT_EQ((**state_object).len(), usize(6));
+    auto install_state = state->get("install"_str);
+    ASSERT_TRUE(install_state.is_some());
+    EXPECT_TRUE((**install_state).as_str().is_some());
+    auto query_state = state->get("query"_str);
+    ASSERT_TRUE(query_state.is_some());
+    auto query_object = (**query_state).as_object();
+    ASSERT_TRUE(query_object.is_some());
+    EXPECT_EQ((**query_object).len(), usize(2));
+    EXPECT_TRUE((**query_state).get("contract"_str).is_some());
+    EXPECT_TRUE((**query_state).get("usage"_str).is_some());
     const auto& dependency = (*resolved)[usize {}];
     EXPECT_EQ(dependency.provider.as_str(), "cmake"_str);
     EXPECT_EQ(dependency.version.as_str(), "1.2.3"_str);
@@ -360,15 +396,15 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
         .source  = lito::PreparedCMakeDependencySource::Find(),
         .targets = rstd::move(targets),
     });
-    auto assets = Vec<lito::ExternalAssetSet>::make();
-    auto resolved =
-        resolve_cmake_fixtures_with_provider(declarations,
-                                             default_profile(*parser),
-                                             native_platform(),
-                                             build_root("cmake-find-generic-work"_str).as_path(),
-                                             rstd::move(provider),
-                                             usize(1),
-                                             rstd::addressof(assets));
+    auto assets    = Vec<lito::ExternalAssetSet>::make();
+    auto work_root = build_root("cmake-find-generic-work"_str);
+    auto resolved  = resolve_cmake_fixtures_with_provider(declarations,
+                                                          default_profile(*parser),
+                                                          native_platform(),
+                                                          work_root.as_path(),
+                                                          rstd::move(provider),
+                                                          usize(1),
+                                                          rstd::addressof(assets));
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error_chain_text(error));
@@ -398,6 +434,35 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
               PathBuf::from("runtime.bin"_str).as_path());
     EXPECT_TRUE(
         assets[usize {}].entries[usize {}].source.as_path().starts_with(project->root.as_path()));
+
+    auto package_root = work_root.join(PathBuf::from("LitoFindFixture-installed"_str).as_path());
+    auto build_exists =
+        rstd::fs::exists(package_root.join(PathBuf::from("build"_str).as_path()).as_path());
+    auto install_exists =
+        rstd::fs::exists(package_root.join(PathBuf::from("install"_str).as_path()).as_path());
+    ASSERT_TRUE(build_exists.is_ok());
+    ASSERT_TRUE(install_exists.is_ok());
+    EXPECT_FALSE(*build_exists);
+    EXPECT_FALSE(*install_exists);
+
+    auto counts            = CMakeEventCounts {};
+    auto repeated_provider = fixture_cmake();
+    repeated_provider.search_paths.push(project->root.clone());
+    auto repeated = resolve_cmake_fixtures_with_provider(declarations,
+                                                         default_profile(*parser),
+                                                         native_platform(),
+                                                         work_root.as_path(),
+                                                         rstd::move(repeated_provider),
+                                                         usize(1),
+                                                         nullptr,
+                                                         None(),
+                                                         Some(lito::tools::cmake::EventSink {
+                                                             .context = rstd::addressof(counts),
+                                                             .notify  = count_cmake_events,
+                                                         }));
+    ASSERT_TRUE(repeated.is_ok());
+    EXPECT_EQ(counts.queries, usize(1));
+    EXPECT_EQ(counts.reuses, usize {});
 }
 
 TEST_F(CMakeProvider, CMakeProviderRequestsRequiredFindComponents) {

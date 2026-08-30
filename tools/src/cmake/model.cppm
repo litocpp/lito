@@ -5,6 +5,7 @@ export module lito.tools.cmake:model;
 
 import rstd;
 import rstd.json;
+import licrypto;
 import lito.tools;
 import lito.system;
 export import :request;
@@ -85,22 +86,6 @@ auto append_search_path_identity(String& output, const Provider& provider)
     return Ok(empty {});
 }
 
-auto identity_hash(ref<str> value) -> String {
-    auto hash = uint64_t(14695981039346656037ull);
-    for (auto byte : value) {
-        hash ^= byte.to_primitive();
-        hash *= uint64_t(1099511628211ull);
-    }
-    static constexpr char digits[] = "0123456789abcdef";
-    char                  result[16];
-    for (size_t index = 0; index < 16; ++index) {
-        result[15 - index] = digits[hash & 0xfu];
-        hash >>= 4u;
-    }
-    return String::make(
-        ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16)));
-}
-
 auto source_identity(const Request& requirement) -> String {
     if (requirement.source.is_Directory()) {
         return requirement.source.as_Directory().identity.clone();
@@ -131,12 +116,17 @@ auto cmake_quoted(ref<str> value, ref<str> context) -> lito::tools::ToolResult<S
 
 struct CMakeWorkArea {
     PathBuf root;
+    PathBuf lock;
     PathBuf source;
     PathBuf build;
     PathBuf install;
+    PathBuf state;
     PathBuf query_root;
     PathBuf query_source;
     PathBuf query_build;
+    String  source_identity;
+    String  preparation_identity;
+    String  query_identity;
 };
 
 enum class CMakePackageOperation
@@ -253,14 +243,54 @@ auto clone_profile(const ProfileConfiguration& profile) -> ProfileConfiguration 
     };
 }
 
+auto cmake_package_path_component(ref<str> package) -> lito::tools::ToolResult<String> {
+    if (! lito::dependency::cmake_package_name_is_valid(package)) {
+        return cmake_failure<String>(
+            rstd::format("CMake package '{}' cannot own a work directory", package));
+    }
+    auto result = String::make(package);
+    auto lower  = result.clone();
+    lower.as_mut_str().make_ascii_lowercase();
+    constexpr ref<str> reserved[] = { "con"_str,  "prn"_str,  "aux"_str,  "nul"_str,  "com1"_str,
+                                      "com2"_str, "com3"_str, "com4"_str, "com5"_str, "com6"_str,
+                                      "com7"_str, "com8"_str, "com9"_str, "lpt1"_str, "lpt2"_str,
+                                      "lpt3"_str, "lpt4"_str, "lpt5"_str, "lpt6"_str, "lpt7"_str,
+                                      "lpt8"_str, "lpt9"_str };
+    auto               unsafe     = package == "."_str || package == ".."_str;
+    for (auto name : reserved) {
+        unsafe = unsafe || lower.as_str() == name ||
+                 lower.as_str().starts_with(rstd::format("{}.", name).as_str());
+    }
+    if (unsafe) {
+        auto prefixed = String::make("cmake-"_str);
+        prefixed.push_str(result.as_str());
+        result = rstd::move(prefixed);
+    }
+    if (result.as_str().ends_with("."_str)) result.push_ascii('_');
+    if (result.len() > usize(80)) {
+        auto digest = licrypto::sha256_hex(package);
+        digest.truncate(usize(16));
+        result.truncate(usize(63));
+        result.push_ascii('-');
+        result.push_str(digest.as_str());
+    }
+    return Ok(rstd::move(result));
+}
+
 auto work_area(const Request&                requirement,
                const Provider&               provider,
                const ToolchainConfiguration& toolchain,
                const ProfileConfiguration&   profile,
                ref<str>                      effective_target,
                ref<rstd::path::Path> profile_cmake_root) -> lito::tools::ToolResult<CMakeWorkArea> {
-    auto recipe = String::make("lito-cmake-install-v6\n"_str);
-    append_identity(recipe, source_identity(requirement).as_str());
+    auto source_id = source_identity(requirement);
+    auto recipe    = String::make("lito-cmake-preparation-v7\n"_str);
+    append_identity(recipe, requirement.package.as_str());
+    append_identity(recipe, source_id.as_str());
+    append_identity(recipe,
+                    requirement.source.is_Directory() && requirement.source.as_Directory().cacheable
+                        ? "immutable-source"_str
+                        : "mutable-or-installed-source"_str);
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto compiler = path_text(toolchain.cxx.as_path(), "C++ compiler"_str);
@@ -300,10 +330,20 @@ auto work_area(const Request&                requirement,
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());
     }
-    auto root         = PathBuf::from(profile_cmake_root)
-                            .join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
-    auto query_recipe = String::make("lito-cmake-query-v6\n"_str);
-    append_identity(query_recipe, requirement.alias.as_str());
+    auto component = cmake_package_path_component(requirement.package.as_str());
+    if (component.is_err()) return Err(rstd::move(component).unwrap_err());
+    auto directory = rstd::move(component).unwrap();
+    directory.push_ascii('-');
+    if (requirement.source.is_Find()) {
+        directory.push_str("installed"_str);
+    } else {
+        auto source_key = licrypto::sha256_hex(source_id.as_str());
+        source_key.truncate(usize(20));
+        directory.push_str(source_key.as_str());
+    }
+    auto root         = PathBuf::from(profile_cmake_root).join(PathBuf::from(directory).as_path());
+    auto query_recipe = String::make("lito-cmake-query-v7\n"_str);
+    append_identity(query_recipe, recipe.as_str());
     append_identity(query_recipe, requirement.package.as_str());
     for (const auto& component : requirement.components) {
         append_identity(query_recipe, component.as_str());
@@ -338,17 +378,21 @@ auto work_area(const Request&                requirement,
         append_identity(query_recipe, prefix->as_str());
     }
     append_identity(query_recipe, effective_target);
-    auto query_root = root.join(PathBuf::from("queries"_str).as_path())
-                          .join(PathBuf::from(identity_hash(query_recipe.as_str())).as_path());
+    auto query_root = root.join(PathBuf::from("query"_str).as_path());
     return Ok(CMakeWorkArea {
         .root   = root.clone(),
+        .lock   = root.join(PathBuf::from("lock"_str).as_path()),
         .source = requirement.source.is_Directory() ? requirement.source.as_Directory().root.clone()
                                                     : PathBuf::make(),
         .build  = root.join(PathBuf::from("build"_str).as_path()),
-        .install      = root.join(PathBuf::from("install"_str).as_path()),
-        .query_root   = query_root.clone(),
-        .query_source = query_root.join(PathBuf::from("source"_str).as_path()),
-        .query_build  = query_root.join(PathBuf::from("build"_str).as_path()),
+        .install              = root.join(PathBuf::from("install"_str).as_path()),
+        .state                = root.join(PathBuf::from("state.json"_str).as_path()),
+        .query_root           = query_root.clone(),
+        .query_source         = query_root.join(PathBuf::from("source"_str).as_path()),
+        .query_build          = query_root.join(PathBuf::from("build"_str).as_path()),
+        .source_identity      = rstd::move(source_id),
+        .preparation_identity = rstd::move(recipe),
+        .query_identity       = rstd::move(query_recipe),
     });
 }
 

@@ -19,10 +19,6 @@ using JsonMap   = rstd::json::Map;
 export namespace lito::tools::cmake
 {
 
-auto usage_snapshot_path(const CMakeWorkArea& area) -> PathBuf {
-    return area.query_root.join(PathBuf::from("usage-snapshot-v4.json"_str).as_path());
-}
-
 auto json_strings(const Vec<String>& values) -> Json {
     auto result = JsonArray::with_capacity(values.len());
     for (const auto& value : values) result.push(Json::String(value.clone()));
@@ -36,13 +32,10 @@ auto snapshot_json(const CMakeTargetUsageSnapshot& snapshot) -> Json {
     return Json::Object(rstd::move(result));
 }
 
-auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& snapshot)
-    -> lito::tools::ToolResult<empty> {
+auto usage_snapshot_json(const CMakeUsageSnapshot& snapshot) -> Json {
     auto targets = JsonArray::with_capacity(snapshot.targets.len());
     for (const auto& target : snapshot.targets) targets.push(snapshot_json(target));
     auto document = JsonMap::make();
-    document.insert(String::make("schema"_str),
-                    Json::String(String::make("lito-cmake-usage-v4"_str)));
     document.insert(String::make("version"_str), Json::String(snapshot.version.clone()));
     document.insert(String::make("targets"_str), Json::Array(rstd::move(targets)));
     document.insert(String::make("combined"_str), snapshot_json(snapshot.combined));
@@ -78,17 +71,7 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
         assets.push(Json::Object(rstd::move(item)));
     }
     document.insert(String::make("assets"_str), Json::Array(rstd::move(assets)));
-    auto text =
-        rstd::json::to_string(Json::Object(rstd::move(document)),
-                              rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
-    text.push('\n');
-    auto path    = usage_snapshot_path(area);
-    auto written = rstd::fs::write_atomic(path.as_path(), text.as_str().as_bytes());
-    if (written.is_err()) {
-        return cmake_io_failure<empty>(
-            "write CMake usage snapshot"_str, path.as_path(), rstd::move(written).unwrap_err());
-    }
-    return Ok(empty {});
+    return Json::Object(rstd::move(document));
 }
 
 auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
@@ -153,31 +136,206 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
     return Ok(rstd::move(result));
 }
 
+struct CMakeStateHeader {
+    bool           exists { false };
+    bool           stale { false };
+    Option<String> install;
+};
+
+auto source_cacheable(const Request& requirement) noexcept -> bool {
+    return requirement.source.is_Directory() && requirement.source.as_Directory().cacheable;
+}
+
+auto read_cmake_state_header(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<CMakeStateHeader> {
+    auto exists = rstd::fs::exists(area.state.as_path());
+    if (exists.is_err()) {
+        return cmake_io_failure<CMakeStateHeader>("inspect CMake package state"_str,
+                                                  area.state.as_path(),
+                                                  rstd::move(exists).unwrap_err());
+    }
+    if (! *exists) return Ok(CMakeStateHeader {});
+    auto value = read_json(area.state.as_path(), "CMake package state"_str);
+    if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+    auto object = value->as_object();
+    auto schema = value->get("schema"_str);
+    if (object.is_none() || schema.is_none() || (**schema).as_str().is_none() ||
+        *(**schema).as_str() != "lito-cmake-package-state-v1"_str) {
+        return Ok(CMakeStateHeader { .exists = true, .stale = true });
+    }
+    auto package = value->get("package"_str);
+    auto source  = value->get("source"_str);
+    if (package.is_none() || source.is_none() || (**package).as_str().is_none() ||
+        (**source).as_str().is_none()) {
+        return Ok(CMakeStateHeader { .exists = true, .stale = true });
+    }
+    if (*(**package).as_str() != requirement.package.as_str() ||
+        *(**source).as_str() != area.source_identity.as_str()) {
+        return cmake_failure<CMakeStateHeader>(
+            rstd::format("CMake work directory '{}' belongs to package '{}' source '{}', not "
+                         "package '{}' source '{}'",
+                         area.root.as_path(),
+                         *(**package).as_str(),
+                         *(**source).as_str(),
+                         requirement.package.as_str(),
+                         area.source_identity.as_str()));
+    }
+    auto cacheable = value->get("cacheable"_str);
+    if (cacheable.is_none() || (**cacheable).as_bool().is_none() ||
+        *(**cacheable).as_bool() != source_cacheable(requirement) || (**object).len() != usize(6)) {
+        return Ok(CMakeStateHeader { .exists = true, .stale = true });
+    }
+    auto install = value->get("install"_str);
+    auto query   = value->get("query"_str);
+    if (install.is_none() || query.is_none()) {
+        return Ok(CMakeStateHeader { .exists = true, .stale = true });
+    }
+    auto install_identity = Option<String> {};
+    if (! (**install).is_null()) {
+        auto text = (**install).as_str();
+        if (text.is_none()) return Ok(CMakeStateHeader { .exists = true, .stale = true });
+        install_identity = Some(String::make(*text));
+    }
+    return Ok(CMakeStateHeader {
+        .exists  = true,
+        .install = rstd::move(install_identity),
+    });
+}
+
+auto write_cmake_state(const CMakeWorkArea&  area,
+                       const Request&        requirement,
+                       const Option<String>& install,
+                       Option<Json>          query) -> lito::tools::ToolResult<empty> {
+    auto document = JsonMap::make();
+    document.insert(String::make("schema"_str),
+                    Json::String(String::make("lito-cmake-package-state-v1"_str)));
+    document.insert(String::make("package"_str), Json::String(requirement.package.clone()));
+    document.insert(String::make("source"_str), Json::String(area.source_identity.clone()));
+    document.insert(String::make("cacheable"_str), Json::Bool(source_cacheable(requirement)));
+    document.insert(String::make("install"_str),
+                    install.is_some() ? Json::String(install->clone()) : Json::Null());
+    document.insert(String::make("query"_str),
+                    query.is_some() ? rstd::move(query).unwrap() : Json::Null());
+    auto text =
+        rstd::json::to_string(Json::Object(rstd::move(document)),
+                              rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
+    text.push_ascii(u8('\n'));
+    auto written = rstd::fs::write_atomic(area.state.as_path(), text.as_str().as_bytes());
+    if (written.is_err()) {
+        return cmake_io_failure<empty>("write CMake package state"_str,
+                                       area.state.as_path(),
+                                       rstd::move(written).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
+auto remove_cmake_tree(ref<rstd::path::Path> root, ref<rstd::path::Path> path, ref<str> context)
+    -> lito::tools::ToolResult<empty> {
+    if (path == root || ! path.starts_with(root)) {
+        return cmake_failure<empty>(rstd::format(
+            "refusing to remove {} '{}' outside CMake package root '{}'", context, path, root));
+    }
+    auto exists = rstd::fs::exists(path);
+    if (exists.is_err()) {
+        return cmake_io_failure<empty>(
+            rstd::format("inspect {}", context).as_str(), path, rstd::move(exists).unwrap_err());
+    }
+    if (! *exists) return Ok(empty {});
+    auto removed = rstd::fs::remove_dir_all(path);
+    if (removed.is_err()) {
+        return cmake_io_failure<empty>(
+            rstd::format("remove {}", context).as_str(), path, rstd::move(removed).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
+auto prepare_cmake_state(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<empty> {
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    if (state.exists && ! state.stale) return Ok(empty {});
+    rstd_try(write_cmake_state(area, requirement, None(), None()));
+    rstd_try(remove_cmake_tree(area.root.as_path(), area.build.as_path(), "CMake build state"_str));
+    rstd_try(
+        remove_cmake_tree(area.root.as_path(), area.install.as_path(), "CMake install state"_str));
+    rstd_try(
+        remove_cmake_tree(area.root.as_path(), area.query_root.as_path(), "CMake query state"_str));
+    return Ok(empty {});
+}
+
+auto source_install_current(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<bool> {
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    return Ok(state.install.is_some() &&
+              state.install->as_str() == area.preparation_identity.as_str());
+}
+
+auto invalidate_cmake_preparation(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<empty> {
+    rstd_try(write_cmake_state(area, requirement, None(), None()));
+    rstd_try(remove_cmake_tree(area.root.as_path(), area.build.as_path(), "CMake build state"_str));
+    rstd_try(
+        remove_cmake_tree(area.root.as_path(), area.install.as_path(), "CMake install state"_str));
+    rstd_try(
+        remove_cmake_tree(area.root.as_path(), area.query_root.as_path(), "CMake query state"_str));
+    return Ok(empty {});
+}
+
+auto publish_cmake_install(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<empty> {
+    return write_cmake_state(area, requirement, Some(area.preparation_identity.clone()), None());
+}
+
+auto begin_cmake_preparation(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<empty> {
+    return write_cmake_state(area, requirement, None(), None());
+}
+
+auto invalidate_cmake_query(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<empty> {
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    rstd_try(write_cmake_state(area, requirement, state.install, None()));
+    return remove_cmake_tree(
+        area.root.as_path(), area.query_root.as_path(), "CMake query state"_str);
+}
+
+auto cmake_query_current(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<bool> {
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    if (! state.exists || state.stale) return Ok(false);
+    auto value = read_json(area.state.as_path(), "CMake package state"_str);
+    if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+    auto query = value->get("query"_str);
+    if (query.is_none() || (**query).is_null()) return Ok(false);
+    auto contract = required_json_string(**query, "contract"_str, "CMake query state"_str);
+    return Ok(contract.is_ok() && *contract == area.query_identity.as_str());
+}
+
+auto begin_cmake_query(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<empty> {
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    return write_cmake_state(area, requirement, state.install, None());
+}
+
 auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
     -> lito::tools::ToolResult<Option<CMakeUsageSnapshot>> {
-    auto path   = usage_snapshot_path(area);
-    auto exists = rstd::fs::exists(path.as_path());
-    if (exists.is_err()) {
-        return cmake_io_failure<Option<CMakeUsageSnapshot>>(
-            "inspect CMake usage snapshot"_str, path.as_path(), rstd::move(exists).unwrap_err());
-    }
-    if (! *exists) return Ok(None());
-    auto value = read_json(path.as_path(), "CMake usage snapshot"_str);
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    if (! state.exists || state.stale) return Ok(None());
+    auto value = read_json(area.state.as_path(), "CMake package state"_str);
     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-    auto schema = required_json_string(*value, "schema"_str, "CMake usage snapshot"_str);
-    if (schema.is_err()) return Err(rstd::move(schema).unwrap_err());
-    if (*schema != "lito-cmake-usage-v4"_str) {
-        return cmake_failure<Option<CMakeUsageSnapshot>>(rstd::format(
-            "CMake usage snapshot '{}' has unsupported schema '{}'", path.as_path(), *schema));
-    }
-    auto version = required_json_string(*value, "version"_str, "CMake usage snapshot"_str);
+    auto query = value->get("query"_str);
+    if (query.is_none() || (**query).is_null()) return Ok(None());
+    auto contract = required_json_string(**query, "contract"_str, "CMake query state"_str);
+    if (contract.is_err() || *contract != area.query_identity.as_str()) return Ok(None());
+    auto usage = required_json_member(**query, "usage"_str, "CMake query state"_str);
+    if (usage.is_err()) return Ok(None());
+    auto version = required_json_string(**usage, "version"_str, "CMake usage snapshot"_str);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
-    auto targets = required_json_array(*value, "targets"_str, "CMake usage snapshot"_str);
+    auto targets = required_json_array(**usage, "targets"_str, "CMake usage snapshot"_str);
     if (targets.is_err()) return Err(rstd::move(targets).unwrap_err());
     if ((**targets).len() != requirement.targets.len()) {
         return cmake_failure<Option<CMakeUsageSnapshot>>(
             rstd::format("CMake usage snapshot '{}' has {} targets, expected {}",
-                         path.as_path(),
+                         area.state.as_path(),
                          (**targets).len(),
                          requirement.targets.len()));
     }
@@ -187,11 +345,11 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
         parsed_targets.push(rstd::move(parsed).unwrap());
     }
-    auto combined = required_json_member(*value, "combined"_str, "CMake usage snapshot"_str);
+    auto combined = required_json_member(**usage, "combined"_str, "CMake usage snapshot"_str);
     if (combined.is_err()) return Err(rstd::move(combined).unwrap_err());
     auto parsed_combined = parse_usage_target(**combined, "CMake combined usage"_str);
     if (parsed_combined.is_err()) return Err(rstd::move(parsed_combined).unwrap_err());
-    auto tool_values = required_json_array(*value, "host-tools"_str, "CMake usage snapshot"_str);
+    auto tool_values = required_json_array(**usage, "host-tools"_str, "CMake usage snapshot"_str);
     if (tool_values.is_err()) return Err(rstd::move(tool_values).unwrap_err());
     if ((**tool_values).len() != requirement.host_tools.len()) return Ok(None());
     auto host_tools = Vec<CMakeHostToolSnapshot>::make();
@@ -220,7 +378,7 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
             .digest     = String::make(*digest),
         });
     }
-    auto asset_values = required_json_array(*value, "assets"_str, "CMake usage snapshot"_str);
+    auto asset_values = required_json_array(**usage, "assets"_str, "CMake usage snapshot"_str);
     if (asset_values.is_err()) return Err(rstd::move(asset_values).unwrap_err());
     auto assets = Vec<ExternalAssetSet>::make();
     for (const auto& item : **asset_values) {
@@ -263,6 +421,17 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
         .combined   = rstd::move(parsed_combined).unwrap(),
         .assets     = rstd::move(validated_assets).unwrap(),
     }));
+}
+
+auto write_usage_snapshot(const CMakeWorkArea&      area,
+                          const Request&            requirement,
+                          const CMakeUsageSnapshot& snapshot) -> lito::tools::ToolResult<empty> {
+    auto state = rstd_try(read_cmake_state_header(area, requirement));
+    auto query = JsonMap::make();
+    query.insert(String::make("contract"_str), Json::String(area.query_identity.clone()));
+    query.insert(String::make("usage"_str), usage_snapshot_json(snapshot));
+    return write_cmake_state(
+        area, requirement, state.install, Some(Json::Object(rstd::move(query))));
 }
 
 auto target_snapshot_identity(const Provider&                 provider,

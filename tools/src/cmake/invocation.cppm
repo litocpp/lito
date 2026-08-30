@@ -146,30 +146,6 @@ auto push_lito_owned_cmake_configuration(Vec<String>& arguments, ref<str> genera
     arguments.push(String::make("-DCMAKE_MODULE_LINKER_FLAGS_NONE="_str));
 }
 
-auto source_install_receipt(const CMakeWorkArea& area) -> PathBuf {
-    return area.root.join(PathBuf::from("install-receipt-v1"_str).as_path());
-}
-
-auto source_install_current(const CMakeWorkArea& area) -> lito::tools::ToolResult<bool> {
-    auto marker = source_install_receipt(area);
-    auto ready  = rstd::fs::exists(marker.as_path());
-    if (ready.is_err()) {
-        return cmake_io_failure<bool>(
-            "inspect CMake install receipt"_str, marker.as_path(), rstd::move(ready).unwrap_err());
-    }
-    if (! *ready) return Ok(false);
-    auto contents = rstd::fs::read_to_string(marker.as_path());
-    if (contents.is_err()) {
-        return cmake_io_failure<bool>(
-            "read CMake install receipt"_str, marker.as_path(), rstd::move(contents).unwrap_err());
-    }
-    if (contents->as_str() != "lito-cmake-install-receipt-v1\n"_str) {
-        return cmake_failure<bool>(
-            rstd::format("CMake install receipt '{}' has invalid contents", marker.as_path()));
-    }
-    return Ok(true);
-}
-
 auto configure_source(const Request&                    requirement,
                       const Provider&                   provider,
                       const ToolchainConfiguration&     toolchain,
@@ -246,7 +222,6 @@ auto build_source(const Request&                    requirement,
 auto install_source(const Request&                    requirement,
                     const Provider&                   provider,
                     const CMakeWorkArea&              area,
-                    bool                              publish_receipt,
                     const ResolvedProcessEnvironment& environment)
     -> lito::tools::ToolResult<empty> {
     auto arguments  = Vec<String>::make();
@@ -263,14 +238,6 @@ auto install_source(const Request&                    requirement,
         rstd::move(arguments),
         rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str(),
         environment));
-    if (! publish_receipt) return Ok(empty {});
-    auto marker = source_install_receipt(area);
-    auto marked = rstd::fs::write_atomic(marker.as_path(),
-                                         ("lito-cmake-install-receipt-v1\n"_str).as_bytes());
-    if (marked.is_err()) {
-        return cmake_io_failure<empty>(
-            "write CMake install receipt"_str, marker.as_path(), rstd::move(marked).unwrap_err());
-    }
     return Ok(empty {});
 }
 
@@ -469,8 +436,10 @@ auto write_probe_files(const Request& requirement, const CMakeWorkArea& area)
         area.query_build.join(PathBuf::from(".cmake/api/v1/query/client-lito"_str).as_path());
     auto directories = Vec<PathBuf>::make();
     directories.push(area.root.clone());
-    directories.push(area.build.clone());
-    directories.push(area.install.clone());
+    if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
+        directories.push(area.build.clone());
+        directories.push(area.install.clone());
+    }
     directories.push(area.query_root.clone());
     directories.push(area.query_source.clone());
     directories.push(area.query_build.clone());

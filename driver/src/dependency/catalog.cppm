@@ -138,12 +138,16 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     }
     rstd::slice_::sort_unstable_by(bindings.as_mut_slice().as_mut_ref(),
                                    [](const CMakeBinding& left, const CMakeBinding& right) {
+                                       if (left.requirement.package != right.requirement.package) {
+                                           return left.requirement.package <
+                                                  right.requirement.package;
+                                       }
                                        if (left.owner != right.owner)
                                            return left.owner < right.owner;
                                        if (left.requirement.alias != right.requirement.alias) {
                                            return left.requirement.alias < right.requirement.alias;
                                        }
-                                       return left.requirement.package < right.requirement.package;
+                                       return left.prepared < right.prepared;
                                    });
 
     auto source_catalog = cpp::ExternalSourceRootCatalog {};
@@ -287,18 +291,48 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
     resolved_cmake = rstd::move(identified).unwrap();
 
-    auto snapshots       = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
     auto cmake_work_root = layout.cmake_work_root();
-    for (auto& binding : bindings) {
-        auto requirement = materialize_cmake_requirement(binding.requirement);
-        if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
-        auto contextualize = [&](lito::dependency::DependencyError error) {
-            if (! binding.installed_override) return error;
-            return lito::dependency::DependencyError::CMakeOverride(
-                binding.requirement.package.clone(),
-                Box<lito::dependency::DependencyError>::make(rstd::move(error)));
+    for (usize index {}; index < bindings.len(); ++index) {
+        auto folded = bindings[index].requirement.package.clone();
+        folded.as_mut_str().make_ascii_lowercase();
+        for (usize prior {}; prior < index; ++prior) {
+            auto prior_folded = bindings[prior].requirement.package.clone();
+            prior_folded.as_mut_str().make_ascii_lowercase();
+            if (folded != prior_folded.as_str() ||
+                bindings[index].requirement.package ==
+                    bindings[prior].requirement.package.as_str()) {
+                continue;
+            }
+            return lito::dependency::dependency_failure<PreparedExternalCatalog>(rstd::format(
+                "CMake packages '{}' and '{}' have colliding portable work directory names",
+                bindings[prior].requirement.package.as_str(),
+                bindings[index].requirement.package.as_str()));
+        }
+    }
+    for (usize left {}; left < bindings.len();) {
+        auto right = left + usize(1);
+        while (right < bindings.len() &&
+               bindings[right].requirement.package == bindings[left].requirement.package.as_str()) {
+            ++right;
+        }
+        auto requirements = Vec<ResolvedCMakeDependencyRequirement>::with_capacity(right - left);
+        for (auto index = left; index < right; ++index) {
+            auto requirement = materialize_cmake_requirement(bindings[index].requirement);
+            if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
+            requirements.push(rstd::move(requirement).unwrap());
+        }
+        auto package = resolve_cmake_package(requirements);
+        if (package.is_err()) return Err(rstd::move(package).unwrap_err());
+        const auto contextualize = [&](lito::dependency::DependencyError error) {
+            for (auto index = left; index < right; ++index) {
+                if (! bindings[index].installed_override) continue;
+                return lito::dependency::DependencyError::CMakeOverride(
+                    bindings[index].requirement.package.clone(),
+                    Box<lito::dependency::DependencyError>::make(rstd::move(error)));
+            }
+            return error;
         };
-        auto plan = plan_cmake_package(*requirement,
+        auto plan = plan_cmake_package(package->requirement,
                                        resolved_cmake,
                                        configuration,
                                        profile,
@@ -310,46 +344,32 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        android_cmake,
                                        cmake_find_install_prefix);
         if (plan.is_err()) return Err(contextualize(rstd::move(plan).unwrap_err()));
-        auto key_text = plan->tool.area.query_root.as_path().to_str();
-        if (key_text.is_none()) {
-            return lito::dependency::dependency_failure<PreparedExternalCatalog>(rstd::format(
-                "CMake query path '{}' is not valid UTF-8", plan->tool.area.query_root.as_path()));
-        }
-        auto cached = snapshots.get(*key_text);
-        auto usage  = [&]() -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
-            if (cached.is_some()) return materialize_cmake_usage(*plan, **cached);
-            auto tool_observer = cmake_observer(observer);
-            auto executed      = execute_cmake_package(*plan, process_environment, tool_observer);
-            if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
-            auto materialized = materialize_cmake_usage(*plan, *executed);
-            if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
-            snapshots.insert(String::make(*key_text), rstd::move(executed).unwrap());
-            return materialized;
-        }();
-        if (usage.is_err()) return Err(contextualize(rstd::move(usage).unwrap_err()));
-        auto dependency = rstd::move(usage).unwrap();
-        auto normalized = normalize_clang_link_arguments(rstd::move(dependency.link_arguments));
-        if (normalized.is_err()) {
-            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                rstd::format("{}", rstd::move(normalized).unwrap_err()));
-        }
-        dependency.link_arguments    = rstd::move(normalized->arguments);
-        dependency.link_requirements = rstd::move(normalized->requirements);
-        result.packages[binding.catalog].dependencies.push(rstd::move(dependency));
-        auto snapshot = snapshots.get(*key_text);
-        if (snapshot.is_none()) {
-            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                String::make("CMake usage snapshot was not retained"_str));
-        }
-        for (const auto& set : (**snapshot).assets) {
-            auto copied   = set.clone();
-            copied.alias  = binding.requirement.alias.clone();
-            auto inserted = assets.insert(rstd::move(copied));
-            if (inserted.is_err()) {
+        auto tool_observer = cmake_observer(observer);
+        auto snapshot      = execute_cmake_package(*plan, process_environment, tool_observer);
+        if (snapshot.is_err()) return Err(contextualize(rstd::move(snapshot).unwrap_err()));
+        for (auto index = left; index < right; ++index) {
+            auto usage = materialize_cmake_usage(*plan, *snapshot, requirements[index - left]);
+            if (usage.is_err()) return Err(contextualize(rstd::move(usage).unwrap_err()));
+            auto dependency = rstd::move(usage).unwrap();
+            auto normalized = normalize_clang_link_arguments(rstd::move(dependency.link_arguments));
+            if (normalized.is_err()) {
                 return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                    rstd::move(inserted).unwrap_err());
+                    rstd::format("{}", rstd::move(normalized).unwrap_err()));
+            }
+            dependency.link_arguments    = rstd::move(normalized->arguments);
+            dependency.link_requirements = rstd::move(normalized->requirements);
+            result.packages[bindings[index].catalog].dependencies.push(rstd::move(dependency));
+            for (const auto& set : snapshot->assets) {
+                auto copied   = set.clone();
+                copied.alias  = bindings[index].requirement.alias.clone();
+                auto inserted = assets.insert(rstd::move(copied));
+                if (inserted.is_err()) {
+                    return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+                        rstd::move(inserted).unwrap_err());
+                }
             }
         }
+        left = right;
     }
     auto provenance = rstd_try(project_external_source_provenance(graph, source_catalog));
     return Ok(PreparedExternalCatalog {

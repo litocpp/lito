@@ -295,7 +295,8 @@ auto resolve_cmake_fixtures_with_provider(
     lito::dependency::CMakeProviderConfig                provider,
     usize                                                jobs                = usize(1),
     Vec<lito::ExternalAssetSet>*                         assets              = nullptr,
-    const Option<PathBuf>&                               find_install_prefix = None())
+    const Option<PathBuf>&                               find_install_prefix = None(),
+    const Option<lito::tools::cmake::EventSink>&         observer            = None())
     -> lito::dependency::DependencyResult<Vec<lito::cpp::ExternalDependencyUsage>> {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
@@ -343,7 +344,7 @@ auto resolve_cmake_fixtures_with_provider(
                                              None(),
                                              find_install_prefix);
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
-        auto snapshot = lito::execute_cmake_package(*plan, *environment);
+        auto snapshot = lito::execute_cmake_package(*plan, *environment, observer);
         if (snapshot.is_err()) return Err(rstd::move(snapshot).unwrap_err());
         if (assets != nullptr) {
             for (const auto& set : snapshot->assets) assets->push(set.clone());

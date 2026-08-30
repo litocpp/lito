@@ -24,6 +24,16 @@ class ResolvedCMakeDependencySource {
     RSTD_ENUM(ResolvedCMakeDependencySource,
               (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)))
+
+public:
+    auto clone() const -> ResolvedCMakeDependencySource {
+        if (is_Directory()) {
+            return Directory(as_Directory().root.clone(),
+                             as_Directory().identity.clone(),
+                             as_Directory().cacheable);
+        }
+        return Find();
+    }
 };
 
 struct ResolvedCMakeDependencyRequirement {
@@ -37,6 +47,12 @@ struct ResolvedCMakeDependencyRequirement {
     Vec<lito::dependency::CMakeCacheEntry>          cache;
     Vec<lito::dependency::CMakeTargetRequirement>   targets;
     Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
+
+    auto clone() const -> ResolvedCMakeDependencyRequirement;
+};
+
+struct ResolvedCMakePackage {
+    ResolvedCMakeDependencyRequirement requirement;
 };
 
 using ExternalAssetEntry       = lito::dependency::ExternalAssetEntry;
@@ -56,6 +72,9 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
 auto identify_cmake_provider(lito::dependency::CMakeProviderConfig provider,
                              const ResolvedProcessEnvironment&     environment)
     -> lito::dependency::DependencyResult<lito::dependency::CMakeProviderConfig>;
+
+auto resolve_cmake_package(const Vec<ResolvedCMakeDependencyRequirement>& requirements)
+    -> lito::dependency::DependencyResult<ResolvedCMakePackage>;
 
 auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement,
                         const lito::dependency::CMakeProviderConfig& provider,
@@ -78,10 +97,48 @@ auto execute_cmake_package(const CMakePackagePlan&                      plan,
 auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnapshot& snapshots)
     -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage>;
 
+auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
+                             const CMakeUsageSnapshot&                 snapshots,
+                             const ResolvedCMakeDependencyRequirement& consumer)
+    -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage>;
+
 } // namespace lito
 
 namespace lito
 {
+
+auto ResolvedCMakeDependencyRequirement::clone() const -> ResolvedCMakeDependencyRequirement {
+    auto cache_copy = Vec<lito::dependency::CMakeCacheEntry>::with_capacity(cache.len());
+    for (const auto& entry : cache) {
+        cache_copy.push(lito::dependency::CMakeCacheEntry {
+            .name  = entry.name.clone(),
+            .value = entry.value.clone(),
+        });
+    }
+    auto target_copy = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
+    for (const auto& target : targets) {
+        target_copy.push(lito::dependency::CMakeTargetRequirement {
+            .name       = target.name.clone(),
+            .visibility = target.visibility,
+        });
+    }
+    auto tool_copy =
+        Vec<lito::dependency::CMakeHostToolRequirement>::with_capacity(host_tools.len());
+    for (const auto& tool : host_tools) tool_copy.push(tool.clone());
+    auto result = ResolvedCMakeDependencyRequirement {
+        .alias            = alias.clone(),
+        .package          = package.clone(),
+        .components       = as<Clone>(components).clone(),
+        .source           = source.clone(),
+        .adapter_identity = adapter_identity.clone(),
+        .cache            = rstd::move(cache_copy),
+        .targets          = rstd::move(target_copy),
+        .host_tools       = rstd::move(tool_copy),
+    };
+    if (adapter.is_some()) result.adapter = Some(adapter->clone());
+    if (config_directory.is_some()) result.config_directory = Some(config_directory->clone());
+    return result;
+}
 
 auto cmake_error(ref<str> context, lito::tools::ToolError error)
     -> lito::dependency::DependencyError {
@@ -154,6 +211,54 @@ auto cmake_provider(const lito::dependency::CMakeProviderConfig& provider)
         .generator    = provider.generator.clone(),
         .search_paths = as<Clone>(provider.search_paths).clone(),
     };
+}
+
+auto same_optional_path(const Option<PathBuf>& left, const Option<PathBuf>& right) noexcept
+    -> bool {
+    if (left.is_some() != right.is_some()) return false;
+    return left.is_none() || left->as_path() == right->as_path();
+}
+
+auto same_cmake_source(const ResolvedCMakeDependencySource& left,
+                       const ResolvedCMakeDependencySource& right) noexcept -> bool {
+    if (left.is_Find() || right.is_Find()) return left.is_Find() && right.is_Find();
+    return left.as_Directory().root.as_path() == right.as_Directory().root.as_path() &&
+           left.as_Directory().identity == right.as_Directory().identity.as_str() &&
+           left.as_Directory().cacheable == right.as_Directory().cacheable;
+}
+
+auto same_cmake_cache(const Vec<lito::dependency::CMakeCacheEntry>& left,
+                      const Vec<lito::dependency::CMakeCacheEntry>& right) noexcept -> bool {
+    if (left.len() != right.len()) return false;
+    for (const auto& entry : left) {
+        auto matched = false;
+        for (const auto& candidate : right) {
+            if (entry.name == candidate.name.as_str() && entry.value == candidate.value.as_str()) {
+                matched = true;
+                break;
+            }
+        }
+        if (! matched) return false;
+    }
+    return true;
+}
+
+auto cmake_package_conflict(ref<str> package, ref<str> left, ref<str> right, ref<str> field)
+    -> lito::dependency::DependencyError {
+    return lito::dependency::dependency_failure<empty>(
+               rstd::format("CMake package '{}' has conflicting {} in aliases '{}' and '{}'",
+                            package,
+                            field,
+                            left,
+                            right))
+        .unwrap_err();
+}
+
+auto append_unique_string(Vec<String>& output, ref<str> value) -> void {
+    for (const auto& current : output) {
+        if (current.as_str() == value) return;
+    }
+    output.push(String::make(value));
 }
 
 auto cmake_toolchain(const cpp::BuildConfiguration&        configuration,
@@ -283,6 +388,87 @@ auto identify_cmake_provider(lito::dependency::CMakeProviderConfig provider,
     return Ok(rstd::move(provider));
 }
 
+auto resolve_cmake_package(const Vec<ResolvedCMakeDependencyRequirement>& requirements)
+    -> lito::dependency::DependencyResult<ResolvedCMakePackage> {
+    if (requirements.is_empty()) {
+        return lito::dependency::dependency_failure<ResolvedCMakePackage>(
+            "CMake package resolution requires at least one declaration"_str);
+    }
+    const auto& first  = requirements[usize {}];
+    auto        merged = first.clone();
+    merged.alias       = first.package.clone();
+    merged.components.clear();
+    merged.targets.clear();
+    merged.host_tools.clear();
+    for (const auto& requirement : requirements) {
+        if (requirement.package != first.package.as_str()) {
+            return lito::dependency::dependency_failure<ResolvedCMakePackage>(
+                rstd::format("cannot merge CMake packages '{}' and '{}'",
+                             first.package.as_str(),
+                             requirement.package.as_str()));
+        }
+        if (! same_cmake_source(first.source, requirement.source)) {
+            return Err(cmake_package_conflict(first.package.as_str(),
+                                              first.alias.as_str(),
+                                              requirement.alias.as_str(),
+                                              "source contract"_str));
+        }
+        if (! same_optional_path(first.adapter, requirement.adapter) ||
+            first.adapter_identity != requirement.adapter_identity.as_str()) {
+            return Err(cmake_package_conflict(first.package.as_str(),
+                                              first.alias.as_str(),
+                                              requirement.alias.as_str(),
+                                              "adapter contract"_str));
+        }
+        if (! same_optional_path(first.config_directory, requirement.config_directory)) {
+            return Err(cmake_package_conflict(first.package.as_str(),
+                                              first.alias.as_str(),
+                                              requirement.alias.as_str(),
+                                              "config directory"_str));
+        }
+        if (! same_cmake_cache(first.cache, requirement.cache)) {
+            return Err(cmake_package_conflict(first.package.as_str(),
+                                              first.alias.as_str(),
+                                              requirement.alias.as_str(),
+                                              "build cache contract"_str));
+        }
+        for (const auto& component : requirement.components) {
+            append_unique_string(merged.components, component.as_str());
+        }
+        for (const auto& target : requirement.targets) {
+            auto present = false;
+            for (const auto& current : merged.targets) {
+                if (current.name == target.name.as_str()) {
+                    present = true;
+                    break;
+                }
+            }
+            if (! present) {
+                merged.targets.push(lito::dependency::CMakeTargetRequirement {
+                    .name       = target.name.clone(),
+                    .visibility = lito::dependency::DependencyVisibility::Private,
+                });
+            }
+        }
+        for (const auto& tool : requirement.host_tools) {
+            auto present = false;
+            for (const auto& current : merged.host_tools) {
+                if (current.name != tool.name.as_str()) continue;
+                if (current.target != tool.target.as_str()) {
+                    return Err(cmake_package_conflict(first.package.as_str(),
+                                                      first.alias.as_str(),
+                                                      requirement.alias.as_str(),
+                                                      "host tool contract"_str));
+                }
+                present = true;
+                break;
+            }
+            if (! present) merged.host_tools.push(tool.clone());
+        }
+    }
+    return Ok(ResolvedCMakePackage { .requirement = rstd::move(merged) });
+}
+
 auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement,
                         const lito::dependency::CMakeProviderConfig& provider,
                         const cpp::BuildConfiguration&               configuration,
@@ -332,12 +518,14 @@ auto execute_cmake_package(const CMakePackagePlan&                      plan,
         lito::tools::cmake::execute_cmake_package(plan.tool, environment, observer));
 }
 
-auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnapshot& snapshots)
+auto materialize_cmake_usage_impl(const CMakePackagePlan&                            plan,
+                                  const lito::tools::cmake::Request&                 requirement,
+                                  const Vec<lito::dependency::DependencyVisibility>& visibilities,
+                                  const CMakeUsageSnapshot&                          snapshots)
     -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
-    const auto& tool        = plan.tool;
-    const auto& requirement = tool.requirement;
+    const auto& tool = plan.tool;
     if (snapshots.targets.len() != requirement.targets.len() ||
-        plan.visibilities.len() != requirement.targets.len()) {
+        visibilities.len() != requirement.targets.len()) {
         return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
             rstd::format("CMake package '{}' usage snapshot has {} targets, expected {}",
                          requirement.package.as_str(),
@@ -365,7 +553,7 @@ auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnaps
         }
         targets.push(cpp::ExternalTargetUsage {
             .name            = target.name.clone(),
-            .visibility      = plan.visibilities[index],
+            .visibility      = visibilities[index],
             .compile_options = as<Clone>(snapshot.compile).clone(),
             .compile_source  = rstd::move(source),
             .identity        = rstd::move(identity).unwrap(),
@@ -419,6 +607,87 @@ auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnaps
             },
         .identity = rstd::move(identity).unwrap(),
     });
+}
+
+auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnapshot& snapshots)
+    -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
+    return materialize_cmake_usage_impl(plan, plan.tool.requirement, plan.visibilities, snapshots);
+}
+
+auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
+                             const CMakeUsageSnapshot&                 snapshots,
+                             const ResolvedCMakeDependencyRequirement& consumer)
+    -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
+    if (snapshots.targets.len() != plan.tool.requirement.targets.len()) {
+        return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+            rstd::format("CMake package '{}' usage snapshot has {} targets, expected {}",
+                         plan.tool.requirement.package.as_str(),
+                         snapshots.targets.len(),
+                         plan.tool.requirement.targets.len()));
+    }
+    auto requirement       = cmake_request(consumer, plan.tool.requirement.find_install_prefix);
+    requirement.components = as<Clone>(plan.tool.requirement.components).clone();
+    auto projected_targets = Vec<lito::tools::cmake::CMakeTargetUsageSnapshot>::make();
+    auto visibilities      = Vec<lito::dependency::DependencyVisibility>::make();
+    auto projected_link    = Vec<String>::make();
+    for (const auto& target : consumer.targets) {
+        auto index = Option<usize> {};
+        for (usize candidate {}; candidate < plan.tool.requirement.targets.len(); ++candidate) {
+            if (plan.tool.requirement.targets[candidate].name == target.name.as_str()) {
+                index = Some(candidate);
+                break;
+            }
+        }
+        if (index.is_none()) {
+            return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+                rstd::format("CMake package '{}' projection is missing target '{}'",
+                             consumer.package.as_str(),
+                             target.name.as_str()));
+        }
+        const auto& snapshot = snapshots.targets[*index];
+        projected_targets.push(lito::tools::cmake::CMakeTargetUsageSnapshot {
+            .compile = as<Clone>(snapshot.compile).clone(),
+            .link    = as<Clone>(snapshot.link).clone(),
+        });
+        for (const auto& token : snapshot.link) projected_link.push(token.clone());
+        visibilities.push(lito::dependency::DependencyVisibility(target.visibility));
+    }
+    auto projected_tools = Vec<lito::tools::cmake::CMakeHostToolSnapshot>::make();
+    for (const auto& tool : consumer.host_tools) {
+        const lito::tools::cmake::CMakeHostToolSnapshot* selected = nullptr;
+        for (const auto& snapshot : snapshots.host_tools) {
+            if (snapshot.name == tool.name.as_str() && snapshot.target == tool.target.as_str()) {
+                selected = rstd::addressof(snapshot);
+                break;
+            }
+        }
+        if (selected == nullptr) {
+            return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+                rstd::format("CMake package '{}' projection is missing host tool '{}'",
+                             consumer.package.as_str(),
+                             tool.name.as_str()));
+        }
+        projected_tools.push(lito::tools::cmake::CMakeHostToolSnapshot {
+            .name       = selected->name.clone(),
+            .target     = selected->target.clone(),
+            .executable = selected->executable.clone(),
+            .digest     = selected->digest.clone(),
+        });
+    }
+    auto projected_assets = Vec<ExternalAssetSet>::with_capacity(snapshots.assets.len());
+    for (const auto& asset : snapshots.assets) projected_assets.push(asset.clone());
+    auto projected = CMakeUsageSnapshot {
+        .version    = snapshots.version.clone(),
+        .targets    = rstd::move(projected_targets),
+        .host_tools = rstd::move(projected_tools),
+        .combined =
+            lito::tools::cmake::CMakeTargetUsageSnapshot {
+                .compile = Vec<String>::make(),
+                .link    = rstd::move(projected_link),
+            },
+        .assets = rstd::move(projected_assets),
+    };
+    return materialize_cmake_usage_impl(plan, requirement, visibilities, projected);
 }
 
 } // namespace lito

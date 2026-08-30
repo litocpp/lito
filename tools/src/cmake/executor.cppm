@@ -92,11 +92,10 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
                                                     area.root.as_path(),
                                                     rstd::move(created).unwrap_err());
     }
-    auto lock_path = area.root.join(PathBuf::from("lock"_str).as_path());
-    auto lock_file = rstd::fs::File::create(lock_path.as_path());
+    auto lock_file = rstd::fs::File::create(area.lock.as_path());
     if (lock_file.is_err()) {
         return cmake_io_failure<CMakeUsageSnapshot>("open CMake dependency lock"_str,
-                                                    lock_path.as_path(),
+                                                    area.lock.as_path(),
                                                     rstd::move(lock_file).unwrap_err());
     }
     auto locked = rstd::fs::FileLock::acquire(rstd::move(lock_file).unwrap(),
@@ -104,12 +103,21 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
     if (locked.is_err()) {
         return cmake_io_failure<CMakeUsageSnapshot>(
             rstd::format("lock CMake dependency '{}'", requirement.alias.as_str()).as_str(),
-            lock_path.as_path(),
+            area.lock.as_path(),
             rstd::move(locked).unwrap_err());
     }
+    rstd_try(prepare_cmake_state(area, requirement));
     auto cacheable =
         requirement.source.is_Directory() && requirement.source.as_Directory().cacheable;
-    if (cacheable) {
+    auto prepares_source = requirement.source.is_Directory() && requirement.adapter.is_none();
+    auto install_contract_current =
+        prepares_source ? rstd_try(source_install_current(area, requirement)) : false;
+    if (prepares_source && ! install_contract_current) {
+        rstd_try(invalidate_cmake_preparation(area, requirement));
+    }
+    auto query_current = rstd_try(cmake_query_current(area, requirement));
+    if (! query_current) rstd_try(invalidate_cmake_query(area, requirement));
+    if (cacheable && (! prepares_source || install_contract_current) && query_current) {
         auto cached = read_usage_snapshot(area, requirement);
         if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
         if (cached->is_some()) {
@@ -118,8 +126,12 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
             return Ok(rstd::move(cached).unwrap().unwrap());
         }
     }
-    auto install_current = cacheable ? rstd_try(source_install_current(area)) : false;
-    auto snapshots       = Option<CMakeUsageSnapshot> {};
+    auto install_current = cacheable && install_contract_current;
+    if (prepares_source && ! install_current) {
+        rstd_try(begin_cmake_preparation(area, requirement));
+    }
+    rstd_try(begin_cmake_query(area, requirement));
+    auto snapshots = Option<CMakeUsageSnapshot> {};
     for (auto operation : plan.operations) {
         switch (operation) {
         case CMakePackageOperation::ConfigureSource:
@@ -162,10 +174,11 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
                                      area.install.as_path(),
                                      [&] {
                                          return install_source(
-                                             requirement, provider, area, cacheable, environment);
+                                             requirement, provider, area, environment);
                                      }),
                     plan,
                     operation));
+                rstd_try(publish_cmake_install(area, requirement));
                 install_current = true;
             } else {
                 emit_cmake(
@@ -232,7 +245,7 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
     auto normalized_version = String::make(version->as_str().trim_ascii());
     if (normalized_version.is_empty()) normalized_version = String::make("unknown"_str);
     snapshots->version = rstd::move(normalized_version);
-    if (cacheable) rstd_try(write_usage_snapshot(area, *snapshots));
+    rstd_try(write_usage_snapshot(area, requirement, *snapshots));
     return Ok(rstd::move(snapshots).unwrap());
 }
 
