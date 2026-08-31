@@ -1,3 +1,12 @@
+<release version="0.7.1" date="2026-08-31">
+  <description>
+    <ul>
+      <li>Improve generated and patched source build reuse.</li>
+      <li>Validate local and Registry publication dependencies.</li>
+      <li>Support Registry action workflows.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.7.0" date="2026-08-29">
   <description>
     <ul>
