@@ -39,6 +39,8 @@ auto inspect_registry_source_tree_at(const lito::source::SourceTree& tree,
 
 auto registry_dependencies_match(slice<RegistryDependencyProjection> left,
                                  slice<RegistryDependencyProjection> right) noexcept -> bool;
+auto registry_candidate_has_external_inputs(
+    const VerifiedRegistrySourceCandidate& candidate) noexcept -> bool;
 
 } // namespace lito::registry
 
@@ -48,11 +50,15 @@ namespace
 using namespace lito::registry;
 
 template<typename T>
-auto inspection_failure(RegistryArtifactErrorKind kind,
-                        const RegistryPackageId&  package,
-                        String                    message) -> RegistryArtifactResult<T> {
+auto inspection_failure(
+    RegistryArtifactErrorKind   kind,
+    const RegistryPackageId&    package,
+    String                      message,
+    RegistryArtifactFailureCode code = RegistryArtifactFailureCode::PackageInvalid)
+    -> RegistryArtifactResult<T> {
     return Err(RegistryArtifactError {
         .kind    = kind,
+        .code    = code,
         .package = package.clone(),
         .message = rstd::move(message),
     });
@@ -298,4 +304,22 @@ auto lito::registry::registry_dependencies_match(slice<RegistryDependencyProject
         if (! projection_equal(left_sorted[index], right_sorted[index])) return false;
     }
     return true;
+}
+
+auto lito::registry::registry_candidate_has_external_inputs(
+    const VerifiedRegistrySourceCandidate& candidate) noexcept -> bool {
+    const auto& manifest = candidate.manifest;
+    if (! manifest.external_sources.is_empty() ||
+        ! manifest.pkg_config_external_dependencies.is_empty() ||
+        ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
+        ! manifest.cmake_external_dependencies.is_empty() ||
+        ! manifest.workspace_cmake_external_dependencies.is_empty() ||
+        ! manifest.cargo_external_dependencies.is_empty() ||
+        ! manifest.workspace_cargo_external_dependencies.is_empty()) {
+        return true;
+    }
+    for (const auto& group : manifest.source_groups) {
+        if (group.external_source.is_some()) return true;
+    }
+    return false;
 }

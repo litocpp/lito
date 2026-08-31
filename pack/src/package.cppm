@@ -20,12 +20,15 @@ struct PackageRegistryContext {
 };
 
 struct PackPackageRequest {
-    PathBuf                root;
-    Option<String>         package;
-    Option<PathBuf>        output;
-    bool                   list {};
-    PackageRegistryContext registry;
-    Vec<PathBuf>           excluded_roots;
+    PathBuf                                     root;
+    Option<String>                              package;
+    Option<PathBuf>                             output;
+    bool                                        list {};
+    PackageRegistryContext                      registry;
+    lito::registry::RegistryExternalInputPolicy external_inputs {
+        lito::registry::RegistryExternalInputPolicy::Reject
+    };
+    Vec<PathBuf> excluded_roots;
 };
 
 struct PackPackageSummary {
@@ -145,7 +148,7 @@ auto lito::pack_package(PackPackageRequest request)
         });
     }
     auto built = lito::registry::PackageArchiveBuilder::build(
-        *files, *standalone, package, exact, output.clone());
+        *files, *standalone, package, exact, output.clone(), {}, request.external_inputs);
     if (built.is_err()) {
         return pack_failure<PackPackageSummary>(rstd::move(built).unwrap_err().message);
     }

@@ -176,6 +176,7 @@ auto run(Options options) -> Result<empty, String> {
             lito::PackageRegistryContext {
                 .owner = rstd::move(registry).unwrap(),
             },
+        .external_inputs = lito::registry::RegistryExternalInputPolicy::AllowEmbedded,
     });
     if (packed.is_err()) {
         auto error = rstd::move(packed).unwrap_err();

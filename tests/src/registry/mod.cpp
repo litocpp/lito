@@ -193,6 +193,7 @@ struct CopyBlobTransportFixture {
 struct PublishTransportFixture {
     Vec<lito::registry::RegistryPublishHttpResponse> responses;
     Vec<String>                                      methods;
+    Vec<String>                                      urls;
     bool                                             api_authorized { true };
     bool                                             upload_uses_archive {};
 
@@ -202,6 +203,7 @@ struct PublishTransportFixture {
         -> lito::registry::RegistryPublishResult<lito::registry::RegistryPublishHttpResponse> {
         auto& self = *static_cast<PublishTransportFixture*>(context);
         self.methods.push(request.method.clone());
+        self.urls.push(request.url.clone());
         auto authorized = false;
         for (const auto& header : request.headers) {
             if (header.name.as_str() == "Authorization"_str &&
@@ -280,9 +282,7 @@ auto publish_request(ref<rstd::path::Path> archive, const lito::config::Registry
                               lito::registry::RegistryArchiveFormat::TAR_ZSTD_V1)
                               .unwrap(),
             },
-        .archive              = PathBuf::from(archive),
-        .maximum_status_polls = usize(2),
-        .poll_interval        = rstd::time::Duration {},
+        .archive = PathBuf::from(archive),
     };
 }
 
@@ -343,7 +343,7 @@ TEST(RegistryChecksum, AcceptsOnlyRawLowercaseSha256) {
                     .is_err());
 }
 
-TEST(RegistryPublish, UploadsCommitsAndWaitsForVisibleContext) {
+TEST(RegistryPublish, UploadsAndReturnsWhenSubmissionQueuesCheck) {
     auto fixture = PublishTransportFixture {};
     fixture.responses.push(lito::registry::RegistryPublishHttpResponse {
         .status = u16(201),
@@ -352,21 +352,20 @@ TEST(RegistryPublish, UploadsCommitsAndWaitsForVisibleContext) {
     fixture.responses.push(lito::registry::RegistryPublishHttpResponse { .status = u16(200) });
     fixture.responses.push(lito::registry::RegistryPublishHttpResponse {
         .status = u16(200),
-        .body   = publish_session_json("projecting"_str, false, false, true),
-    });
-    fixture.responses.push(lito::registry::RegistryPublishHttpResponse {
-        .status = u16(200),
-        .body   = publish_session_json("visible"_str, false, false, true),
+        .body   = publish_session_json("uploaded"_str, false, false, false),
     });
     auto token   = lito::config::RegistryBearerToken(String::make("fixture-token"_str));
     auto request = publish_request(PathBuf::from("fixture.tar.zst"_str).as_path(), token);
     auto result  = lito::registry::RegistryPublishClient(fixture.transport()).publish(request);
     ASSERT_TRUE(result.is_ok());
-    EXPECT_EQ(result->state, lito::registry::RegistryPublishState::Visible);
-    ASSERT_TRUE(result->checksum.is_some());
-    ASSERT_EQ(fixture.methods.len(), usize(4));
+    EXPECT_EQ(result->state, lito::registry::RegistryPublishState::Uploaded);
+    EXPECT_EQ(lito::registry::registry_publish_state_name(result->state), "uploaded"_str);
+    ASSERT_TRUE(result->checksum.is_none());
+    ASSERT_EQ(fixture.methods.len(), usize(3));
     EXPECT_EQ(fixture.methods[usize {}].as_str(), "POST"_str);
     EXPECT_EQ(fixture.methods[usize(1)].as_str(), "PUT"_str);
+    EXPECT_TRUE(
+        fixture.urls[usize(2)].as_str().ends_with("/v1/publish/sessions/session-1/submit"_str));
     EXPECT_TRUE(fixture.api_authorized);
     EXPECT_TRUE(fixture.upload_uses_archive);
 }
@@ -831,5 +830,42 @@ archive = "sample"
         rstd::json::from_str(lito::registry::registry_inspector_capabilities_json().as_str())
             .unwrap();
     EXPECT_EQ(capabilities["schema"_str].as_str().unwrap(),
-              "lito.registry.inspector-capabilities.v2"_str);
+              "lito.registry.inspector-capabilities.v3"_str);
+}
+
+TEST(RegistryArchive, RejectsExternalInputsWithAStableCheckCode) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto tree  = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str,
+                              R"toml([package]
+name = "sample"
+version = "1.2.3"
+
+[external-sources.vendor]
+path = "vendor"
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
+    ASSERT_TRUE(tree.add_text("vendor/input.txt"_str, "external"_str).is_ok());
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3"_str);
+    auto archive =
+        PathBuf::from(owner.path()).join(PathBuf::from("external.tar.zst"_str).as_path());
+    auto built = lito::registry::PackageArchiveBuilder::build(tree, package, version, archive);
+    ASSERT_TRUE(built.is_err());
+    auto error = rstd::move(built).unwrap_err();
+    EXPECT_EQ(error.code, lito::registry::RegistryArtifactFailureCode::ExternalInputsNotAllowed);
+    auto failure =
+        rstd::json::from_str(lito::registry::serialize_registry_inspection_failure(error).as_str());
+    ASSERT_TRUE(failure.is_ok());
+    EXPECT_EQ((*failure)["schema"_str].as_str().unwrap(),
+              lito::registry::REGISTRY_INSPECTION_FAILURE_SCHEMA);
+    EXPECT_EQ((*failure)["code"_str].as_str().unwrap(), "external_inputs_not_allowed"_str);
 }

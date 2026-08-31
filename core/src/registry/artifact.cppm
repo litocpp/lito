@@ -21,10 +21,17 @@ enum class RegistryArtifactErrorKind
     Projection,
 };
 
+enum class RegistryArtifactFailureCode
+{
+    PackageInvalid,
+    ExternalInputsNotAllowed,
+};
+
 struct RegistryArtifactError {
-    RegistryArtifactErrorKind kind { RegistryArtifactErrorKind::Io };
-    RegistryPackageId         package;
-    String                    message;
+    RegistryArtifactErrorKind   kind { RegistryArtifactErrorKind::Io };
+    RegistryArtifactFailureCode code { RegistryArtifactFailureCode::PackageInvalid };
+    RegistryPackageId           package;
+    String                      message;
 };
 
 template<typename T>

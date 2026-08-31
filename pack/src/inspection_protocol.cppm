@@ -14,11 +14,13 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
-inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v2"_str;
-inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v2"_str;
+inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v3"_str;
+inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v3"_str;
 inline constexpr auto REGISTRY_INSPECTION_CANDIDATE_SCHEMA =
-    "lito.registry.verified-publish-candidate.v2"_str;
-inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v2"_str;
+    "lito.registry.verified-publish-candidate.v3"_str;
+inline constexpr auto REGISTRY_INSPECTION_FAILURE_SCHEMA =
+    "lito.registry.package-check-failure.v3"_str;
+inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v3"_str;
 
 struct RegistryInspectionProtocolError {
     String message;
@@ -50,6 +52,7 @@ auto parse_registry_inspection_request(slice<u8> input)
 auto parse_verified_publish_candidate(slice<u8> input)
     -> RegistryInspectionProtocolResult<VerifiedRegistryPackageDescriptor>;
 auto serialize_verified_publish_candidate(const InspectedRegistryArchive& inspected) -> String;
+auto serialize_registry_inspection_failure(const RegistryArtifactError& error) -> String;
 
 } // namespace lito::registry
 
@@ -168,6 +171,15 @@ auto dependency_visibility_text(lito::dependency::DependencyVisibility visibilit
     rstd::unreachable();
 }
 
+auto failure_code_text(RegistryArtifactFailureCode code) noexcept -> ref<str> {
+    switch (code) {
+    case RegistryArtifactFailureCode::PackageInvalid: return "package_invalid"_str;
+    case RegistryArtifactFailureCode::ExternalInputsNotAllowed:
+        return "external_inputs_not_allowed"_str;
+    }
+    rstd::unreachable();
+}
+
 auto dependency_kind(ref<str> value, ref<str> context)
     -> RegistryInspectionProtocolResult<RegistryDependencyKind> {
     if (value == "normal"_str) return Ok(RegistryDependencyKind::Normal);
@@ -278,7 +290,7 @@ auto lito::registry::registry_inspector_capabilities_json() -> String {
     formats.push(string_json(RegistryArchiveFormat::TAR_ZSTD_V1));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str),
-                string_json("lito.registry.inspector-capabilities.v2"_str));
+                string_json("lito.registry.inspector-capabilities.v3"_str));
     root.insert(String::make("protocols"_str), Json::Array(rstd::move(protocols)));
     root.insert(String::make("archive_formats"_str), Json::Array(rstd::move(formats)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
@@ -493,6 +505,17 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
                 string_json(rstd::format("{}", candidate.file_count).as_str()));
     root.insert(String::make("unpacked_size"_str),
                 string_json(rstd::format("{}", candidate.unpacked_size).as_str()));
+    root.insert(String::make("receipt"_str), string_json(REGISTRY_INSPECTOR_RECEIPT));
+    return rstd::json::to_string(Json::Object(rstd::move(root)));
+}
+
+auto lito::registry::serialize_registry_inspection_failure(const RegistryArtifactError& error)
+    -> String {
+    auto root = JsonMap::make();
+    root.insert(String::make("schema"_str), string_json(REGISTRY_INSPECTION_FAILURE_SCHEMA));
+    root.insert(String::make("protocol"_str), string_json(REGISTRY_INSPECTION_PROTOCOL));
+    root.insert(String::make("code"_str), string_json(failure_code_text(error.code)));
+    root.insert(String::make("message"_str), string_json(error.message.as_str()));
     root.insert(String::make("receipt"_str), string_json(REGISTRY_INSPECTOR_RECEIPT));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }

@@ -22,7 +22,8 @@ enum class RegistryPublishState
 {
     Prepared,
     Uploaded,
-    Verifying,
+    Checking,
+    CheckRetry,
     Rejected,
     Committed,
     Projecting,
@@ -30,6 +31,22 @@ enum class RegistryPublishState
     Visible,
     Expired,
 };
+
+inline auto registry_publish_state_name(RegistryPublishState state) noexcept -> ref<str> {
+    switch (state) {
+    case RegistryPublishState::Prepared: return "prepared"_str;
+    case RegistryPublishState::Uploaded: return "uploaded"_str;
+    case RegistryPublishState::Checking: return "checking"_str;
+    case RegistryPublishState::CheckRetry: return "check_retry"_str;
+    case RegistryPublishState::Rejected: return "rejected"_str;
+    case RegistryPublishState::Committed: return "committed"_str;
+    case RegistryPublishState::Projecting: return "projecting"_str;
+    case RegistryPublishState::ProjectionRetry: return "projection_retry"_str;
+    case RegistryPublishState::Visible: return "visible"_str;
+    case RegistryPublishState::Expired: return "expired"_str;
+    }
+    rstd::unreachable();
+}
 
 enum class RegistryPublishErrorKind
 {
@@ -40,7 +57,6 @@ enum class RegistryPublishErrorKind
     Conflict,
     Rejected,
     Expired,
-    Timeout,
     Io,
 };
 
@@ -94,8 +110,6 @@ struct RegistryPublishRequest {
     SemanticVersion                          version;
     RegistryPackageArchive                   artifact;
     PathBuf                                  archive;
-    usize                                    maximum_status_polls { usize(120) };
-    rstd::time::Duration poll_interval { rstd::time::Duration::from_secs(u64(1)) };
 };
 
 class RegistryPublishClient {
@@ -292,7 +306,8 @@ auto parse_publish_state(ref<str> value, const RegistryPackageId& package)
     -> RegistryPublishResult<RegistryPublishState> {
     if (value == "prepared"_str) return Ok(RegistryPublishState::Prepared);
     if (value == "uploaded"_str) return Ok(RegistryPublishState::Uploaded);
-    if (value == "verifying"_str) return Ok(RegistryPublishState::Verifying);
+    if (value == "checking"_str) return Ok(RegistryPublishState::Checking);
+    if (value == "check_retry"_str) return Ok(RegistryPublishState::CheckRetry);
     if (value == "rejected"_str) return Ok(RegistryPublishState::Rejected);
     if (value == "committed"_str) return Ok(RegistryPublishState::Committed);
     if (value == "projecting"_str) return Ok(RegistryPublishState::Projecting);
@@ -657,12 +672,6 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
             request.package,
             "Registry publish requires a bearer token"_str);
     }
-    if (request.maximum_status_polls == usize {}) {
-        return publish_failure<RegistryPublishSession>(
-            RegistryPublishErrorKind::Protocol,
-            request.package,
-            "publish status poll limit must be positive"_str);
-    }
     auto body        = request_body(request);
     auto idempotency = rstd::format("lito-{}", licrypto::sha256_hex(body.as_str()));
     auto headers     = authorization_headers(*request.token);
@@ -711,56 +720,22 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
     }
     if (session.state == RegistryPublishState::Prepared ||
         session.state == RegistryPublishState::Uploaded) {
-        auto commit_response = rstd_try(execute_request(
+        auto submit_response = rstd_try(execute_request(
             transport_,
             request.package,
             RegistryPublishHttpRequest {
                 .method = String::make("POST"_str),
                 .url = api_url(request.api,
-                               rstd::format("/v1/publish/sessions/{}/commit", session.id).as_str()),
+                               rstd::format("/v1/publish/sessions/{}/submit", session.id).as_str()),
                 .headers = authorization_headers(*request.token),
             },
             { u16(200) },
-            "commit publish session"_str));
+            "submit publish session"_str));
         session              = rstd::move(
-            rstd_try(parse_session_response(commit_response.body.as_str(), request, false))
+            rstd_try(parse_session_response(submit_response.body.as_str(), request, false))
                 .session);
     }
-    if (session.state == RegistryPublishState::Visible ||
-        session.state == RegistryPublishState::Rejected ||
-        session.state == RegistryPublishState::Expired) {
-        return terminal_result(rstd::move(session));
-    }
-
-    for (usize poll {}; poll < request.maximum_status_polls; ++poll) {
-        if (request.poll_interval != rstd::time::Duration {}) {
-            rstd::thread::sleep(request.poll_interval);
-        }
-        auto response = rstd_try(execute_request(
-            transport_,
-            request.package,
-            RegistryPublishHttpRequest {
-                .method  = String::make("GET"_str),
-                .url     = api_url(request.api,
-                                   rstd::format("/v1/publish/sessions/{}", session.id).as_str()),
-                .headers = authorization_headers(*request.token),
-            },
-            { u16(200) },
-            "read publish session"_str));
-        session       = rstd::move(
-            rstd_try(parse_session_response(response.body.as_str(), request, false)).session);
-        if (session.state == RegistryPublishState::Visible ||
-            session.state == RegistryPublishState::Rejected ||
-            session.state == RegistryPublishState::Expired) {
-            return terminal_result(rstd::move(session));
-        }
-    }
-    return publish_failure<RegistryPublishSession>(
-        RegistryPublishErrorKind::Timeout,
-        request.package,
-        rstd::format("publish session '{}' is not visible after {} status polls",
-                     session.id,
-                     request.maximum_status_polls));
+    return terminal_result(rstd::move(session));
 }
 
 auto lito::registry::CurlRegistryPublishTransport::execute_callback(

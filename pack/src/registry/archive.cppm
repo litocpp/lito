@@ -20,6 +20,12 @@ struct RegistryArchiveLimits {
     usize maximum_entries { usize(100000) };
 };
 
+enum class RegistryExternalInputPolicy
+{
+    Reject,
+    AllowEmbedded,
+};
+
 struct InspectedRegistryArchive {
     RegistryPackageArchive          archive;
     lito::source::SourceTree        tree;
@@ -28,35 +34,43 @@ struct InspectedRegistryArchive {
 
 class PackageArchiveInspector {
 public:
-    static auto inspect_candidate(const VerifiedRegistryBlob& blob,
-                                  const RegistryPackageId&    package,
-                                  const SemanticVersion&      version,
-                                  RegistryArchiveLimits       limits = {})
+    static auto inspect_candidate(
+        const VerifiedRegistryBlob& blob,
+        const RegistryPackageId&    package,
+        const SemanticVersion&      version,
+        RegistryArchiveLimits       limits          = {},
+        RegistryExternalInputPolicy external_inputs = RegistryExternalInputPolicy::Reject)
         -> RegistryArtifactResult<InspectedRegistryArchive>;
 
-    static auto inspect_at_root(const VerifiedRegistryBlob& blob,
-                                const RegistryPackageId&    package,
-                                const SemanticVersion&      version,
-                                ref<rstd::path::Path>       manifest_root,
-                                RegistryArchiveLimits       limits = {})
+    static auto inspect_at_root(
+        const VerifiedRegistryBlob& blob,
+        const RegistryPackageId&    package,
+        const SemanticVersion&      version,
+        ref<rstd::path::Path>       manifest_root,
+        RegistryArchiveLimits       limits          = {},
+        RegistryExternalInputPolicy external_inputs = RegistryExternalInputPolicy::Reject)
         -> RegistryArtifactResult<InspectedRegistryArchive>;
 };
 
 class PackageArchiveBuilder {
 public:
-    static auto build(const lito::manifest::PackageFileSet&            files,
-                      const lito::manifest::StandalonePackageManifest& manifest,
-                      const RegistryPackageId&                         package,
-                      const SemanticVersion&                           version,
-                      PathBuf                                          destination,
-                      RegistryArchiveLimits                            limits = {})
+    static auto
+    build(const lito::manifest::PackageFileSet&            files,
+          const lito::manifest::StandalonePackageManifest& manifest,
+          const RegistryPackageId&                         package,
+          const SemanticVersion&                           version,
+          PathBuf                                          destination,
+          RegistryArchiveLimits                            limits = {},
+          RegistryExternalInputPolicy external_inputs = RegistryExternalInputPolicy::Reject)
         -> RegistryArtifactResult<InspectedRegistryArchive>;
 
-    static auto build(const lito::source::SourceTree& tree,
-                      const RegistryPackageId&        package,
-                      const SemanticVersion&          version,
-                      PathBuf                         destination,
-                      RegistryArchiveLimits           limits = {})
+    static auto
+    build(const lito::source::SourceTree& tree,
+          const RegistryPackageId&        package,
+          const SemanticVersion&          version,
+          PathBuf                         destination,
+          RegistryArchiveLimits           limits          = {},
+          RegistryExternalInputPolicy     external_inputs = RegistryExternalInputPolicy::Reject)
         -> RegistryArtifactResult<InspectedRegistryArchive>;
 };
 
@@ -68,11 +82,14 @@ namespace
 using namespace lito::registry;
 
 template<typename T>
-auto archive_failure(RegistryArtifactErrorKind kind,
-                     const RegistryPackageId&  package,
-                     String                    message) -> RegistryArtifactResult<T> {
+auto archive_failure(RegistryArtifactErrorKind   kind,
+                     const RegistryPackageId&    package,
+                     String                      message,
+                     RegistryArtifactFailureCode code = RegistryArtifactFailureCode::PackageInvalid)
+    -> RegistryArtifactResult<T> {
     return Err(RegistryArtifactError {
         .kind    = kind,
+        .code    = code,
         .package = package.clone(),
         .message = rstd::move(message),
     });
@@ -303,13 +320,22 @@ auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
                                  const RegistryPackageId&      package,
                                  const SemanticVersion&        version,
                                  Option<ref<rstd::path::Path>> manifest_root,
-                                 RegistryArchiveLimits         limits)
+                                 RegistryArchiveLimits         limits,
+                                 RegistryExternalInputPolicy   external_inputs)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
     auto tree      = rstd_try(decode_archive(blob, package, version, limits));
     auto candidate = manifest_root.is_some()
                          ? inspect_registry_source_tree_at(tree, package, version, *manifest_root)
                          : inspect_registry_source_tree(tree, package, version);
     if (candidate.is_err()) return Err(rstd::move(candidate).unwrap_err());
+    if (external_inputs == RegistryExternalInputPolicy::Reject &&
+        registry_candidate_has_external_inputs(*candidate)) {
+        return archive_failure<InspectedRegistryArchive>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("Registry packages must not declare external inputs"_str),
+            RegistryArtifactFailureCode::ExternalInputsNotAllowed);
+    }
     return Ok(InspectedRegistryArchive {
         .archive =
             RegistryPackageArchive {
@@ -330,7 +356,9 @@ auto lito::registry::PackageArchiveBuilder::build(
     const RegistryPackageId&                         package,
     const SemanticVersion&                           version,
     PathBuf                                          destination,
-    RegistryArchiveLimits limits) -> RegistryArtifactResult<InspectedRegistryArchive> {
+    RegistryArchiveLimits                            limits,
+    RegistryExternalInputPolicy                      external_inputs)
+    -> RegistryArtifactResult<InspectedRegistryArchive> {
     auto tree     = files.tree().clone();
     auto replaced = tree.replace_text("lito.toml"_str, manifest.as_str());
     if (replaced.is_err()) {
@@ -340,31 +368,37 @@ auto lito::registry::PackageArchiveBuilder::build(
             rstd::format("cannot install standalone manifest into package file set: {}",
                          rstd::move(replaced).unwrap_err()));
     }
-    return build(tree, package, version, rstd::move(destination), limits);
+    return build(tree, package, version, rstd::move(destination), limits, external_inputs);
 }
 
-auto lito::registry::PackageArchiveInspector::inspect_at_root(const VerifiedRegistryBlob& blob,
-                                                              const RegistryPackageId&    package,
-                                                              const SemanticVersion&      version,
-                                                              ref<rstd::path::Path> manifest_root,
-                                                              RegistryArchiveLimits limits)
+auto lito::registry::PackageArchiveInspector::inspect_at_root(
+    const VerifiedRegistryBlob& blob,
+    const RegistryPackageId&    package,
+    const SemanticVersion&      version,
+    ref<rstd::path::Path>       manifest_root,
+    RegistryArchiveLimits       limits,
+    RegistryExternalInputPolicy external_inputs)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
-    return inspect_candidate_with_root(blob, package, version, Some(manifest_root), limits);
+    return inspect_candidate_with_root(
+        blob, package, version, Some(manifest_root), limits, external_inputs);
 }
 
-auto lito::registry::PackageArchiveInspector::inspect_candidate(const VerifiedRegistryBlob& blob,
-                                                                const RegistryPackageId&    package,
-                                                                const SemanticVersion&      version,
-                                                                RegistryArchiveLimits       limits)
+auto lito::registry::PackageArchiveInspector::inspect_candidate(
+    const VerifiedRegistryBlob& blob,
+    const RegistryPackageId&    package,
+    const SemanticVersion&      version,
+    RegistryArchiveLimits       limits,
+    RegistryExternalInputPolicy external_inputs)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
-    return inspect_candidate_with_root(blob, package, version, None(), limits);
+    return inspect_candidate_with_root(blob, package, version, None(), limits, external_inputs);
 }
 
 auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree& tree,
                                                   const RegistryPackageId&        package,
                                                   const SemanticVersion&          version,
                                                   PathBuf                         destination,
-                                                  RegistryArchiveLimits           limits)
+                                                  RegistryArchiveLimits           limits,
+                                                  RegistryExternalInputPolicy     external_inputs)
     -> RegistryArtifactResult<InspectedRegistryArchive> {
     auto parent = destination.as_path().parent();
     if (parent.is_some()) {
@@ -418,5 +452,6 @@ auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree
     auto archive = rstd_try(registry_package_archive_from_file(destination.as_path(), package));
     auto verified =
         rstd_try(verify_registry_blob_file(destination.clone(), package, archive.checksum));
-    return PackageArchiveInspector::inspect_candidate(verified, package, version, limits);
+    return PackageArchiveInspector::inspect_candidate(
+        verified, package, version, limits, external_inputs);
 }

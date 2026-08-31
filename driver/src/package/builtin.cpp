@@ -89,7 +89,11 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
             descriptor_error(id, "archive does not match its verified descriptor"_str));
     }
     auto inspected = lito::registry::PackageArchiveInspector::inspect_candidate(
-        *blob, descriptor->package, descriptor->version);
+        *blob,
+        descriptor->package,
+        descriptor->version,
+        {},
+        lito::registry::RegistryExternalInputPolicy::AllowEmbedded);
     if (inspected.is_err()) {
         return embedded_failure<lito::registry::BuiltinRegistryPackage>(
             descriptor_error(id, rstd::move(inspected).unwrap_err().message.as_str()));

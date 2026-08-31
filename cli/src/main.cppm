@@ -619,7 +619,8 @@ extern "C++" int main() {
         auto inspected = lito::registry::PackageArchiveInspector::inspect_candidate(
             *verified, request->package, request->version, request->limits);
         if (inspected.is_err()) {
-            rstd::io::eprintln("lito: {}", rstd::move(inspected).unwrap_err().message);
+            auto error = rstd::move(inspected).unwrap_err();
+            rstd::io::println("{}", lito::registry::serialize_registry_inspection_failure(error));
             return 1;
         }
         rstd::io::println("{}", lito::registry::serialize_verified_publish_candidate(*inspected));
@@ -1052,10 +1053,11 @@ extern "C++" int main() {
             return 1;
         }
         auto session = rstd::move(published).unwrap();
-        rstd::io::println("published {} {} as {}",
+        rstd::io::println("submitted {} {} as {} ({})",
                           session.package.name.as_str(),
                           session.version.text(),
-                          session.checksum->text());
+                          session.id.as_str(),
+                          lito::registry::registry_publish_state_name(session.state));
         return 0;
     }
     auto       registry_bootstrap = Option<lito::config::LitoBootstrapConfig> {};
