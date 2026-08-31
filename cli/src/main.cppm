@@ -582,20 +582,36 @@ extern "C++" int main() {
     }
     auto invocation = rstd::move(parsed).as_Parsed();
     if (invocation.command.is_Registry()) {
-        auto command = rstd::move(invocation.command).as_Registry().command;
-        auto options = rstd::move(command).as_Inspect().options;
-        if (options.capabilities) {
-            rstd::io::println("{}", lito::registry::registry_inspector_capabilities_json());
-            return 0;
+        auto command      = rstd::move(invocation.command).as_Registry().command;
+        auto protocol     = Option<String> {};
+        auto archive      = Option<rstd::path::PathBuf> {};
+        auto request_json = Option<String> {};
+        auto output       = Option<rstd::path::PathBuf> {};
+        auto materialize  = command.is_Materialize();
+        if (command.is_Inspect()) {
+            auto options = rstd::move(command).as_Inspect().options;
+            if (options.capabilities) {
+                rstd::io::println("{}", lito::registry::registry_inspector_capabilities_json());
+                return 0;
+            }
+            protocol     = rstd::move(options.protocol);
+            archive      = rstd::move(options.archive);
+            request_json = rstd::move(options.request_json);
+        } else {
+            auto options = rstd::move(command).as_Materialize().options;
+            protocol     = Some(rstd::move(options.protocol));
+            archive      = Some(rstd::move(options.archive));
+            request_json = Some(rstd::move(options.request_json));
+            output       = Some(rstd::move(options.output));
         }
-        if (options.protocol->as_str() != lito::registry::REGISTRY_INSPECTION_PROTOCOL) {
+        if (protocol->as_str() != lito::registry::REGISTRY_INSPECTION_PROTOCOL) {
             rstd::io::eprintln("lito: unsupported Registry inspector protocol '{}': expected '{}'",
-                               options.protocol->as_str(),
+                               protocol->as_str(),
                                lito::registry::REGISTRY_INSPECTION_PROTOCOL);
             return 1;
         }
-        auto request_text = read_inspector_request(options.request_json->as_str(),
-                                                   invocation.working_directory.as_path());
+        auto request_text =
+            read_inspector_request(request_json->as_str(), invocation.working_directory.as_path());
         if (request_text.is_err()) {
             rstd::io::eprintln("lito: {}", rstd::move(request_text).unwrap_err().message);
             return 1;
@@ -606,12 +622,12 @@ extern "C++" int main() {
             rstd::io::eprintln("lito: {}", rstd::move(request).unwrap_err().message);
             return 1;
         }
-        auto archive = rstd::move(*options.archive);
-        if (archive.as_path().is_relative()) {
-            archive = invocation.working_directory.join(archive.as_path());
+        auto archive_path = rstd::move(*archive);
+        if (archive_path.as_path().is_relative()) {
+            archive_path = invocation.working_directory.join(archive_path.as_path());
         }
         auto verified = lito::registry::verify_registry_blob_file(
-            rstd::move(archive), request->package, request->archive.checksum);
+            rstd::move(archive_path), request->package, request->archive.checksum);
         if (verified.is_err()) {
             rstd::io::eprintln("lito: {}", rstd::move(verified).unwrap_err().message);
             return 1;
@@ -620,8 +636,28 @@ extern "C++" int main() {
             *verified, request->package, request->version, request->limits);
         if (inspected.is_err()) {
             auto error = rstd::move(inspected).unwrap_err();
-            rstd::io::println("{}", lito::registry::serialize_registry_inspection_failure(error));
+            if (materialize)
+                rstd::io::eprintln("lito: {}", error.message);
+            else
+                rstd::io::println("{}",
+                                  lito::registry::serialize_registry_inspection_failure(error));
             return 1;
+        }
+        if (materialize) {
+            auto destination = rstd::move(*output);
+            if (destination.as_path().is_relative()) {
+                destination = invocation.working_directory.join(destination.as_path());
+            }
+            auto materialized =
+                lito::source::materialize_source_tree(inspected->tree, destination.as_path());
+            if (materialized.is_err()) {
+                rstd::io::eprintln("lito: cannot materialize Registry package: {}",
+                                   rstd::move(materialized).unwrap_err());
+                return 1;
+            }
+            rstd::io::println(
+                "{}", R"({"schema":"lito.registry.materialized-source.v1","status":"ok"})"_str);
+            return 0;
         }
         rstd::io::println("{}", lito::registry::serialize_verified_publish_candidate(*inspected));
         return 0;
@@ -1631,6 +1667,10 @@ extern "C++" int main() {
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         request.config                       = rstd::move(project.doc);
+        if (options.litodoc_executable.is_some()) {
+            request.config.litodoc_executable = Some(project_output_path(
+                project.root.as_path(), rstd::move(options.litodoc_executable).unwrap()));
+        }
         if (options.output.is_some()) {
             request.output =
                 project_output_path(project.root.as_path(), rstd::move(options.output).unwrap());

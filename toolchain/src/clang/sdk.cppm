@@ -293,6 +293,20 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
                             .clang_cpp   = PathBuf::from("lib/libclang-cpp.so"_str),
                             .llvm_config = PathBuf::from("bin/llvm-config"_str),
                         };
+    if (target->family != TargetFamily::Windows) {
+        auto prefix_path = PathBuf::from(*prefix);
+        auto default_config =
+            prefix_path.join(PathBuf::from("lib/cmake/clang/ClangConfig.cmake"_str).as_path());
+        auto multilib_config =
+            prefix_path.join(PathBuf::from("lib64/cmake/clang/ClangConfig.cmake"_str).as_path());
+        auto default_exists  = rstd::fs::exists(default_config.as_path());
+        auto multilib_exists = rstd::fs::exists(multilib_config.as_path());
+        if (default_exists.is_ok() && multilib_exists.is_ok() && ! *default_exists &&
+            *multilib_exists) {
+            layout.cmake     = PathBuf::from("lib64/cmake"_str);
+            layout.clang_cpp = PathBuf::from("lib64/libclang-cpp.so"_str);
+        }
+    }
     return inspect_clang_sdk(compiler, *target, *prefix, layout, environment);
 }
 

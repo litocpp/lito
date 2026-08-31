@@ -241,7 +241,8 @@ auto publish_session_json(ref<str> state,
                           bool     prepare,
                           bool     upload,
                           bool     commit,
-                          ref<str> package = "sample"_str) -> String {
+                          ref<str> package = "sample"_str,
+                          ref<str> failure = ""_str) -> String {
     constexpr auto checksum =
         "1111111111111111111111111111111111111111111111111111111111111111"_str;
     auto prefix =
@@ -256,6 +257,9 @@ auto publish_session_json(ref<str> state,
     if (upload) {
         suffix.push_str(
             R"json(,"upload":{"method":"PUT","url":"https://uploads.example/staging/session-1","headers":{"content-type":"application/zstd"},"expires_at":"2026-08-23T12:00:00Z"})json"_str);
+    }
+    if (! failure.is_empty()) {
+        suffix.push_str(rstd::format(R"json(,"failure":"{}")json", failure).as_str());
     }
     return rstd::format(
         R"json({}"id":"session-1","state":"{}","registry":"https://registry.example/","package":"{}","version":"1.2.3","archive":{{"checksum":"{}","size":"42","format":"lito.package.tar-zstd.v1"}}{}}})json",
@@ -381,6 +385,23 @@ TEST(RegistryPublish, RejectsResponseContextMismatchBeforeUpload) {
     auto result  = lito::registry::RegistryPublishClient(fixture.transport()).publish(request);
     ASSERT_TRUE(result.is_err());
     EXPECT_EQ(result.unwrap_err().kind, lito::registry::RegistryPublishErrorKind::Protocol);
+    EXPECT_FALSE(fixture.upload_uses_archive);
+}
+
+TEST(RegistryPublish, ReportsTerminalCheckInfrastructureFailure) {
+    auto fixture = PublishTransportFixture {};
+    fixture.responses.push(lito::registry::RegistryPublishHttpResponse {
+        .status = u16(201),
+        .body   = publish_session_json(
+            "check_failed"_str, true, false, false, "sample"_str, "runner unavailable"_str),
+    });
+    auto token   = lito::config::RegistryBearerToken(String::make("fixture-token"_str));
+    auto request = publish_request(PathBuf::from("fixture.tar.zst"_str).as_path(), token);
+    auto result  = lito::registry::RegistryPublishClient(fixture.transport()).publish(request);
+    ASSERT_TRUE(result.is_err());
+    auto error = rstd::move(result).unwrap_err();
+    EXPECT_EQ(error.kind, lito::registry::RegistryPublishErrorKind::Infrastructure);
+    EXPECT_TRUE(error.message.as_str().contains("runner unavailable"_str));
     EXPECT_FALSE(fixture.upload_uses_archive);
 }
 

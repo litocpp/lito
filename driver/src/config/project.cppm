@@ -21,6 +21,7 @@ struct InstallConfig {
 
 struct DocConfig {
     Option<PathBuf> litodoc_path;
+    Option<PathBuf> litodoc_executable;
 };
 
 struct BuildConfigurationRequest {

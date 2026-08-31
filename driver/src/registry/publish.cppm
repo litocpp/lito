@@ -24,6 +24,7 @@ enum class RegistryPublishState
     Uploaded,
     Checking,
     CheckRetry,
+    CheckFailed,
     Rejected,
     Committed,
     Projecting,
@@ -38,6 +39,7 @@ inline auto registry_publish_state_name(RegistryPublishState state) noexcept -> 
     case RegistryPublishState::Uploaded: return "uploaded"_str;
     case RegistryPublishState::Checking: return "checking"_str;
     case RegistryPublishState::CheckRetry: return "check_retry"_str;
+    case RegistryPublishState::CheckFailed: return "check_failed"_str;
     case RegistryPublishState::Rejected: return "rejected"_str;
     case RegistryPublishState::Committed: return "committed"_str;
     case RegistryPublishState::Projecting: return "projecting"_str;
@@ -56,6 +58,7 @@ enum class RegistryPublishErrorKind
     Authorization,
     Conflict,
     Rejected,
+    Infrastructure,
     Expired,
     Io,
 };
@@ -100,6 +103,7 @@ struct RegistryPublishSession {
     SemanticVersion         version;
     RegistryPackageArchive  archive;
     Option<String>          rejection;
+    Option<String>          failure;
     Option<PackageChecksum> checksum;
 };
 
@@ -308,6 +312,7 @@ auto parse_publish_state(ref<str> value, const RegistryPackageId& package)
     if (value == "uploaded"_str) return Ok(RegistryPublishState::Uploaded);
     if (value == "checking"_str) return Ok(RegistryPublishState::Checking);
     if (value == "check_retry"_str) return Ok(RegistryPublishState::CheckRetry);
+    if (value == "check_failed"_str) return Ok(RegistryPublishState::CheckFailed);
     if (value == "rejected"_str) return Ok(RegistryPublishState::Rejected);
     if (value == "committed"_str) return Ok(RegistryPublishState::Committed);
     if (value == "projecting"_str) return Ok(RegistryPublishState::Projecting);
@@ -344,8 +349,8 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
                          rstd::move(parsed).unwrap_err()));
     }
     auto allowed = { "id"_str,      "state"_str,   "registry"_str,  "package"_str,
-                     "version"_str, "archive"_str, "rejection"_str, "commit"_str,
-                     "schema"_str,  "outcome"_str, "upload"_str };
+                     "version"_str, "archive"_str, "rejection"_str, "failure"_str,
+                     "commit"_str,  "schema"_str,  "outcome"_str,   "upload"_str };
     rstd_try(reject_unknown(*parsed, "publish response"_str, allowed, expected.package));
     if (prepare) {
         if (rstd_try(
@@ -425,6 +430,14 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
             RegistryPublishErrorKind::Protocol,
             expected.package,
             "Registry publish response rejection does not match its state"_str);
+    }
+    auto failure = rstd_try(
+        optional_string_member(*parsed, "failure"_str, "publish response"_str, expected.package));
+    if ((state == RegistryPublishState::CheckFailed) != failure.is_some()) {
+        return publish_failure<ParsedPublishResponse>(
+            RegistryPublishErrorKind::Protocol,
+            expected.package,
+            "Registry publish response failure does not match its state"_str);
     }
     auto checksum = Option<PackageChecksum> {};
     auto root     = rstd_try(object(*parsed, "publish response"_str, expected.package));
@@ -527,6 +540,7 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
                 .version   = expected.version.clone(),
                 .archive   = expected.artifact.clone(),
                 .rejection = rstd::move(rejection),
+                .failure   = rstd::move(failure),
                 .checksum  = rstd::move(checksum),
             },
         .upload_url     = rstd::move(upload_url),
@@ -592,6 +606,14 @@ auto terminal_result(RegistryPublishSession session)
             rstd::format("Registry rejected publish session '{}': {}",
                          session.id.as_str(),
                          session.rejection->as_str()));
+    }
+    if (session.state == RegistryPublishState::CheckFailed) {
+        return publish_failure<RegistryPublishSession>(
+            RegistryPublishErrorKind::Infrastructure,
+            session.package,
+            rstd::format("Registry could not check publish session '{}': {}",
+                         session.id.as_str(),
+                         session.failure->as_str()));
     }
     if (session.state == RegistryPublishState::Expired) {
         return publish_failure<RegistryPublishSession>(
@@ -715,6 +737,7 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
 
     auto session = rstd::move(prepared.session);
     if (session.state == RegistryPublishState::Rejected ||
+        session.state == RegistryPublishState::CheckFailed ||
         session.state == RegistryPublishState::Expired) {
         return terminal_result(rstd::move(session));
     }

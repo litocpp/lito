@@ -58,6 +58,7 @@ struct DocOptions {
     Option<PathBuf>                          data_output;
     Option<PathBuf>                          publication_dir;
     Option<PathBuf>                          frontend;
+    Option<PathBuf>                          litodoc_executable;
     bool                                     data_only {};
     bool                                     locked {};
     bool                                     offline {};
@@ -206,6 +207,13 @@ struct RegistryInspectOptions {
     Option<String>  request_json;
 };
 
+struct RegistryMaterializeOptions {
+    String  protocol;
+    PathBuf archive;
+    String  request_json;
+    PathBuf output;
+};
+
 class LockCommand {
     RSTD_ENUM(LockCommand, (Export, (LockExportOptions options;)))
 };
@@ -234,7 +242,9 @@ class SdkCommand {
 };
 
 class RegistryCommand {
-    RSTD_ENUM(RegistryCommand, (Inspect, (RegistryInspectOptions options;)))
+    RSTD_ENUM(RegistryCommand,
+              (Inspect, (RegistryInspectOptions options;)),
+              (Materialize, (RegistryMaterializeOptions options;)))
 };
 
 class CliCommand {
@@ -439,6 +449,7 @@ struct DocSchema {
     ArgKey<String>        data_output;
     ArgKey<String>        publication_dir;
     ArgKey<String>        frontend;
+    ArgKey<String>        litodoc_executable;
     ArgKey<bool>          data_only;
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
@@ -614,9 +625,21 @@ struct RegistryInspectSchema {
     auto decode(const Matches& matches) const -> Result<RegistryInspectOptions, CliDecodeError>;
 };
 
+struct RegistryMaterializeSchema {
+    CommandKey     command;
+    ArgKey<String> protocol;
+    ArgKey<String> archive;
+    ArgKey<String> request_json;
+    ArgKey<String> output;
+    ArgKey<bool>   json;
+
+    auto decode(const Matches& matches) const -> Result<RegistryMaterializeOptions, CliDecodeError>;
+};
+
 struct RegistrySchema {
-    CommandKey            command;
-    RegistryInspectSchema inspect;
+    CommandKey                command;
+    RegistryInspectSchema     inspect;
+    RegistryMaterializeSchema materialize;
 
     auto decode(const Matches& matches) const -> Result<RegistryCommand, CliDecodeError>;
 };
@@ -1009,10 +1032,15 @@ auto make_doc_definition() -> CommandDefinition<DocSchema> {
                             .long_name("publication-dir"_str)
                             .value_name("DIRECTORY"_str)
                             .help("Write relocatable package publications to a directory"_str));
-    auto frontend  = command.add_arg(Arg<String>::value("doc-frontend"_str, string_parser())
-                                         .long_name("frontend"_str)
-                                         .value_name("DIRECTORY"_str)
-                                         .help("Use a custom documentation frontend"_str));
+    auto frontend = command.add_arg(Arg<String>::value("doc-frontend"_str, string_parser())
+                                        .long_name("frontend"_str)
+                                        .value_name("DIRECTORY"_str)
+                                        .help("Use a custom documentation frontend"_str));
+    auto litodoc_executable =
+        command.add_arg(Arg<String>::value("doc-litodoc-executable"_str, string_parser())
+                            .long_name("litodoc-executable"_str)
+                            .value_name("FILE"_str)
+                            .help("Use a prebuilt litodoc executable"_str));
     auto data_only = command.add_arg(Arg<bool>::flag("doc-data-only"_str)
                                          .long_name("data-only"_str)
                                          .help("Generate documentation data without a site"_str));
@@ -1029,6 +1057,7 @@ auto make_doc_definition() -> CommandDefinition<DocSchema> {
             .data_output        = data_output,
             .publication_dir    = publication_dir,
             .frontend           = frontend,
+            .litodoc_executable = litodoc_executable,
             .data_only          = data_only,
             .source_acquisition = rstd::move(source_acquisition),
             .execution          = rstd::move(execution),
@@ -1395,11 +1424,43 @@ auto make_registry_definition() -> CommandDefinition<RegistrySchema> {
     auto json = inspect.add_arg(
         Arg<bool>::flag("json"_str).long_name("json"_str).help("Emit only protocol JSON"_str));
 
+    auto materialize = Command::make("materialize"_str);
+    materialize.about("Materialize a verified Registry package archive"_str);
+    auto materialize_key = materialize.key();
+    auto materialize_protocol =
+        materialize.add_arg(Arg<String>::value("materialize-protocol"_str, string_parser())
+                                .long_name("protocol"_str)
+                                .value_name("PROTOCOL"_str)
+                                .required()
+                                .help("Select the Registry inspection protocol"_str));
+    auto materialize_archive =
+        materialize.add_arg(Arg<String>::value("materialize-archive"_str, string_parser())
+                                .long_name("archive"_str)
+                                .value_name("FILE"_str)
+                                .required()
+                                .help("Read the committed package archive"_str));
+    auto materialize_request =
+        materialize.add_arg(Arg<String>::value("materialize-request-json"_str, string_parser())
+                                .long_name("request-json"_str)
+                                .value_name("FILE"_str)
+                                .required()
+                                .help("Read the inspection request JSON ('-' for stdin)"_str));
+    auto materialize_output =
+        materialize.add_arg(Arg<String>::value("materialize-output"_str, string_parser())
+                                .long_name("output"_str)
+                                .value_name("DIRECTORY"_str)
+                                .required()
+                                .help("Write the standalone package source tree"_str));
+    auto materialize_json = materialize.add_arg(Arg<bool>::flag("materialize-json"_str)
+                                                    .long_name("json"_str)
+                                                    .help("Emit only protocol JSON"_str));
+
     auto command = Command::make("registry"_str);
     command.about("Registry protocol operations"_str);
     command.require_subcommand();
     auto key = command.key();
     command.add_subcommand(rstd::move(inspect));
+    command.add_subcommand(rstd::move(materialize));
     return {
         RegistrySchema {
             .command = key,
@@ -1411,6 +1472,15 @@ auto make_registry_definition() -> CommandDefinition<RegistrySchema> {
                     .archive      = archive,
                     .request_json = request_json,
                     .json         = json,
+                },
+            .materialize =
+                RegistryMaterializeSchema {
+                    .command      = materialize_key,
+                    .protocol     = materialize_protocol,
+                    .archive      = materialize_archive,
+                    .request_json = materialize_request,
+                    .output       = materialize_output,
+                    .json         = materialize_json,
                 },
         },
         rstd::move(command),
@@ -1789,23 +1859,24 @@ auto DocSchema::decode(const Matches& matches) const -> Result<DocOptions, CliDe
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
     return Ok(DocOptions {
-        .packages        = rstd::move(package.packages),
-        .profile         = rstd::move(package.profile),
-        .targets         = rstd_try(string_values(matches, target)),
-        .output          = rstd_try(optional_path(matches, output)),
-        .data_output     = rstd_try(optional_path(matches, data_output)),
-        .publication_dir = rstd_try(optional_path(matches, publication_dir)),
-        .frontend        = rstd_try(optional_path(matches, frontend)),
-        .data_only       = rstd_try(flag_value(matches, data_only)),
-        .locked          = source.locked,
-        .offline         = source.offline,
-        .frozen          = source.frozen,
-        .source_bundles  = rstd::move(source.source_bundles),
-        .verbose         = execution.verbose,
-        .timing_file     = rstd::move(execution.timing_file),
-        .no_timing       = execution.no_timing,
-        .jobs            = rstd::move(execution.jobs),
-        .features        = rstd::move(package.features),
+        .packages           = rstd::move(package.packages),
+        .profile            = rstd::move(package.profile),
+        .targets            = rstd_try(string_values(matches, target)),
+        .output             = rstd_try(optional_path(matches, output)),
+        .data_output        = rstd_try(optional_path(matches, data_output)),
+        .publication_dir    = rstd_try(optional_path(matches, publication_dir)),
+        .frontend           = rstd_try(optional_path(matches, frontend)),
+        .litodoc_executable = rstd_try(optional_path(matches, litodoc_executable)),
+        .data_only          = rstd_try(flag_value(matches, data_only)),
+        .locked             = source.locked,
+        .offline            = source.offline,
+        .frozen             = source.frozen,
+        .source_bundles     = rstd::move(source.source_bundles),
+        .verbose            = execution.verbose,
+        .timing_file        = rstd::move(execution.timing_file),
+        .no_timing          = execution.no_timing,
+        .jobs               = rstd::move(execution.jobs),
+        .features           = rstd::move(package.features),
     });
 }
 
@@ -2009,10 +2080,27 @@ auto RegistryInspectSchema::decode(const Matches& matches) const
     });
 }
 
+auto RegistryMaterializeSchema::decode(const Matches& matches) const
+    -> Result<RegistryMaterializeOptions, CliDecodeError> {
+    if (! rstd_try(flag_value(matches, json))) {
+        return Err(
+            CliDecodeError::InvalidUsage(String::make("registry materialize requires --json"_str)));
+    }
+    return Ok(RegistryMaterializeOptions {
+        .protocol     = rstd_try(required_string(matches, protocol, "--protocol"_str)),
+        .archive      = PathBuf::from(rstd_try(required_string(matches, archive, "--archive"_str))),
+        .request_json = rstd_try(required_string(matches, request_json, "--request-json"_str)),
+        .output       = PathBuf::from(rstd_try(required_string(matches, output, "--output"_str))),
+    });
+}
+
 auto RegistrySchema::decode(const Matches& matches) const
     -> Result<RegistryCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(inspect.command); child.is_some()) {
         return Ok(RegistryCommand::Inspect(rstd_try(inspect.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(materialize.command); child.is_some()) {
+        return Ok(RegistryCommand::Materialize(rstd_try(materialize.decode(**child))));
     }
     return Err(CliDecodeError::CommandMismatch(String::make("registry"_str)));
 }

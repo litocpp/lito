@@ -14,7 +14,7 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito::registry
 {
 
-inline constexpr auto MAX_REGISTRY_PACKAGE_ARCHIVE_BYTES = u64(512) * u64(1024) * u64(1024);
+inline constexpr auto MAX_REGISTRY_PACKAGE_ARCHIVE_BYTES = u64(5) * u64(1024) * u64(1024);
 
 struct VerifiedRegistryBlob {
     PackageChecksum checksum;

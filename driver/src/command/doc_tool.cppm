@@ -415,6 +415,20 @@ auto resolve_doc_tool(const BuildRequest&               request,
                       const Option<DocEventSink>&       observer) -> DocResult<ResolvedDocTool> {
     auto sdk = resolve_clang_sdk(project.compiler, environment);
     if (sdk.is_err()) return Err(rstd::into<DocError>(rstd::move(sdk).unwrap_err()));
+    if (config.litodoc_executable.is_some()) {
+        auto capabilities =
+            probe_doc_tool(config.litodoc_executable->as_path(), project.compiler, environment);
+        if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
+        auto executable_digest = doc_tool_file_digest(config.litodoc_executable->as_path());
+        if (executable_digest.is_err()) return Err(rstd::move(executable_digest).unwrap_err());
+        auto identity = rstd::format("executable:sha256:{}", executable_digest->as_str());
+        return Ok(ResolvedDocTool {
+            .executable      = config.litodoc_executable->clone(),
+            .source_identity = identity.clone(),
+            .build_identity  = rstd::move(identity),
+            .sdk             = rstd::move(sdk).unwrap(),
+        });
+    }
     auto resolver =
         lito::tools::ToolResolver(environment, request.tools.clone(), request.tool_reporter);
     auto source = acquire_doc_tool_source(request, config, resolver, environment);
