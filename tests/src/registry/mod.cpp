@@ -729,6 +729,12 @@ TEST(RegistryGraphClient, LockedResolutionUsesOnlyLockAndBlob) {
                               R"toml([package]
 name = "sample"
 version = "1.2.3"
+authors = ["Lito Authors"]
+license = "MIT"
+description = "Registry metadata fixture"
+readme = "README.md"
+repository = "https://example.invalid/sample"
+documentation = "https://docs.example.invalid/sample"
 
 [lib]
 name = "sample"
@@ -736,6 +742,7 @@ module = "sample"
 archive = "sample"
 )toml"_str)
                     .is_ok());
+    ASSERT_TRUE(tree.add_text("README.md"_str, "# Sample\n\nRegistry README.\n"_str).is_ok());
     ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
     auto package = registry_package("sample"_str);
     auto version = registry_version("1.2.3"_str);
@@ -808,6 +815,12 @@ TEST(RegistryArchive, BuildsAndInspectsDeterministicTarZstd) {
                               R"toml([package]
 name = "sample"
 version = "1.2.3"
+authors = ["Lito Authors"]
+license = "MIT"
+description = "Registry metadata fixture"
+readme = "README.md"
+repository = "https://example.invalid/sample"
+documentation = "https://docs.example.invalid/sample"
 
 [lib]
 name = "sample"
@@ -815,6 +828,7 @@ module = "sample"
 archive = "sample"
 )toml"_str)
                     .is_ok());
+    ASSERT_TRUE(tree.add_text("README.md"_str, "# Sample\n\nRegistry README.\n"_str).is_ok());
     ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
     ASSERT_TRUE(tree.add_text("tools/generate"_str,
                               "#!/bin/sh\n"_str,
@@ -833,7 +847,18 @@ archive = "sample"
         lito::registry::PackageArchiveBuilder::build(tree, package, version, second_path.clone());
     ASSERT_TRUE(second.is_ok());
     EXPECT_EQ(first->archive.checksum.text(), second->archive.checksum.text());
-    EXPECT_EQ(first->candidate.file_count, usize(3));
+    EXPECT_EQ(first->candidate.file_count, usize(4));
+    ASSERT_TRUE(first->candidate.metadata.description.is_some());
+    EXPECT_EQ(first->candidate.metadata.description->as_str(), "Registry metadata fixture"_str);
+    ASSERT_TRUE(first->candidate.metadata.repository.is_some());
+    EXPECT_EQ(first->candidate.metadata.repository->as_str(), "https://example.invalid/sample"_str);
+    ASSERT_TRUE(first->candidate.metadata.documentation.is_some());
+    EXPECT_EQ(first->candidate.metadata.documentation->as_str(),
+              "https://docs.example.invalid/sample"_str);
+    ASSERT_TRUE(first->candidate.metadata.readme.is_some());
+    EXPECT_EQ(first->candidate.metadata.readme->path.as_str(), "README.md"_str);
+    EXPECT_EQ(first->candidate.metadata.readme->contents.as_str(),
+              "# Sample\n\nRegistry README.\n"_str);
 
     auto protocol = lito::registry::serialize_verified_publish_candidate(*first);
     auto json     = rstd::json::from_str(protocol.as_str()).unwrap();
@@ -846,12 +871,14 @@ archive = "sample"
     EXPECT_EQ(parsed->package, package);
     EXPECT_EQ(parsed->version, version);
     EXPECT_EQ(parsed->archive.checksum, first->archive.checksum);
+    ASSERT_TRUE(parsed->metadata.readme.is_some());
+    EXPECT_EQ(parsed->metadata.readme->checksum, first->candidate.metadata.readme->checksum);
 
     auto capabilities =
         rstd::json::from_str(lito::registry::registry_inspector_capabilities_json().as_str())
             .unwrap();
     EXPECT_EQ(capabilities["schema"_str].as_str().unwrap(),
-              "lito.registry.inspector-capabilities.v3"_str);
+              "lito.registry.inspector-capabilities.v4"_str);
 }
 
 TEST(RegistryArchive, RejectsExternalInputsWithAStableCheckCode) {
@@ -879,7 +906,8 @@ archive = "sample"
     auto version = registry_version("1.2.3"_str);
     auto archive =
         PathBuf::from(owner.path()).join(PathBuf::from("external.tar.zst"_str).as_path());
-    auto built = lito::registry::PackageArchiveBuilder::build(tree, package, version, archive);
+    auto built =
+        lito::registry::PackageArchiveBuilder::build(tree, package, version, archive.clone());
     ASSERT_TRUE(built.is_err());
     auto error = rstd::move(built).unwrap_err();
     EXPECT_EQ(error.code, lito::registry::RegistryArtifactFailureCode::ExternalInputsNotAllowed);

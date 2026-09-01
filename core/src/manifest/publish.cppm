@@ -518,6 +518,68 @@ auto validate_references(const FileSetState& state) -> PackageFileSetResult<empt
     return Ok(empty {});
 }
 
+auto include_package_readme(FileSetState& state) -> PackageFileSetResult<empty> {
+    if (state.manifest.readme.path.is_none() || state.manifest.readme.archive_path.is_none()) {
+        return Ok(empty {});
+    }
+    const auto& physical = *state.manifest.readme.path;
+    const auto& portable = *state.manifest.readme.archive_path;
+    auto        metadata = rstd::fs::symlink_metadata(physical.as_path());
+    if (metadata.is_err()) {
+        return publish_failure<empty>(rstd::format(
+            "cannot inspect package.readme '{}': {}", physical.as_path(), metadata.unwrap_err()));
+    }
+    if (metadata->is_symlink() || ! metadata->is_file()) {
+        return publish_failure<empty>(
+            rstd::format("package.readme '{}' must be a regular file", physical.as_path()));
+    }
+    if (metadata->nlink() > u64(1)) {
+        return publish_failure<empty>(
+            rstd::format("package.readme '{}' is a hardlink alias", physical.as_path()));
+    }
+    auto validated = lito::source::SourcePath::parse(portable.as_str());
+    if (validated.is_err()) {
+        return publish_failure<empty>(
+            rstd::format("package.readme archive path '{}': {}", portable, validated.unwrap_err()));
+    }
+
+    auto canonical = rstd::fs::canonicalize(physical.as_path());
+    if (canonical.is_err()) {
+        return publish_failure<empty>(rstd::format(
+            "cannot resolve package.readme '{}': {}", physical.as_path(), canonical.unwrap_err()));
+    }
+    auto package_relative  = canonical->as_path().strip_prefix(state.manifest.root.as_path());
+    auto same_package_file = false;
+    if (package_relative.is_some()) {
+        auto package_path = lito::source::SourcePath::from_relative_path(*package_relative);
+        same_package_file = package_path.is_ok() && package_path->as_str() == portable.as_str();
+    }
+    if (state.candidates.contains_key(portable.as_str()) && ! same_package_file) {
+        return publish_failure<empty>(
+            rstd::format("package.readme '{}' conflicts with package file '{}'",
+                         physical.as_path(),
+                         portable.as_str()));
+    }
+    if (state.selected.contains_key(portable.as_str())) return Ok(empty {});
+
+    auto contents = rstd::fs::read(physical.as_path());
+    if (contents.is_err()) {
+        return publish_failure<empty>(rstd::format(
+            "cannot read package.readme '{}': {}", physical.as_path(), contents.unwrap_err()));
+    }
+    auto mode  = (metadata->permissions().mode() & u32(0111)) == u32 {}
+                     ? lito::source::SourceFileMode::Regular
+                     : lito::source::SourceFileMode::Executable;
+    auto added = state.tree.add_bytes(portable.as_str(), contents->as_slice(), mode);
+    if (added.is_err()) {
+        return publish_failure<empty>(rstd::format(
+            "cannot add package.readme '{}': {}", portable, rstd::move(added).unwrap_err()));
+    }
+    state.candidates.insert(portable.clone(), empty {});
+    state.selected.insert(portable.clone(), empty {});
+    return Ok(empty {});
+}
+
 } // namespace
 
 auto lito::manifest::PackageFileSetResolver::resolve(const PackageManifest&      manifest,
@@ -558,6 +620,7 @@ auto lito::manifest::PackageFileSetResolver::resolve(const PackageManifest&     
         return publish_failure<PackageFileSet>(
             "package root lito.toml is missing from the publish file set"_str);
     }
+    rstd_try(include_package_readme(state));
     rstd_try(validate_references(state));
     return Ok(PackageFileSet(rstd::move(state.tree), rstd::move(state.directories)));
 }

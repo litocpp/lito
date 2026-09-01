@@ -10,10 +10,19 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito::manifest
 {
 
+struct WorkspacePackageReadme {
+    bool    enabled {};
+    PathBuf path;
+};
+
 struct WorkspacePackageDefaults {
-    Option<String>      version;
-    Option<String>      license;
-    Option<Vec<String>> authors;
+    Option<String>                 version;
+    Option<String>                 license;
+    Option<Vec<String>>            authors;
+    Option<String>                 description;
+    Option<String>                 repository;
+    Option<String>                 documentation;
+    Option<WorkspacePackageReadme> readme;
 };
 
 struct WorkspaceManifest {

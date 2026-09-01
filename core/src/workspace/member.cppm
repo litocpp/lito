@@ -11,6 +11,7 @@ import :dependency.cmake;
 import :dependency.pkg_config;
 import :dependency.source;
 import :manifest;
+import :source.tree;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -93,6 +94,58 @@ auto resolve_workspace_member_authors(lito::manifest::PackageManifest&         m
                          manifest.name.as_str()));
     }
     manifest.authors.values = workspace.package.authors->clone();
+    return Ok(empty {});
+}
+
+auto resolve_workspace_member_metadata(lito::manifest::PackageMetadata& metadata,
+                                       const Option<String>&            workspace_value,
+                                       ref<str>                         package,
+                                       ref<str> key) -> WorkspaceResult<empty> {
+    if (metadata.source != lito::manifest::PackageMetadataSource::Workspace) {
+        return Ok(empty {});
+    }
+    if (workspace_value.is_none()) {
+        return workspace_failure<empty>(rstd::format(
+            "workspace member '{}' inherits package.{} but workspace.package.{} is not set",
+            package,
+            key,
+            key));
+    }
+    metadata.value = Some(workspace_value->clone());
+    return Ok(empty {});
+}
+
+auto resolve_workspace_member_readme(lito::manifest::PackageManifest&         manifest,
+                                     const lito::manifest::WorkspaceManifest& workspace)
+    -> WorkspaceResult<empty> {
+    if (manifest.readme.source != lito::manifest::PackageReadmeSource::Workspace) {
+        return Ok(empty {});
+    }
+    if (workspace.package.readme.is_none()) {
+        return workspace_failure<empty>(
+            rstd::format("workspace member '{}' inherits package.readme but "
+                         "workspace.package.readme is not set",
+                         manifest.name.as_str()));
+    }
+    if (! workspace.package.readme->enabled) {
+        manifest.readme.source = lito::manifest::PackageReadmeSource::Disabled;
+        return Ok(empty {});
+    }
+    auto filename = workspace.package.readme->path.as_path().file_name();
+    if (filename.is_none() || filename->to_str().is_none()) {
+        return workspace_failure<empty>(
+            rstd::format("workspace package.readme for member '{}' must name a portable file",
+                         manifest.name.as_str()));
+    }
+    auto archive_path = lito::source::SourcePath::parse(*filename->to_str());
+    if (archive_path.is_err()) {
+        return workspace_failure<empty>(
+            rstd::format("workspace package.readme for member '{}' must name a portable file: {}",
+                         manifest.name.as_str(),
+                         rstd::move(archive_path).unwrap_err()));
+    }
+    manifest.readme.path         = Some(workspace.package.readme->path.clone());
+    manifest.readme.archive_path = Some(String::make(archive_path->as_str()));
     return Ok(empty {});
 }
 
@@ -377,6 +430,19 @@ auto resolve_workspace_member(lito::manifest::PackageManifest&         manifest,
     rstd_try(resolve_workspace_member_version(manifest, workspace));
     rstd_try(resolve_workspace_member_license(manifest, workspace));
     rstd_try(resolve_workspace_member_authors(manifest, workspace));
+    rstd_try(resolve_workspace_member_metadata(manifest.description,
+                                               workspace.package.description,
+                                               manifest.name.as_str(),
+                                               "description"_str));
+    rstd_try(resolve_workspace_member_metadata(manifest.repository,
+                                               workspace.package.repository,
+                                               manifest.name.as_str(),
+                                               "repository"_str));
+    rstd_try(resolve_workspace_member_metadata(manifest.documentation,
+                                               workspace.package.documentation,
+                                               manifest.name.as_str(),
+                                               "documentation"_str));
+    rstd_try(resolve_workspace_member_readme(manifest, workspace));
     return resolve_workspace_member_dependencies(manifest, workspace);
 }
 

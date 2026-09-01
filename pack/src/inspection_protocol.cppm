@@ -14,13 +14,13 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
-inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v3"_str;
-inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v3"_str;
+inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v4"_str;
+inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v4"_str;
 inline constexpr auto REGISTRY_INSPECTION_CANDIDATE_SCHEMA =
-    "lito.registry.verified-publish-candidate.v3"_str;
+    "lito.registry.verified-publish-candidate.v4"_str;
 inline constexpr auto REGISTRY_INSPECTION_FAILURE_SCHEMA =
-    "lito.registry.package-check-failure.v3"_str;
-inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v3"_str;
+    "lito.registry.package-check-failure.v4"_str;
+inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v4"_str;
 
 struct RegistryInspectionProtocolError {
     String message;
@@ -42,6 +42,7 @@ struct VerifiedRegistryPackageDescriptor {
     SemanticVersion                   version;
     RegistryPackageArchive            archive;
     Vec<RegistryDependencyProjection> dependencies;
+    RegistryPackageMetadata           metadata;
     usize                             file_count {};
     u64                               unpacked_size {};
 };
@@ -119,6 +120,19 @@ auto string_member(const Json& value, ref<str> key, ref<str> context)
         return protocol_failure<ref<str>>(rstd::format("{}.{} must be a string", context, key));
     }
     return Ok(*text);
+}
+
+auto optional_string_member(const Json& value, ref<str> key, ref<str> context)
+    -> RegistryInspectionProtocolResult<Option<String>> {
+    auto members = rstd_try(object(value, context));
+    auto result  = members->get(key);
+    if (result.is_none()) return Ok(None());
+    auto text = (**result).as_str();
+    if (text.is_none()) {
+        return protocol_failure<Option<String>>(
+            rstd::format("{}.{} must be a string", context, key));
+    }
+    return Ok(Some(String::make(*text)));
 }
 
 auto bool_member(const Json& value, ref<str> key, ref<str> context)
@@ -281,6 +295,109 @@ auto dependency_json(const RegistryDependencyProjection& dependency) -> Json {
     return Json::Object(rstd::move(value));
 }
 
+auto parse_candidate_metadata(const Json& value)
+    -> RegistryInspectionProtocolResult<RegistryPackageMetadata> {
+    rstd_try(reject_unknown(value,
+                            "candidate.metadata"_str,
+                            { "authors"_str,
+                              "license"_str,
+                              "description"_str,
+                              "repository"_str,
+                              "documentation"_str,
+                              "readme"_str }));
+    auto authors_value = rstd_try(member(value, "authors"_str, "candidate.metadata"_str));
+    auto authors_array = authors_value->as_array();
+    if (authors_array.is_none()) {
+        return protocol_failure<RegistryPackageMetadata>(
+            "candidate.metadata.authors must be an array"_str);
+    }
+    auto authors = Vec<String>::with_capacity((*authors_array)->len());
+    for (usize index {}; index < (*authors_array)->len(); ++index) {
+        auto author = (**authors_array)[index].as_str();
+        if (author.is_none()) {
+            return protocol_failure<RegistryPackageMetadata>(
+                rstd::format("candidate.metadata.authors[{}] must be a string", index));
+        }
+        authors.push(String::make(*author));
+    }
+
+    auto metadata_object = rstd_try(object(value, "candidate.metadata"_str));
+    auto readme_value    = metadata_object->get("readme"_str);
+    auto readme          = Option<RegistryReadmeMetadata> {};
+    if (readme_value.is_some()) {
+        rstd_try(reject_unknown(**readme_value,
+                                "candidate.metadata.readme"_str,
+                                { "file"_str, "contents"_str, "sha256"_str, "size"_str }));
+        auto path =
+            rstd_try(string_member(**readme_value, "file"_str, "candidate.metadata.readme"_str));
+        auto source_path = lito::source::SourcePath::parse(path);
+        if (source_path.is_err()) {
+            return protocol_failure<RegistryPackageMetadata>(rstd::format(
+                "candidate.metadata.readme.file is invalid: {}", source_path.unwrap_err()));
+        }
+        auto contents = rstd_try(
+            string_member(**readme_value, "contents"_str, "candidate.metadata.readme"_str));
+        auto size =
+            rstd_try(canonical_size(**readme_value, "size"_str, "candidate.metadata.readme"_str));
+        if (size != as_cast<u64>(contents.len())) {
+            return protocol_failure<RegistryPackageMetadata>(
+                "candidate.metadata.readme.size does not match contents"_str);
+        }
+        auto checksum = rstd_try(parse_registry_value(
+            PackageChecksum::parse(rstd_try(
+                string_member(**readme_value, "sha256"_str, "candidate.metadata.readme"_str))),
+            "candidate.metadata.readme.sha256"_str));
+        auto actual   = licrypto::sha256_digest(contents);
+        if (! (checksum.digest() == actual)) {
+            return protocol_failure<RegistryPackageMetadata>(
+                "candidate.metadata.readme.checksum does not match contents"_str);
+        }
+        readme = Some(RegistryReadmeMetadata {
+            .path     = String::make(path),
+            .contents = String::make(contents),
+            .checksum = rstd::move(actual),
+            .size     = size,
+        });
+    }
+    return Ok(RegistryPackageMetadata {
+        .authors = rstd::move(authors),
+        .license = rstd_try(optional_string_member(value, "license"_str, "candidate.metadata"_str)),
+        .description =
+            rstd_try(optional_string_member(value, "description"_str, "candidate.metadata"_str)),
+        .repository =
+            rstd_try(optional_string_member(value, "repository"_str, "candidate.metadata"_str)),
+        .documentation =
+            rstd_try(optional_string_member(value, "documentation"_str, "candidate.metadata"_str)),
+        .readme = rstd::move(readme),
+    });
+}
+
+auto candidate_metadata_json(const RegistryPackageMetadata& metadata) -> Json {
+    auto authors = rstd::json::Array::make();
+    for (const auto& author : metadata.authors) authors.push(string_json(author.as_str()));
+    auto value = JsonMap::make();
+    value.insert(String::make("authors"_str), Json::Array(rstd::move(authors)));
+    const auto insert_optional = [&](ref<str> key, const Option<String>& item) {
+        if (item.is_some()) value.insert(String::make(key), string_json(item->as_str()));
+    };
+    insert_optional("license"_str, metadata.license);
+    insert_optional("description"_str, metadata.description);
+    insert_optional("repository"_str, metadata.repository);
+    insert_optional("documentation"_str, metadata.documentation);
+    if (metadata.readme.is_some()) {
+        auto readme = JsonMap::make();
+        readme.insert(String::make("file"_str), string_json(metadata.readme->path.as_str()));
+        readme.insert(String::make("contents"_str),
+                      string_json(metadata.readme->contents.as_str()));
+        readme.insert(String::make("sha256"_str),
+                      string_json(metadata.readme->checksum.to_hex().as_str()));
+        readme.insert(String::make("size"_str),
+                      string_json(rstd::format("{}", metadata.readme->size).as_str()));
+        value.insert(String::make("readme"_str), Json::Object(rstd::move(readme)));
+    }
+    return Json::Object(rstd::move(value));
+}
+
 } // namespace
 
 auto lito::registry::registry_inspector_capabilities_json() -> String {
@@ -290,7 +407,7 @@ auto lito::registry::registry_inspector_capabilities_json() -> String {
     formats.push(string_json(RegistryArchiveFormat::TAR_ZSTD_V1));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str),
-                string_json("lito.registry.inspector-capabilities.v3"_str));
+                string_json("lito.registry.inspector-capabilities.v4"_str));
     root.insert(String::make("protocols"_str), Json::Array(rstd::move(protocols)));
     root.insert(String::make("archive_formats"_str), Json::Array(rstd::move(formats)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
@@ -410,6 +527,7 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
                               "version"_str,
                               "archive"_str,
                               "dependencies"_str,
+                              "metadata"_str,
                               "file_count"_str,
                               "unpacked_size"_str,
                               "receipt"_str }));
@@ -456,6 +574,8 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
     for (usize index {}; index < (*dependencies_array)->len(); ++index) {
         dependencies.push(rstd_try(parse_dependency((**dependencies_array)[index], index)));
     }
+    auto metadata = rstd_try(
+        parse_candidate_metadata(*rstd_try(member(root, "metadata"_str, "candidate"_str))));
     auto file_count = rstd_try(canonical_size(root, "file_count"_str, "candidate"_str));
     if (file_count > as_cast<u64>(usize::MAX)) {
         return protocol_failure<VerifiedRegistryPackageDescriptor>(
@@ -475,6 +595,7 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
                 .format   = rstd::move(format),
             },
         .dependencies  = rstd::move(dependencies),
+        .metadata      = rstd::move(metadata),
         .file_count    = usize(file_count.to_primitive()),
         .unpacked_size = rstd_try(canonical_size(root, "unpacked_size"_str, "candidate"_str)),
     });
@@ -501,6 +622,7 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
     root.insert(String::make("version"_str), string_json(candidate.version.text().as_str()));
     root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
     root.insert(String::make("dependencies"_str), Json::Array(rstd::move(dependencies)));
+    root.insert(String::make("metadata"_str), candidate_metadata_json(candidate.metadata));
     root.insert(String::make("file_count"_str),
                 string_json(rstd::format("{}", candidate.file_count).as_str()));
     root.insert(String::make("unpacked_size"_str),

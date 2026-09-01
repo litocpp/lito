@@ -57,6 +57,33 @@ struct PackageAuthors {
     Vec<String>          values;
 };
 
+enum class PackageMetadataSource
+{
+    Unspecified,
+    Explicit,
+    Workspace,
+};
+
+struct PackageMetadata {
+    PackageMetadataSource source { PackageMetadataSource::Unspecified };
+    Option<String>        value;
+};
+
+enum class PackageReadmeSource
+{
+    Unspecified,
+    Explicit,
+    Inferred,
+    Workspace,
+    Disabled,
+};
+
+struct PackageReadme {
+    PackageReadmeSource source { PackageReadmeSource::Unspecified };
+    Option<PathBuf>     path;
+    Option<String>      archive_path;
+};
+
 struct PackagePublish {
     Option<Vec<String>> include;
     Vec<String>         exclude;
@@ -67,6 +94,10 @@ struct PackageManifest {
     PackageVersion                                     version;
     PackageLicense                                     license;
     PackageAuthors                                     authors;
+    PackageMetadata                                    description;
+    PackageMetadata                                    repository;
+    PackageMetadata                                    documentation;
+    PackageReadme                                      readme;
     PackagePublish                                     publish;
     Option<PackageStandardRequirement>                 standard;
     PathBuf                                            root;

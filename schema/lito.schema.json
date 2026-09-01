@@ -135,6 +135,51 @@
         }
       ]
     },
+    "packageMetadata": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        {
+          "type": "object",
+          "required": [
+            "workspace"
+          ],
+          "properties": {
+            "workspace": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "packageReadme": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "required": [
+            "workspace"
+          ],
+          "properties": {
+            "workspace": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "predicateFamily": {
       "enum": [
         "unix",
@@ -217,6 +262,18 @@
         },
         "authors": {
           "$ref": "#/definitions/packageAuthors"
+        },
+        "description": {
+          "$ref": "#/definitions/packageMetadata"
+        },
+        "readme": {
+          "$ref": "#/definitions/packageReadme"
+        },
+        "repository": {
+          "$ref": "#/definitions/packageMetadata"
+        },
+        "documentation": {
+          "$ref": "#/definitions/packageMetadata"
         },
         "source-root": {
           "description": "Source and usage path base, relative to the package manifest directory. It must contain the package directory.",
@@ -1705,6 +1762,25 @@
         },
         "authors": {
           "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "description": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "readme": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/nonEmptyString"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        },
+        "repository": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "documentation": {
+          "$ref": "#/definitions/nonEmptyString"
         }
       },
       "additionalProperties": false

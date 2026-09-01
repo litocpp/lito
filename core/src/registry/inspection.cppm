@@ -4,7 +4,9 @@ module;
 export module lito.core:registry.inspection;
 
 import rstd;
+import licrypto;
 import :manifest.document;
+import :parse.value;
 import :registry.artifact;
 import :registry.identity;
 import :registry.metadata;
@@ -18,10 +20,27 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
+struct RegistryReadmeMetadata {
+    String                 path;
+    String                 contents;
+    licrypto::Sha256Digest checksum;
+    u64                    size {};
+};
+
+struct RegistryPackageMetadata {
+    Vec<String>                    authors;
+    Option<String>                 license;
+    Option<String>                 description;
+    Option<String>                 repository;
+    Option<String>                 documentation;
+    Option<RegistryReadmeMetadata> readme;
+};
+
 struct VerifiedRegistrySourceCandidate {
     RegistryPackageId                 package;
     SemanticVersion                   version;
     Vec<RegistryDependencyProjection> dependencies;
+    RegistryPackageMetadata           metadata;
     lito::manifest::PackageManifest   manifest;
     usize                             file_count {};
     u64                               unpacked_size {};
@@ -168,6 +187,139 @@ auto projection_equal(const RegistryDependencyProjection& left,
     return true;
 }
 
+auto validate_description(const lito::manifest::PackageMetadata& value,
+                          const RegistryPackageId&               package)
+    -> RegistryArtifactResult<Option<String>> {
+    if (value.source == lito::manifest::PackageMetadataSource::Workspace) {
+        return inspection_failure<Option<String>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("standalone Registry manifest must not inherit package.description"_str));
+    }
+    if (value.value.is_none()) return Ok(None());
+    if (value.value->as_str().trim_ascii().is_empty()) {
+        return inspection_failure<Option<String>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("package.description must contain non-whitespace text"_str));
+    }
+    if (value.value->len() > usize(512)) {
+        return inspection_failure<Option<String>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("package.description must not exceed 512 UTF-8 bytes"_str));
+    }
+    for (auto byte : value.value->as_str().as_bytes()) {
+        const auto raw = byte.to_primitive();
+        if (raw < 0x20 || raw == 0x7f) {
+            return inspection_failure<Option<String>>(
+                RegistryArtifactErrorKind::Manifest,
+                package,
+                String::make("package.description must not contain control characters"_str));
+        }
+    }
+    return Ok(Some(value.value->clone()));
+}
+
+auto validate_metadata_url(const lito::manifest::PackageMetadata& value,
+                           ref<str>                               key,
+                           const RegistryPackageId&               package)
+    -> RegistryArtifactResult<Option<String>> {
+    if (value.source == lito::manifest::PackageMetadataSource::Workspace) {
+        return inspection_failure<Option<String>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            rstd::format("standalone Registry manifest must not inherit package.{}", key));
+    }
+    if (value.value.is_none()) return Ok(None());
+    if (value.value->len() > usize(2048)) {
+        return inspection_failure<Option<String>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            rstd::format("package.{} must not exceed 2048 UTF-8 bytes", key));
+    }
+    auto parsed = lito::parse::HttpsUrl::parse(value.value->as_str());
+    if (parsed.is_err() || parsed->as_str() != value.value->as_str() ||
+        parsed->url()->authority().contains("@"_str)) {
+        return inspection_failure<Option<String>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            rstd::format("package.{} must be a canonical HTTPS URL without credentials", key));
+    }
+    return Ok(Some(value.value->clone()));
+}
+
+auto inspect_readme(const lito::manifest::PackageManifest& manifest,
+                    const lito::source::SourceTree&        tree,
+                    const RegistryPackageId&               package)
+    -> RegistryArtifactResult<Option<RegistryReadmeMetadata>> {
+    if (manifest.readme.source == lito::manifest::PackageReadmeSource::Workspace) {
+        return inspection_failure<Option<RegistryReadmeMetadata>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("standalone Registry manifest must not inherit package.readme"_str));
+    }
+    if (manifest.readme.archive_path.is_none()) return Ok(None());
+    const lito::source::SourceTreeEntry* readme = nullptr;
+    for (const auto& entry : tree.entries()) {
+        if (entry.kind() == lito::source::SourceEntryKind::File &&
+            entry.path().as_str() == manifest.readme.archive_path->as_str()) {
+            readme = rstd::addressof(entry);
+            break;
+        }
+    }
+    if (readme == nullptr) {
+        return inspection_failure<Option<RegistryReadmeMetadata>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            rstd::format("package.readme '{}' is missing from the Registry archive",
+                         manifest.readme.archive_path->as_str()));
+    }
+    if (readme->contents().len() > usize(256) * usize(1024)) {
+        return inspection_failure<Option<RegistryReadmeMetadata>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("package.readme must not exceed 256 KiB"_str));
+    }
+    auto contents = String::from_utf8(Vec<u8>::from(readme->contents()));
+    if (contents.is_err()) {
+        return inspection_failure<Option<RegistryReadmeMetadata>>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("package.readme must contain valid UTF-8"_str));
+    }
+    auto size = as_cast<u64>(readme->contents().len());
+    return Ok(Some(RegistryReadmeMetadata {
+        .path     = String::make(readme->path().as_str()),
+        .contents = rstd::move(contents).unwrap(),
+        .checksum = licrypto::sha256_digest(readme->contents()),
+        .size     = size,
+    }));
+}
+
+auto inspect_package_metadata(const lito::manifest::PackageManifest& manifest,
+                              const lito::source::SourceTree&        tree,
+                              const RegistryPackageId&               package)
+    -> RegistryArtifactResult<RegistryPackageMetadata> {
+    if (manifest.authors.source == lito::manifest::PackageAuthorsSource::Workspace ||
+        manifest.license.source == lito::manifest::PackageLicenseSource::Workspace) {
+        return inspection_failure<RegistryPackageMetadata>(
+            RegistryArtifactErrorKind::Manifest,
+            package,
+            String::make("standalone Registry manifest must not inherit package metadata"_str));
+    }
+    return Ok(RegistryPackageMetadata {
+        .authors     = manifest.authors.values.clone(),
+        .license     = manifest.license.value.clone(),
+        .description = rstd_try(validate_description(manifest.description, package)),
+        .repository =
+            rstd_try(validate_metadata_url(manifest.repository, "repository"_str, package)),
+        .documentation =
+            rstd_try(validate_metadata_url(manifest.documentation, "documentation"_str, package)),
+        .readme = rstd_try(inspect_readme(manifest, tree, package)),
+    });
+}
+
 } // namespace
 
 auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
@@ -268,6 +420,7 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
         .package       = expected_package.clone(),
         .version       = expected_version.clone(),
         .dependencies  = rstd::move(dependencies),
+        .metadata      = rstd_try(inspect_package_metadata(manifest, tree, expected_package)),
         .manifest      = rstd::move(manifest),
         .file_count    = file_count,
         .unpacked_size = unpacked_size,

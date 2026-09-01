@@ -505,6 +505,24 @@ auto lito::manifest::serialize_standalone_package_manifest(const PackageManifest
     } else {
         package_table->remove("authors"_str);
     }
+    const auto replace_package_metadata = [&](ref<str> key, const PackageMetadata& metadata) {
+        if (metadata.value.is_some()) {
+            package_table->insert(String::make(key), string_value(metadata.value->as_str()));
+        } else {
+            package_table->remove(key);
+        }
+    };
+    replace_package_metadata("description"_str, manifest.description);
+    replace_package_metadata("repository"_str, manifest.repository);
+    replace_package_metadata("documentation"_str, manifest.documentation);
+    if (manifest.readme.archive_path.is_some()) {
+        package_table->insert(String::make("readme"_str),
+                              string_value(manifest.readme.archive_path->as_str()));
+    } else if (manifest.readme.source == PackageReadmeSource::Disabled) {
+        package_table->insert(String::make("readme"_str), Toml::Boolean(false));
+    } else {
+        package_table->remove("readme"_str);
+    }
 
     auto root = document.as_table_mut().unwrap();
     root->remove("workspace"_str);

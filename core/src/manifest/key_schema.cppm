@@ -7,19 +7,23 @@ import rstd;
 import rstd.toml;
 import :manifest.error;
 import :manifest.package;
+import :manifest.workspace;
 import :manifest.language;
 import :package.identity;
 import :manifest.primitives;
+import :source.tree;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using Toml = rstd::toml::Value;
+using Toml    = rstd::toml::Value;
+using PathBuf = rstd::path::PathBuf;
 using namespace lito::manifest;
 
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
            key == "target"_str || key == "license"_str || key == "authors"_str ||
-           key == "standard"_str || key == "publish"_str;
+           key == "description"_str || key == "readme"_str || key == "repository"_str ||
+           key == "documentation"_str || key == "standard"_str || key == "publish"_str;
 }
 
 auto package_publish_key(ref<str> key) -> bool {
@@ -205,7 +209,9 @@ auto package_version_key(ref<str> key) -> bool {
 }
 
 auto workspace_package_key(ref<str> key) -> bool {
-    return key == "version"_str || key == "license"_str || key == "authors"_str;
+    return key == "version"_str || key == "license"_str || key == "authors"_str ||
+           key == "description"_str || key == "readme"_str || key == "repository"_str ||
+           key == "documentation"_str;
 }
 
 auto package_license_key(ref<str> key) -> bool {
@@ -213,6 +219,10 @@ auto package_license_key(ref<str> key) -> bool {
 }
 
 auto package_authors_key(ref<str> key) -> bool {
+    return key == "workspace"_str;
+}
+
+auto package_metadata_key(ref<str> key) -> bool {
     return key == "workspace"_str;
 }
 
@@ -354,6 +364,182 @@ auto parse_package_authors(const Toml& package) -> ManifestSchemaResult<PackageA
     return Ok(PackageAuthors {
         .source = PackageAuthorsSource::Workspace,
     });
+}
+
+auto parse_package_metadata(const Toml& package, ref<str> key)
+    -> ManifestSchemaResult<PackageMetadata> {
+    auto declared = member(package, key);
+    if (declared.is_none()) return Ok(PackageMetadata {});
+
+    auto explicit_value = (**declared).as_str();
+    if (explicit_value.is_some()) {
+        if (explicit_value->is_empty()) {
+            return manifest_schema_failure<PackageMetadata>(
+                rstd::format("package.{} must not be empty", key));
+        }
+        return Ok(PackageMetadata {
+            .source = PackageMetadataSource::Explicit,
+            .value  = Some(String::make(*explicit_value)),
+        });
+    }
+
+    auto context   = rstd::format("package.{}", key);
+    auto inherited = rstd_try(table_value(**declared, context.as_str()));
+    rstd_try(reject_unknown(*inherited, context.as_str(), package_metadata_key));
+    auto workspace = member(**declared, "workspace"_str);
+    if (workspace.is_none()) {
+        return manifest_schema_failure<PackageMetadata>(
+            rstd::format("package.{} is missing 'workspace'", key));
+    }
+    auto enabled = (**workspace).as_bool();
+    if (enabled.is_none() || ! *enabled) {
+        return manifest_schema_failure<PackageMetadata>(
+            rstd::format("package.{}.workspace must be true", key));
+    }
+    return Ok(PackageMetadata {
+        .source = PackageMetadataSource::Workspace,
+    });
+}
+
+auto readme_archive_path(ref<rstd::path::Path> declared, ref<str> context)
+    -> ManifestSchemaResult<String> {
+    auto portable = lito::source::SourcePath::from_relative_path(declared);
+    if (portable.is_ok()) return Ok(String::make(portable->as_str()));
+    auto filename = declared.file_name();
+    if (filename.is_none() || filename->to_str().is_none()) {
+        return manifest_schema_failure<String>(
+            rstd::format("{} must name a portable file", context));
+    }
+    auto flattened = lito::source::SourcePath::parse(*filename->to_str());
+    if (flattened.is_err()) {
+        return manifest_schema_failure<String>(
+            rstd::format("{} must name a portable file: {}", context, flattened.unwrap_err()));
+    }
+    return Ok(String::make(flattened->as_str()));
+}
+
+auto inferred_readme_exists(ref<str>                              candidate,
+                            ref<rstd::path::Path>                 root,
+                            Option<ref<lito::source::SourceTree>> embedded_source)
+    -> ManifestSchemaResult<bool> {
+    if (embedded_source.is_some()) {
+        for (const auto& entry : (**embedded_source).entries()) {
+            if (entry.path().as_str() == candidate &&
+                entry.kind() == lito::source::SourceEntryKind::File) {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    auto path   = PathBuf::from(root).join(PathBuf::from(candidate).as_path());
+    auto exists = rstd::fs::exists(path.as_path());
+    if (exists.is_err()) {
+        return manifest_schema_failure<bool>(
+            rstd::format("cannot inspect inferred package.readme '{}': {}",
+                         path.as_path(),
+                         exists.unwrap_err()));
+    }
+    return Ok(*exists);
+}
+
+auto parse_package_readme(const Toml&                           package,
+                          ref<rstd::path::Path>                 root,
+                          Option<ref<lito::source::SourceTree>> embedded_source)
+    -> ManifestSchemaResult<PackageReadme> {
+    auto declared = member(package, "readme"_str);
+    if (declared.is_none()) {
+        constexpr ref<str> candidates[] = { "README.md"_str, "README.txt"_str, "README"_str };
+        for (auto candidate : candidates) {
+            if (! rstd_try(inferred_readme_exists(candidate, root, embedded_source))) continue;
+            return Ok(PackageReadme {
+                .source       = PackageReadmeSource::Inferred,
+                .path         = Some(PathBuf::from(root).join(PathBuf::from(candidate).as_path())),
+                .archive_path = Some(String::make(candidate)),
+            });
+        }
+        return Ok(PackageReadme {});
+    }
+
+    auto explicit_path = (**declared).as_str();
+    if (explicit_path.is_some()) {
+        if (explicit_path->is_empty()) {
+            return manifest_schema_failure<PackageReadme>("package.readme must not be empty"_str);
+        }
+        auto relative = PathBuf::from(*explicit_path);
+        if (relative.as_path().is_absolute() || relative.as_path().has_root()) {
+            return manifest_schema_failure<PackageReadme>(
+                "package.readme must be relative to the package root"_str);
+        }
+        if (embedded_source.is_some()) {
+            auto portable = lito::source::SourcePath::parse(*explicit_path);
+            if (portable.is_err()) {
+                return manifest_schema_failure<PackageReadme>(
+                    rstd::format("standalone package.readme must be a portable archive path: {}",
+                                 rstd::move(portable).unwrap_err()));
+            }
+        }
+        auto archive_path = rstd_try(readme_archive_path(relative.as_path(), "package.readme"_str));
+        return Ok(PackageReadme {
+            .source       = PackageReadmeSource::Explicit,
+            .path         = Some(PathBuf::from(root).join(relative.as_path())),
+            .archive_path = Some(rstd::move(archive_path)),
+        });
+    }
+
+    auto explicit_enabled = (**declared).as_bool();
+    if (explicit_enabled.is_some()) {
+        if (! *explicit_enabled) {
+            return Ok(PackageReadme { .source = PackageReadmeSource::Disabled });
+        }
+        return Ok(PackageReadme {
+            .source = PackageReadmeSource::Explicit,
+            .path   = Some(PathBuf::from(root).join(PathBuf::from("README.md"_str).as_path())),
+            .archive_path = Some(String::make("README.md"_str)),
+        });
+    }
+
+    auto inherited = rstd_try(table_value(**declared, "package.readme"_str));
+    rstd_try(reject_unknown(*inherited, "package.readme"_str, package_metadata_key));
+    auto workspace = member(**declared, "workspace"_str);
+    if (workspace.is_none()) {
+        return manifest_schema_failure<PackageReadme>("package.readme is missing 'workspace'"_str);
+    }
+    auto enabled = (**workspace).as_bool();
+    if (enabled.is_none() || ! *enabled) {
+        return manifest_schema_failure<PackageReadme>("package.readme.workspace must be true"_str);
+    }
+    return Ok(PackageReadme { .source = PackageReadmeSource::Workspace });
+}
+
+auto parse_workspace_package_readme(Option<ref<Toml>> value, ref<rstd::path::Path> root)
+    -> ManifestSchemaResult<Option<WorkspacePackageReadme>> {
+    if (value.is_none()) return Ok(None());
+    auto path = (**value).as_str();
+    if (path.is_some()) {
+        if (path->is_empty()) {
+            return manifest_schema_failure<Option<WorkspacePackageReadme>>(
+                "workspace.package.readme must not be empty"_str);
+        }
+        auto relative = PathBuf::from(*path);
+        if (relative.as_path().is_absolute() || relative.as_path().has_root()) {
+            return manifest_schema_failure<Option<WorkspacePackageReadme>>(
+                "workspace.package.readme must be relative to the workspace root"_str);
+        }
+        return Ok(Some(WorkspacePackageReadme {
+            .enabled = true,
+            .path    = PathBuf::from(root).join(relative.as_path()),
+        }));
+    }
+    auto enabled = (**value).as_bool();
+    if (enabled.is_none()) {
+        return manifest_schema_failure<Option<WorkspacePackageReadme>>(
+            "workspace.package.readme must be a path or boolean"_str);
+    }
+    return Ok(Some(WorkspacePackageReadme {
+        .enabled = *enabled,
+        .path    = *enabled ? PathBuf::from(root).join(PathBuf::from("README.md"_str).as_path())
+                            : PathBuf::make(),
+    }));
 }
 
 auto parse_package_publish(const Toml& package) -> ManifestSchemaResult<PackagePublish> {

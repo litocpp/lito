@@ -119,9 +119,43 @@ auto assemble_manifest_document(PathBuf                               root,
                 workspace_authors = Some(rstd_try(
                     parse_author_list(workspace_authors_value, "workspace.package.authors"_str)));
             }
-            package_defaults.version = rstd::move(workspace_version).unwrap();
-            package_defaults.license = rstd::move(workspace_license).unwrap();
-            package_defaults.authors = rstd::move(workspace_authors);
+            auto workspace_description = optional_string(
+                **workspace_package_value, "description"_str, "workspace.package"_str);
+            if (workspace_description.is_err()) {
+                return Err(rstd::move(workspace_description).unwrap_err());
+            }
+            auto workspace_repository = optional_string(
+                **workspace_package_value, "repository"_str, "workspace.package"_str);
+            if (workspace_repository.is_err()) {
+                return Err(rstd::move(workspace_repository).unwrap_err());
+            }
+            auto workspace_documentation = optional_string(
+                **workspace_package_value, "documentation"_str, "workspace.package"_str);
+            if (workspace_documentation.is_err()) {
+                return Err(rstd::move(workspace_documentation).unwrap_err());
+            }
+            const auto require_non_empty = [](const Option<String>& value,
+                                              ref<str> context) -> ManifestSchemaResult<empty> {
+                if (value.is_some() && value->is_empty()) {
+                    return manifest_schema_failure<empty>(
+                        rstd::format("{} must not be empty", context));
+                }
+                return Ok(empty {});
+            };
+            rstd_try(
+                require_non_empty(*workspace_description, "workspace.package.description"_str));
+            rstd_try(require_non_empty(*workspace_repository, "workspace.package.repository"_str));
+            rstd_try(
+                require_non_empty(*workspace_documentation, "workspace.package.documentation"_str));
+            auto workspace_readme          = rstd_try(parse_workspace_package_readme(
+                member(**workspace_package_value, "readme"_str), root.as_path()));
+            package_defaults.version       = rstd::move(workspace_version).unwrap();
+            package_defaults.license       = rstd::move(workspace_license).unwrap();
+            package_defaults.authors       = rstd::move(workspace_authors);
+            package_defaults.description   = rstd::move(workspace_description).unwrap();
+            package_defaults.repository    = rstd::move(workspace_repository).unwrap();
+            package_defaults.documentation = rstd::move(workspace_documentation).unwrap();
+            package_defaults.readme        = rstd::move(workspace_readme);
         }
         auto workspace_dependencies =
             rstd_try(parse_workspace_dependencies(member(**workspace_value, "dependencies"_str)));
@@ -268,6 +302,14 @@ auto assemble_manifest_document(PathBuf                               root,
     if (license.is_err()) return Err(rstd::move(license).unwrap_err());
     auto authors = parse_package_authors(package_value);
     if (authors.is_err()) return Err(rstd::move(authors).unwrap_err());
+    auto description = parse_package_metadata(package_value, "description"_str);
+    if (description.is_err()) return Err(rstd::move(description).unwrap_err());
+    auto repository = parse_package_metadata(package_value, "repository"_str);
+    if (repository.is_err()) return Err(rstd::move(repository).unwrap_err());
+    auto documentation = parse_package_metadata(package_value, "documentation"_str);
+    if (documentation.is_err()) return Err(rstd::move(documentation).unwrap_err());
+    auto readme = parse_package_readme(package_value, root.as_path(), embedded_source);
+    if (readme.is_err()) return Err(rstd::move(readme).unwrap_err());
     auto publish = parse_package_publish(package_value);
     if (publish.is_err()) return Err(rstd::move(publish).unwrap_err());
 
@@ -439,6 +481,10 @@ auto assemble_manifest_document(PathBuf                               root,
             .version                    = rstd::move(version).unwrap(),
             .license                    = rstd::move(license).unwrap(),
             .authors                    = rstd::move(authors).unwrap(),
+            .description                = rstd::move(description).unwrap(),
+            .repository                 = rstd::move(repository).unwrap(),
+            .documentation              = rstd::move(documentation).unwrap(),
+            .readme                     = rstd::move(readme).unwrap(),
             .publish                    = rstd::move(publish).unwrap(),
             .standard                   = rstd::move(standard),
             .root                       = root.clone(),

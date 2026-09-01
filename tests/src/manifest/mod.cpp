@@ -35,6 +35,10 @@ name = "fixture-package-license"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["Lito Authors <authors@example.invalid>", "Lito Contributors"]
+description = "Manifest metadata fixture"
+readme = false
+repository = "https://example.invalid/fixture"
+documentation = "https://docs.example.invalid/fixture"
 
 [lib]
 name = "fixture-package-license"
@@ -52,6 +56,15 @@ archive = "fixture-package-license"
     EXPECT_EQ(package->authors.values[usize {}].as_str(),
               "Lito Authors <authors@example.invalid>"_str);
     EXPECT_EQ(package->authors.values[usize(1)].as_str(), "Lito Contributors"_str);
+    EXPECT_EQ(package->description.source, lito::manifest::PackageMetadataSource::Explicit);
+    ASSERT_TRUE(package->description.value.is_some());
+    EXPECT_EQ(package->description.value->as_str(), "Manifest metadata fixture"_str);
+    ASSERT_TRUE(package->repository.value.is_some());
+    EXPECT_EQ(package->repository.value->as_str(), "https://example.invalid/fixture"_str);
+    ASSERT_TRUE(package->documentation.value.is_some());
+    EXPECT_EQ(package->documentation.value->as_str(), "https://docs.example.invalid/fixture"_str);
+    EXPECT_EQ(package->readme.source, lito::manifest::PackageReadmeSource::Disabled);
+    EXPECT_TRUE(package->readme.path.is_none());
 
     auto workspace_project = manifest("workspace-license"_str, R"toml([workspace]
 name = "fixture-workspace-license"
@@ -61,6 +74,10 @@ members = ["package"]
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["Lito Authors <authors@example.invalid>"]
+description = "Workspace metadata fixture"
+readme = "README.md"
+repository = "https://example.invalid/workspace"
+documentation = "https://docs.example.invalid/workspace"
 )toml"_str);
     ASSERT_TRUE(workspace_project.is_ok());
     auto workspace = lito::manifest::load_manifest_document(workspace_project->root.as_path());
@@ -72,6 +89,93 @@ authors = ["Lito Authors <authors@example.invalid>"]
     ASSERT_EQ(workspace->workspace->package.authors->len(), usize(1));
     EXPECT_EQ((*workspace->workspace->package.authors)[usize {}].as_str(),
               "Lito Authors <authors@example.invalid>"_str);
+    ASSERT_TRUE(workspace->workspace->package.description.is_some());
+    EXPECT_EQ(workspace->workspace->package.description->as_str(),
+              "Workspace metadata fixture"_str);
+    ASSERT_TRUE(workspace->workspace->package.repository.is_some());
+    EXPECT_EQ(workspace->workspace->package.repository->as_str(),
+              "https://example.invalid/workspace"_str);
+    ASSERT_TRUE(workspace->workspace->package.documentation.is_some());
+    EXPECT_EQ(workspace->workspace->package.documentation->as_str(),
+              "https://docs.example.invalid/workspace"_str);
+    ASSERT_TRUE(workspace->workspace->package.readme.is_some());
+    EXPECT_TRUE(workspace->workspace->package.readme->enabled);
+    EXPECT_EQ(workspace->workspace->package.readme->path.as_path(),
+              workspace_project->root.join(PathBuf::from("README.md"_str).as_path()).as_path());
+}
+
+TEST_F(Manifest, WorkspaceMetadataResolvesBeforeStandalonePackaging) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "fixture-workspace-metadata"
+members = ["package"]
+
+[workspace.package]
+version = "1.2.3"
+description = "Inherited package description"
+readme = "README.md"
+repository = "https://example.invalid/inherited"
+documentation = "https://docs.example.invalid/inherited"
+)toml"_str },
+        { "README.md"_str, "# Inherited README\n"_str },
+        { "package/lito.toml"_str, R"toml([package]
+name = "fixture-inherited-metadata"
+version.workspace = true
+description.workspace = true
+readme.workspace = true
+repository.workspace = true
+documentation.workspace = true
+
+[lib]
+name = "fixture-inherited-metadata"
+module = "fixture.inherited_metadata"
+archive = "fixture-inherited-metadata"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "package/src/lib.cppm"_str, "export module fixture.inherited_metadata;\n"_str },
+    };
+    auto project = materialize("workspace-metadata"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto document = lito::manifest::load_manifest_document(project->root.as_path());
+    ASSERT_TRUE(document.is_ok());
+    ASSERT_TRUE(document->workspace.is_some());
+    auto catalog =
+        lito::workspace::load_workspace_catalog(rstd::move(document->workspace).unwrap());
+    ASSERT_TRUE(catalog.is_ok());
+    auto package = catalog->package("fixture-inherited-metadata"_str);
+    ASSERT_TRUE(package.is_some());
+    ASSERT_TRUE((**package).description.value.is_some());
+    EXPECT_EQ((**package).description.value->as_str(), "Inherited package description"_str);
+    ASSERT_TRUE((**package).repository.value.is_some());
+    EXPECT_EQ((**package).repository.value->as_str(), "https://example.invalid/inherited"_str);
+    ASSERT_TRUE((**package).documentation.value.is_some());
+    EXPECT_EQ((**package).documentation.value->as_str(),
+              "https://docs.example.invalid/inherited"_str);
+    EXPECT_EQ((**package).readme.source, lito::manifest::PackageReadmeSource::Workspace);
+    ASSERT_TRUE((**package).readme.path.is_some());
+    EXPECT_EQ((**package).readme.path->as_path(),
+              project->root.join(PathBuf::from("README.md"_str).as_path()).as_path());
+    ASSERT_TRUE((**package).readme.archive_path.is_some());
+    EXPECT_EQ((**package).readme.archive_path->as_str(), "README.md"_str);
+
+    auto file_set = lito::manifest::PackageFileSetResolver::resolve(**package);
+    ASSERT_TRUE(file_set.is_ok());
+    auto paths      = file_set->paths();
+    auto has_readme = false;
+    for (const auto& path : paths) {
+        if (path.as_str() == "README.md"_str) has_readme = true;
+    }
+    EXPECT_TRUE(has_readme);
+
+    auto standalone = lito::manifest::serialize_standalone_package_manifest(
+        **package,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(standalone.is_ok());
+    EXPECT_TRUE(standalone->as_str().contains("readme = \"README.md\""_str));
+    EXPECT_FALSE(standalone->as_str().contains("workspace = true"_str));
 }
 
 TEST_F(Manifest, RegistryDependencyUsesDependencyName) {
