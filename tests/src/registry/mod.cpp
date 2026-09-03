@@ -110,6 +110,7 @@ struct SolverFixtureProvider {
 
 struct IndexHttpFixture {
     String body;
+    String last_url;
     usize  calls {};
     bool   not_modified {};
     bool   saw_condition {};
@@ -119,9 +120,11 @@ struct IndexHttpFixture {
         auto& self = *static_cast<IndexHttpFixture*>(context);
         ++self.calls;
         self.saw_condition = request.if_none_match.is_some();
+        self.last_url      = request.url.clone();
+        auto not_modified  = self.not_modified && self.saw_condition;
         return Ok(lito::registry::RegistryHttpResponse {
-            .status = self.not_modified ? u16(304) : u16(200),
-            .body   = self.not_modified ? String::make() : self.body.clone(),
+            .status = not_modified ? u16(304) : u16(200),
+            .body   = not_modified ? String::make() : self.body.clone(),
             .etag   = Some(String::make("\"fixture-etag\""_str)),
         });
     }
@@ -456,6 +459,7 @@ TEST(RegistrySolver, BacktracksAndUnifiesEachPackageToOneVersion) {
         lito::registry::RegistrySolverInput { .roots = rstd::move(roots) }, fixture.provider());
     ASSERT_TRUE(solved.is_ok());
     ASSERT_EQ(solved->packages.len(), usize(2));
+    EXPECT_EQ(fixture.loads, usize(2));
     EXPECT_EQ(solved->packages[usize {}].release.version.text().as_str(), "1.0.0"_str);
     EXPECT_EQ(solved->packages[usize(1)].release.version.text().as_str(), "1.2.3"_str);
 }
@@ -532,17 +536,19 @@ TEST(RegistrySolver, RejectsChecksumChangeForLockedVersion) {
     EXPECT_EQ(error.as_Provider().error.kind, lito::registry::RegistryIndexErrorKind::Integrity);
 }
 
-TEST(RegistryIndexCache, RevalidatesAndSupportsStrictOfflineReads) {
+TEST(RegistryIndexCache, RefreshRevalidatesWhileReuseStaysLocal) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner   = rstd::move(temporary).unwrap();
     auto config  = registry_test_config();
     auto fixture = IndexHttpFixture { .body = String::make(package_index_fixture) };
-    auto online = lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
-                                                      config,
-                                                      lito::registry::RegistryNetworkPolicy::Online,
-                                                      fixture.transport());
-    auto first  = online.load(registry_package("sample"_str));
+    auto online =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    auto first = online.load(registry_package("sample"_str));
     ASSERT_TRUE(first.is_ok());
     EXPECT_EQ(fixture.calls, usize(1));
     EXPECT_FALSE(fixture.saw_condition);
@@ -550,16 +556,65 @@ TEST(RegistryIndexCache, RevalidatesAndSupportsStrictOfflineReads) {
     fixture.not_modified = true;
     ASSERT_TRUE(online.load(registry_package("sample"_str)).is_ok());
     EXPECT_TRUE(fixture.saw_condition);
+    EXPECT_EQ(fixture.calls, usize(2));
+
+    auto reuse =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                            fixture.transport());
+    ASSERT_TRUE(reuse.load(registry_package("sample"_str)).is_ok());
+    EXPECT_EQ(fixture.calls, usize(2));
 
     auto offline =
         lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
                                             config,
                                             lito::registry::RegistryNetworkPolicy::Offline,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
                                             lito::registry::RegistryHttpTransport {});
     auto cached = offline.load(registry_package("sample"_str));
     ASSERT_TRUE(cached.is_ok());
     EXPECT_EQ(cached->releases()[usize {}].checksum.text().as_str(),
               "1111111111111111111111111111111111111111111111111111111111111111"_str);
+}
+
+TEST(RegistryIndexCache, DoesNotSendAnEtagToAnotherEndpoint) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto primary = registry_test_config();
+    auto fixture = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto initial =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            primary,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    ASSERT_TRUE(initial.load(registry_package("sample"_str)).is_ok());
+    EXPECT_EQ(fixture.calls, usize(1));
+
+    auto mirror          = primary.clone();
+    mirror.mirror        = Some(lito::registry::RegistryDataEndpoints {
+        .index = registry_endpoint("https://mirror.example/index/{package}.json"_str,
+                                   lito::registry::RegistryEndpointKind::Index),
+        .blob  = primary.endpoints.blob.clone(),
+    });
+    fixture.not_modified = true;
+    auto refreshed =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            mirror,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    ASSERT_TRUE(refreshed.load(registry_package("sample"_str)).is_ok());
+    EXPECT_EQ(fixture.calls, usize(2));
+    EXPECT_FALSE(fixture.saw_condition);
+    EXPECT_EQ(fixture.last_url.as_str(), "https://mirror.example/index/sample.json"_str);
+
+    ASSERT_TRUE(refreshed.load(registry_package("sample"_str)).is_ok());
+    EXPECT_EQ(fixture.calls, usize(3));
+    EXPECT_TRUE(fixture.saw_condition);
 }
 
 TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
@@ -568,10 +623,12 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
     auto owner   = rstd::move(temporary).unwrap();
     auto config  = registry_test_config();
     auto fixture = IndexHttpFixture { .body = String::make(package_index_fixture) };
-    auto online = lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
-                                                      config,
-                                                      lito::registry::RegistryNetworkPolicy::Online,
-                                                      fixture.transport());
+    auto online =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
     ASSERT_TRUE(online.load(registry_package("sample"_str)).is_ok());
     fixture.body = String::make(changed_package_index_fixture);
     auto changed = online.load(registry_package("sample"_str));
@@ -589,6 +646,7 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
         lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
                                             config,
                                             lito::registry::RegistryNetworkPolicy::Offline,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
                                             lito::registry::RegistryHttpTransport {});
     auto corrupted = offline.load(registry_package("sample"_str));
     ASSERT_TRUE(corrupted.is_err());
@@ -768,6 +826,7 @@ archive = "sample"
         PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path()),
         bootstrap,
         lito::registry::RegistryNetworkPolicy::Online,
+        lito::registry::RegistryGraphPolicy {},
         http.transport(),
         blob.transport(),
         true,
@@ -783,6 +842,85 @@ archive = "sample"
     ASSERT_EQ(resolved->len(), usize(1));
     EXPECT_EQ((*resolved)[usize {}].version.text().as_str(), "1.2.3"_str);
     EXPECT_EQ(http.calls, usize {});
+    EXPECT_EQ(blob.calls, usize(1));
+}
+
+TEST(RegistryGraphClient, RefreshesOnceAfterCachedIndexIncompatibility) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner        = rstd::move(temporary).unwrap();
+    auto cache        = PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path());
+    auto config       = registry_test_config();
+    auto initial_http = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto initial =
+        lito::registry::RegistryIndexClient(cache.clone(),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            initial_http.transport());
+    ASSERT_TRUE(initial.load(registry_package("sample"_str)).is_ok());
+
+    auto tree = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str,
+                              R"toml([package]
+name = "sample"
+version = "2.0.0"
+authors = ["Lito Authors"]
+license = "MIT"
+description = "Registry refresh fixture"
+readme = "README.md"
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("README.md"_str, "# Sample\n"_str).is_ok());
+    ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("2.0.0"_str);
+    auto archive = PathBuf::from(owner.path()).join(PathBuf::from("sample.tar.zst"_str).as_path());
+    auto built =
+        lito::registry::PackageArchiveBuilder::build(tree, package, version, archive.clone());
+    ASSERT_TRUE(built.is_ok());
+
+    auto refreshed_index =
+        rstd::format("{{\"schema\":\"lito.registry.package-index.v1\","
+                     "\"registry\":\"https://registry.example/\",\"package\":\"sample\","
+                     "\"releases\":[{{\"version\":\"2.0.0\",\"checksum\":\"{}\","
+                     "\"dependencies\":[],\"yanked\":false,"
+                     "\"published_at\":\"2026-09-03T12:00:00Z\"}}]}}",
+                     built->archive.checksum.text().as_str());
+    auto http       = IndexHttpFixture { .body = rstd::move(refreshed_index) };
+    auto blob       = CopyBlobTransportFixture { .source = archive.clone() };
+    auto registries = Vec<lito::config::NamedRegistryConfig>::make();
+    registries.push(config.clone());
+    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries),
+                                                       Some(String::make("fixture"_str)));
+    auto client    = lito::registry::RegistryGraphClient(
+        rstd::move(cache),
+        bootstrap,
+        lito::registry::RegistryNetworkPolicy::Online,
+        lito::registry::RegistryGraphPolicy {
+            .index                      = lito::registry::RegistryIndexUpdatePolicy::Reuse,
+            .refresh_on_incompatibility = true,
+        },
+        http.transport(),
+        blob.transport(),
+        false);
+    auto requirements = Vec<lito::registry::RegistryGraphRequirement>::make();
+    requirements.push(lito::registry::RegistryGraphRequirement {
+        .package     = package.name.clone(),
+        .requirement = lito::registry::VersionRequirement::parse(">=2.0.0"_str).unwrap(),
+        .source      = String::make("root dependency 'sample'"_str),
+    });
+    auto resolved = client.resolve(requirements.as_slice());
+    ASSERT_TRUE(resolved.is_ok());
+    ASSERT_EQ(resolved->len(), usize(1));
+    EXPECT_EQ((*resolved)[usize {}].version.text().as_str(), "2.0.0"_str);
+    EXPECT_EQ(http.calls, usize(1));
+    EXPECT_TRUE(http.saw_condition);
     EXPECT_EQ(blob.calls, usize(1));
 }
 

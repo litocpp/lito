@@ -23,6 +23,12 @@ enum class RegistryNetworkPolicy
     Offline,
 };
 
+enum class RegistryIndexUpdatePolicy
+{
+    Reuse,
+    Refresh,
+};
+
 struct RegistryHttpRequest {
     RegistryPackageId package;
     String            url;
@@ -43,11 +49,12 @@ struct RegistryHttpTransport {
 };
 
 class RegistryIndexClient {
-    PathBuf                  cache_root_;
-    RegistryId               registry_;
-    RegistryEndpointTemplate endpoint_;
-    RegistryNetworkPolicy    network_ { RegistryNetworkPolicy::Online };
-    RegistryHttpTransport    transport_;
+    PathBuf                   cache_root_;
+    RegistryId                registry_;
+    RegistryEndpointTemplate  endpoint_;
+    RegistryNetworkPolicy     network_ { RegistryNetworkPolicy::Online };
+    RegistryIndexUpdatePolicy update_ { RegistryIndexUpdatePolicy::Reuse };
+    RegistryHttpTransport     transport_;
 
     static auto load_provider(void* context, const RegistryPackageId& package) noexcept
         -> RegistryIndexLoadResult;
@@ -56,11 +63,13 @@ public:
     RegistryIndexClient(PathBuf                                  cache_root,
                         const lito::config::NamedRegistryConfig& config,
                         RegistryNetworkPolicy                    network,
+                        RegistryIndexUpdatePolicy                update,
                         RegistryHttpTransport                    transport)
         : cache_root_(rstd::move(cache_root)),
           registry_(config.identity.clone()),
           endpoint_(config.effective_endpoints()->index.clone()),
           network_(network),
+          update_(update),
           transport_(transport) {}
 
     auto load(const RegistryPackageId& package) -> RegistryIndexLoadResult;
@@ -133,7 +142,7 @@ auto cache_fields_are_known(const JsonMap& object) -> bool {
     for (auto key : keys) {
         auto value = (*key).as_str();
         if (value == "schema"_str || value == "registry"_str || value == "package"_str ||
-            value == "etag"_str || value == "fetched-at-unix-seconds"_str || value == "body"_str) {
+            value == "endpoint"_str || value == "etag"_str || value == "body"_str) {
             continue;
         }
         return false;
@@ -144,6 +153,7 @@ auto cache_fields_are_known(const JsonMap& object) -> bool {
 struct CachedPackageIndex {
     RegistryPackageIndex index;
     String               body;
+    String               endpoint;
     Option<String>       etag;
 };
 
@@ -181,12 +191,11 @@ auto read_cached_index(ref<rstd::path::Path> record, const RegistryPackageId& pa
     auto schema   = required_string(*parsed, "schema"_str);
     auto registry = required_string(*parsed, "registry"_str);
     auto name     = required_string(*parsed, "package"_str);
-    auto fetched  = required_string(*parsed, "fetched-at-unix-seconds"_str);
+    auto endpoint = required_string(*parsed, "endpoint"_str);
     auto body     = required_string(*parsed, "body"_str);
-    if (schema.is_none() || registry.is_none() || name.is_none() || fetched.is_none() ||
+    if (schema.is_none() || registry.is_none() || name.is_none() || endpoint.is_none() ||
         body.is_none() || *schema != INDEX_CACHE_SCHEMA || *registry != package.registry.as_str() ||
-        *name != package.name.as_str() || body->len() > MAX_INDEX_BYTES ||
-        lito::parse::parse_canonical_u64_decimal(*fetched).is_err()) {
+        *name != package.name.as_str() || endpoint->is_empty() || body->len() > MAX_INDEX_BYTES) {
         return corrupt_cache(package, record, "record fields are invalid"_str);
     }
     auto etag       = Option<String> {};
@@ -204,14 +213,16 @@ auto read_cached_index(ref<rstd::path::Path> record, const RegistryPackageId& pa
         return corrupt_cache(package, record, "cached package index is invalid"_str);
     }
     return Ok(Some(CachedPackageIndex {
-        .index = rstd::move(index).unwrap(),
-        .body  = String::make(*body),
-        .etag  = rstd::move(etag),
+        .index    = rstd::move(index).unwrap(),
+        .body     = String::make(*body),
+        .endpoint = String::make(*endpoint),
+        .etag     = rstd::move(etag),
     }));
 }
 
 auto write_cached_index(ref<rstd::path::Path>    record,
                         const RegistryPackageId& package,
+                        ref<str>                 endpoint,
                         ref<str>                 body,
                         const Option<String>&    etag) -> Result<empty, RegistryIndexError> {
     auto parent = record.parent();
@@ -233,11 +244,9 @@ auto write_cached_index(ref<rstd::path::Path>    record,
     document.insert(String::make("schema"_str), rstd::into<Json>(INDEX_CACHE_SCHEMA));
     document.insert(String::make("registry"_str), rstd::into<Json>(package.registry.as_str()));
     document.insert(String::make("package"_str), rstd::into<Json>(package.name.as_str()));
+    document.insert(String::make("endpoint"_str), rstd::into<Json>(endpoint));
     document.insert(String::make("etag"_str),
                     etag.is_some() ? rstd::into<Json>(etag->as_str()) : Json::Null());
-    auto now = rstd::time::SystemTime::now().as_unix_time();
-    document.insert(String::make("fetched-at-unix-seconds"_str),
-                    rstd::into<Json>(rstd::format("{}", now.seconds).as_str()));
     document.insert(String::make("body"_str), rstd::into<Json>(body));
     auto text = rstd::json::to_string(Json::Object(rstd::move(document)));
     text.push_ascii(u8('\n'));
@@ -317,6 +326,7 @@ auto reject_checksum_changes(const RegistryPackageIndex& incoming,
 auto commit_cached_index(ref<rstd::path::Path>       record,
                          const RegistryPackageId&    package,
                          const RegistryPackageIndex& incoming,
+                         ref<str>                    endpoint,
                          ref<str>                    body,
                          const Option<String>&       etag) -> Result<empty, RegistryIndexError> {
     auto lock    = rstd_try(acquire_cache_lock(record, package));
@@ -324,7 +334,7 @@ auto commit_cached_index(ref<rstd::path::Path>       record,
     if (current.is_ok() && current->is_some()) {
         rstd_try(reject_checksum_changes(incoming, current->as_ref().unwrap().index));
     }
-    return write_cached_index(record, package, body, etag);
+    return write_cached_index(record, package, endpoint, body, etag);
 }
 
 auto http_status_failure(const RegistryHttpResponse& response, const RegistryPackageId& package)
@@ -355,6 +365,9 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     }
     auto record = cache_record_path(cache_root_.as_path(), package);
     auto cached = read_cached_index(record.as_path(), package);
+    if (update_ == RegistryIndexUpdatePolicy::Reuse && cached.is_ok() && cached->is_some()) {
+        return Ok(cached->as_ref().unwrap().index.clone());
+    }
     if (network_ == RegistryNetworkPolicy::Offline) {
         if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
         if (cached->is_none()) {
@@ -366,11 +379,14 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
         return Ok(cached->as_ref().unwrap().index.clone());
     }
 
-    auto request = RegistryHttpRequest {
+    auto endpoint = endpoint_.render(package.name.as_str());
+    auto request  = RegistryHttpRequest {
         .package = package.clone(),
-        .url     = endpoint_.render(package.name.as_str()),
+        .url     = endpoint.clone(),
     };
-    if (cached.is_ok() && cached->is_some() && cached->as_ref().unwrap().etag.is_some()) {
+    if (cached.is_ok() && cached->is_some() &&
+        cached->as_ref().unwrap().endpoint.as_str() == endpoint.as_str() &&
+        cached->as_ref().unwrap().etag.is_some()) {
         request.if_none_match = Some(cached->as_ref().unwrap().etag->clone());
     }
     if (transport_.get == nullptr) {
@@ -389,7 +405,8 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
             "Registry index response has an invalid ETag"_str);
     }
     if (received.status == u16(304)) {
-        if (cached.is_err() || cached->is_none()) {
+        if (cached.is_err() || cached->is_none() ||
+            cached->as_ref().unwrap().endpoint.as_str() != endpoint.as_str()) {
             return index_failure<RegistryPackageIndex>(
                 RegistryIndexErrorKind::CorruptCache,
                 package,
@@ -397,8 +414,12 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
         }
         auto& current = cached->as_ref().unwrap();
         auto  etag    = received.etag.is_some() ? received.etag.clone() : current.etag.clone();
-        rstd_try(commit_cached_index(
-            record.as_path(), package, current.index, current.body.as_str(), etag));
+        rstd_try(commit_cached_index(record.as_path(),
+                                     package,
+                                     current.index,
+                                     endpoint.as_str(),
+                                     current.body.as_str(),
+                                     etag));
         return Ok(current.index.clone());
     }
     if (received.status != u16(200)) return http_status_failure(received, package);
@@ -416,7 +437,11 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     if (cached.is_ok() && cached->is_some()) {
         rstd_try(reject_checksum_changes(*index, cached->as_ref().unwrap().index));
     }
-    rstd_try(commit_cached_index(
-        record.as_path(), package, *index, received.body.as_str(), received.etag));
+    rstd_try(commit_cached_index(record.as_path(),
+                                 package,
+                                 *index,
+                                 endpoint.as_str(),
+                                 received.body.as_str(),
+                                 received.etag));
     return Ok(rstd::move(index).unwrap());
 }

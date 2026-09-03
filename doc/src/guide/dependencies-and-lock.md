@@ -56,6 +56,25 @@ for reproducible applications and workspaces.
 - `--frozen` combines `--locked` and `--offline`.
 - repeated `--source-bundle DIRECTORY` adds read-only pre-populated sources for offline acquisition.
 
+Registry packages keep the canonical Registry identity in `source`, while `name`, `version`, and
+`checksum` identify the selected package release and archive bytes separately:
+
+```toml
+[[packages]]
+name = "geometry"
+version = "1.2.3"
+source = "registry+https://registry.litocpp.org/"
+checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+The configured Index, blob, API, and mirror endpoints are transport details and are not written to
+the lock. A normal build reuses its locked Registry releases and locally cached package Index
+records without checking for newly published versions. If a manifest change cannot be resolved
+from that cache, an online build may refresh the affected package Index once. `lito update`
+conditionally refreshes every package Index reached by resolution. `--locked` does not read the
+Index at all; it may still download a missing archive by its locked checksum unless `--offline` is
+also active.
+
 Offline resolution evaluates source availability before resolving network tools. A verified
 archive file-cache entry can be extracted without `curl`, and a valid archive materialization
 needs neither a downloader nor an extractor. Locked Git checkouts carry a Lito-owned receipt, so a

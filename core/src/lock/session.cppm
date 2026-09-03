@@ -28,8 +28,15 @@ enum class InvalidLockPolicy
     Replace,
 };
 
+enum class RegistryLockPolicy
+{
+    Reuse,
+    Ignore,
+};
+
 class LockSession {
     bool                                  locked_ { false };
+    bool                                  has_resolution_lock_ { false };
     PathBuf                               root_;
     PathBuf                               destination_;
     Option<Toml>                          existing_;
@@ -42,12 +49,14 @@ public:
     auto take_resolution_options() -> lito::source::SourceResolutionOptions {
         return rstd::move(options_);
     }
+    auto has_resolution_lock() const noexcept -> bool { return has_resolution_lock_; }
 
     friend auto load_lock_session(ref<rstd::path::Path>           root,
                                   const LockConfig&               config,
                                   bool                            locked,
                                   lito::source::GitResolutionMode git,
-                                  InvalidLockPolicy invalid) -> LockResult<LockSession>;
+                                  InvalidLockPolicy               invalid,
+                                  RegistryLockPolicy registry) -> LockResult<LockSession>;
     friend auto sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
         -> LockResult<LockStatus>;
 };
@@ -60,13 +69,15 @@ auto load_lock_session(
     const LockConfig&               config,
     bool                            locked,
     lito::source::GitResolutionMode git     = lito::source::GitResolutionMode::ReuseLocked,
-    InvalidLockPolicy               invalid = InvalidLockPolicy::Reject) -> LockResult<LockSession>;
+    InvalidLockPolicy               invalid = InvalidLockPolicy::Reject,
+    RegistryLockPolicy registry             = RegistryLockPolicy::Reuse) -> LockResult<LockSession>;
 
 auto load_lock_session(
     ref<rstd::path::Path>           root,
     bool                            locked,
     lito::source::GitResolutionMode git     = lito::source::GitResolutionMode::ReuseLocked,
-    InvalidLockPolicy               invalid = InvalidLockPolicy::Reject) -> LockResult<LockSession>;
+    InvalidLockPolicy               invalid = InvalidLockPolicy::Reject,
+    RegistryLockPolicy registry             = RegistryLockPolicy::Reuse) -> LockResult<LockSession>;
 
 auto sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
     -> LockResult<LockStatus>;

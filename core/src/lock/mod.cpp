@@ -116,10 +116,7 @@ auto locked_source_wire(const LockedSource& source) -> LockedSourceWire {
         };
     }
     return LockedSourceWire {
-        .source   = rstd::format("registry+{}{}@{}",
-                                 source.as_Registry().package.registry.as_str(),
-                                 source.as_Registry().package.name.as_str(),
-                                 source.as_Registry().version.text().as_str()),
+        .source   = rstd::format("registry+{}", source.as_Registry().package.registry.as_str()),
         .checksum = Some(source.as_Registry().checksum.text()),
     };
 }
@@ -304,54 +301,56 @@ auto parse_locked_source(String                value,
         return Ok(LockedSource::Archive(rstd::move(url).unwrap_unchecked(), rstd::move(sha256)));
     }
 
-    auto registry = value.as_str().strip_prefix("registry+"_str);
-    if (registry.is_some() && ! external_source) {
-        if (checksum.is_none()) {
-            return lock_data_failure<LockedSource>(path.with_field("checksum"_str),
-                                                   "Registry source checksum is required"_str);
-        }
-        auto version = registry->rsplit_once("@"_str);
-        if (version.is_none()) {
-            return lock_data_failure<LockedSource>(path.with_field("source"_str),
-                                                   "Registry source version is missing"_str);
-        }
-        auto package = version->get<0>().rsplit_once("/"_str);
-        if (package.is_none()) {
-            return lock_data_failure<LockedSource>(path.with_field("source"_str),
-                                                   "Registry source package is missing"_str);
-        }
-        auto registry_id =
-            lito::registry::RegistryId::parse(rstd::format("{}/", package->get<0>()).as_str());
-        auto package_name     = lito::registry::RegistryPackageName::parse(package->get<1>());
-        auto semantic_version = lito::registry::SemanticVersion::parse(version->get<1>());
-        if (registry_id.is_err() || package_name.is_err() || semantic_version.is_err()) {
-            return lock_data_failure<LockedSource>(path.with_field("source"_str),
-                                                   "Registry source coordinate is invalid"_str);
-        }
-        auto package_checksum = lito::registry::PackageChecksum(
-            rstd_try(parse_sha256_checksum(checksum->as_str(), path.with_field("checksum"_str))));
-        return Ok(LockedSource::Registry(
-            lito::registry::RegistryPackageId {
-                .registry = rstd::move(registry_id).unwrap_unchecked(),
-                .name     = rstd::move(package_name).unwrap_unchecked(),
-            },
-            rstd::move(semantic_version).unwrap_unchecked(),
-            rstd::move(package_checksum)));
-    }
-
     return lock_data_failure<LockedSource>(path.with_field("source"_str),
                                            "source kind is not allowed here"_str);
 }
 
-auto validate_locked_package_source(const Option<LockedSource>& source, ref<str> package)
-    -> LockResult<empty> {
-    if (source.is_some() && source->is_Registry()) {
-        if (source->as_Registry().package.name.as_str() != package) {
-            return lock_failure<empty>(
-                "lock Registry source package does not match lock package name"_str);
-        }
+auto parse_locked_registry_source(ref<str>              value,
+                                  Option<String>        checksum,
+                                  ref<str>              package,
+                                  const Option<String>& version,
+                                  rstd::serde::DataPath path) -> LockResult<LockedSource> {
+    auto registry = value.strip_prefix("registry+"_str);
+    if (registry.is_none()) {
+        return lock_data_failure<LockedSource>(path.with_field("source"_str),
+                                               "Registry source must be 'registry+<identity>'"_str);
     }
-    return Ok(empty {});
+    auto registry_id = lito::registry::RegistryId::parse(*registry);
+    if (registry_id.is_err()) {
+        return lock_data_failure<LockedSource>(
+            path.with_field("source"_str),
+            rstd::format("Registry source identity '{}' is invalid", *registry).as_str(),
+            rstd::move(registry_id).unwrap_err_unchecked());
+    }
+    auto package_name = lito::registry::RegistryPackageName::parse(package);
+    if (package_name.is_err()) {
+        return lock_data_failure<LockedSource>(path.with_field("name"_str),
+                                               "Registry package name is invalid"_str,
+                                               rstd::move(package_name).unwrap_err_unchecked());
+    }
+    if (version.is_none()) {
+        return lock_data_failure<LockedSource>(path.with_field("version"_str),
+                                               "Registry package version is required"_str);
+    }
+    auto semantic_version = lito::registry::SemanticVersion::parse(version->as_str());
+    if (semantic_version.is_err()) {
+        return lock_data_failure<LockedSource>(path.with_field("version"_str),
+                                               "Registry package version is invalid"_str,
+                                               rstd::move(semantic_version).unwrap_err_unchecked());
+    }
+    if (checksum.is_none()) {
+        return lock_data_failure<LockedSource>(path.with_field("checksum"_str),
+                                               "Registry source checksum is required"_str);
+    }
+    auto package_checksum = lito::registry::PackageChecksum(
+        rstd_try(parse_sha256_checksum(checksum->as_str(), path.with_field("checksum"_str))));
+    return Ok(LockedSource::Registry(
+        lito::registry::RegistryPackageId {
+            .registry = rstd::move(registry_id).unwrap_unchecked(),
+            .name     = rstd::move(package_name).unwrap_unchecked(),
+        },
+        rstd::move(semantic_version).unwrap_unchecked(),
+        rstd::move(package_checksum)));
 }
 
 auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedProject> {
@@ -387,26 +386,26 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
         }
         auto locked_source = Option<LockedSource> {};
         if (package.source.is_some()) {
-            locked_source =
-                Some(rstd_try(parse_locked_source(rstd::move(package.source).unwrap_unchecked(),
-                                                  rstd::move(package.checksum),
-                                                  package_path.clone(),
-                                                  false)));
+            if (package.source->as_str().starts_with("registry+"_str)) {
+                locked_source =
+                    Some(rstd_try(parse_locked_registry_source(package.source->as_str(),
+                                                               rstd::move(package.checksum),
+                                                               package.name.as_str(),
+                                                               package.version,
+                                                               package_path.clone())));
+            } else {
+                locked_source =
+                    Some(rstd_try(parse_locked_source(rstd::move(package.source).unwrap_unchecked(),
+                                                      rstd::move(package.checksum),
+                                                      package_path.clone(),
+                                                      false)));
+            }
         } else {
             if (package.checksum.is_some()) {
                 return lock_data_failure<LockedProject>(package_path.with_field("checksum"_str),
                                                         "package checksum requires a source"_str);
             }
         }
-        rstd_try(validate_locked_package_source(locked_source, package.name.as_str()));
-        if (locked_source.is_some() && locked_source->is_Registry() &&
-            (package.version.is_none() ||
-             package.version->as_str() != locked_source->as_Registry().version.text().as_str())) {
-            return lock_data_failure<LockedProject>(
-                package_path.with_field("version"_str),
-                "Registry package version does not match source version"_str);
-        }
-
         auto locked_externals =
             Vec<LockedPackageExternalSource>::with_capacity(package.externals.len());
         auto external_identities = StringSet::make();
@@ -602,16 +601,14 @@ auto append_registry_pin(lito::source::SourceResolutionOptions& options,
     return Ok(empty {});
 }
 
-auto append_project_pins(lito::source::SourceResolutionOptions& options,
-                         const LockedProject&                   project) -> LockResult<empty> {
+auto append_project_git_pins(lito::source::SourceResolutionOptions& options,
+                             const LockedProject&                   project) -> LockResult<empty> {
     for (const auto& package : project.packages) {
         if (package.source.is_none()) continue;
         if (package.source->is_Git()) {
             rstd_try(append_git_pin(options,
                                     package.source->as_Git().url.as_str(),
                                     package.source->as_Git().commit.as_str()));
-        } else if (package.source->is_Registry()) {
-            rstd_try(append_registry_pin(options, package.source->as_Registry()));
         }
     }
     for (const auto& package : project.packages) {
@@ -620,6 +617,16 @@ auto append_project_pins(lito::source::SourceResolutionOptions& options,
             rstd_try(append_git_pin(options,
                                     external.source.as_Git().url.as_str(),
                                     external.source.as_Git().commit.as_str()));
+        }
+    }
+    return Ok(empty {});
+}
+
+auto append_project_registry_pins(lito::source::SourceResolutionOptions& options,
+                                  const LockedProject& project) -> LockResult<empty> {
+    for (const auto& package : project.packages) {
+        if (package.source.is_some() && package.source->is_Registry()) {
+            rstd_try(append_registry_pin(options, package.source->as_Registry()));
         }
     }
     return Ok(empty {});
@@ -649,7 +656,8 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
                                    const LockConfig&               config,
                                    bool                            locked,
                                    lito::source::GitResolutionMode git,
-                                   InvalidLockPolicy invalid) -> LockResult<LockSession> {
+                                   InvalidLockPolicy               invalid,
+                                   RegistryLockPolicy registry) -> LockResult<LockSession> {
     if (locked && git == lito::source::GitResolutionMode::Refresh) {
         return lock_failure<LockSession>("--locked cannot refresh Git dependencies"_str);
     }
@@ -701,23 +709,28 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
     auto options = lito::source::SourceResolutionOptions { .locked = locked, .git = git };
     auto project = Some(rstd::move(parsed_project).unwrap());
     if (git != lito::source::GitResolutionMode::Refresh) {
-        rstd_try(append_project_pins(options, *project));
+        rstd_try(append_project_git_pins(options, *project));
     }
-    auto session           = LockSession {};
-    session.locked_        = locked;
-    session.root_          = PathBuf::from(root);
-    session.destination_   = rstd::move(destination);
-    session.existing_      = Some(rstd::move(existing->document));
-    session.existing_text_ = Some(rstd::move(existing->text));
-    session.options_       = rstd::move(options);
+    if (registry == RegistryLockPolicy::Reuse) {
+        rstd_try(append_project_registry_pins(options, *project));
+    }
+    auto session                 = LockSession {};
+    session.locked_              = locked;
+    session.has_resolution_lock_ = true;
+    session.root_                = PathBuf::from(root);
+    session.destination_         = rstd::move(destination);
+    session.existing_            = Some(rstd::move(existing->document));
+    session.existing_text_       = Some(rstd::move(existing->text));
+    session.options_             = rstd::move(options);
     return Ok(rstd::move(session));
 }
 
 auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
                                    bool                            locked,
                                    lito::source::GitResolutionMode git,
-                                   InvalidLockPolicy invalid) -> LockResult<LockSession> {
-    return load_lock_session(root, LockConfig {}, locked, git, invalid);
+                                   InvalidLockPolicy               invalid,
+                                   RegistryLockPolicy registry) -> LockResult<LockSession> {
+    return load_lock_session(root, LockConfig {}, locked, git, invalid, registry);
 }
 
 auto lito::lock::sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)

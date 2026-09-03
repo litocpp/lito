@@ -139,6 +139,43 @@ TEST_F(Lock, VersionOneUsesPackageNames) {
     EXPECT_EQ(root->dependencies[usize {}].as_str(), "fixture-lock-dependency"_str);
 }
 
+TEST_F(Lock, RegistryWriterUsesIdentityOnly) {
+    auto fixture = project_without_lock("registry-writer"_str);
+    ASSERT_TRUE(fixture.is_ok());
+    auto session = lito::lock::load_lock_session(fixture->root.as_path(), false);
+    ASSERT_TRUE(session.is_ok());
+    auto options = session->take_resolution_options();
+    auto graph = lito::package::resolve_package_graph(fixture->root.as_path(), rstd::move(options));
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->packages.len(), usize(1));
+    auto& source            = graph->packages[usize {}].source;
+    source.kind             = lito::source::PackageSourceKind::Registry;
+    source.registry_package = Some(lito::registry::RegistryPackageId {
+        .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        .name     = lito::registry::RegistryPackageName::parse("fixture-lock"_str).unwrap(),
+    });
+    source.registry_version = Some(lito::registry::SemanticVersion::parse("1.0.0"_str).unwrap());
+    source.package_checksum =
+        Some(lito::registry::PackageChecksum::parse(
+                 "0000000000000000000000000000000000000000000000000000000000000000"_str)
+                 .unwrap());
+    auto synchronized = lito::lock::sync_lock(*graph, rstd::move(session).unwrap());
+    ASSERT_TRUE(synchronized.is_ok());
+
+    auto lock = rstd::fs::read_to_string(
+        fixture->root.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
+    ASSERT_TRUE(lock.is_ok());
+    EXPECT_TRUE(lock->as_str().contains(
+        "name = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/\"\nchecksum = \"0000000000000000000000000000000000000000000000000000000000000000\""_str));
+    EXPECT_FALSE(lock->as_str().contains("fixture-lock@1.0.0"_str));
+
+    auto loaded = lito::lock::load_locked_project(fixture->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->packages.len(), usize(1));
+    ASSERT_TRUE(loaded->packages[usize {}].source.is_some());
+    EXPECT_TRUE(loaded->packages[usize {}].source->is_Registry());
+}
+
 TEST_F(Lock, PackageIdIsRejected) {
     constexpr auto old_lock = R"toml(version = 1
 
@@ -171,7 +208,7 @@ version = "1.0.0"
 [[packages]]
 name = "fixture-lock"
 version = "1.0.0"
-source = "registry+https://registry.example/fixture-lock@1.0.0"
+source = "registry+https://registry.example/"
 checksum = "0000000000000000000000000000000000000000000000000000000000000000"
 )toml"_str;
     auto           registry      = project("registry-source"_str, registry_lock);
@@ -183,12 +220,28 @@ checksum = "0000000000000000000000000000000000000000000000000000000000000000"
     EXPECT_EQ(loaded_registry->packages[usize {}].source->as_Registry().package.name.as_str(),
               "fixture-lock"_str);
 
+    auto registry_reused = lito::lock::load_lock_session(registry->root.as_path(),
+                                                         false,
+                                                         lito::source::GitResolutionMode::Refresh,
+                                                         lito::lock::InvalidLockPolicy::Reject,
+                                                         lito::lock::RegistryLockPolicy::Reuse);
+    ASSERT_TRUE(registry_reused.is_ok());
+    EXPECT_EQ(registry_reused->take_resolution_options().registry_sources.len(), usize(1));
+    auto registry_ignored =
+        lito::lock::load_lock_session(registry->root.as_path(),
+                                      false,
+                                      lito::source::GitResolutionMode::ReuseLocked,
+                                      lito::lock::InvalidLockPolicy::Reject,
+                                      lito::lock::RegistryLockPolicy::Ignore);
+    ASSERT_TRUE(registry_ignored.is_ok());
+    EXPECT_TRUE(registry_ignored->take_resolution_options().registry_sources.is_empty());
+
     constexpr auto legacy_registry_lock = R"toml(version = 1
 
 [[packages]]
 name = "fixture-lock"
 version = "1.0.0"
-source = "registry+https://registry.example/fixture-lock@1.0.0"
+source = "registry+https://registry.example/"
 checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 )toml"_str;
     auto           legacy_registry = project("legacy-registry-checksum"_str, legacy_registry_lock);
@@ -240,7 +293,9 @@ checksum = "1111111111111111111111111111111111111111111111111111111111111111"
         { "archive-without-checksum"_str,
           "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\n"_str },
         { "registry-without-checksum"_str,
-          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/fixture-lock@1.0.0\"\n"_str },
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/\"\n"_str },
+        { "old-registry-coordinate"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/fixture-lock@1.0.0\"\nchecksum = \"0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
         { "git-with-checksum"_str,
           "version = 1\n[[packages]]\nname = \"fixture-lock\"\nsource = \"git+https://example.invalid/repository.git#0000000000000000000000000000000000000000\"\nchecksum = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
         { "package-manifest"_str,

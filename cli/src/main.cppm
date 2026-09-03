@@ -1168,6 +1168,10 @@ extern "C++" int main() {
                 *registry_bootstrap,
                 options.offline ? lito::registry::RegistryNetworkPolicy::Offline
                                 : lito::registry::RegistryNetworkPolicy::Online,
+                lito::registry::RegistryGraphPolicy {
+                    .index = lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                    .refresh_on_incompatibility = false,
+                },
                 http,
                 blobs,
                 false);

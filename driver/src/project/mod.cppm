@@ -51,9 +51,18 @@ struct StartedProjectResolution {
     lito::source::SourceResolutionOptions   external;
 };
 
+struct ProjectRegistryResolutionPolicy {
+    lito::registry::RegistryIndexUpdatePolicy index {
+        lito::registry::RegistryIndexUpdatePolicy::Reuse
+    };
+    lito::lock::RegistryLockPolicy lock { lito::lock::RegistryLockPolicy::Reuse };
+    bool                           refresh_on_incompatibility { true };
+};
+
 struct ProjectRegistryResolver {
     const lito::config::LitoBootstrapConfig* config {};
     lito::registry::RegistryNetworkPolicy network { lito::registry::RegistryNetworkPolicy::Online };
+    lito::registry::RegistryGraphPolicy   policy;
     bool                                  locked_mode {};
     Vec<lito::source::RegistrySourcePin>  locked;
     const Vec<PathBuf>*                   source_bundles {};
@@ -120,6 +129,7 @@ struct ProjectRegistryResolver {
         auto client = lito::registry::RegistryGraphClient(PathBuf::from(data->root()),
                                                           *self.config,
                                                           self.network,
+                                                          self.policy,
                                                           http,
                                                           blobs,
                                                           self.locked_mode,
@@ -159,16 +169,28 @@ auto start_project_resolution(
         lito::source::SourceMaterializationPolicy::Materialize,
     lito::lock::InvalidLockPolicy            invalid_lock = lito::lock::InvalidLockPolicy::Reject,
     const lito::config::LitoBootstrapConfig* registries   = nullptr,
-    lito::registry::RegistryGraphProvider    registry_provider = {},
-    Option<ref<str>> artifact_processor = None()) -> ProjectResult<StartedProjectResolution> {
-    auto lock_session = rstd_try(
-        lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git, invalid_lock));
+    lito::registry::RegistryGraphProvider    registry_provider  = {},
+    Option<ref<str>>                         artifact_processor = None(),
+    ProjectRegistryResolutionPolicy          registry_policy    = {})
+    -> ProjectResult<StartedProjectResolution> {
+    auto lock_session          = rstd_try(lito::lock::load_lock_session(
+        selection.root.as_path(), lock, locked, git, invalid_lock, registry_policy.lock));
+    auto has_resolution_lock   = lock_session.has_resolution_lock();
     auto resolution            = lock_session.take_resolution_options();
     resolution.sources         = sources.clone();
     resolution.materialization = materialization;
     auto external_resolution   = resolution.clone();
     auto registry_resolver     = Option<ProjectRegistryResolver> {};
     if (registry_provider.resolve == nullptr && registries != nullptr) {
+        auto graph_policy = lito::registry::RegistryGraphPolicy {
+            .index                      = registry_policy.index,
+            .refresh_on_incompatibility = registry_policy.refresh_on_incompatibility,
+        };
+        if (! locked && ! has_resolution_lock &&
+            graph_policy.index == lito::registry::RegistryIndexUpdatePolicy::Reuse) {
+            graph_policy.index = lito::registry::RegistryIndexUpdatePolicy::Refresh;
+            graph_policy.refresh_on_incompatibility = false;
+        }
         auto pins =
             Vec<lito::source::RegistrySourcePin>::with_capacity(resolution.registry_sources.len());
         for (const auto& pin : resolution.registry_sources) pins.push(pin.clone());
@@ -190,6 +212,7 @@ auto start_project_resolution(
                                sources.network == lito::source::NetworkPolicy::Offline
                            ? lito::registry::RegistryNetworkPolicy::Offline
                            : lito::registry::RegistryNetworkPolicy::Online,
+            .policy  = graph_policy,
             .locked_mode    = resolution.locked,
             .locked         = rstd::move(pins),
             .source_bundles = rstd::addressof(sources.source_bundles),
@@ -250,7 +273,8 @@ auto resolve_project(
     lito::lock::InvalidLockPolicy            invalid_lock   = lito::lock::InvalidLockPolicy::Reject,
     const lito::config::LitoBootstrapConfig* registries     = nullptr,
     lito::registry::RegistryGraphProvider    registry       = {},
-    Option<ref<str>> artifact_processor = None()) -> ProjectResult<ProjectResolution> {
+    Option<ref<str>>                         artifact_processor = None(),
+    ProjectRegistryResolutionPolicy registry_policy = {}) -> ProjectResult<ProjectResolution> {
     auto started =
         rstd_try(start_project_resolution(selection,
                                           purpose,
@@ -268,7 +292,8 @@ auto resolve_project(
                                           invalid_lock,
                                           registries,
                                           registry,
-                                          artifact_processor));
+                                          artifact_processor,
+                                          registry_policy));
     auto declared_sources =
         rstd_try(resolve_external_dependency_sources(started.selection.graph,
                                                      rstd::move(started.external),
@@ -1281,21 +1306,29 @@ auto update_project_dependencies(
     auto jobs          = usize(1);
     auto available     = rstd::thread::available_parallelism();
     if (available.is_ok()) jobs = available->get();
-    auto resolved = rstd_try(resolve_project(selection,
-                                             lito::package::PackageSelectionPurpose::All,
-                                             sources,
-                                             lock,
-                                             false,
-                                             lito::source::GitResolutionMode::Refresh,
-                                             nullptr,
-                                             tool_resolver,
-                                             environment,
-                                             lito::dependency::CMakeBuildOverrideSet {},
-                                             jobs,
-                                             observer_value(observer),
-                                             None(),
-                                             lito::lock::InvalidLockPolicy::Replace,
-                                             registries));
+    auto resolved =
+        rstd_try(resolve_project(selection,
+                                 lito::package::PackageSelectionPurpose::All,
+                                 sources,
+                                 lock,
+                                 false,
+                                 lito::source::GitResolutionMode::Refresh,
+                                 nullptr,
+                                 tool_resolver,
+                                 environment,
+                                 lito::dependency::CMakeBuildOverrideSet {},
+                                 jobs,
+                                 observer_value(observer),
+                                 None(),
+                                 lito::lock::InvalidLockPolicy::Replace,
+                                 registries,
+                                 {},
+                                 None(),
+                                 ProjectRegistryResolutionPolicy {
+                                     .index = lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                     .lock  = lito::lock::RegistryLockPolicy::Ignore,
+                                     .refresh_on_incompatibility = false,
+                                 }));
     return Ok(resolved.lock);
 }
 

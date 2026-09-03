@@ -42,6 +42,11 @@ struct BuiltinRegistryPackage {
     SemanticVersion   version;
 };
 
+struct RegistryGraphPolicy {
+    RegistryIndexUpdatePolicy index { RegistryIndexUpdatePolicy::Reuse };
+    bool                      refresh_on_incompatibility { true };
+};
+
 struct RegistryGraphProvider {
     void*                                      context {};
     const lito::source::ResolvedPackageSource* root_source {};
@@ -54,10 +59,12 @@ class RegistryGraphClient {
     PathBuf                                  cache_root_;
     const lito::config::LitoBootstrapConfig* config_ {};
     RegistryNetworkPolicy                    network_ { RegistryNetworkPolicy::Online };
+    RegistryGraphPolicy                      policy_;
     RegistryHttpTransport                    http_;
     RegistryBlobTransport                    blobs_;
     bool                                     locked_mode_ {};
     Vec<lito::source::RegistrySourcePin>     locked_;
+    Vec<RegistryPackageIndex>                provided_indices_;
     Vec<RegistryPackageIndex>                indices_;
     Vec<RegistryPackageId>                   development_packages_;
     const Vec<PathBuf>*                      source_bundles_ {};
@@ -74,6 +81,7 @@ public:
     RegistryGraphClient(PathBuf                                  cache_root,
                         const lito::config::LitoBootstrapConfig& config,
                         RegistryNetworkPolicy                    network,
+                        RegistryGraphPolicy                      policy,
                         RegistryHttpTransport                    http,
                         RegistryBlobTransport                    blobs,
                         bool                                     locked_mode,
@@ -82,6 +90,7 @@ public:
         : cache_root_(rstd::move(cache_root)),
           config_(rstd::addressof(config)),
           network_(network),
+          policy_(policy),
           http_(http),
           blobs_(blobs),
           locked_mode_(locked_mode),
@@ -94,7 +103,9 @@ public:
                          Option<String>             registry = None(),
                          ref<str>                   source   = "Registry install"_str)
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
-    auto add_index(RegistryPackageIndex index) -> void { indices_.push(rstd::move(index)); }
+    auto add_index(RegistryPackageIndex index) -> void {
+        provided_indices_.push(rstd::move(index));
+    }
     auto provider() noexcept -> RegistryGraphProvider {
         return RegistryGraphProvider {
             .context = this,
@@ -190,6 +201,9 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
             .message = String::make("Registry graph client has no bootstrap config"_str),
         });
     }
+    for (const auto& index : self.provided_indices_) {
+        if (index.package() == package) return Ok(index.clone());
+    }
     for (const auto& index : self.indices_) {
         if (index.package() == package) return Ok(index.clone());
     }
@@ -201,8 +215,8 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
             .message = rstd::format("Registry '{}' is not configured", package.registry.as_str()),
         });
     }
-    auto client =
-        RegistryIndexClient(self.cache_root_.clone(), **config, self.network_, self.http_);
+    auto client = RegistryIndexClient(
+        self.cache_root_.clone(), **config, self.network_, self.policy_.index, self.http_);
     auto loaded = client.load(package);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     self.indices_.push(loaded->clone());
@@ -302,16 +316,29 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
             .checksum = pin.checksum.clone(),
         });
     }
-    auto solved = RegistryVersionSolver::solve(
-        RegistrySolverInput {
-            .roots                = rstd::move(roots),
-            .locked               = rstd::move(locked),
-            .development_packages = rstd::move(development_packages_),
-        },
-        RegistryIndexProvider {
-            .context = this,
-            .load    = load_index,
-        });
+    auto input = RegistrySolverInput {
+        .roots                = rstd::move(roots),
+        .locked               = rstd::move(locked),
+        .development_packages = rstd::move(development_packages_),
+    };
+    auto provider = RegistryIndexProvider {
+        .context = this,
+        .load    = load_index,
+    };
+    auto solved = RegistryVersionSolver::solve(input, provider);
+    if (solved.is_err()) {
+        auto error = rstd::move(solved).unwrap_err();
+        if (policy_.index == RegistryIndexUpdatePolicy::Reuse &&
+            policy_.refresh_on_incompatibility && network_ == RegistryNetworkPolicy::Online &&
+            error.is_Incompatibility()) {
+            indices_.clear();
+            policy_.index = RegistryIndexUpdatePolicy::Refresh;
+            solved        = RegistryVersionSolver::solve(input, provider);
+        } else {
+            return graph_failure<Vec<ResolvedRegistryGraphSource>>(
+                rstd::format("Registry version resolution failed: {}", error));
+        }
+    }
     if (solved.is_err()) {
         return graph_failure<Vec<ResolvedRegistryGraphSource>>(rstd::format(
             "Registry version resolution failed: {}", rstd::move(solved).unwrap_err()));

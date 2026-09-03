@@ -35,6 +35,10 @@ lito update [OPTIONS]
 
 Resolve the current manifests and update `lito.lock` without building selected artifacts.
 
+For Registry dependencies, update conditionally refreshes the per-package HTTP Index entries
+actually reached while solving the dependency graph. It does not download or clone a complete
+Registry Index. Existing ETags are reused only for the same configured Index endpoint.
+
 - `--offline` forbids network acquisition;
 - repeated `--source-bundle DIRECTORY` supplies read-only source bundles.
 

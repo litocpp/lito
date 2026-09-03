@@ -13,7 +13,9 @@ token = "..."
 ```
 
 `mirror` may override only the immutable index and blob endpoints. Publish requests continue to use
-`api`.
+`api`. The `identity` remains the package provenance written to `lito.lock`; changing a mirror does
+not change that identity. Cached Index validators belong to the rendered endpoint, so the first
+refresh after changing a mirror is unconditional.
 
 ## Global data root
 
