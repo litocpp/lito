@@ -1726,6 +1726,46 @@ visibility = "public"
     EXPECT_FALSE(contents->as_str().contains("# normalized"_str));
 }
 
+TEST_F(Manifest, ProjectInitializationCreatesALoadableBinaryPackage) {
+    auto root        = source_root("initialized-package"_str);
+    auto initialized = lito::manifest::initialize_project(root.as_path());
+    ASSERT_TRUE(initialized.is_ok());
+    EXPECT_EQ(initialized->package.as_str(), "initialized-package"_str);
+    EXPECT_EQ(initialized->root.as_path(), root.as_path());
+
+    auto manifest =
+        rstd::fs::read_to_string(root.join(PathBuf::from("lito.toml"_str).as_path()).as_path());
+    ASSERT_TRUE(manifest.is_ok());
+    EXPECT_TRUE(manifest->as_str().contains("name = \"initialized-package\""_str));
+    auto source =
+        rstd::fs::read_to_string(root.join(PathBuf::from("src/main.cpp"_str).as_path()).as_path());
+    ASSERT_TRUE(source.is_ok());
+    EXPECT_TRUE(source->as_str().contains("Hello, world!"_str));
+
+    auto package = lito::manifest::load_package_manifest(root.as_path());
+    ASSERT_TRUE(package.is_ok());
+    EXPECT_EQ(package->name.as_str(), "initialized-package"_str);
+    ASSERT_EQ(package->targets.len(), usize(1));
+    EXPECT_TRUE(package->targets[usize {}].is_Binary());
+}
+
+TEST_F(Manifest, ProjectInitializationAcceptsAnEmptyDirectoryAndRejectsContent) {
+    auto empty = source_root("invalid.directory"_str);
+    ASSERT_TRUE(rstd::fs::create_dir(empty.as_path()).is_ok());
+    auto initialized = lito::manifest::initialize_project(empty.as_path(),
+                                                          Some(String::make("explicit-name"_str)));
+    ASSERT_TRUE(initialized.is_ok());
+    EXPECT_EQ(initialized->package.as_str(), "explicit-name"_str);
+
+    auto occupied = source_root("occupied"_str);
+    ASSERT_TRUE(rstd::fs::create_dir(occupied.as_path()).is_ok());
+    auto sentinel = occupied.join(PathBuf::from("keep.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(sentinel.as_path(), "keep"_str.as_bytes()).is_ok());
+    auto rejected = lito::manifest::initialize_project(occupied.as_path());
+    ASSERT_TRUE(rejected.is_err());
+    EXPECT_EQ(rstd::fs::read_to_string(sentinel.as_path()).unwrap().as_str(), "keep"_str);
+}
+
 TEST_F(Manifest, PluginTargetUsesThePackageName) {
     auto project = manifest("compiler-plugin"_str, R"toml([package]
 name = "fixture-compiler-plugin"

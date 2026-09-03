@@ -12,6 +12,7 @@ export import :manifest.package;
 export import :manifest.workspace;
 export import :manifest.document;
 export import :manifest.edit;
+export import :manifest.initialize;
 export import :manifest.standalone;
 export import :manifest.publish;
 export import :manifest.error;

@@ -16,6 +16,7 @@ import :manifest.target_schema;
 import :manifest.dependency_schema;
 import :manifest.build_tool_schema;
 import :manifest.build_script_schema;
+import :manifest.initialize;
 import :parse;
 import :source.tree;
 
@@ -29,6 +30,178 @@ using namespace lito::manifest;
 
 auto lito::manifest::valid_package_name(ref<str> value) -> bool {
     return package_name_is_valid(value);
+}
+
+template<typename T>
+auto project_initialization_failure(ref<rstd::path::Path> path, String message)
+    -> lito::manifest::ProjectInitializationResult<T> {
+    return Err(lito::manifest::ProjectInitializationError {
+        .path    = PathBuf::from(path),
+        .message = rstd::move(message),
+    });
+}
+
+template<typename T>
+auto project_initialization_failure(ref<rstd::path::Path> path, ref<str> message)
+    -> lito::manifest::ProjectInitializationResult<T> {
+    return project_initialization_failure<T>(path, String::make(message));
+}
+
+auto inferred_project_name(ref<rstd::path::Path> directory)
+    -> lito::manifest::ProjectInitializationResult<String> {
+    auto named_path = PathBuf::from(directory);
+    if (named_path.as_path().file_name().is_none()) {
+        auto canonical = rstd::fs::canonicalize(directory);
+        if (canonical.is_err()) {
+            return project_initialization_failure<String>(
+                directory,
+                rstd::format("cannot infer package name: {}", rstd::move(canonical).unwrap_err()));
+        }
+        named_path = rstd::move(canonical).unwrap();
+    }
+    auto name = named_path.as_path().file_name();
+    if (name.is_none() || name->to_str().is_none()) {
+        return project_initialization_failure<String>(
+            directory, "directory name must be valid UTF-8; provide --name explicitly"_str);
+    }
+    return Ok(String::make(*name->to_str()));
+}
+
+auto checked_project_name(ref<rstd::path::Path> directory, Option<String> requested)
+    -> lito::manifest::ProjectInitializationResult<String> {
+    auto name = requested.is_some() ? rstd::move(requested).unwrap()
+                                    : rstd_try(inferred_project_name(directory));
+    if (! package_name_is_valid(name.as_str())) {
+        return project_initialization_failure<String>(
+            directory,
+            rstd::format("package name '{}' must contain only ASCII letters, digits, '-' or '_'",
+                         name.as_str()));
+    }
+    return Ok(rstd::move(name));
+}
+
+auto ensure_initialization_destination(ref<rstd::path::Path> directory)
+    -> lito::manifest::ProjectInitializationResult<bool> {
+    auto exists = rstd::fs::exists(directory);
+    if (exists.is_err()) {
+        return project_initialization_failure<bool>(
+            directory,
+            rstd::format("cannot inspect destination: {}", rstd::move(exists).unwrap_err()));
+    }
+    if (! *exists) return Ok(false);
+    auto metadata = rstd::fs::metadata(directory);
+    if (metadata.is_err()) {
+        return project_initialization_failure<bool>(
+            directory,
+            rstd::format("cannot inspect destination: {}", rstd::move(metadata).unwrap_err()));
+    }
+    if (! metadata->is_dir()) {
+        return project_initialization_failure<bool>(directory,
+                                                    "destination is not a directory"_str);
+    }
+    auto opened = rstd::fs::read_dir(directory);
+    if (opened.is_err()) {
+        return project_initialization_failure<bool>(
+            directory,
+            rstd::format("cannot enumerate destination: {}", rstd::move(opened).unwrap_err()));
+    }
+    auto entries = rstd::move(opened).unwrap();
+    auto first   = entries.next();
+    if (first.is_some()) {
+        if (first->is_err()) {
+            return project_initialization_failure<bool>(
+                directory,
+                rstd::format("cannot enumerate destination: {}", rstd::move(*first).unwrap_err()));
+        }
+        return project_initialization_failure<bool>(directory, "destination is not empty"_str);
+    }
+    return Ok(true);
+}
+
+auto write_new_project_file(ref<rstd::path::Path> path, ref<str> contents)
+    -> lito::manifest::ProjectInitializationResult<empty> {
+    auto file = rstd::fs::File::create_new(path);
+    if (file.is_err()) {
+        return project_initialization_failure<empty>(
+            path, rstd::format("cannot create file: {}", rstd::move(file).unwrap_err()));
+    }
+    auto written = rstd::move(file).unwrap().write_all(contents.as_bytes());
+    if (written.is_err()) {
+        (void)rstd::fs::remove_file(path);
+        return project_initialization_failure<empty>(
+            path, rstd::format("cannot write file: {}", rstd::move(written).unwrap_err()));
+    }
+    return Ok(empty {});
+}
+
+auto cleanup_failed_initialization(ref<rstd::path::Path> root,
+                                   ref<rstd::path::Path> manifest,
+                                   ref<rstd::path::Path> source_directory,
+                                   bool                  created_root,
+                                   bool                  created_manifest) noexcept -> void {
+    if (created_manifest) (void)rstd::fs::remove_file(manifest);
+    (void)rstd::fs::remove_dir(source_directory);
+    if (created_root) (void)rstd::fs::remove_dir(root);
+}
+
+auto lito::manifest::initialize_project(ref<rstd::path::Path> directory, Option<String> package)
+    -> ProjectInitializationResult<ProjectInitialization> {
+    auto           name          = rstd_try(checked_project_name(directory, rstd::move(package)));
+    auto           root_existed  = rstd_try(ensure_initialization_destination(directory));
+    auto           root          = PathBuf::from(directory);
+    auto           manifest      = root.join(PathBuf::from("lito.toml"_str).as_path());
+    auto           source_folder = root.join(PathBuf::from("src"_str).as_path());
+    auto           source        = source_folder.join(PathBuf::from("main.cpp"_str).as_path());
+    auto           manifest_text = rstd::format("[package]\n"
+                                                "name = \"{}\"\n"
+                                                "version = \"0.1.0\"\n"
+                                                "\n"
+                                                "[[bin]]\n"
+                                                "name = \"{}\"\n"
+                                                "sources = [\"src/main.cpp\"]\n",
+                                                name.as_str(),
+                                                name.as_str());
+    constexpr auto source_text   = "#include <cstdio>\n"
+                                   "\n"
+                                   "auto main() -> int {\n"
+                                   "    std::puts(\"Hello, world!\");\n"
+                                   "    return 0;\n"
+                                   "}\n"_str;
+
+    if (! root_existed) {
+        auto created = rstd::fs::create_dir_all(root.as_path());
+        if (created.is_err()) {
+            return project_initialization_failure<ProjectInitialization>(
+                root.as_path(),
+                rstd::format("cannot create destination: {}", rstd::move(created).unwrap_err()));
+        }
+    }
+    auto created_source_directory = rstd::fs::create_dir(source_folder.as_path());
+    if (created_source_directory.is_err()) {
+        if (! root_existed) (void)rstd::fs::remove_dir(root.as_path());
+        return project_initialization_failure<ProjectInitialization>(
+            source_folder.as_path(),
+            rstd::format("cannot create source directory: {}",
+                         rstd::move(created_source_directory).unwrap_err()));
+    }
+    auto manifest_written = write_new_project_file(manifest.as_path(), manifest_text.as_str());
+    if (manifest_written.is_err()) {
+        auto error = rstd::move(manifest_written).unwrap_err();
+        cleanup_failed_initialization(
+            root.as_path(), manifest.as_path(), source_folder.as_path(), ! root_existed, false);
+        return Err(rstd::move(error));
+    }
+    auto source_written = write_new_project_file(source.as_path(), source_text);
+    if (source_written.is_err()) {
+        auto error = rstd::move(source_written).unwrap_err();
+        cleanup_failed_initialization(
+            root.as_path(), manifest.as_path(), source_folder.as_path(), ! root_existed, true);
+        return Err(rstd::move(error));
+    }
+    return Ok(ProjectInitialization {
+        .root    = rstd::move(root),
+        .package = rstd::move(name),
+    });
 }
 
 template<typename T>

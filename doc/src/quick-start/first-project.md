@@ -1,18 +1,26 @@
 # Build the first project
 
-Create an empty directory with this layout:
+Create a binary package:
+
+```sh
+lito init hello
+cd hello
+```
+
+The command creates this layout:
 
 ```text
 hello/
 ├── lito.toml
 └── src/
-    ├── lib.cppm
-    └── main.cppm
+    └── main.cpp
 ```
 
 ## Declare the package and targets
 
-Create `lito.toml`:
+The generated `lito.toml` starts with a binary target. To expand the example with a library,
+replace that manifest with the following one, remove `src/main.cpp`, and create the module sources
+shown below:
 
 ```toml
 [package]

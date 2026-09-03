@@ -30,6 +30,9 @@ persisted local config directly.
 
 ## Commands
 
+- `init [DIRECTORY] [--name NAME]` creates a binary package in a new or empty directory. The
+  package name defaults to the directory name.
+- `add PACKAGE[@REQUIREMENT] [--registry NAME]` adds a Registry dependency to `lito.toml`.
 - [`build` and `install`](build-and-install.md)
 - [`test` and `bench`](test-and-bench.md)
 - [`doc`, `scan`, and `format`](doc-scan-and-format.md)

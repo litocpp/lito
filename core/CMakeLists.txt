@@ -54,6 +54,7 @@ target_sources(
          src/manifest/dependency.cppm
          src/manifest/document.cppm
          src/manifest/edit.cppm
+         src/manifest/initialize.cppm
          src/manifest/package.cppm
          src/manifest/primitives.cppm
          src/manifest/profile.cppm

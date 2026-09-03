@@ -147,6 +147,11 @@ struct FetchOptions {
     lito::package::FeatureSelection features;
 };
 
+struct InitOptions {
+    Option<PathBuf> path;
+    Option<String>  name;
+};
+
 struct AddOptions {
     String         source;
     Option<String> registry;
@@ -259,6 +264,7 @@ class CliCommand {
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
               (Fetch, (FetchOptions options;)),
+              (Init, (InitOptions options;)),
               (Add, (AddOptions options;)),
               (Pack, (PackOptions options;)),
               (Publish, (PublishOptions options;)),
@@ -487,6 +493,14 @@ struct FetchSchema {
     auto decode(const Matches& matches) const -> Result<FetchOptions, CliDecodeError>;
 };
 
+struct InitSchema {
+    CommandKey     command;
+    ArgKey<String> path;
+    ArgKey<String> name;
+
+    auto decode(const Matches& matches) const -> Result<InitOptions, CliDecodeError>;
+};
+
 struct AddSchema {
     CommandKey     command;
     ArgKey<String> source;
@@ -656,6 +670,7 @@ struct CliSchema {
     FormatSchema   format;
     UpdateSchema   update;
     FetchSchema    fetch;
+    InitSchema     init;
     AddSchema      add;
     PackSchema     pack;
     PublishSchema  publish;
@@ -1125,6 +1140,27 @@ auto make_fetch_definition() -> CommandDefinition<FetchSchema> {
     };
 }
 
+auto make_init_definition() -> CommandDefinition<InitSchema> {
+    auto command = Command::make("init"_str);
+    command.about("Create a new package"_str);
+    auto key  = command.key();
+    auto path = command.add_arg(Arg<String>::value("path"_str, string_parser())
+                                    .value_name("DIRECTORY"_str)
+                                    .help("Create the package in this directory"_str));
+    auto name = command.add_arg(Arg<String>::value("name"_str, string_parser())
+                                    .long_name("name"_str)
+                                    .value_name("NAME"_str)
+                                    .help("Set the package and binary name"_str));
+    return {
+        InitSchema {
+            .command = key,
+            .path    = path,
+            .name    = name,
+        },
+        rstd::move(command),
+    };
+}
+
 auto make_add_definition() -> CommandDefinition<AddSchema> {
     auto command = Command::make("add"_str);
     command.about("Add a Registry dependency to the manifest"_str);
@@ -1498,6 +1534,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto format   = make_format_definition();
     auto update   = make_update_definition();
     auto fetch    = make_fetch_definition();
+    auto init     = make_init_definition();
     auto add      = make_add_definition();
     auto pack     = make_pack_definition();
     auto publish  = make_publish_definition();
@@ -1530,6 +1567,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(format.command));
     root.add_subcommand(rstd::move(update.command));
     root.add_subcommand(rstd::move(fetch.command));
+    root.add_subcommand(rstd::move(init.command));
     root.add_subcommand(rstd::move(add.command));
     root.add_subcommand(rstd::move(pack.command));
     root.add_subcommand(rstd::move(publish.command));
@@ -1552,6 +1590,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .format   = rstd::move(format.schema),
         .update   = rstd::move(update.schema),
         .fetch    = rstd::move(fetch.schema),
+        .init     = rstd::move(init.schema),
         .add      = rstd::move(add.schema),
         .pack     = rstd::move(pack.schema),
         .publish  = rstd::move(publish.schema),
@@ -1906,6 +1945,13 @@ auto FetchSchema::decode(const Matches& matches) const -> Result<FetchOptions, C
     });
 }
 
+auto InitSchema::decode(const Matches& matches) const -> Result<InitOptions, CliDecodeError> {
+    return Ok(InitOptions {
+        .path = rstd_try(optional_path(matches, path)),
+        .name = rstd_try(optional_string(matches, name)),
+    });
+}
+
 auto AddSchema::decode(const Matches& matches) const -> Result<AddOptions, CliDecodeError> {
     return Ok(AddOptions {
         .source   = rstd_try(required_string(matches, source, "source"_str)),
@@ -2146,6 +2192,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
     if (auto child = matches.subcommand_matches(schema.fetch.command); child.is_some()) {
         auto options = rstd_try(schema.fetch.decode(**child));
         return Ok(CliCommand::Fetch(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.init.command); child.is_some()) {
+        auto options = rstd_try(schema.init.decode(**child));
+        return Ok(CliCommand::Init(rstd::move(options)));
     }
     if (auto child = matches.subcommand_matches(schema.add.command); child.is_some()) {
         auto options = rstd_try(schema.add.decode(**child));

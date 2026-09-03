@@ -711,6 +711,22 @@ extern "C++" int main() {
         rstd::io::println("unset {} in {}", mutation->key, mutation->path.as_path());
         return 0;
     }
+    if (invocation.command.is_Init()) {
+        auto options     = rstd::move(invocation.command).as_Init().options;
+        auto destination = invocation.working_directory.clone();
+        if (options.path.is_some()) {
+            destination = invocation.working_directory.join(options.path->as_path());
+        }
+        auto initialized =
+            lito::manifest::initialize_project(destination.as_path(), rstd::move(options.name));
+        if (initialized.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(initialized).unwrap_err());
+            return 1;
+        }
+        rstd::io::println(
+            "created package {} at {}", initialized->package, initialized->root.as_path());
+        return 0;
+    }
     if (invocation.command.is_Clean()) {
         auto options = rstd::move(invocation.command).as_Clean().options;
         auto target  = lito::CleanTarget::All();
