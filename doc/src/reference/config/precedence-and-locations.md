@@ -1,5 +1,20 @@
 # Configuration precedence and locations
 
+## Global user config
+
+`$XDG_CONFIG_HOME/lito/config.toml`, or `$HOME/.config/lito/config.toml` when
+`XDG_CONFIG_HOME` is unset, owns Registry selection, endpoint overrides, mirrors, and publish
+tokens. The file must not be accessible by group or other users on Unix.
+
+The `official` Registry and its endpoints are built in. A user who only publishes to it needs:
+
+```toml
+[registries.official]
+token = "..."
+```
+
+The global file is independent of project configuration. `--no-config` does not disable it.
+
 Lito builds one typed project configuration in this order:
 
 ```text

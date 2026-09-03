@@ -17,12 +17,23 @@ using Table = rstd::toml::Table;
 export namespace lito::config
 {
 
+class RegistryBearerToken {
+    String value_;
+
+public:
+    explicit RegistryBearerToken(String value): value_(rstd::move(value)) {}
+
+    auto clone() const -> RegistryBearerToken { return RegistryBearerToken(value_.clone()); }
+    auto authorization_header() const -> String { return rstd::format("Bearer {}", value_); }
+};
+
 struct NamedRegistryConfig {
     String                                        name;
     lito::registry::RegistryId                    identity;
     lito::registry::RegistryDataEndpoints         endpoints;
     lito::registry::RegistryFixedEndpoint         api;
     Option<lito::registry::RegistryDataEndpoints> mirror;
+    Option<RegistryBearerToken>                   token;
 
     auto clone() const -> NamedRegistryConfig {
         return NamedRegistryConfig {
@@ -32,6 +43,7 @@ struct NamedRegistryConfig {
             .api       = api.clone(),
             .mirror    = mirror.is_some() ? Some(mirror->clone())
                                           : Option<lito::registry::RegistryDataEndpoints> {},
+            .token     = token.is_some() ? Some(token->clone()) : Option<RegistryBearerToken> {},
         };
     }
 
@@ -80,48 +92,14 @@ public:
 };
 
 struct RegistryBootstrapConfigRequest {
-    ConfigLoadMode           mode { ConfigLoadMode::Enabled };
     Option<PathBuf>          path;
     Vec<NamedRegistryConfig> registry_overrides;
     Option<String>           default_registry;
 };
 
-class RegistryBearerToken {
-    String value_;
-
-public:
-    explicit RegistryBearerToken(String value): value_(rstd::move(value)) {}
-
-    auto authorization_header() const -> String { return rstd::format("Bearer {}", value_); }
-};
-
-struct NamedRegistryCredential {
-    String              registry;
-    RegistryBearerToken token;
-};
-
-class RegistryCredentials {
-    Vec<NamedRegistryCredential> entries_;
-
-public:
-    explicit RegistryCredentials(Vec<NamedRegistryCredential> entries)
-        : entries_(rstd::move(entries)) {}
-
-    auto token(ref<str> registry) const noexcept -> Option<ref<RegistryBearerToken>> {
-        for (const auto& entry : entries_) {
-            if (entry.registry.as_str() == registry) {
-                return Some(ref<RegistryBearerToken>::from_raw_parts(&entry.token));
-            }
-        }
-        return None();
-    }
-};
-
-auto registry_bootstrap_config_path() -> ConfigResult<PathBuf>;
-auto registry_credentials_path() -> ConfigResult<PathBuf>;
+auto global_config_path() -> ConfigResult<PathBuf>;
 auto load_registry_bootstrap_config(RegistryBootstrapConfigRequest request = {})
     -> ConfigResult<LitoBootstrapConfig>;
-auto load_registry_credentials(Option<PathBuf> path = {}) -> ConfigResult<RegistryCredentials>;
 
 } // namespace lito::config
 
@@ -242,6 +220,22 @@ auto parse_data_endpoints(const Toml& value, ref<str> context)
     });
 }
 
+auto parse_bearer_token(const Toml& value, ref<str> context)
+    -> lito::config::ConfigResult<Option<lito::config::RegistryBearerToken>> {
+    auto member = value.get("token"_str);
+    if (member.is_none()) {
+        return Ok(Option<lito::config::RegistryBearerToken> {});
+    }
+    auto token = rstd_try(required_string(value, "token"_str, context));
+    for (auto byte : token.as_bytes()) {
+        if (byte.to_primitive() <= 0x20 || byte.to_primitive() == 0x7f) {
+            return registry_config_failure<Option<lito::config::RegistryBearerToken>>(
+                rstd::format("{}.token must not contain whitespace or control bytes", context));
+        }
+    }
+    return Ok(Some(lito::config::RegistryBearerToken(String::make(token))));
+}
+
 auto parse_named_registry(ref<str> name, const Toml& value)
     -> lito::config::ConfigResult<lito::config::NamedRegistryConfig> {
     if (! valid_registry_config_name(name)) {
@@ -252,9 +246,10 @@ auto parse_named_registry(ref<str> name, const Toml& value)
     }
     auto context     = rstd::format("registries.{}", name);
     auto value_table = rstd_try(table(value, context.as_str()));
-    rstd_try(reject_unknown(*value_table,
-                            context.as_str(),
-                            { "identity"_str, "index"_str, "blob"_str, "api"_str, "mirror"_str }));
+    rstd_try(reject_unknown(
+        *value_table,
+        context.as_str(),
+        { "identity"_str, "index"_str, "blob"_str, "api"_str, "mirror"_str, "token"_str }));
     auto identity_field = rstd::format("{}.identity", context);
     auto identity       = parse_registry_value<lito::registry::RegistryId>(
         rstd_try(required_string(value, "identity"_str, context.as_str())),
@@ -277,6 +272,7 @@ auto parse_named_registry(ref<str> name, const Toml& value)
         .endpoints = rstd_try(parse_data_endpoints(value, context.as_str())),
         .api       = rstd_try(parse_fixed_endpoint(value, "api"_str, context.as_str())),
         .mirror    = rstd::move(mirror),
+        .token     = rstd_try(parse_bearer_token(value, context.as_str())),
     });
 }
 
@@ -360,6 +356,20 @@ auto replace_registry(Vec<lito::config::NamedRegistryConfig>& registries,
     registries.push(rstd::move(replacement));
 }
 
+auto merge_global_config(Toml& destination, const Toml& source) -> void {
+    auto source_table = source.as_table().unwrap();
+    for (auto key : source_table->keys()) {
+        auto source_value      = source_table->get((*key).as_str()).unwrap();
+        auto destination_value = destination.get_mut((*key).as_str());
+        if (destination_value.is_some() && (**destination_value).is_table() &&
+            source_value->is_table()) {
+            merge_global_config(**destination_value, *source_value);
+            continue;
+        }
+        destination.as_table_mut().unwrap()->insert((*key).clone(), source_value->clone());
+    }
+}
+
 auto validate_bootstrap_default(const lito::config::LitoBootstrapConfig& config)
     -> lito::config::ConfigResult<empty> {
     auto name = config.default_registry_name();
@@ -370,7 +380,7 @@ auto validate_bootstrap_default(const lito::config::LitoBootstrapConfig& config)
     return Ok(empty {});
 }
 
-auto compiled_bootstrap_config() -> lito::config::ConfigResult<lito::config::LitoBootstrapConfig> {
+auto compiled_global_config() -> lito::config::ConfigResult<Toml> {
     constexpr auto official = R"toml(default = "official"
 [registries.official]
 identity = "https://registry.litocpp.org/"
@@ -380,54 +390,35 @@ api = "https://registry.litocpp.org/"
 )toml"_str;
     auto           parsed   = rstd::toml::from_str(official);
     if (parsed.is_err()) {
-        return registry_config_failure<lito::config::LitoBootstrapConfig>(
-            "compiled official registry config is invalid"_str);
+        return registry_config_failure<Toml>("compiled official registry config is invalid"_str);
     }
-    return parse_bootstrap_document(*parsed);
+    return Ok(rstd::move(parsed).unwrap());
 }
 
 } // namespace
 
-auto lito::config::registry_bootstrap_config_path() -> ConfigResult<PathBuf> {
+auto lito::config::global_config_path() -> ConfigResult<PathBuf> {
     auto root = lito::system::LitoConfigRoot::resolve();
     if (root.is_err()) {
-        return Err(ConfigError::Schema(rstd::format("cannot resolve registry bootstrap config: {}",
+        return Err(ConfigError::Schema(rstd::format("cannot resolve global configuration: {}",
                                                     rstd::move(root).unwrap_err())));
     }
-    return Ok(root->registries());
-}
-
-auto lito::config::registry_credentials_path() -> ConfigResult<PathBuf> {
-    auto root = lito::system::LitoConfigRoot::resolve();
-    if (root.is_err()) {
-        return Err(ConfigError::Schema(rstd::format("cannot resolve registry credentials: {}",
-                                                    rstd::move(root).unwrap_err())));
-    }
-    return Ok(root->registry_credentials());
+    return Ok(root->config());
 }
 
 auto lito::config::load_registry_bootstrap_config(RegistryBootstrapConfigRequest request)
     -> ConfigResult<LitoBootstrapConfig> {
-    auto compiled   = rstd_try(compiled_bootstrap_config());
-    auto registries = Vec<NamedRegistryConfig>::make();
-    for (const auto& registry : *compiled.registries()) registries.push(registry.clone());
+    auto document = rstd_try(compiled_global_config());
+    auto path =
+        request.path.is_some() ? rstd::move(request.path).unwrap() : rstd_try(global_config_path());
+    auto user = rstd_try(read_registry_toml(path.as_path(), "global configuration"_str, true));
+    if (user.is_some()) merge_global_config(document, *user);
+    auto result           = rstd_try(parse_bootstrap_document(document));
+    auto registries       = Vec<NamedRegistryConfig>::make();
     auto default_registry = Option<String> {};
-    auto compiled_default = compiled.default_registry_name();
-    if (compiled_default.is_some()) default_registry = Some(String::make(*compiled_default));
-
-    if (request.mode == ConfigLoadMode::Enabled) {
-        auto path = request.path.is_some() ? rstd::move(request.path).unwrap()
-                                           : rstd_try(registry_bootstrap_config_path());
-        auto document =
-            rstd_try(read_registry_toml(path.as_path(), "registry bootstrap config"_str, false));
-        if (document.is_some()) {
-            auto user = rstd_try(parse_bootstrap_document(*document));
-            for (const auto& registry : *user.registries())
-                replace_registry(registries, registry.clone());
-            auto user_default = user.default_registry_name();
-            if (user_default.is_some()) default_registry = Some(String::make(*user_default));
-        }
-    }
+    for (const auto& registry : *result.registries()) registries.push(registry.clone());
+    auto selected = result.default_registry_name();
+    if (selected.is_some()) default_registry = Some(String::make(*selected));
     for (auto& registry : request.registry_overrides) {
         replace_registry(registries, rstd::move(registry));
     }
@@ -438,45 +429,7 @@ auto lito::config::load_registry_bootstrap_config(RegistryBootstrapConfigRequest
         }
         default_registry = rstd::move(request.default_registry);
     }
-    auto result = LitoBootstrapConfig(rstd::move(registries), rstd::move(default_registry));
+    result = LitoBootstrapConfig(rstd::move(registries), rstd::move(default_registry));
     rstd_try(validate_bootstrap_default(result));
     return Ok(rstd::move(result));
-}
-
-auto lito::config::load_registry_credentials(Option<PathBuf> requested_path)
-    -> ConfigResult<RegistryCredentials> {
-    auto path     = requested_path.is_some() ? rstd::move(requested_path).unwrap()
-                                             : rstd_try(registry_credentials_path());
-    auto document = rstd_try(read_registry_toml(path.as_path(), "registry credentials"_str, true));
-    auto entries  = Vec<NamedRegistryCredential>::make();
-    if (document.is_none()) return Ok(RegistryCredentials(rstd::move(entries)));
-    auto root = rstd_try(table(*document, "registry credentials"_str));
-    rstd_try(reject_unknown(*root, "registry credentials"_str, { "registries"_str }));
-    auto registries = document->get("registries"_str);
-    if (registries.is_none()) return Ok(RegistryCredentials(rstd::move(entries)));
-    auto registry_table = rstd_try(table(**registries, "registry credentials.registries"_str));
-    auto keys           = registry_table->keys();
-    for (auto key : keys) {
-        auto name = (*key).as_str();
-        if (! valid_registry_config_name(name)) {
-            return registry_config_failure<RegistryCredentials>(
-                rstd::format("registry credential name '{}' is invalid", name));
-        }
-        auto value       = registry_table->get(name).unwrap();
-        auto context     = rstd::format("registry credentials.registries.{}", name);
-        auto value_table = rstd_try(table(*value, context.as_str()));
-        rstd_try(reject_unknown(*value_table, context.as_str(), { "token"_str }));
-        auto token = rstd_try(required_string(*value, "token"_str, context.as_str()));
-        for (auto byte : token.as_bytes()) {
-            if (byte.to_primitive() <= 0x20 || byte.to_primitive() == 0x7f) {
-                return registry_config_failure<RegistryCredentials>(
-                    rstd::format("{}.token must not contain whitespace or control bytes", context));
-            }
-        }
-        entries.push(NamedRegistryCredential {
-            .registry = String::make(name),
-            .token    = RegistryBearerToken(String::make(token)),
-        });
-    }
-    return Ok(RegistryCredentials(rstd::move(entries)));
 }

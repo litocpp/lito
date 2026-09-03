@@ -342,23 +342,24 @@ version = "29.0.14206865"
     }
 }
 
-TEST_F(Config, RegistryBootstrapOwnsIdentityDataEndpointsApiAndMirror) {
-    auto project = empty_project("registry-bootstrap"_str);
+TEST_F(Config, RegistryGlobalConfigMergesOfficialDefaultsMirrorAndCredential) {
+    auto project = empty_project("registry-global"_str);
     ASSERT_TRUE(project.is_ok());
-    auto           path     = project->root.join(PathBuf::from("registries.toml"_str).as_path());
-    constexpr auto contents = R"toml(default = "official"
-
+    auto           path     = project->root.join(PathBuf::from("config.toml"_str).as_path());
+    constexpr auto contents = R"toml(
 [registries.official]
-identity = "https://registry.litocpp.org/"
-index = "https://registry.litocpp.org/v1/index/{package}.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
-api = "https://registry.litocpp.org/"
+token = "secret-value"
 
 [registries.official.mirror]
 index = "https://mirror.example/v1/index/{package}.json"
 blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
 )toml"_str;
     ASSERT_TRUE(rstd::fs::write(path.as_path(), contents.as_bytes()).is_ok());
+#if ! defined(_WIN32)
+    ASSERT_TRUE(
+        rstd::fs::set_permissions(path.as_path(), rstd::fs::Permissions::from_mode(u32(0600)))
+            .is_ok());
+#endif
 
     auto loaded = lito::config::load_registry_bootstrap_config(
         lito::config::RegistryBootstrapConfigRequest { .path = Some(path.clone()) });
@@ -372,46 +373,31 @@ blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
               "https://registry.litocpp.org/v1/index/luato.json"_str);
     EXPECT_EQ(registry.effective_endpoints()->index.render("luato"_str).as_str(),
               "https://mirror.example/v1/index/luato.json"_str);
+    ASSERT_TRUE(registry.token.is_some());
+    EXPECT_EQ(registry.token->authorization_header().as_str(), "Bearer secret-value"_str);
 }
 
-TEST_F(Config, RegistryBootstrapNoConfigSkipsTheUserDocumentButKeepsOfficialDefaults) {
-    auto project = empty_project("registry-bootstrap-disabled"_str);
-    ASSERT_TRUE(project.is_ok());
-    auto path = project->root.join(PathBuf::from("registries.toml"_str).as_path());
-    ASSERT_TRUE(rstd::fs::write(path.as_path(), "not valid toml = ["_str.as_bytes()).is_ok());
-    auto loaded =
-        lito::config::load_registry_bootstrap_config(lito::config::RegistryBootstrapConfigRequest {
-            .mode = lito::config::ConfigLoadMode::Disabled,
-            .path = Some(rstd::move(path)),
-        });
-    ASSERT_TRUE(loaded.is_ok());
-    ASSERT_TRUE(loaded->default_registry().is_some());
-    EXPECT_EQ((**loaded->default_registry()).name.as_str(), "official"_str);
-}
-
-TEST_F(Config, RegistryBootstrapRejectsUnknownFieldsAndInvalidTemplates) {
+TEST_F(Config, RegistryGlobalConfigRejectsUnknownFieldsAndInvalidValues) {
     constexpr ref<str> invalid[] = {
-        R"toml(default = "official"
-[registries.official]
-identity = "https://registry.litocpp.org/"
+        R"toml([registries.official]
 index = "https://registry.litocpp.org/v1/index/fixed.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
-api = "https://registry.litocpp.org/"
 )toml"_str,
         R"toml([registries.official]
-identity = "https://registry.litocpp.org/"
-index = "https://registry.litocpp.org/v1/index/{package}.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
-api = "https://registry.litocpp.org/"
-token = "must-not-live-here"
+token = "contains whitespace"
 )toml"_str,
+        "unexpected = true\n"_str,
     };
     auto index = usize {};
     for (auto contents : invalid) {
         auto project = empty_project(rstd::format("registry-bootstrap-invalid-{}", index).as_str());
         ASSERT_TRUE(project.is_ok());
-        auto path = project->root.join(PathBuf::from("registries.toml"_str).as_path());
+        auto path = project->root.join(PathBuf::from("config.toml"_str).as_path());
         ASSERT_TRUE(rstd::fs::write(path.as_path(), contents.as_bytes()).is_ok());
+#if ! defined(_WIN32)
+        ASSERT_TRUE(
+            rstd::fs::set_permissions(path.as_path(), rstd::fs::Permissions::from_mode(u32(0600)))
+                .is_ok());
+#endif
         auto loaded = lito::config::load_registry_bootstrap_config(
             lito::config::RegistryBootstrapConfigRequest { .path = Some(rstd::move(path)) });
         EXPECT_TRUE(loaded.is_err());
@@ -419,29 +405,24 @@ token = "must-not-live-here"
     }
 }
 
-TEST_F(Config, RegistryCredentialsUseASeparatePrivateDocument) {
-    auto project = empty_project("registry-credentials"_str);
+TEST_F(Config, RegistryGlobalConfigMustBePrivate) {
+    auto project = empty_project("registry-global-permissions"_str);
     ASSERT_TRUE(project.is_ok());
-    auto path = project->root.join(PathBuf::from("registry-credentials.toml"_str).as_path());
+    auto           path     = project->root.join(PathBuf::from("config.toml"_str).as_path());
     constexpr auto contents = "[registries.official]\n"
                               "token = \"secret-value\"\n"_str;
     ASSERT_TRUE(rstd::fs::write(path.as_path(), contents.as_bytes()).is_ok());
 #if ! defined(_WIN32)
     ASSERT_TRUE(
-        rstd::fs::set_permissions(path.as_path(), rstd::fs::Permissions::from_mode(u32(0600)))
-            .is_ok());
-#endif
-    auto loaded = lito::config::load_registry_credentials(Some(path.clone()));
-    ASSERT_TRUE(loaded.is_ok());
-    ASSERT_TRUE(loaded->token("official"_str).is_some());
-    EXPECT_EQ((**loaded->token("official"_str)).authorization_header().as_str(),
-              "Bearer secret-value"_str);
-
-#if ! defined(_WIN32)
-    ASSERT_TRUE(
         rstd::fs::set_permissions(path.as_path(), rstd::fs::Permissions::from_mode(u32(0644)))
             .is_ok());
-    EXPECT_TRUE(lito::config::load_registry_credentials(Some(rstd::move(path))).is_err());
+    EXPECT_TRUE(lito::config::load_registry_bootstrap_config(
+                    lito::config::RegistryBootstrapConfigRequest { .path = Some(rstd::move(path)) })
+                    .is_err());
+#else
+    EXPECT_TRUE(lito::config::load_registry_bootstrap_config(
+                    lito::config::RegistryBootstrapConfigRequest { .path = Some(rstd::move(path)) })
+                    .is_ok());
 #endif
 }
 

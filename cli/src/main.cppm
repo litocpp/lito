@@ -893,11 +893,7 @@ extern "C++" int main() {
             return 1;
         }
         if (options.registry.is_some()) {
-            auto bootstrap = lito::config::load_registry_bootstrap_config(
-                lito::config::RegistryBootstrapConfigRequest {
-                    .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
-                                                 : lito::config::ConfigLoadMode::Enabled,
-                });
+            auto bootstrap = lito::config::load_registry_bootstrap_config();
             if (bootstrap.is_err()) {
                 report_error(rstd::move(bootstrap).unwrap_err());
                 return 1;
@@ -922,11 +918,7 @@ extern "C++" int main() {
     }
     if (invocation.command.is_Pack()) {
         auto options   = rstd::move(invocation.command).as_Pack().options;
-        auto bootstrap = lito::config::load_registry_bootstrap_config(
-            lito::config::RegistryBootstrapConfigRequest {
-                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
-                                             : lito::config::ConfigLoadMode::Enabled,
-            });
+        auto bootstrap = lito::config::load_registry_bootstrap_config();
         if (bootstrap.is_err()) {
             auto error = rstd::move(bootstrap).unwrap_err();
             report_error(error);
@@ -980,11 +972,7 @@ extern "C++" int main() {
     }
     if (invocation.command.is_Publish()) {
         auto options   = rstd::move(invocation.command).as_Publish().options;
-        auto bootstrap = lito::config::load_registry_bootstrap_config(
-            lito::config::RegistryBootstrapConfigRequest {
-                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
-                                             : lito::config::ConfigLoadMode::Enabled,
-            });
+        auto bootstrap = lito::config::load_registry_bootstrap_config();
         if (bootstrap.is_err()) {
             report_error(rstd::move(bootstrap).unwrap_err());
             return 1;
@@ -998,14 +986,7 @@ extern "C++" int main() {
                                                           : "default"_str);
             return 1;
         }
-        auto credentials = lito::config::load_registry_credentials();
-        if (credentials.is_err()) {
-            report_error(rstd::move(credentials).unwrap_err());
-            return 1;
-        }
-        auto credential_store = rstd::move(credentials).unwrap();
-        auto token            = credential_store.token((**selected).name.as_str());
-        if (token.is_none()) {
+        if ((**selected).token.is_none()) {
             rstd::io::eprintln("lito: Registry '{}' has no publish credential",
                                (**selected).name.as_str());
             return 1;
@@ -1077,7 +1058,7 @@ extern "C++" int main() {
         auto client    = lito::registry::RegistryPublishClient(transport.transport());
         auto published = client.publish(lito::registry::RegistryPublishRequest {
             .api      = (**selected).api.clone(),
-            .token    = rstd::addressof(**token),
+            .token    = rstd::addressof(*(**selected).token),
             .package  = package.package.clone(),
             .version  = package.version.clone(),
             .artifact = package.artifact->archive.clone(),
@@ -1110,11 +1091,7 @@ extern "C++" int main() {
                                    rstd::move(spec).unwrap_err());
                 return 1;
             }
-            auto bootstrap = lito::config::load_registry_bootstrap_config(
-                lito::config::RegistryBootstrapConfigRequest {
-                    .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
-                                                 : lito::config::ConfigLoadMode::Enabled,
-                });
+            auto bootstrap = lito::config::load_registry_bootstrap_config();
             if (bootstrap.is_err()) {
                 report_error(rstd::move(bootstrap).unwrap_err());
                 return 1;
@@ -1255,11 +1232,7 @@ extern "C++" int main() {
     }
     if ((build_command || invocation.command.is_Update() || invocation.command.is_Install()) &&
         registry_bootstrap.is_none()) {
-        auto loaded = lito::config::load_registry_bootstrap_config(
-            lito::config::RegistryBootstrapConfigRequest {
-                .mode = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
-                                             : lito::config::ConfigLoadMode::Enabled,
-            });
+        auto loaded = lito::config::load_registry_bootstrap_config();
         if (loaded.is_err()) {
             report_error(rstd::move(loaded).unwrap_err());
             return 1;

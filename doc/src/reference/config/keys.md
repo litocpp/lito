@@ -1,5 +1,20 @@
 # Configuration keys
 
+## Global Registry configuration
+
+The global `config.toml` accepts `default` and `registries`. `default` names the Registry used when
+a command does not pass `--registry`. Each `registries.<name>` table accepts `identity`, `index`,
+`blob`, `api`, `mirror`, and `token`. The built-in `official` entry supplies every field except the
+publish token, so the minimal configuration is:
+
+```toml
+[registries.official]
+token = "..."
+```
+
+`mirror` may override only the immutable index and blob endpoints. Publish requests continue to use
+`api`.
+
 ## Global data root
 
 Lito keeps reusable Git sources, downloaded archives, and automatically built tools under one

@@ -1,11 +1,13 @@
 # Configuration Reference
 
-Configuration controls project-local integration policy that does not belong to package identity:
-tool paths, standard library selection, global C/C++/link options, search roots, local source
-patches, lock location, install root, and documentation tool location.
+Configuration controls global Registry access and project-local integration policy that does not
+belong to package identity: tool paths, standard library selection, global C/C++/link options,
+search roots, local source patches, lock location, install root, and documentation tool location.
 
-There are three input forms:
+There are four input forms:
 
+- global user configuration: `$XDG_CONFIG_HOME/lito/config.toml`, or
+  `$HOME/.config/lito/config.toml` when `XDG_CONFIG_HOME` is unset;
 - committed project configuration: `lito-config.toml`;
 - machine-local persisted configuration: `.lito/config.toml`;
 - invocation overrides: repeated `-c/--config KEY=VALUE` assignments.

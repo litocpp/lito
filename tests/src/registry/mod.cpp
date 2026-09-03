@@ -67,7 +67,8 @@ auto registry_test_config() -> lito::config::NamedRegistryConfig {
                     "https://registry.example/v1/blobs/sha256/{checksum}.tar.zst"_str,
                     lito::registry::RegistryEndpointKind::Blob),
             },
-        .api = registry_fixed_endpoint("https://registry.example/"_str),
+        .api   = registry_fixed_endpoint("https://registry.example/"_str),
+        .token = {},
     };
 }
 

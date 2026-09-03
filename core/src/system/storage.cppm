@@ -219,10 +219,7 @@ public:
     }
 
     auto root() const noexcept -> ref<rstd::path::Path> { return root_.as_path(); }
-    auto registries() const -> PathBuf { return join(root_.as_path(), "registries.toml"_str); }
-    auto registry_credentials() const -> PathBuf {
-        return join(root_.as_path(), "registry-credentials.toml"_str);
-    }
+    auto config() const -> PathBuf { return join(root_.as_path(), "config.toml"_str); }
 };
 
 class LitoDataRoot {
