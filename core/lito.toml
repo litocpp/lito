@@ -7,26 +7,10 @@ name = "lito-core"
 module = "lito.core"
 archive = "lito.core"
 
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-json]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-serde]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-toml]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
-
-[dependencies.licrypto]
-workspace = true
-visibility = "public"
+[dependencies]
+rstd-std = { workspace = true, visibility = "public" }
+rstd-json = { workspace = true, visibility = "private" }
+rstd-serde = { workspace = true, visibility = "private" }
+rstd-toml = { workspace = true, visibility = "private" }
+rstd-nostd = { workspace = true, visibility = "link" }
+licrypto = { workspace = true, visibility = "public" }

@@ -7,34 +7,12 @@ name = "lito-toolchain"
 module = "lito.toolchain"
 archive = "lito.toolchain"
 
-[dependencies.lito-core]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-cpp]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-frontend]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-tools]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-json]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-serde]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+lito-core = { workspace = true, visibility = "public" }
+lito-cpp = { workspace = true, visibility = "public" }
+lito-frontend = { workspace = true, visibility = "public" }
+lito-tools = { workspace = true, visibility = "public" }
+rstd-std = { workspace = true, visibility = "public" }
+rstd-json = { workspace = true, visibility = "private" }
+rstd-serde = { workspace = true, visibility = "private" }
+rstd-nostd = { workspace = true, visibility = "link" }

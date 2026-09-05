@@ -7,22 +7,9 @@ name = "lito-tools"
 module = "lito.tools"
 archive = "lito.tools"
 
-[dependencies.lito-core]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-json]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-toml]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+lito-core = { workspace = true, visibility = "public" }
+rstd-std = { workspace = true, visibility = "public" }
+rstd-json = { workspace = true, visibility = "public" }
+rstd-toml = { workspace = true, visibility = "public" }
+rstd-nostd = { workspace = true, visibility = "link" }

@@ -4,7 +4,7 @@ Lito is a module-first build tool for C++.
 A fixed `lito.toml` describes packages, workspaces, targets, dependencies, and build policy.  
 Lito discovers named module sources and drives Clang, LLD, and LLVM tools.  
 
-[Documentation](https://lito.litocpp.org/)
+[Documentation](https://lito.litocpp.org/) · [Packages](https://pkgs.litocpp.org/)
 
 ## Requirements
 

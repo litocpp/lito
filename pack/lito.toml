@@ -14,26 +14,10 @@ sources = ["src/package_embed.cppm"]
 host-tool = true
 link-stdlib = false
 
-[dependencies.lito-core]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-zstd]
-workspace = true
-visibility = "private"
-
-[dependencies.licrypto]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-json]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+lito-core = { workspace = true, visibility = "public" }
+lito-zstd = { workspace = true, visibility = "private" }
+licrypto = { workspace = true, visibility = "private" }
+rstd-std = { workspace = true, visibility = "public" }
+rstd-json = { workspace = true, visibility = "private" }
+rstd-nostd = { workspace = true, visibility = "link" }

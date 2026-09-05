@@ -7,18 +7,8 @@ name = "lito-cpp"
 module = "lito.cpp"
 archive = "lito.cpp"
 
-[dependencies.lito-core]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-frontend]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+lito-core = { workspace = true, visibility = "public" }
+lito-frontend = { workspace = true, visibility = "public" }
+rstd-std = { workspace = true, visibility = "public" }
+rstd-nostd = { workspace = true, visibility = "link" }

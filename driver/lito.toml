@@ -7,54 +7,17 @@ name = "lito-driver"
 module = "lito.driver"
 archive = "lito.driver"
 
-[dependencies.lito-core]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-pack]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-cpp]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-tools]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-toolchain]
-workspace = true
-visibility = "public"
-
-[dependencies.lito-frontend]
-workspace = true
-visibility = "public"
-
-[dependencies.luato]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-json]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-serde]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-toml]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-bench]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+lito-core = { workspace = true, visibility = "public" }
+lito-pack = { workspace = true, visibility = "public" }
+lito-cpp = { workspace = true, visibility = "public" }
+lito-tools = { workspace = true, visibility = "public" }
+lito-toolchain = { workspace = true, visibility = "public" }
+lito-frontend = { workspace = true, visibility = "public" }
+luato = { workspace = true, visibility = "private" }
+rstd-std = { workspace = true, visibility = "public" }
+rstd-json = { workspace = true, visibility = "private" }
+rstd-serde = { workspace = true, visibility = "private" }
+rstd-toml = { workspace = true, visibility = "private" }
+rstd-bench = { workspace = true, visibility = "private" }
+rstd-nostd = { workspace = true, visibility = "link" }

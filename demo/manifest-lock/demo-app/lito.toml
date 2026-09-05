@@ -11,6 +11,5 @@ sources = [
   "src/lib.cpp",
 ]
 
-[dependencies.demo-base]
-path = "../demo-base"
-visibility = "public"
+[dependencies]
+demo-base = { path = "../demo-base", visibility = "public" }

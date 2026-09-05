@@ -84,65 +84,20 @@ sources = [
   "src/workspace/manifest.cpp",
 ]
 
-[dependencies.lito-core]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-pack]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-cpp]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-tools]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-toolchain]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-driver]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-frontend]
-workspace = true
-visibility = "private"
-
-[dependencies.luato]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-json]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-serde]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-toml]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-test]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-bench]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
-
-[dependencies.pmacro-basic-provider]
-path = "proc-macro/basic"
+[dependencies]
+lito-core = { workspace = true, visibility = "private" }
+lito-pack = { workspace = true, visibility = "private" }
+lito-cpp = { workspace = true, visibility = "private" }
+lito-tools = { workspace = true, visibility = "private" }
+lito-toolchain = { workspace = true, visibility = "private" }
+lito-driver = { workspace = true, visibility = "private" }
+lito-frontend = { workspace = true, visibility = "private" }
+luato = { workspace = true, visibility = "private" }
+rstd-std = { workspace = true, visibility = "private" }
+rstd-json = { workspace = true, visibility = "private" }
+rstd-serde = { workspace = true, visibility = "private" }
+rstd-toml = { workspace = true, visibility = "private" }
+rstd-test = { workspace = true, visibility = "private" }
+rstd-bench = { workspace = true, visibility = "private" }
+rstd-nostd = { workspace = true, visibility = "link" }
+pmacro-basic-provider = { path = "proc-macro/basic" }

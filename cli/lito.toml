@@ -7,25 +7,12 @@ module = "lito.executable"
 name = "lito"
 link-stdlib = false
 
-[dependencies.lito-driver]
-workspace = true
-visibility = "private"
-
-[dependencies.lito-pack]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-std]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-argparse]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+lito-driver = { workspace = true, visibility = "private" }
+lito-pack = { workspace = true, visibility = "private" }
+rstd-std = { workspace = true, visibility = "private" }
+rstd-argparse = { workspace = true, visibility = "private" }
+rstd-nostd = { workspace = true, visibility = "link" }
 
 [external-sources.builtin-pmacro]
 path = "../plugins/pmacro"

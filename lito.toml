@@ -7,59 +7,25 @@ default-members = ["cli"]
 version = "0.7.1"
 license = "MIT OR Apache-2.0"
 
-[workspace.dependencies.lito-frontend]
-path = "frontend"
-
-[workspace.dependencies.lito-core]
-path = "core"
-
-[workspace.dependencies.lito-pack]
-path = "pack"
-
-[workspace.dependencies.lito-cpp]
-path = "cpp"
-
-[workspace.dependencies.lito-tools]
-path = "tools"
-
-[workspace.dependencies.lito-toolchain]
-path = "toolchain"
-
-[workspace.dependencies.lito-driver]
-path = "driver"
-
-[workspace.dependencies.lito-zstd]
-path = "third-party/zstd"
-
-[workspace.dependencies.licrypto]
-git = "https://github.com/litocpp/licrypto.git"
-
-[workspace.dependencies.luato]
-git = "https://github.com/litocpp/luato.git"
-
-[workspace.dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-nostd]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-json]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-serde]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-bench]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-toml]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-argparse]
-git = "https://github.com/litocpp/rstd.git"
-
-[workspace.dependencies.rstd-test]
-git = "https://github.com/litocpp/rstd.git"
+[workspace.dependencies]
+lito-frontend = { path = "frontend" }
+lito-core = { path = "core" }
+lito-pack = { path = "pack" }
+lito-cpp = { path = "cpp" }
+lito-tools = { path = "tools" }
+lito-toolchain = { path = "toolchain" }
+lito-driver = { path = "driver" }
+lito-zstd = { path = "third-party/zstd" }
+licrypto = { git = "https://github.com/litocpp/licrypto.git" }
+luato = { git = "https://github.com/litocpp/luato.git" }
+rstd-std = { version = "0.1.0" }
+rstd-nostd = { version = "0.1.0" }
+rstd-json = { version = "0.1.0" }
+rstd-serde = { version = "0.1.0" }
+rstd-bench = { version = "0.1.0" }
+rstd-toml = { version = "0.1.0" }
+rstd-argparse = { version = "0.1.0" }
+rstd-test = { version = "0.1.0" }
 
 [workspace.external-sources.zstd]
 git = "https://github.com/facebook/zstd.git"

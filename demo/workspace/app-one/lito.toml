@@ -6,6 +6,5 @@ version.workspace = true
 name = "demo-app"
 sources = ["main.cpp"]
 
-[dependencies.demo-workspace-common]
-path = ".."
-visibility = "private"
+[dependencies]
+demo-workspace-common = { path = "..", visibility = "private" }

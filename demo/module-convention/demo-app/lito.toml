@@ -7,6 +7,5 @@ name = "demo-app"
 module = "demo.app"
 archive = "demo.app"
 
-[dependencies.demo-base]
-path = "../demo-base"
-visibility = "public"
+[dependencies]
+demo-base = { path = "../demo-base", visibility = "public" }

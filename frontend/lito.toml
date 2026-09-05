@@ -7,10 +7,6 @@ name = "lito-frontend"
 module = "lito.frontend"
 archive = "lito.frontend"
 
-[dependencies.rstd-std]
-workspace = true
-visibility = "public"
-
-[dependencies.rstd-nostd]
-workspace = true
-visibility = "link"
+[dependencies]
+rstd-std = { workspace = true, visibility = "public" }
+rstd-nostd = { workspace = true, visibility = "link" }

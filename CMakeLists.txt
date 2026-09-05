@@ -63,7 +63,7 @@ set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   luato
   GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG 61dd40dca1e9aeda69eed208ddf0d10b34f59db7)
+  GIT_TAG cef39d187804c2a243618d4d28a9913bbefbc665)
 FetchContent_MakeAvailable(luato)
 
 if(NOT LITO_USE_SYSTEM_ZSTD)
@@ -77,7 +77,7 @@ endif()
 FetchContent_Declare(
   licrypto
   GIT_REPOSITORY https://github.com/litocpp/licrypto.git
-  GIT_TAG b7156942a4b85780a21bd11092c08cb6893b05d4)
+  GIT_TAG c73211c66216c9a2f4644ea97c5693bd82dce787)
 FetchContent_MakeAvailable(licrypto)
 
 add_subdirectory(third-party/zstd)
