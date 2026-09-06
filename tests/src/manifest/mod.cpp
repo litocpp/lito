@@ -258,7 +258,7 @@ TEST_F(Manifest, PackageDependencySourceCombinationsAreValidated) {
     constexpr ref<str> invalid_dependencies[] = {
         "path = \"dependency\"\ngit = \"https://example.invalid/dependency.git\""_str,
         "builtin = \"dependency\"\nversion = \"0.1.0\""_str,
-        "path = \"dependency\"\nregistry = \"official\""_str,
+        "path = \"dependency\"\nregistry = \"litocpp\""_str,
     };
     auto index = usize {};
     for (auto declaration : invalid_dependencies) {
@@ -304,7 +304,7 @@ archive = "fixture-standalone-publish"
 
 [dependencies.same-registry]
 version = "^2.0"
-registry = "official"
+registry = "litocpp"
 visibility = "public"
 
 [dependencies.local-versioned]
@@ -334,12 +334,12 @@ builtin = "qt"
     ASSERT_EQ(loaded->publish.include->len(), usize(2));
     ASSERT_EQ(loaded->publish.exclude.len(), usize(1));
 
-    auto official  = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap();
+    auto primary   = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap();
     auto community = lito::registry::RegistryId::parse("https://community.example/"_str).unwrap();
     auto aliases   = Vec<lito::manifest::StandaloneRegistryAlias>::make();
     aliases.push(lito::manifest::StandaloneRegistryAlias {
-        .name     = String::make("official"_str),
-        .identity = rstd::move(official),
+        .name     = String::make("litocpp"_str),
+        .identity = rstd::move(primary),
     });
     aliases.push(lito::manifest::StandaloneRegistryAlias {
         .name     = String::make("community"_str),
@@ -1706,7 +1706,7 @@ visibility = "public"
     ASSERT_TRUE(package.is_ok());
     ASSERT_TRUE(requirement.is_ok());
     auto edited = lito::manifest::add_registry_dependency(
-        project->root.as_path(), *package, *requirement, Some(String::make("official"_str)));
+        project->root.as_path(), *package, *requirement, Some(String::make("litocpp"_str)));
     ASSERT_TRUE(edited.is_ok());
 
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -1715,7 +1715,7 @@ visibility = "public"
     const auto& dependency = loaded->dependencies[usize {}];
     ASSERT_TRUE(dependency.source.resolution.is_Registry());
     EXPECT_EQ(dependency.name.as_str(), "sample"_str);
-    EXPECT_EQ(dependency.source.resolution.as_Registry().registry->as_str(), "official"_str);
+    EXPECT_EQ(dependency.source.resolution.as_Registry().registry->as_str(), "litocpp"_str);
     EXPECT_EQ(dependency.source.resolution.as_Registry().requirement.text(), "0.4"_str);
     ASSERT_TRUE(dependency.visibility.is_some());
     EXPECT_EQ(*dependency.visibility, lito::dependency::DependencyVisibility::Public);

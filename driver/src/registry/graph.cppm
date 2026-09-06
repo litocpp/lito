@@ -50,6 +50,8 @@ struct RegistryGraphPolicy {
 struct RegistryGraphProvider {
     void*                                      context {};
     const lito::source::ResolvedPackageSource* root_source {};
+    RegistryGraphResult<Option<RegistryId>> (*resolve_registry)(void*,
+                                                                Option<ref<str>>) noexcept {};
     RegistryGraphResult<Vec<ResolvedRegistryGraphSource>> (
         *resolve)(void*, slice<RegistryGraphRequirement>) noexcept {};
     RegistryGraphResult<BuiltinRegistryPackage> (*resolve_builtin)(void*, ref<str>) noexcept {};
@@ -72,6 +74,8 @@ class RegistryGraphClient {
     static auto load_index(void*, const RegistryPackageId&) noexcept -> RegistryIndexLoadResult;
     static auto resolve_callback(void*, slice<RegistryGraphRequirement>) noexcept
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
+    static auto resolve_registry_callback(void*, Option<ref<str>>) noexcept
+        -> RegistryGraphResult<Option<RegistryId>>;
     auto resolve_locked(Vec<RegistrySolverRequirement> roots)
         -> RegistryGraphResult<Vec<lito::source::RegistrySourcePin>>;
     auto materialize(Vec<lito::source::RegistrySourcePin> packages)
@@ -108,8 +112,9 @@ public:
     }
     auto provider() noexcept -> RegistryGraphProvider {
         return RegistryGraphProvider {
-            .context = this,
-            .resolve = resolve_callback,
+            .context          = this,
+            .resolve_registry = resolve_registry_callback,
+            .resolve          = resolve_callback,
         };
     }
 };
@@ -133,16 +138,7 @@ auto graph_failure(ref<str> message) -> RegistryGraphResult<T> {
 
 auto configured_registry(const lito::config::LitoBootstrapConfig& config, ref<str> selector)
     -> Option<ref<lito::config::NamedRegistryConfig>> {
-    auto named = config.registry(selector);
-    if (named.is_some()) return named;
-    auto identity = RegistryId::parse(selector);
-    if (identity.is_err()) return None();
-    for (const auto& registry : *config.registries()) {
-        if (registry.identity == *identity) {
-            return Some(ref<lito::config::NamedRegistryConfig>::from_raw_parts(&registry));
-        }
-    }
-    return None();
+    return config.resolve_registry(selector);
 }
 
 auto configured_registry(const lito::config::LitoBootstrapConfig& config,
@@ -221,6 +217,20 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     self.indices_.push(loaded->clone());
     return Ok(rstd::move(loaded).unwrap());
+}
+
+auto lito::registry::RegistryGraphClient::resolve_registry_callback(
+    void*            context,
+    Option<ref<str>> selector) noexcept -> RegistryGraphResult<Option<RegistryId>> {
+    auto& self = *static_cast<RegistryGraphClient*>(context);
+    if (self.config_ == nullptr) {
+        return graph_failure<Option<RegistryId>>(
+            "Registry graph client has no bootstrap config"_str);
+    }
+    auto selected = selector.is_some() ? self.config_->resolve_registry(*selector)
+                                       : self.config_->default_registry();
+    if (selected.is_none()) return Ok(Option<RegistryId> {});
+    return Ok(Some((**selected).identity.clone()));
 }
 
 auto lito::registry::RegistryGraphClient::resolve_callback(

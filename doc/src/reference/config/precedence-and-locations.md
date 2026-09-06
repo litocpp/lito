@@ -6,10 +6,11 @@
 `XDG_CONFIG_HOME` is unset, owns Registry selection, endpoint overrides, mirrors, and publish
 tokens. The file must not be accessible by group or other users on Unix.
 
-The `official` Registry and its endpoints are built in. A user who only publishes to it needs:
+The `litocpp` Registry and its endpoints are built in and selected by default. A user who only
+publishes to it needs:
 
 ```toml
-[registries.official]
+[registries.litocpp]
 token = "..."
 ```
 

@@ -89,9 +89,30 @@ contains both Lito source-bundle entries and Cargo vendor entries, but the locks
 Cargo owns `Cargo.lock`, Lito owns `lito.lock`, and neither lock records the attachment. Lito does
 not search for Cargo locks or attach one by default.
 
-## Local Git patches
+## Local package patches
 
-Keep a Git identity in `lito.toml` and redirect it locally through config:
+Keep the Registry requirement in `lito.toml` and redirect selected packages locally through
+config:
+
+```toml
+[patch.litocpp]
+geometry = { path = "../geometry" }
+geometry-codegen = { path = "../geometry" }
+```
+
+The outer key names the original Registry, and the inner keys identify the packages to replace.
+Multiple entries may point at the same workspace root. Unlisted packages still resolve from the
+Registry. The local package version must satisfy the original Registry requirement.
+
+Git packages use the same package-specific shape:
+
+```toml
+[patch."https://github.com/example/geometry.git"]
+geometry = { path = "../geometry" }
+```
+
+For a Git source whose complete package set should come from one local workspace, Lito also accepts
+the source-wide form:
 
 ```toml
 [patch."https://github.com/example/geometry.git"]
@@ -99,9 +120,9 @@ path = "../geometry"
 ```
 
 This belongs in `.lito/config.toml` when it is a developer checkout override. `lito.toml` retains
-the Git requirement, but the matched package resolves as a Path source. Lito does not contact the
-matched Git URL or require the patch directory to be a Git repository. Like an ordinary Path
-dependency, the lock records neither the original Git source nor the machine-local path.
+the original requirement, but the matched package resolves as a Path source. Lito does not contact
+a matched Git URL or require the patch directory to be a Git repository. Like an ordinary Path
+dependency, the lock records neither the original source nor the machine-local path.
 
 The patch config is therefore required whenever that local source should remain active. A normal
 command can update the lock when a patch is enabled or removed; `--locked` rejects such a source

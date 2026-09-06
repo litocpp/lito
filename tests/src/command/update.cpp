@@ -244,3 +244,50 @@ TEST_F(Update, LocalGitPatchConfigResolvesAnUnreachableSourceAsPath) {
     EXPECT_FALSE(lock_text->as_str().contains("https://example.invalid/patch-fixture.git"_str));
     EXPECT_FALSE(lock_text->as_str().contains("../patch-fixture"_str));
 }
+
+TEST_F(Update, RegistryPackagePatchUsesTheDefaultLitocppRegistry) {
+    const ProjectFile files[] = {
+        { ".lito/config.toml"_str, R"toml([patch.litocpp]
+fixture-registry-patch = { path = "provider" }
+)toml"_str },
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-registry-patch-app"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-registry-patch-app"
+link-stdlib = false
+
+[dependencies.fixture-registry-patch]
+version = "=0.1.0"
+visibility = "private"
+)toml"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-registry-patch"
+version = "0.1.0"
+
+[lib]
+name = "fixture-registry-patch"
+module = "fixture.registry_patch"
+archive = "fixture-registry-patch"
+)toml"_str },
+    };
+    auto project = materialize("registry-package-patch"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto config = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(config.is_ok());
+    auto registries =
+        lito::config::load_registry_bootstrap_config(lito::config::RegistryBootstrapConfigRequest {
+            .path = Some(project->root.join(PathBuf::from("missing-registry.toml"_str).as_path())),
+        });
+    ASSERT_TRUE(registries.is_ok());
+    config->sources.network = lito::source::NetworkPolicy::Offline;
+    auto updated            = lito::update_dependencies(lito::UpdateRequest {
+        .root       = config->root.clone(),
+        .registries = Some(rstd::move(registries).unwrap()),
+        .lock       = rstd::move(config->lock),
+        .sources    = rstd::move(config->sources),
+    });
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
+}

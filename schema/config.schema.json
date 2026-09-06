@@ -314,10 +314,26 @@
       "additionalProperties": false
     },
     "patches": {
-      "description": "Git source URLs map to local replacement directories.",
+      "description": "Registry names or source URLs map package names to local replacement directories. A Git URL may also use the source-wide path form.",
       "type": "object",
       "patternProperties": {
         "^(?!-)(?!.*#).+$": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/patch"
+            },
+            {
+              "$ref": "#/definitions/sourcePatches"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "sourcePatches": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
           "$ref": "#/definitions/patch"
         }
       },

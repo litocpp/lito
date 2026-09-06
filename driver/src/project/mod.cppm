@@ -81,6 +81,20 @@ struct ProjectRegistryResolver {
         return self.embedded->resolve(id);
     }
 
+    static auto resolve_registry(void* raw, Option<ref<str>> selector) noexcept
+        -> lito::registry::RegistryGraphResult<Option<lito::registry::RegistryId>> {
+        auto& self = *static_cast<ProjectRegistryResolver*>(raw);
+        if (self.config == nullptr) {
+            return Err(lito::registry::RegistryGraphError {
+                .message = String::make("Registry resolution has no bootstrap context"_str),
+            });
+        }
+        auto selected = selector.is_some() ? self.config->resolve_registry(*selector)
+                                           : self.config->default_registry();
+        if (selected.is_none()) return Ok(Option<lito::registry::RegistryId> {});
+        return Ok(Some((**selected).identity.clone()));
+    }
+
     static auto resolve(void*                                           raw,
                         slice<lito::registry::RegistryGraphRequirement> requirements) noexcept
         -> lito::registry::RegistryGraphResult<Vec<lito::registry::ResolvedRegistryGraphSource>> {
@@ -141,9 +155,10 @@ struct ProjectRegistryResolver {
 
     auto provider() noexcept -> lito::registry::RegistryGraphProvider {
         return lito::registry::RegistryGraphProvider {
-            .context         = this,
-            .resolve         = resolve,
-            .resolve_builtin = embedded.is_some() ? resolve_builtin : nullptr,
+            .context          = this,
+            .resolve_registry = resolve_registry,
+            .resolve          = resolve,
+            .resolve_builtin  = embedded.is_some() ? resolve_builtin : nullptr,
         };
     }
 };

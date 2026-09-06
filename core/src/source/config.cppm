@@ -24,6 +24,12 @@ struct GitSourcePatch {
     PathBuf path;
 };
 
+struct PackageSourcePatch {
+    String  source;
+    String  package;
+    PathBuf path;
+};
+
 class BuiltinPackageSource {
     RSTD_ENUM(BuiltinPackageSource,
               (Registry,
@@ -39,6 +45,7 @@ struct BuiltinPackageSourceEntry {
 
 struct PackageSourceConfig {
     Vec<GitSourcePatch>            patches;
+    Vec<PackageSourcePatch>        package_patches;
     Vec<BuiltinPackageSourceEntry> builtin_packages;
     Vec<PathBuf>                   source_bundles;
     NetworkPolicy                  network { NetworkPolicy::Allow };
@@ -61,6 +68,14 @@ struct PackageSourceConfig {
                 .path = patch.path.clone(),
             });
         }
+        auto package_copies = Vec<PackageSourcePatch>::with_capacity(package_patches.len());
+        for (const auto& patch : package_patches) {
+            package_copies.push(PackageSourcePatch {
+                .source  = patch.source.clone(),
+                .package = patch.package.clone(),
+                .path    = patch.path.clone(),
+            });
+        }
         auto builtins = Vec<BuiltinPackageSourceEntry>::with_capacity(builtin_packages.len());
         for (const auto& package : builtin_packages) {
             auto source = package.source.is_Registry()
@@ -80,6 +95,7 @@ struct PackageSourceConfig {
         for (const auto& bundle : source_bundles) bundles.push(bundle.clone());
         return PackageSourceConfig {
             .patches          = rstd::move(copied),
+            .package_patches  = rstd::move(package_copies),
             .builtin_packages = rstd::move(builtins),
             .source_bundles   = rstd::move(bundles),
             .network          = network,

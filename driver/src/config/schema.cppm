@@ -796,66 +796,104 @@ auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value
     return Ok(rstd::move(result));
 }
 
-auto configured_sources(
-    const Option<rstd::collections::BTreeMap<String, lito::config::wire::Patch>>& value,
-    const Option<lito::config::wire::Builtin>&                                    builtin,
-    ref<rstd::path::Path> project_root) -> ConfigResult<lito::source::PackageSourceConfig> {
-    auto patches = Vec<lito::source::GitSourcePatch>::make();
+auto configured_patch_path(const Toml&           value,
+                           rstd::serde::DataPath path,
+                           ref<rstd::path::Path> project_root) -> ConfigResult<PathBuf> {
+    auto decoded = rstd::toml::decode_value<lito::config::wire::Patch>(value, path.clone());
+    if (decoded.is_err()) return Err(ConfigError::Data(rstd::move(decoded).unwrap_err()));
+    if (decoded->path.is_empty()) {
+        return config_data_failure<PathBuf>(path.with_field("path"_str), "must not be empty"_str);
+    }
+    auto requested = PathBuf::from(decoded->path.as_str());
+    if (requested.as_path().is_relative()) {
+        requested = PathBuf::from(project_root).join(requested.as_path());
+    }
+    auto canonical = rstd::fs::canonicalize(requested.as_path());
+    if (canonical.is_err()) {
+        return config_io_failure<PathBuf>("resolve config.patch path"_str,
+                                          requested.as_path(),
+                                          rstd::move(canonical).unwrap_err());
+    }
+    auto metadata = rstd::fs::metadata(canonical->as_path());
+    if (metadata.is_err()) {
+        return config_io_failure<PathBuf>("inspect config.patch path"_str,
+                                          canonical->as_path(),
+                                          rstd::move(metadata).unwrap_err());
+    }
+    if (! metadata->is_dir()) {
+        return config_data_failure<PathBuf>(path.with_field("path"_str), "must be a directory"_str);
+    }
+    return Ok(rstd::move(canonical).unwrap_unchecked());
+}
+
+auto configured_sources(Option<ref<Toml>>                          value,
+                        const Option<lito::config::wire::Builtin>& builtin,
+                        ref<rstd::path::Path>                      project_root)
+    -> ConfigResult<lito::source::PackageSourceConfig> {
+    auto source_patches  = Vec<lito::source::GitSourcePatch>::make();
+    auto package_patches = Vec<lito::source::PackageSourcePatch>::make();
     if (value.is_none()) {
         return Ok(lito::source::PackageSourceConfig {
-            .patches          = rstd::move(patches),
+            .patches          = rstd::move(source_patches),
+            .package_patches  = rstd::move(package_patches),
             .builtin_packages = rstd_try(configured_builtin_sources(builtin, project_root)),
         });
     }
-    for (auto key : value->keys()) {
-        const auto& url = *key;
-        auto path = rstd::serde::DataPath().with_field("patch"_str).with_map_key(url.as_str());
-        if (url.is_empty()) {
+    auto table = (**value).as_table();
+    if (table.is_none()) {
+        return config_data_failure<lito::source::PackageSourceConfig>(
+            rstd::serde::DataPath().with_field("patch"_str), "must be a table"_str);
+    }
+    for (auto source_key : (**table).keys()) {
+        const auto& source = *source_key;
+        auto        source_path =
+            rstd::serde::DataPath().with_field("patch"_str).with_map_key(source.as_str());
+        if (source.is_empty()) {
             return config_data_failure<lito::source::PackageSourceConfig>(
-                rstd::move(path), "URL must not be empty"_str);
+                rstd::move(source_path), "source must not be empty"_str);
         }
-        if (url.as_str().starts_with("-"_str)) {
+        if (source.as_str().starts_with("-"_str)) {
             return config_data_failure<lito::source::PackageSourceConfig>(
-                rstd::move(path), "URL must not start with '-'"_str);
+                rstd::move(source_path), "source must not start with '-'"_str);
         }
-        if (url.as_str().contains("#"_str)) {
+        if (source.as_str().contains("#"_str)) {
             return config_data_failure<lito::source::PackageSourceConfig>(
-                rstd::move(path), "URL must not contain a fragment"_str);
+                rstd::move(source_path), "source must not contain a fragment"_str);
         }
-        const auto specification = value->get(url.as_str()).unwrap_unchecked();
-        if (specification->path.is_empty()) {
-            return config_data_failure<lito::source::PackageSourceConfig>(
-                path.with_field("path"_str), "must not be empty"_str);
+        const auto source_value = (**table).get(source.as_str()).unwrap_unchecked();
+        auto       source_table = source_value->as_table();
+        if (source_table.is_none()) {
+            return config_data_failure<lito::source::PackageSourceConfig>(rstd::move(source_path),
+                                                                          "must be a table"_str);
         }
-        auto requested = PathBuf::from(specification->path.as_str());
-        if (requested.as_path().is_relative()) {
-            requested = PathBuf::from(project_root).join(requested.as_path());
+        auto direct_path = source_value->get("path"_str);
+        if (direct_path.is_some() && (**direct_path).as_str().is_some()) {
+            source_patches.push(lito::source::GitSourcePatch {
+                .git  = source.clone(),
+                .path = rstd_try(
+                    configured_patch_path(*source_value, rstd::move(source_path), project_root)),
+            });
+            continue;
         }
-        auto canonical = rstd::fs::canonicalize(requested.as_path());
-        if (canonical.is_err()) {
-            return config_io_failure<lito::source::PackageSourceConfig>(
-                "resolve config.patch path"_str,
-                requested.as_path(),
-                rstd::move(canonical).unwrap_err());
+        for (auto package_key : (**source_table).keys()) {
+            const auto& package = *package_key;
+            auto        path    = source_path.clone().with_map_key(package.as_str());
+            if (! lito::manifest::valid_package_name(package.as_str())) {
+                return config_data_failure<lito::source::PackageSourceConfig>(
+                    rstd::move(path), "must be a valid package name"_str);
+            }
+            const auto specification = (**source_table).get(package.as_str()).unwrap_unchecked();
+            package_patches.push(lito::source::PackageSourcePatch {
+                .source  = source.clone(),
+                .package = package.clone(),
+                .path =
+                    rstd_try(configured_patch_path(*specification, rstd::move(path), project_root)),
+            });
         }
-        auto metadata = rstd::fs::metadata(canonical->as_path());
-        if (metadata.is_err()) {
-            return config_io_failure<lito::source::PackageSourceConfig>(
-                "inspect config.patch path"_str,
-                canonical->as_path(),
-                rstd::move(metadata).unwrap_err());
-        }
-        if (! metadata->is_dir()) {
-            return config_data_failure<lito::source::PackageSourceConfig>(
-                path.with_field("path"_str), "must be a directory"_str);
-        }
-        patches.push(lito::source::GitSourcePatch {
-            .git  = url.clone(),
-            .path = rstd::move(canonical).unwrap_unchecked(),
-        });
     }
     return Ok(lito::source::PackageSourceConfig {
-        .patches          = rstd::move(patches),
+        .patches          = rstd::move(source_patches),
+        .package_patches  = rstd::move(package_patches),
         .builtin_packages = rstd_try(configured_builtin_sources(builtin, project_root)),
     });
 }
@@ -877,9 +915,10 @@ auto decode_project_config(PathBuf               root,
         rstd_try(configured_host_tools(wire.tools, root.as_path(), rstd::move(tool_defaults)));
     auto standard_library         = rstd_try(configured_standard_library(wire.toolchain));
     auto standard_library_runtime = rstd_try(configured_standard_library_runtime(wire.toolchain));
-    auto environment   = rstd_try(configured_environment(wire.environment, root.as_path()));
-    auto lock          = rstd_try(configured_lock(wire.lock, root.as_path()));
-    auto sources       = rstd_try(configured_sources(wire.patch, wire.builtin, root.as_path()));
+    auto environment = rstd_try(configured_environment(wire.environment, root.as_path()));
+    auto lock        = rstd_try(configured_lock(wire.lock, root.as_path()));
+    auto sources =
+        rstd_try(configured_sources(document.get("patch"_str), wire.builtin, root.as_path()));
     auto install       = rstd_try(configured_install(wire.install, root.as_path()));
     auto doc           = rstd_try(configured_doc(wire.doc, root.as_path()));
     auto build_options = rstd_try(configured_build_options(wire.build));

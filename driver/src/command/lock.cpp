@@ -59,6 +59,7 @@ auto acquire_cargo_git_checkouts(const LockExportRequest&                  reque
         lito::tools::ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
     auto source_config = request.sources.clone();
     source_config.patches.clear();
+    source_config.package_patches.clear();
     auto manager =
         lito::source::SourceManager(request.root.as_path(),
                                     lito::source::SourceResolutionOptions {

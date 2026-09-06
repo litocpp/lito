@@ -127,15 +127,15 @@ struct Builtin {
 };
 
 struct Document {
-    Option<Environment>                                environment;
-    Option<Tools>                                      tools;
-    Option<Toolchain>                                  toolchain;
-    Option<rstd::collections::BTreeMap<String, Patch>> patch;
-    Option<Lock>                                       lock;
-    Option<Install>                                    install;
-    Option<Build>                                      build;
-    Option<Doc>                                        doc;
-    Option<Builtin>                                    builtin;
+    Option<Environment>          environment;
+    Option<Tools>                tools;
+    Option<Toolchain>            toolchain;
+    Option<rstd::serde::Ignored> patch;
+    Option<Lock>                 lock;
+    Option<Install>              install;
+    Option<Build>                build;
+    Option<Doc>                  doc;
+    Option<Builtin>              builtin;
 };
 
 struct HostDocument {
@@ -522,14 +522,12 @@ struct Impl<serde::Deserialize, lito::config::wire::Document> {
         auto environment = serde::OptionalField<lito::config::wire::Environment>("environment"_str);
         auto tools       = serde::OptionalField<lito::config::wire::Tools>("tools"_str);
         auto toolchain   = serde::OptionalField<lito::config::wire::Toolchain>("toolchain"_str);
-        auto patch =
-            serde::OptionalField<rstd::collections::BTreeMap<String, lito::config::wire::Patch>>(
-                "patch"_str);
-        auto lock    = serde::OptionalField<lito::config::wire::Lock>("lock"_str);
-        auto install = serde::OptionalField<lito::config::wire::Install>("install"_str);
-        auto build   = serde::OptionalField<lito::config::wire::Build>("build"_str);
-        auto doc     = serde::OptionalField<lito::config::wire::Doc>("doc"_str);
-        auto builtin = serde::OptionalField<lito::config::wire::Builtin>("builtin"_str);
+        auto patch       = serde::OptionalField<rstd::serde::Ignored>("patch"_str);
+        auto lock        = serde::OptionalField<lito::config::wire::Lock>("lock"_str);
+        auto install     = serde::OptionalField<lito::config::wire::Install>("install"_str);
+        auto build       = serde::OptionalField<lito::config::wire::Build>("build"_str);
+        auto doc         = serde::OptionalField<lito::config::wire::Doc>("doc"_str);
+        auto builtin     = serde::OptionalField<lito::config::wire::Builtin>("builtin"_str);
         rstd_try(serde::deserialize_record(deserializer,
                                            serde::UnknownFieldPolicy::Reject,
                                            environment,

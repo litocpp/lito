@@ -79,6 +79,18 @@ public:
         }
         return None();
     }
+    auto resolve_registry(ref<str> selector) const -> Option<ref<NamedRegistryConfig>> {
+        auto named = registry(selector);
+        if (named.is_some()) return named;
+        auto identity = lito::registry::RegistryId::parse(selector);
+        if (identity.is_err()) return None();
+        for (const auto& candidate : registries_) {
+            if (candidate.identity == *identity) {
+                return Some(ref<NamedRegistryConfig>::from_raw_parts(&candidate));
+            }
+        }
+        return None();
+    }
     auto default_registry() const noexcept -> Option<ref<NamedRegistryConfig>> {
         if (default_registry_.is_none()) return None();
         return registry(default_registry_->as_str());
@@ -381,16 +393,16 @@ auto validate_bootstrap_default(const lito::config::LitoBootstrapConfig& config)
 }
 
 auto compiled_global_config() -> lito::config::ConfigResult<Toml> {
-    constexpr auto official = R"toml(default = "official"
-[registries.official]
+    constexpr auto litocpp = R"toml(default = "litocpp"
+[registries.litocpp]
 identity = "https://registry.litocpp.org/"
 index = "https://registry.litocpp.org/v1/index/{package}.json"
 blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
 api = "https://registry.litocpp.org/"
 )toml"_str;
-    auto           parsed   = rstd::toml::from_str(official);
+    auto           parsed  = rstd::toml::from_str(litocpp);
     if (parsed.is_err()) {
-        return registry_config_failure<Toml>("compiled official registry config is invalid"_str);
+        return registry_config_failure<Toml>("compiled litocpp registry config is invalid"_str);
     }
     return Ok(rstd::move(parsed).unwrap());
 }

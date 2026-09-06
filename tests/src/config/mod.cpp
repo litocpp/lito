@@ -342,15 +342,15 @@ version = "29.0.14206865"
     }
 }
 
-TEST_F(Config, RegistryGlobalConfigMergesOfficialDefaultsMirrorAndCredential) {
+TEST_F(Config, RegistryGlobalConfigMergesLitocppDefaultsMirrorAndCredential) {
     auto project = empty_project("registry-global"_str);
     ASSERT_TRUE(project.is_ok());
     auto           path     = project->root.join(PathBuf::from("config.toml"_str).as_path());
     constexpr auto contents = R"toml(
-[registries.official]
+[registries.litocpp]
 token = "secret-value"
 
-[registries.official.mirror]
+[registries.litocpp.mirror]
 index = "https://mirror.example/v1/index/{package}.json"
 blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
 )toml"_str;
@@ -366,7 +366,7 @@ blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_TRUE(loaded->default_registry().is_some());
     const auto& registry = **loaded->default_registry();
-    EXPECT_EQ(registry.name.as_str(), "official"_str);
+    EXPECT_EQ(registry.name.as_str(), "litocpp"_str);
     EXPECT_EQ(registry.identity.as_str(), "https://registry.litocpp.org/"_str);
     EXPECT_EQ(registry.api.as_str(), "https://registry.litocpp.org/"_str);
     EXPECT_EQ(registry.endpoints.index.render("luato"_str).as_str(),
@@ -379,10 +379,10 @@ blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
 
 TEST_F(Config, RegistryGlobalConfigRejectsUnknownFieldsAndInvalidValues) {
     constexpr ref<str> invalid[] = {
-        R"toml([registries.official]
+        R"toml([registries.litocpp]
 index = "https://registry.litocpp.org/v1/index/fixed.json"
 )toml"_str,
-        R"toml([registries.official]
+        R"toml([registries.litocpp]
 token = "contains whitespace"
 )toml"_str,
         "unexpected = true\n"_str,
@@ -409,7 +409,7 @@ TEST_F(Config, RegistryGlobalConfigMustBePrivate) {
     auto project = empty_project("registry-global-permissions"_str);
     ASSERT_TRUE(project.is_ok());
     auto           path     = project->root.join(PathBuf::from("config.toml"_str).as_path());
-    constexpr auto contents = "[registries.official]\n"
+    constexpr auto contents = "[registries.litocpp]\n"
                               "token = \"secret-value\"\n"_str;
     ASSERT_TRUE(rstd::fs::write(path.as_path(), contents.as_bytes()).is_ok());
 #if ! defined(_WIN32)
@@ -894,6 +894,34 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(patched->sources.patches[usize {}].git.as_str(),
               "https://example.com/source?a=b"_str);
     EXPECT_EQ(patched->sources.patches[usize {}].path.as_path(), patch_directory.as_path());
+}
+
+TEST_F(Config, PackagePatchesKeepSourceAndPackageIdentity) {
+    const ProjectFile files[] = {
+        { ".lito/config.toml"_str, R"toml([patch.litocpp]
+rstd-std = { path = "rstd" }
+licrypto = { path = "licrypto" }
+)toml"_str },
+        { "rstd/.keep"_str, ""_str },
+        { "licrypto/.keep"_str, ""_str },
+    };
+    auto project = materialize("package-patches"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->sources.package_patches.len(), usize(2));
+
+    const auto& licrypto = loaded->sources.package_patches[usize {}];
+    EXPECT_EQ(licrypto.source.as_str(), "litocpp"_str);
+    EXPECT_EQ(licrypto.package.as_str(), "licrypto"_str);
+    EXPECT_EQ(licrypto.path.as_path(),
+              project->root.join(PathBuf::from("licrypto"_str).as_path()).as_path());
+
+    const auto& rstd = loaded->sources.package_patches[usize(1)];
+    EXPECT_EQ(rstd.source.as_str(), "litocpp"_str);
+    EXPECT_EQ(rstd.package.as_str(), "rstd-std"_str);
+    EXPECT_EQ(rstd.path.as_path(),
+              project->root.join(PathBuf::from("rstd"_str).as_path()).as_path());
 }
 
 TEST_F(Config, EnvironmentFlagsAppendToTheirLanguageAndLinkDomains) {

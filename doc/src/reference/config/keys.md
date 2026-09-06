@@ -4,11 +4,11 @@
 
 The global `config.toml` accepts `default` and `registries`. `default` names the Registry used when
 a command does not pass `--registry`. Each `registries.<name>` table accepts `identity`, `index`,
-`blob`, `api`, `mirror`, and `token`. The built-in `official` entry supplies every field except the
-publish token, so the minimal configuration is:
+`blob`, `api`, `mirror`, and `token`. The built-in `litocpp` entry is selected by default and
+supplies every field except the publish token, so the minimal configuration is:
 
 ```toml
-[registries.official]
+[registries.litocpp]
 token = "..."
 ```
 
@@ -214,18 +214,44 @@ value, `LITO_HOME`, then `$HOME/.lito`.
 `litodoc-path` is an existing directory containing a local Litodoc project. Lito canonicalizes it
 when loading config.
 
-## `[patch."GIT-URL"]`
+## `[patch.SOURCE]`
 
-Every patch entry requires `path`, an existing local directory. The Git URL must be non-empty, must
-not start with `-`, and must not contain `#`. The URL matches the declared Git source exactly. Once
-matched, the directory is resolved as an independent Path source before Git pin, cache, tool, or
-network resolution. It needs a valid package manifest but does not need a Git repository or `HEAD`.
+Like Cargo, the outer key selects the original Registry or source and each inner key selects one
+package from that source. Every package entry requires `path`, an existing local directory. The
+path may name either the package root or a workspace containing that package; Lito selects the
+package by its manifest name.
+
+The built-in and default Registry is named `litocpp`:
+
+```toml
+[patch.litocpp]
+rstd-std = { path = "../rstd" }
+licrypto = { path = "../licrypto" }
+```
+
+A Registry patch matches the canonical identity behind the configured Registry name, so it also
+applies to dependencies that omit `registry` and use that Registry as the default. Only the named
+package is replaced; other packages from the same Registry continue through Registry resolution.
+The local package must satisfy the dependency's declared version requirement.
+
+A Git source URL uses the same package-specific form and matches the declared URL exactly:
+
+```toml
+[patch."https://github.com/litocpp/rstd.git"]
+rstd-std = { path = "../rstd" }
+```
+
+Lito also retains its source-wide Git replacement form for external sources and repositories whose
+packages should all come from one local workspace:
 
 ```toml
 [patch."https://github.com/litocpp/rstd.git"]
 path = "../rstd"
 ```
 
-The lock omits both the matched Git source and the local path, following the ordinary Path-source
-rule. Keep this machine-local config active while using that lock; enabling or removing the patch
-changes the resolved source and therefore requires a normal lock update rather than `--locked`.
+Once matched, the directory is resolved as an independent Path source before Git pin, cache, tool,
+or network resolution. It needs a valid package manifest but does not need a Git repository or
+`HEAD`. The lock omits both the original source and the local path, following the ordinary
+Path-source rule. Keep this machine-local config active while using that lock; enabling or removing
+the patch changes the resolved source and therefore requires a normal lock update rather than
+`--locked`.

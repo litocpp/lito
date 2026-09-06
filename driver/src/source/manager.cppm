@@ -259,6 +259,22 @@ class SourceManager {
         return Ok(Some(rstd::move(canonical).unwrap()));
     }
 
+    auto patched_package_path(ref<str> source, ref<str> package)
+        -> SourceResult<Option<ref<rstd::path::Path>>> {
+        auto matched = Option<ref<rstd::path::Path>> {};
+        for (const auto& patch : options_.sources.package_patches) {
+            if (patch.source.as_str() != source || patch.package.as_str() != package) continue;
+            if (matched.is_some()) {
+                return source_failure<Option<ref<rstd::path::Path>>>(rstd::format(
+                    "source configuration contains more than one patch for package '{}' from '{}'",
+                    package,
+                    source));
+            }
+            matched = Some(patch.path.as_path());
+        }
+        return Ok(matched);
+    }
+
     auto patched_path(ref<str> url) -> SourceResult<Option<ref<rstd::path::Path>>> {
         auto matched = Option<ref<rstd::path::Path>> {};
         for (const auto& patch : options_.sources.patches) {
@@ -282,7 +298,8 @@ class SourceManager {
     }
 
     auto select_effective_source(const PackageSourceRequirement& requirement,
-                                 ref<rstd::path::Path>           declaring_root)
+                                 ref<rstd::path::Path>           declaring_root,
+                                 Option<ref<str>>                package = None())
         -> SourceResult<EffectivePackageSource> {
         if (requirement.is_Registry()) {
             return source_failure<EffectivePackageSource>(
@@ -298,8 +315,14 @@ class SourceManager {
             return Ok(
                 EffectivePackageSource::Path(rstd_try(canonical_path_source(requested.as_path()))));
         }
-        const auto& git   = requirement.as_Git();
-        auto        patch = rstd_try(patched_path(git.url.as_str()));
+        const auto& git = requirement.as_Git();
+        if (package.is_some()) {
+            auto patch = rstd_try(patched_package_path(git.url.as_str(), *package));
+            if (patch.is_some()) {
+                return Ok(EffectivePackageSource::Path(rstd_try(canonical_path_source(*patch))));
+            }
+        }
+        auto patch = rstd_try(patched_path(git.url.as_str()));
         if (patch.is_some()) {
             return Ok(EffectivePackageSource::Path(rstd_try(canonical_path_source(*patch))));
         }
@@ -312,8 +335,8 @@ class SourceManager {
 
     auto select_effective_request(PackageSourceFetchRequest request)
         -> SourceResult<EffectiveSourceFetchRequest> {
-        auto source =
-            rstd_try(select_effective_source(request.source, request.declaring_root.as_path()));
+        auto source = rstd_try(select_effective_source(
+            request.source, request.declaring_root.as_path(), Some(request.name.as_str())));
         return Ok(EffectiveSourceFetchRequest {
             .owner  = rstd::move(request.owner),
             .name   = rstd::move(request.name),
@@ -966,6 +989,10 @@ public:
 
     auto builtin_package(ref<str> id) const noexcept -> Option<ref<BuiltinPackageSource>> {
         return options_.sources.builtin_package(id);
+    }
+
+    auto package_patches() const noexcept -> ref<Vec<PackageSourcePatch>> {
+        return ref<Vec<PackageSourcePatch>>::from_raw_parts(&options_.sources.package_patches);
     }
 
     auto acquire_root(ref<rstd::path::Path> root) -> SourceResult<usize> {

@@ -62,6 +62,12 @@ struct PreparedRegistrySource {
 
 using PreparedRegistryMap = rstd::collections::BTreeMap<String, PreparedRegistrySource>;
 
+struct PreparedRegistryPatch {
+    lito::registry::RegistryId registry;
+    String                     package;
+    PathBuf                    path;
+};
+
 auto same_source_root(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
     return left.starts_with(right) && right.starts_with(left);
 }
@@ -161,13 +167,95 @@ class PackageGraphResolver {
     Vec<PackageDependencyKind>                     active_kinds_;
     lito::registry::RegistryGraphProvider          registry_;
     Vec<lito::registry::RegistryGraphRequirement>  registry_requirements_;
-    PreparedRegistryMap registry_sources_ { PreparedRegistryMap::make() };
-    StringSet           discovered_ { StringSet::make() };
-    usize               jobs_ { usize(1) };
+    PreparedRegistryMap        registry_sources_ { PreparedRegistryMap::make() };
+    Vec<PreparedRegistryPatch> registry_patches_;
+    StringSet                  discovered_ { StringSet::make() };
+    usize                      jobs_ { usize(1) };
+
+    auto prepare_registry_patches() -> PackageResult<empty> {
+        for (const auto& patch : *sources_.package_patches()) {
+            if (registry_.resolve_registry == nullptr) {
+                if (lito::registry::RegistryPackageName::parse(patch.source.as_str()).is_ok()) {
+                    return package_resolution_failure<empty>(
+                        "Registry package patches require configured Registry resolution"_str);
+                }
+                continue;
+            }
+            auto resolved =
+                registry_.resolve_registry(registry_.context, Some(patch.source.as_str()));
+            if (resolved.is_err()) {
+                return package_resolution_failure<empty>(rstd::move(resolved).unwrap_err().message);
+            }
+            if (resolved->is_none()) {
+                auto registry_name =
+                    lito::registry::RegistryPackageName::parse(patch.source.as_str());
+                if (registry_name.is_ok()) {
+                    return package_resolution_failure<empty>(rstd::format(
+                        "patch source '{}' is not a configured Registry", patch.source));
+                }
+                continue;
+            }
+            for (const auto& existing : registry_patches_) {
+                if (existing.registry == **resolved && existing.package == patch.package) {
+                    return package_resolution_failure<empty>(rstd::format(
+                        "source configuration contains more than one patch for Registry package "
+                        "'{}' from '{}'",
+                        patch.package,
+                        (**resolved).as_str()));
+                }
+            }
+            registry_patches_.push(PreparedRegistryPatch {
+                .registry = rstd::move(*resolved).unwrap(),
+                .package  = patch.package.clone(),
+                .path     = patch.path.clone(),
+            });
+        }
+        return Ok(empty {});
+    }
+
+    auto registry_patch(const lito::source::PackageSourceRequirement& source, ref<str> package)
+        -> PackageResult<Option<PathBuf>> {
+        auto has_candidate = false;
+        for (const auto& patch : registry_patches_) {
+            if (patch.package == package) has_candidate = true;
+        }
+        if (! has_candidate) return Ok(Option<PathBuf> {});
+        if (registry_.resolve_registry == nullptr) {
+            return package_resolution_failure<Option<PathBuf>>(
+                "Registry package patches require configured Registry resolution"_str);
+        }
+        const auto& registry = source.as_Registry();
+        auto        selected = registry_.resolve_registry(
+            registry_.context,
+            registry.registry.is_some() ? Some(registry.registry->as_str()) : Option<ref<str>> {});
+        if (selected.is_err()) {
+            return package_resolution_failure<Option<PathBuf>>(
+                rstd::move(selected).unwrap_err().message);
+        }
+        if (selected->is_none()) {
+            return package_resolution_failure<Option<PathBuf>>(
+                registry.registry.is_some()
+                    ? rstd::format("Registry '{}' is not configured", registry.registry->as_str())
+                    : String::make("default Registry is not configured"_str));
+        }
+        for (const auto& patch : registry_patches_) {
+            if (patch.package == package && patch.registry == **selected) {
+                return Ok(Some(patch.path.clone()));
+            }
+        }
+        return Ok(Option<PathBuf> {});
+    }
 
     auto effective_source(const lito::source::PackageSourceRequirement& source,
                           ref<str>                                      expected_name)
         -> PackageResult<lito::source::PackageSourceRequirement> {
+        if (source.is_Registry()) {
+            auto patch = rstd_try(registry_patch(source, expected_name));
+            if (patch.is_some()) {
+                return Ok(lito::source::PackageSourceRequirement::Path(rstd::move(patch).unwrap()));
+            }
+            return Ok(source.clone());
+        }
         if (! source.is_Builtin()) return Ok(source.clone());
         auto id       = source.as_Builtin().id.as_str();
         auto override = sources_.builtin_package(id);
@@ -451,6 +539,7 @@ class PackageGraphResolver {
     }
 
     auto prepare_registry_impl(const AcquiredProjectSources& roots) -> PackageResult<empty> {
+        rstd_try(prepare_registry_patches());
         rstd_try(discover_source(roots.primary));
         if (roots.tests.is_some()) rstd_try(discover_source(*roots.tests));
         if (registry_requirements_.is_empty()) return Ok(empty {});
