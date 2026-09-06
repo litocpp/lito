@@ -123,8 +123,19 @@ auto locked_source_wire(const LockedSource& source) -> LockedSourceWire {
 
 auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_version)
     -> LockResult<lito::lock::wire::Document> {
+    auto builtin_packages = StringSet::make();
+    for (const auto& package : graph.packages) {
+        if (package.source.kind == lito::source::PackageSourceKind::Builtin) {
+            builtin_packages.insert(package.manifest.name.clone(), empty {});
+        }
+    }
+
     auto package_indices = Vec<usize>::with_capacity(graph.packages.len());
-    for (usize index {}; index < graph.packages.len(); ++index) package_indices.push(usize(index));
+    for (usize index {}; index < graph.packages.len(); ++index) {
+        if (graph.packages[index].source.kind != lito::source::PackageSourceKind::Builtin) {
+            package_indices.push(usize(index));
+        }
+    }
     rstd::slice_::sort_unstable_by(
         package_indices.as_mut_slice().as_mut_ref(), [&graph](usize left, usize right) {
             return graph.packages[left].manifest.name < graph.packages[right].manifest.name;
@@ -137,15 +148,19 @@ auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_ver
             Vec<String>::with_capacity(package.dependencies.len() + package.dev_dependencies.len());
         for (const auto& dependency : package.dependencies) {
             auto name = resolved_dependency_name(dependency);
+            if (builtin_packages.contains_key(name)) continue;
             dependencies.push(String::make(name));
         }
         for (const auto& dependency : package.dev_dependencies) {
-            dependencies.push(String::make(resolved_dependency_name(dependency)));
+            auto name = resolved_dependency_name(dependency);
+            if (builtin_packages.contains_key(name)) continue;
+            dependencies.push(String::make(name));
         }
         rstd::slice_::sort_unstable(dependencies.as_mut_slice().as_mut_ref());
 
         auto runtime_dependencies = Vec<String>::with_capacity(package.runtime_dependencies.len());
         for (const auto& dependency : package.runtime_dependencies) {
+            if (builtin_packages.contains_key(dependency.name.as_str())) continue;
             runtime_dependencies.push(dependency.name.clone());
         }
         rstd::slice_::sort_unstable(runtime_dependencies.as_mut_slice().as_mut_ref());
