@@ -94,7 +94,6 @@ sources = ["lib.cppm"]
 
 [dependencies.helper]
 path = "helper"
-visibility = "private"
 
 [dev-dependencies.helper]
 path = "helper"
@@ -159,6 +158,12 @@ sources = ["library.cppm"]
 name = "fixture-workspace-inherited-app"
 version = "0.1.0"
 
+[lib]
+name = "fixture-workspace-inherited-app"
+module = "fixture.workspace_inherited_app"
+archive = "fixture-workspace-inherited-app"
+sources = ["library.cppm"]
+
 [[bin]]
 link-stdlib = false
 name = "fixture-workspace-inherited-app"
@@ -166,20 +171,20 @@ sources = ["main.cpp"]
 
 [dependencies.fixture-workspace-inherited-library]
 workspace = true
-visibility = "private"
 
 [external-dependencies.pkg-config.curl]
 workspace = true
 usage = "compile"
-visibility = "public"
+pub = true
 condition = "true"
 
 [external-dependencies.cmake.fixture]
 workspace = true
 condition = "true"
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )toml"_str,
         },
+        { "app/library.cppm"_str, "export module fixture.workspace_inherited_app;\n"_str },
         { "app/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
         { "cmake-package/CMakeLists.txt"_str,
           "cmake_minimum_required(VERSION 3.28)\nproject(LitoFixture)\n"_str },
@@ -204,8 +209,10 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_TRUE(member->cmake_external_dependencies.is_empty());
     ASSERT_EQ(member->workspace_dependencies.len(), usize(1));
     ASSERT_EQ(member->workspace_pkg_config_external_dependencies.len(), usize(1));
-    EXPECT_EQ(member->workspace_pkg_config_external_dependencies[usize {}].usage,
-              lito::dependency::PkgConfigDependencyUsage::Compile);
+    EXPECT_TRUE(member->workspace_pkg_config_external_dependencies[usize {}]
+                    .consumption.usage.uses_compile());
+    EXPECT_FALSE(
+        member->workspace_pkg_config_external_dependencies[usize {}].consumption.usage.uses_link());
     ASSERT_EQ(member->workspace_cmake_external_dependencies.len(), usize(1));
     EXPECT_TRUE(member->workspace_external_sources.is_empty());
 
@@ -247,8 +254,9 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_EQ(curl.alias.as_str(), "curl"_str);
     EXPECT_EQ(curl.requirement.module.as_str(), "libcurl"_str);
     EXPECT_EQ(curl.requirement.mode, lito::dependency::PkgConfigQueryMode::Static);
-    EXPECT_EQ(curl.usage, lito::dependency::PkgConfigDependencyUsage::Compile);
-    EXPECT_EQ(curl.visibility, lito::dependency::DependencyVisibility::Public);
+    EXPECT_TRUE(curl.consumption.usage.uses_compile());
+    EXPECT_FALSE(curl.consumption.usage.uses_link());
+    EXPECT_TRUE(curl.consumption.is_public);
     ASSERT_TRUE(curl.condition.is_some());
     EXPECT_EQ(curl.condition->source.as_str(), "true"_str);
 

@@ -71,7 +71,7 @@ auto install_pkg_config_version_operator(lito::dependency::PkgConfigVersionOpera
 
 auto pkg_config_requirement(const lito::dependency::PkgConfigExternalDependency& dependency)
     -> InstallResult<String> {
-    if (dependency.usage == lito::dependency::PkgConfigDependencyUsage::Compile) {
+    if (! dependency.consumption.usage.uses_link()) {
         return selection_failure<String>(rstd::format(
             "compile-only pkg-config dependency '{}' cannot be represented in a Requires field",
             dependency.alias.as_str()));
@@ -171,7 +171,7 @@ auto resolve_pkg_config_file(const InstallRecipe&                  recipe,
                 alias.as_str()));
         }
         auto requirement = rstd_try(pkg_config_requirement(*dependency));
-        if (dependency->visibility == lito::dependency::DependencyVisibility::Public) {
+        if (dependency->consumption.is_public) {
             append_unique(public_dependencies, rstd::move(requirement));
         } else {
             append_unique(private_dependencies, rstd::move(requirement));

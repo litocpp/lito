@@ -306,7 +306,6 @@ sources = ["src/main.c"]
 
 [dependencies.fixture-shared-library]
 path = "../library"
-visibility = "private"
 )toml"_str },
         { "consumer/src/main.c"_str, R"c(int fixture_shared_answer(void);
 

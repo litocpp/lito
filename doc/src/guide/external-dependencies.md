@@ -11,13 +11,17 @@ A pkg-config dependency names the module queried by `pkg-config`:
 [external-dependencies.pkg-config.openssl]
 module = "openssl"
 version = ">= 3.0"
-visibility = "private"
 ```
 
 `static = true` requests static metadata. Configure the provider under `tools.pkg-config` in
 [project config](../reference/config/keys.md), including its executable, search paths, library
 paths, and sysroot. Do not insert shell variables into the manifest. The scalar
 `tools.pkg-config = "pkg-config"` form changes only the provider executable.
+
+Pkg-config dependencies default to compile plus link usage. `usage = "compile"` selects cflags
+only, `usage = "link"` selects libraries only, and `usage = ["compile", "link"]` spells the default
+explicitly. `pub = true` propagates the selected facets through a library. The same scalar/array
+syntax applies to CMake selected targets.
 
 ## CMake packages
 
@@ -27,7 +31,7 @@ A CMake dependency names the package and the targets Lito consumes:
 [external-dependencies.cmake.vulkan]
 package = "Vulkan"
 targets = [
-  { name = "Vulkan::Vulkan", visibility = "private" },
+  { name = "Vulkan::Vulkan", pub = true },
 ]
 ```
 
@@ -51,8 +55,8 @@ then parses it in the C or C++ option domain selected by that package. Ambient `
 and `LDFLAGS` are removed from CMake subprocess environments; even an invocation using
 `--use-env-flags` does not leak those values into the external CMake project.
 
-Workspace declarations keep the package identity and omit target visibility. A member referencing
-the workspace declaration supplies its selected targets and visibility:
+Workspace declarations keep the package identity and omit target consumption. A member referencing
+the workspace declaration supplies its selected targets, usage, and publicity:
 
 ```toml
 [workspace.external-dependencies.cmake.vulkan]
@@ -61,7 +65,7 @@ package = "Vulkan"
 [external-dependencies.cmake.vulkan]
 workspace = true
 targets = [
-  { name = "Vulkan::Vulkan", visibility = "private" },
+  { name = "Vulkan::Vulkan", usage = "compile" },
 ]
 ```
 
@@ -103,8 +107,6 @@ source = "rust-math"
 package = "rust-math-ffi"
 features = ["simd"]
 default-features = false
-usage = "link"
-visibility = "private"
 ```
 
 `manifest-path` is relative to the external source and defaults to `Cargo.toml`. `profile` selects
@@ -115,6 +117,9 @@ assertion, and runtime strip settings. Thus a plain profile can receive values f
 global build options without declaring a Cargo profile or passing native flags through
 `RUSTFLAGS`. Cargo dependencies require an existing workspace `Cargo.lock`, and Lito invokes Cargo
 with `--locked` and a Lito-owned target directory.
+
+Cargo defaults to `usage = "link"`; `pub = true` may propagate that link interface. Runtime usage
+is exclusive, remains private, and may also be written as `usage = ["runtime"]`.
 
 The Cargo package owns its foreign ABI. Export stable `extern "C"` symbols, use C-compatible data
 representations, keep allocation and deallocation under one owner, and do not let Rust panic or C++

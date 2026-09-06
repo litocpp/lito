@@ -7,4 +7,4 @@ name = "demo-app"
 sources = ["main.cpp"]
 
 [dependencies]
-demo-workspace-common = { path = "..", visibility = "private" }
+demo-workspace-common = { path = ".." }

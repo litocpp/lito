@@ -386,8 +386,8 @@ auto versioned_fixture(
     };
 }
 
-auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
-                             const lito::cpp::CppArgumentParser&    parser)
+auto external_usage_metadata(lito::dependency::DependencyConsumption consumption,
+                             const lito::cpp::CppArgumentParser&     parser)
     -> lito::package::PackageResult<lito::cpp::PackageMetadata> {
     auto raw       = strings("-DLITO_EXTERNAL_USAGE=1"_str);
     auto arguments = parser.parse(raw, "pkg-config test fixture"_str);
@@ -400,7 +400,7 @@ auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
     auto external_targets = Vec<lito::cpp::ResolvedExternalTargetUsage>::make();
     external_targets.push(lito::cpp::ResolvedExternalTargetUsage {
         .name              = String::make("lito-fixture"_str),
-        .visibility        = visibility,
+        .consumption       = consumption,
         .compile_arguments = lito::cpp::LanguageArgumentLayer::Cpp(rstd::move(arguments).unwrap()),
         .identity          = String::make("fixture-resolution-v1"_str),
     });
@@ -425,7 +425,7 @@ auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
                 .kind    = lito::package::PackageTargetKind::Library,
                 .name    = String::make("library"_str),
             },
-        .visibility = lito::dependency::DependencyVisibility::Private,
+        .consumption = lito::dependency::DependencyConsumption {},
     });
     auto targets = Vec<lito::cpp::ResolvedTarget>::make();
     targets.push(lito::cpp::ResolvedTarget {

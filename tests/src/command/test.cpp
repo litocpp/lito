@@ -83,7 +83,6 @@ sources = ["src/registration.cppm"]
 
 [dependencies.fixture-test-attach-lib]
 path = "../test-attach-lib"
-visibility = "private"
 )test"_str },
         { "test-attach/src/main.cpp"_str, R"test(import fixture.test.attach;
 
@@ -120,7 +119,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-test-lib]
 path = "../test-lib"
-visibility = "private"
 )test"_str },
         { "test-pass/marker.txt"_str, R"test(package working directory marker
 )test"_str },
@@ -150,7 +148,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-test-lib]
 path = "../test-lib"
-visibility = "private"
 )test"_str },
         { "test-fail/src/main.cpp"_str, R"test(#include <cstdio>
 
@@ -216,7 +213,6 @@ options = ["-DFIXTURE_COMPILE_OPTION=1"]
 
 [dependencies.fixture-compile-lib]
 path = "../compile-lib"
-visibility = "private"
 )test"_str },
         { "compile-pass/src/failure.cpp"_str, R"test(import fixture.compile.lib;
 
@@ -409,7 +405,6 @@ source = "rust"
 package = "lito-cargo-ffi-fixture"
 features = ["ffi"]
 default-features = false
-visibility = "private"
 
 [usage]
 private-include-directories = [{ path = "include", external-source = "rust" }]
@@ -514,7 +509,6 @@ path = "missing-rust-source"
 [external-dependencies.cargo.ffi]
 source = "rust"
 package = "missing-cargo-package"
-visibility = "private"
 condition = "false"
 )toml"_str },
         { "test/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
@@ -630,7 +624,6 @@ sources = ["main.cpp"]
 
 [dependencies.fixture-test-dependency]
 path = "../test-dependency"
-visibility = "private"
 )toml"_str,
         },
         { "app/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },

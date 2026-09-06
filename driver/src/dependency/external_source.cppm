@@ -138,8 +138,8 @@ auto prepare_external_source_task(ExternalSourceTask task)
         Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(declaration.targets.len());
     for (const auto& target : declaration.targets) {
         targets.push(lito::dependency::CMakeTargetRequirement {
-            .name       = target.name.clone(),
-            .visibility = target.visibility,
+            .name        = target.name.clone(),
+            .consumption = target.consumption,
         });
     }
     auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();
@@ -486,8 +486,8 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(requirement.targets.len());
     for (const auto& target : requirement.targets) {
         targets.push(lito::dependency::CMakeTargetRequirement {
-            .name       = target.name.clone(),
-            .visibility = target.visibility,
+            .name        = target.name.clone(),
+            .consumption = target.consumption,
         });
     }
     auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();
@@ -538,8 +538,8 @@ auto materialize_cmake_requirement(const SelectedCMakeDependencyRequirement& req
         Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(requirement.targets.len());
     for (const auto& target : requirement.targets) {
         targets.push(lito::dependency::CMakeTargetRequirement {
-            .name       = target.name.clone(),
-            .visibility = target.visibility,
+            .name        = target.name.clone(),
+            .consumption = target.consumption,
         });
     }
     auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();

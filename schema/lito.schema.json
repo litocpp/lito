@@ -1046,10 +1046,45 @@
       }
     },
     "dependencyVisibility": {
+      "description": "Deprecated dependency edge syntax. Use pub and usage instead.",
+      "deprecated": true,
       "enum": [
         "public",
         "private",
         "link"
+      ]
+    },
+    "nativeDependencyUsage": {
+      "description": "Compile and link facets consumed from a native dependency edge.",
+      "oneOf": [
+        {
+          "enum": ["compile", "link"]
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["compile", "link"]
+          }
+        }
+      ]
+    },
+    "cargoDependencyUsage": {
+      "description": "Artifact facet consumed from a Cargo dependency edge.",
+      "oneOf": [
+        {
+          "enum": ["link", "runtime"]
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["link", "runtime"]
+          }
+        }
       ]
     },
     "gitSelectors": {
@@ -1143,6 +1178,13 @@
         },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
+        },
+        "usage": {
+          "$ref": "#/definitions/nativeDependencyUsage"
+        },
+        "pub": {
+          "type": "boolean",
+          "default": false
         },
         "features": {
           "$ref": "#/definitions/stringArray"
@@ -1250,6 +1292,18 @@
               }
             }
           ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": ["visibility", "pub"]
+              },
+              {
+                "required": ["visibility", "usage"]
+              }
+            ]
+          }
         }
       ],
       "additionalProperties": false
@@ -1276,6 +1330,13 @@
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
         },
+        "usage": {
+          "$ref": "#/definitions/nativeDependencyUsage"
+        },
+        "pub": {
+          "type": "boolean",
+          "default": false
+        },
         "features": {
           "$ref": "#/definitions/stringArray"
         },
@@ -1283,6 +1344,12 @@
           "type": "boolean",
           "default": true
         }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["visibility", "pub"] },
+          { "required": ["visibility", "usage"] }
+        ]
       },
       "additionalProperties": false
     },
@@ -1305,7 +1372,11 @@
           "not": {
             "anyOf": [
               { "required": ["visibility"] },
-              { "required": ["package"] }
+              { "required": ["package"] },
+              {
+                "properties": { "pub": { "const": true } },
+                "required": ["pub"]
+              }
             ]
           }
         }
@@ -1321,6 +1392,13 @@
           "enum": [
             true
           ]
+        },
+        "usage": {
+          "$ref": "#/definitions/nativeDependencyUsage"
+        },
+        "pub": {
+          "enum": [false],
+          "default": false
         },
         "features": {
           "$ref": "#/definitions/stringArray"
@@ -1358,7 +1436,9 @@
           "not": {
             "anyOf": [
               { "required": ["features"] },
-              { "required": ["default-features"] }
+              { "required": ["default-features"] },
+              { "required": ["usage"] },
+              { "required": ["pub"] }
             ]
           }
         }
@@ -1373,6 +1453,8 @@
           "not": {
             "anyOf": [
               { "required": ["visibility"] },
+              { "required": ["usage"] },
+              { "required": ["pub"] },
               { "required": ["features"] },
               { "required": ["default-features"] },
               { "required": ["package"] }
@@ -1433,17 +1515,27 @@
           "type": "boolean"
         },
         "usage": {
-          "enum": [
-            "link",
-            "compile"
-          ]
+          "$ref": "#/definitions/nativeDependencyUsage"
         },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
         },
+        "pub": {
+          "type": "boolean",
+          "default": false
+        },
         "condition": {
           "$ref": "#/definitions/nonEmptyString"
         }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["visibility", "pub"] },
+          {
+            "properties": { "usage": { "type": "array" } },
+            "required": ["visibility", "usage"]
+          }
+        ]
       },
       "additionalProperties": false
     },
@@ -1451,11 +1543,6 @@
       "allOf": [
         {
           "$ref": "#/definitions/pkgConfigExternalDependencyDefinition"
-        },
-        {
-          "required": [
-            "visibility"
-          ]
         },
         {
           "not": {
@@ -1478,8 +1565,7 @@
     "workspacePkgConfigExternalDependencyReference": {
       "type": "object",
       "required": [
-        "workspace",
-        "visibility"
+        "workspace"
       ],
       "properties": {
         "workspace": {
@@ -1491,27 +1577,32 @@
           "$ref": "#/definitions/dependencyVisibility"
         },
         "usage": {
-          "enum": [
-            "link",
-            "compile"
-          ]
+          "$ref": "#/definitions/nativeDependencyUsage"
+        },
+        "pub": {
+          "type": "boolean",
+          "default": false
         },
         "condition": {
           "$ref": "#/definitions/nonEmptyString"
         }
       },
       "not": {
-        "properties": {
-          "usage": {
-            "const": "compile"
+        "anyOf": [
+          {
+            "required": ["visibility", "pub"]
           },
-          "visibility": {
-            "const": "link"
+          {
+            "properties": { "usage": { "type": "array" } },
+            "required": ["visibility", "usage"]
+          },
+          {
+            "properties": {
+              "usage": { "const": "compile" },
+              "visibility": { "const": "link" }
+            },
+            "required": ["usage", "visibility"]
           }
-        },
-        "required": [
-          "usage",
-          "visibility"
         ]
       },
       "additionalProperties": false
@@ -1541,6 +1632,9 @@
                 "required": ["usage"]
               },
               {
+                "required": ["pub"]
+              },
+              {
                 "required": ["condition"]
               }
             ]
@@ -1551,8 +1645,7 @@
     "cmakeExternalTarget": {
       "type": "object",
       "required": [
-        "name",
-        "visibility"
+        "name"
       ],
       "properties": {
         "name": {
@@ -1560,7 +1653,20 @@
         },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
+        },
+        "usage": {
+          "$ref": "#/definitions/nativeDependencyUsage"
+        },
+        "pub": {
+          "type": "boolean",
+          "default": false
         }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["visibility", "pub"] },
+          { "required": ["visibility", "usage"] }
+        ]
       },
       "additionalProperties": false
     },
@@ -1703,6 +1809,152 @@
         }
       ]
     },
+    "explicitCargoExternalDependency": {
+      "type": "object",
+      "required": ["source", "package"],
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/packageName"
+        },
+        "package": {
+          "$ref": "#/definitions/packageName"
+        },
+        "manifest-path": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "features": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "default-features": {
+          "type": "boolean",
+          "default": true
+        },
+        "profile": {
+          "$ref": "#/definitions/packageName"
+        },
+        "usage": {
+          "$ref": "#/definitions/cargoDependencyUsage"
+        },
+        "pub": {
+          "type": "boolean",
+          "default": false
+        },
+        "visibility": {
+          "$ref": "#/definitions/dependencyVisibility"
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["visibility", "pub"] },
+          {
+            "properties": { "usage": { "type": "array" } },
+            "required": ["visibility", "usage"]
+          },
+          {
+            "properties": {
+              "pub": { "enum": [true] },
+              "usage": {
+                "anyOf": [
+                  { "enum": ["runtime"] },
+                  {
+                    "type": "array",
+                    "items": { "enum": ["runtime"] }
+                  }
+                ]
+              }
+            },
+            "required": ["pub", "usage"]
+          }
+        ]
+      },
+      "additionalProperties": false
+    },
+    "workspaceCargoExternalDependencyReference": {
+      "type": "object",
+      "required": ["workspace"],
+      "properties": {
+        "workspace": {
+          "enum": [true]
+        },
+        "features": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "default-features": {
+          "type": "boolean",
+          "default": true
+        },
+        "profile": {
+          "$ref": "#/definitions/packageName"
+        },
+        "usage": {
+          "$ref": "#/definitions/cargoDependencyUsage"
+        },
+        "pub": {
+          "type": "boolean",
+          "default": false
+        },
+        "visibility": {
+          "$ref": "#/definitions/dependencyVisibility"
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["visibility", "pub"] },
+          {
+            "properties": { "usage": { "type": "array" } },
+            "required": ["visibility", "usage"]
+          },
+          {
+            "properties": {
+              "pub": { "enum": [true] },
+              "usage": {
+                "anyOf": [
+                  { "enum": ["runtime"] },
+                  {
+                    "type": "array",
+                    "items": { "enum": ["runtime"] }
+                  }
+                ]
+              }
+            },
+            "required": ["pub", "usage"]
+          }
+        ]
+      },
+      "additionalProperties": false
+    },
+    "cargoExternalDependency": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/explicitCargoExternalDependency"
+        },
+        {
+          "$ref": "#/definitions/workspaceCargoExternalDependencyReference"
+        }
+      ]
+    },
+    "workspaceCargoExternalDependency": {
+      "type": "object",
+      "required": ["source", "package"],
+      "properties": {
+        "source": {
+          "$ref": "#/definitions/packageName"
+        },
+        "package": {
+          "$ref": "#/definitions/packageName"
+        },
+        "manifest-path": {
+          "$ref": "#/definitions/relativePath"
+        }
+      },
+      "additionalProperties": false
+    },
     "externalDependencies": {
       "type": "object",
       "properties": {
@@ -1720,6 +1972,15 @@
           "patternProperties": {
             "^[A-Za-z0-9_-]+$": {
               "$ref": "#/definitions/cmakeExternalDependency"
+            }
+          },
+          "additionalProperties": false
+        },
+        "cargo": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z0-9_-]+$": {
+              "$ref": "#/definitions/cargoExternalDependency"
             }
           },
           "additionalProperties": false
@@ -1744,6 +2005,15 @@
           "patternProperties": {
             "^[A-Za-z0-9_-]+$": {
               "$ref": "#/definitions/workspaceCmakeExternalDependency"
+            }
+          },
+          "additionalProperties": false
+        },
+        "cargo": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z0-9_-]+$": {
+              "$ref": "#/definitions/workspaceCargoExternalDependency"
             }
           },
           "additionalProperties": false

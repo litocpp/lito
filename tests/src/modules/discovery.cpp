@@ -69,11 +69,9 @@ name = "fixture-ambiguous-app"
 
 [dependencies.fixture-ambiguous-alpha]
 path = "../alpha"
-visibility = "private"
 
 [dependencies.fixture-ambiguous-beta]
 path = "../beta"
-visibility = "private"
 )module"_str },
         { "app/src/main.cppm"_str, R"module(export module fixture.ambiguous.app;
 
@@ -122,7 +120,6 @@ name = "fixture-discovery-app"
 
 [dependencies.fixture-discovery-lib]
 path = "../lib"
-visibility = "private"
 )module"_str },
         { "app/src/main.cppm"_str, R"module(export module fixture.discovery.app;
 
@@ -433,7 +430,6 @@ sources = ["app/main.cpp"]
 
 [dependencies.fixture-shared-source-root-library]
 path = "../library"
-visibility = "private"
 )module"_str },
         { "packages/library/lito.toml"_str, R"module([package]
 name = "fixture-shared-source-root-library"
@@ -573,7 +569,7 @@ archive = "fixture_convention_consumer"
 
 [dependencies.fixture-explicit-no-src]
 path = "../dependency"
-visibility = "public"
+pub = true
 )module"_str },
         { "app/src/lib.cppm"_str, R"module(export module fixture.convention;
 

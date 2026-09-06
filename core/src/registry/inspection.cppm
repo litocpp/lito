@@ -121,10 +121,14 @@ auto append_dependency(Vec<RegistryDependencyProjection>&        output,
             },
         .requirement = source.requirement.clone(),
         .kind        = kind,
-        .visibility  = dependency.visibility.is_some()
-                           ? *dependency.visibility
-                           : lito::dependency::DependencyVisibility::Private,
-        .features    = rstd::move(features),
+        .consumption =
+            lito::dependency::DependencyConsumption {
+                .usage     = dependency.usage.is_some()
+                                 ? *dependency.usage
+                                 : lito::dependency::DependencyUsage::compile_and_link(),
+                .is_public = dependency.is_public.is_some() ? *dependency.is_public : false,
+            },
+        .features = rstd::move(features),
         .default_features =
             dependency.default_features.is_some() ? *dependency.default_features : true,
     });
@@ -151,7 +155,10 @@ auto append_runtime_dependency(Vec<RegistryDependencyProjection>&               
             },
         .requirement = source.requirement.clone(),
         .kind        = RegistryDependencyKind::Runtime,
-        .visibility  = lito::dependency::DependencyVisibility::Private,
+        .consumption =
+            lito::dependency::DependencyConsumption {
+                .usage = lito::dependency::DependencyUsage::runtime_only(),
+            },
     });
     return Ok(empty {});
 }
@@ -177,7 +184,8 @@ auto projection_equal(const RegistryDependencyProjection& left,
                       const RegistryDependencyProjection& right) noexcept -> bool {
     if (left.alias != right.alias || ! (left.package == right.package) ||
         left.requirement.text() != right.requirement.text() || left.kind != right.kind ||
-        left.visibility != right.visibility || left.default_features != right.default_features ||
+        ! (left.consumption == right.consumption) ||
+        left.default_features != right.default_features ||
         left.features.len() != right.features.len()) {
         return false;
     }

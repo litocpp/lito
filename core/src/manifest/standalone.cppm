@@ -10,9 +10,9 @@ import :manifest.document;
 import :manifest.error;
 import :manifest.package;
 import :dependency.cmake;
+import :dependency.consumption;
 import :dependency.pkg_config;
 import :dependency.source;
-import :dependency.visibility;
 import :registry.identity;
 import :source.git;
 import :source.requirement;
@@ -83,13 +83,22 @@ auto string_array(const Vec<String>& values) -> Toml {
     return Toml::Array(rstd::move(result));
 }
 
-auto visibility_text(lito::dependency::DependencyVisibility visibility) noexcept -> ref<str> {
-    switch (visibility) {
-    case lito::dependency::DependencyVisibility::Private: return "private"_str;
-    case lito::dependency::DependencyVisibility::Public: return "public"_str;
-    case lito::dependency::DependencyVisibility::LinkOnly: return "link"_str;
+auto dependency_usage_value(lito::dependency::DependencyUsage usage) -> Toml {
+    auto values = Vec<String>::with_capacity(usage.len());
+    if (usage.uses_compile()) values.push(String::make("compile"_str));
+    if (usage.uses_link()) values.push(String::make("link"_str));
+    if (usage.uses_runtime()) values.push(String::make("runtime"_str));
+    if (values.len() == usize(1)) return string_value(values[usize {}].as_str());
+    return string_array(values);
+}
+
+auto insert_consumption(Table&                                  table,
+                        lito::dependency::DependencyConsumption consumption,
+                        lito::dependency::DependencyUsage       default_usage) -> void {
+    if (! (consumption.usage == default_usage)) {
+        table.insert(String::make("usage"_str), dependency_usage_value(consumption.usage));
     }
-    rstd::unreachable();
+    if (consumption.is_public) table.insert(String::make("pub"_str), Toml::Boolean(true));
 }
 
 auto registry_identity(const StandaloneManifestOptions& options, ref<str> value)
@@ -158,9 +167,12 @@ auto dependency_table(const PackageManifest&           manifest,
     }
     auto table = rstd_try(package_source_table(
         manifest, *dependency.source.publication, dependency.name.as_str(), options));
-    if (! development && dependency.visibility.is_some()) {
-        table.insert(String::make("visibility"_str),
-                     string_value(visibility_text(*dependency.visibility)));
+    if (dependency.usage.is_some() &&
+        ! (*dependency.usage == lito::dependency::DependencyUsage::compile_and_link())) {
+        table.insert(String::make("usage"_str), dependency_usage_value(*dependency.usage));
+    }
+    if (! development && dependency.is_public.is_some() && *dependency.is_public) {
+        table.insert(String::make("pub"_str), Toml::Boolean(true));
     }
     if (dependency.features.is_some()) {
         table.insert(String::make("features"_str), string_array(*dependency.features));
@@ -311,14 +323,6 @@ auto pkg_config_version(const lito::dependency::PkgConfigVersionRequirement& ver
     return rstd::format("{}{}", prefix, version.value.as_str());
 }
 
-auto pkg_config_usage(lito::dependency::PkgConfigDependencyUsage usage) noexcept -> ref<str> {
-    switch (usage) {
-    case lito::dependency::PkgConfigDependencyUsage::Link: return "link"_str;
-    case lito::dependency::PkgConfigDependencyUsage::Compile: return "compile"_str;
-    }
-    return "link"_str;
-}
-
 auto pkg_config_dependencies(const PackageManifest& manifest) -> Option<Toml> {
     if (manifest.pkg_config_external_dependencies.is_empty()) return Option<Toml> {};
     auto table = Table::make();
@@ -334,9 +338,8 @@ auto pkg_config_dependencies(const PackageManifest& manifest) -> Option<Toml> {
         if (dependency.requirement.mode == lito::dependency::PkgConfigQueryMode::Static) {
             value.insert(String::make("static"_str), Toml::Boolean(true));
         }
-        value.insert(String::make("usage"_str), string_value(pkg_config_usage(dependency.usage)));
-        value.insert(String::make("visibility"_str),
-                     string_value(visibility_text(dependency.visibility)));
+        insert_consumption(
+            value, dependency.consumption, lito::dependency::DependencyUsage::compile_and_link());
         if (dependency.condition.is_some()) {
             value.insert(String::make("condition"_str),
                          string_value(dependency.condition->source.as_str()));
@@ -388,8 +391,9 @@ auto cmake_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
             for (const auto& target : dependency.targets) {
                 auto item = Table::make();
                 item.insert(String::make("name"_str), string_value(target.name.as_str()));
-                item.insert(String::make("visibility"_str),
-                            string_value(visibility_text(target.visibility)));
+                insert_consumption(item,
+                                   target.consumption,
+                                   lito::dependency::DependencyUsage::compile_and_link());
                 targets.push(Toml::Table(rstd::move(item)));
             }
             value.insert(String::make("targets"_str), Toml::Array(rstd::move(targets)));
@@ -426,11 +430,9 @@ auto cargo_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
         value.insert(String::make("source"_str), string_value(dependency.recipe.source.as_str()));
         value.insert(String::make("package"_str), string_value(dependency.recipe.package.as_str()));
         value.insert(String::make("manifest-path"_str), string_value(*manifest_path));
-        value.insert(String::make("usage"_str),
-                     string_value(dependency.consumption.usage ==
-                                          lito::dependency::CargoDependencyUsage::Link
-                                      ? "link"_str
-                                      : "runtime"_str));
+        insert_consumption(value,
+                           dependency.consumption.dependency,
+                           lito::dependency::DependencyUsage::link_only());
         if (! dependency.consumption.features.is_empty()) {
             value.insert(String::make("features"_str),
                          string_array(dependency.consumption.features));
@@ -441,10 +443,6 @@ auto cargo_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
         if (dependency.consumption.profile.is_some()) {
             value.insert(String::make("profile"_str),
                          string_value(dependency.consumption.profile->as_str()));
-        }
-        if (dependency.consumption.visibility.is_some()) {
-            value.insert(String::make("visibility"_str),
-                         string_value(visibility_text(*dependency.consumption.visibility)));
         }
         if (dependency.consumption.condition.is_some()) {
             value.insert(String::make("condition"_str),

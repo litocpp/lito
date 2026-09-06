@@ -685,7 +685,8 @@ class PackageGraphResolver {
                         lito::source::PackageSourceRequirement::Builtin(String::make("pmacro"_str)),
                     .publication = None(),
                 },
-            .visibility       = None(),
+            .usage            = None(),
+            .is_public        = None(),
             .features         = None(),
             .default_features = None(),
             .declaration_root = None(),
@@ -770,7 +771,8 @@ class PackageGraphResolver {
                 if (! fields.is_empty()) fields.push_str(", "_str);
                 fields.push_str(name);
             };
-            if (declaration.visibility.is_some()) append("visibility"_str);
+            if (declaration.usage.is_some()) append("usage"_str);
+            if (declaration.is_public.is_some()) append("pub"_str);
             if (declaration.features.is_some()) append("features"_str);
             if (declaration.default_features.is_some()) append("default-features"_str);
             if (! fields.is_empty()) {
@@ -796,9 +798,9 @@ class PackageGraphResolver {
             }));
         }
         if (package_has_plugin(provider->manifest)) {
-            if (declaration.visibility.is_some()) {
+            if (declaration.usage.is_some() || declaration.is_public.is_some()) {
                 return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
-                    "dependency '{}' resolves to plugin package '{}', so visibility is not "
+                    "dependency '{}' resolves to plugin package '{}', so usage and pub are not "
                     "allowed",
                     declaration.name.as_str(),
                     provider->manifest.manifest_path.as_path()));
@@ -813,9 +815,9 @@ class PackageGraphResolver {
             }));
         }
         if (package_has_proc_macro(provider->manifest)) {
-            if (declaration.visibility.is_some()) {
+            if (declaration.usage.is_some() || declaration.is_public.is_some()) {
                 return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
-                    "dependency '{}' resolves to pmacro package '{}', so visibility is not "
+                    "dependency '{}' resolves to pmacro package '{}', so usage and pub are not "
                     "allowed",
                     declaration.name.as_str(),
                     provider->manifest.manifest_path.as_path()));
@@ -839,12 +841,25 @@ class PackageGraphResolver {
         }
         auto features =
             declaration.features.is_some() ? declaration.features->clone() : Vec<String>::make();
+        auto consumption = lito::dependency::DependencyConsumption {};
+        if (declaration.usage.is_some()) consumption.usage = *declaration.usage;
+        if (consumption.usage.uses_runtime()) {
+            return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                "dependency '{}' resolves to C/C++ package '{}', so runtime usage is not allowed",
+                declaration.name.as_str(),
+                provider->manifest.manifest_path.as_path()));
+        }
+        consumption.is_public = declaration.is_public.is_some() && *declaration.is_public;
+        if (kind == PackageDependencyKind::Development && consumption.is_public) {
+            return package_resolution_failure<ResolvedRequiredDependency>(
+                rstd::format("development dependency '{}' of package '{}' cannot be public",
+                             declaration.name.as_str(),
+                             provider->manifest.name.as_str()));
+        }
         return Ok(ResolvedRequiredDependency::Cpp(ResolvedCppDependency {
-            .name       = provider->manifest.name.clone(),
-            .visibility = declaration.visibility.is_some()
-                              ? *declaration.visibility
-                              : lito::dependency::DependencyVisibility::Private,
-            .features   = rstd::move(features),
+            .name        = provider->manifest.name.clone(),
+            .consumption = consumption,
+            .features    = rstd::move(features),
             .default_features =
                 declaration.default_features.is_some() ? *declaration.default_features : true,
         }));

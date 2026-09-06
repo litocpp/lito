@@ -349,16 +349,14 @@ sources = ["library.c"]
 [external-dependencies.pkg-config.public-api]
 module = "fixture-public"
 version = ">= 1.2"
-visibility = "public"
+pub = true
 
 [external-dependencies.pkg-config.private-api]
 module = "fixture-private"
-visibility = "private"
 
 [external-dependencies.pkg-config.compile-api]
 module = "fixture-compile"
 usage = "compile"
-visibility = "private"
 )toml"_str },
         { "install.lua"_str, "lito.install({})\n"_str },
         { "library.c"_str, "int fixture_export(void) { return 0; }\n"_str },

@@ -215,7 +215,8 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             dependencies.push(lito::manifest::DeclaredDependency {
                 .name             = reference.name.clone(),
                 .source           = definition->source.clone(),
-                .visibility       = reference.visibility,
+                .usage            = reference.usage,
+                .is_public        = reference.is_public,
                 .features         = reference.features.is_some() ? Some(reference.features->clone())
                                                                  : Option<Vec<String>> {},
                 .default_features = reference.default_features,
@@ -284,8 +285,7 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             lito::dependency::PkgConfigExternalDependency {
                 .alias       = reference.alias.clone(),
                 .requirement = clone_pkg_config_requirement(definition->requirement),
-                .usage       = reference.usage,
-                .visibility  = reference.visibility,
+                .consumption = reference.consumption,
                 .condition   = reference.condition.is_some()
                                    ? Some(reference.condition->clone())
                                    : Option<lito::dependency::ExternalDependencyCondition> {},
@@ -323,8 +323,8 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(reference.targets.len());
         for (const auto& target : reference.targets) {
             targets.push(lito::dependency::CMakeTargetRequirement {
-                .name       = target.name.clone(),
-                .visibility = target.visibility,
+                .name        = target.name.clone(),
+                .consumption = target.consumption,
             });
         }
         auto components = as<Clone>(definition->components).clone();

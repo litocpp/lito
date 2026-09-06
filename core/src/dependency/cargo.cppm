@@ -2,19 +2,13 @@ export module lito.core:dependency.cargo;
 
 import rstd;
 import :dependency.condition;
-import :dependency.visibility;
+import :dependency.consumption;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
 export namespace lito::dependency
 {
-
-enum class CargoDependencyUsage
-{
-    Link,
-    Runtime,
-};
 
 struct CargoProfileName {
     String value;
@@ -42,18 +36,16 @@ struct CargoDependencyConsumption {
     Vec<String>                         features;
     bool                                default_features { true };
     Option<CargoProfileName>            profile;
-    CargoDependencyUsage                usage { CargoDependencyUsage::Link };
-    Option<DependencyVisibility>        visibility;
+    DependencyConsumption               dependency;
     Option<ExternalDependencyCondition> condition;
 
     auto clone() const -> CargoDependencyConsumption {
         auto result = CargoDependencyConsumption {
             .features         = as<Clone>(features).clone(),
             .default_features = default_features,
-            .usage            = usage,
+            .dependency       = dependency,
         };
         if (profile.is_some()) result.profile = Some(profile->clone());
-        result.visibility = visibility;
         if (condition.is_some()) result.condition = Some(condition->clone());
         return result;
     }

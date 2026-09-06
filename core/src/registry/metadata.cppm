@@ -5,7 +5,7 @@ export module lito.core:registry.metadata;
 
 import rstd;
 import rstd.json;
-import :dependency.visibility;
+import :dependency.consumption;
 import :registry.digest;
 import :registry.error;
 import :registry.identity;
@@ -37,15 +37,13 @@ enum class RegistryDependencyKind
 };
 
 struct RegistryDependencyProjection {
-    String                                 alias;
-    RegistryPackageId                      package;
-    VersionRequirement                     requirement;
-    RegistryDependencyKind                 kind { RegistryDependencyKind::Normal };
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
-    Vec<String> features;
-    bool        default_features { true };
+    String                                  alias;
+    RegistryPackageId                       package;
+    VersionRequirement                      requirement;
+    RegistryDependencyKind                  kind { RegistryDependencyKind::Normal };
+    lito::dependency::DependencyConsumption consumption;
+    Vec<String>                             features;
+    bool                                    default_features { true };
 
     auto clone() const -> RegistryDependencyProjection;
 };
@@ -193,13 +191,39 @@ auto parse_kind(ref<str> value, ref<str> context)
                                                     "has an unsupported dependency kind"_str);
 }
 
-auto parse_visibility(ref<str> value, ref<str> context)
-    -> RegistryValueResult<lito::dependency::DependencyVisibility> {
-    using lito::dependency::DependencyVisibility;
-    if (value == "public"_str) return Ok(DependencyVisibility::Public);
-    if (value == "private"_str) return Ok(DependencyVisibility::Private);
-    if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
-    return metadata_failure<DependencyVisibility>(context, "has an unsupported visibility"_str);
+auto parse_usage(const Json& value, ref<str> context)
+    -> RegistryValueResult<lito::dependency::DependencyUsage> {
+    auto array   = rstd_try(json_array(value, context));
+    auto compile = false;
+    auto link    = false;
+    auto runtime = false;
+    for (usize index {}; index < array->len(); ++index) {
+        auto item_context = rstd::format("{}[{}]", context, index);
+        auto text         = (*array)[index].as_str();
+        if (text.is_none()) {
+            return metadata_failure<lito::dependency::DependencyUsage>(item_context.as_str(),
+                                                                       "must be a string"_str);
+        }
+        auto* selected = &compile;
+        if (*text == "link"_str)
+            selected = &link;
+        else if (*text == "runtime"_str)
+            selected = &runtime;
+        else if (*text != "compile"_str)
+            return metadata_failure<lito::dependency::DependencyUsage>(
+                item_context.as_str(), "has an unsupported usage facet"_str);
+        if (*selected) {
+            return metadata_failure<lito::dependency::DependencyUsage>(
+                context, rstd::format("repeats usage facet '{}'", *text));
+        }
+        *selected = true;
+    }
+    auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime);
+    if (result.is_none()) {
+        return metadata_failure<lito::dependency::DependencyUsage>(
+            context, "must contain compile, link, or runtime without mixing runtime"_str);
+    }
+    return Ok(*result);
 }
 
 auto parse_features(const Json& value, ref<str> context) -> RegistryValueResult<Vec<String>> {
@@ -232,7 +256,8 @@ auto parse_dependency(const Json& value, ref<str> context)
                               "package"_str,
                               "requirement"_str,
                               "kind"_str,
-                              "visibility"_str,
+                              "pub"_str,
+                              "usage"_str,
                               "features"_str,
                               "default_features"_str }));
     auto alias_text = rstd_try(required_string(value, "alias"_str, context));
@@ -246,9 +271,25 @@ auto parse_dependency(const Json& value, ref<str> context)
         rstd_try(required_string(value, "package"_str, context)));
     auto requirement = lito::registry::VersionRequirement::parse(
         rstd_try(required_string(value, "requirement"_str, context)));
-    auto kind = parse_kind(rstd_try(required_string(value, "kind"_str, context)), context);
-    auto visibility =
-        parse_visibility(rstd_try(required_string(value, "visibility"_str, context)), context);
+    auto kind        = parse_kind(rstd_try(required_string(value, "kind"_str, context)), context);
+    auto consumption = lito::dependency::DependencyConsumption {};
+    if (kind.is_ok()) {
+        auto usage_member = rstd_try(required_member(value, "usage"_str, context));
+        auto usage        = parse_usage(*usage_member, rstd::format("{}.usage", context).as_str());
+        auto is_public    = required_bool(value, "pub"_str, context);
+        if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
+        if (is_public.is_err()) return Err(rstd::move(is_public).unwrap_err());
+        if (usage->uses_runtime() != (*kind == lito::registry::RegistryDependencyKind::Runtime)) {
+            return metadata_failure<lito::registry::RegistryDependencyProjection>(
+                context, "kind and usage do not describe the same lifecycle"_str);
+        }
+        if (*kind != lito::registry::RegistryDependencyKind::Normal && *is_public) {
+            return metadata_failure<lito::registry::RegistryDependencyProjection>(
+                context, "development and runtime dependencies cannot be public"_str);
+        }
+        consumption =
+            lito::dependency::DependencyConsumption { .usage = *usage, .is_public = *is_public };
+    }
     auto features_member = rstd_try(required_member(value, "features"_str, context));
     auto features = parse_features(*features_member, rstd::format("{}.features", context).as_str());
     auto default_features = required_bool(value, "default_features"_str, context);
@@ -263,7 +304,6 @@ auto parse_dependency(const Json& value, ref<str> context)
             context,
             rstd::format("has invalid requirement: {}", rstd::move(requirement).unwrap_err()));
     if (kind.is_err()) return Err(rstd::move(kind).unwrap_err());
-    if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
     if (features.is_err()) return Err(rstd::move(features).unwrap_err());
     if (default_features.is_err()) return Err(rstd::move(default_features).unwrap_err());
     return Ok(lito::registry::RegistryDependencyProjection {
@@ -275,7 +315,7 @@ auto parse_dependency(const Json& value, ref<str> context)
             },
         .requirement      = rstd::move(requirement).unwrap(),
         .kind             = *kind,
-        .visibility       = *visibility,
+        .consumption      = consumption,
         .features         = rstd::move(features).unwrap(),
         .default_features = *default_features,
     });
@@ -394,7 +434,7 @@ auto lito::registry::RegistryDependencyProjection::clone() const -> RegistryDepe
         .package          = package.clone(),
         .requirement      = requirement.clone(),
         .kind             = kind,
-        .visibility       = visibility,
+        .consumption      = consumption,
         .features         = as<Clone>(features).clone(),
         .default_features = default_features,
     };

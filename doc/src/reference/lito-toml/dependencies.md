@@ -16,10 +16,21 @@ package aliases are not supported:
 not start with `-`, and URLs may not contain a fragment.
 
 After resolving the provider package, Lito classifies the dependency as a C/C++ library, script,
-or pmacro contract. C/C++ library dependencies accept
-`visibility = "public" | "private" | "link"` and default to `private`. Pmacro dependencies do not
-accept `visibility` because they execute only in the compiler host. Script dependencies retain
-their script-specific field restrictions.
+plugin, or pmacro contract. A C/C++ library edge accepts two independent settings:
+
+- `usage = "compile" | "link"`, or a non-empty unique array containing those facets. Omitting it
+  selects both compile and link usage;
+- `pub = true | false`, defaulting to `false`. A public edge propagates the selected facets through
+  the consuming library.
+
+`usage = "compile"` and `usage = ["compile"]` are equivalent. Array order is not significant.
+An empty, duplicate, or unknown facet is rejected. Public link-only dependencies are valid: they
+propagate link requirements without exposing headers, definitions, or modules.
+
+The deprecated `visibility = "public" | "private" | "link"` spelling is still read for existing
+packages, but cannot be mixed with `pub` or new usage syntax and is never emitted. Plugin, pmacro,
+and script dependencies do not accept `pub` or `usage` because their lifecycle is determined by
+the provider target kind.
 
 `features` is an optional array of provider feature names. `default-features` is a boolean and
 defaults to `true`.
@@ -29,24 +40,23 @@ Examples:
 ```toml
 [dependencies.geometry]
 path = "../geometry"
-visibility = "private"
 
 [dependencies.rstd-std]
 git = "https://github.com/litocpp/rstd.git"
 branch = "main"
-visibility = "public"
+pub = true
 
 [dependencies.geometry-codec]
 version = "^1.4"
 registry = "internal"
-visibility = "private"
+usage = "link"
 ```
 
 ## `[dev-dependencies.NAME]`
 
-Development dependencies use the same package sources and feature fields but do not
-accept `visibility`. They are considered when selected targets are tests, benchmarks, or compile
-tests.
+Development dependencies use the same package sources, feature fields, and compile/link usage
+selection. They are always private, so `pub = true` is rejected. They are considered when selected
+targets are tests, benchmarks, or compile tests.
 
 ## Pmacro dependencies
 
@@ -65,19 +75,20 @@ struct [[pmacro::attr("model-macros::validate")]] Model {};
 struct [[pmacro::derive("model-macros::equal")]] Value {};
 ```
 
-Source, feature, and workspace fields match other dependencies. A pmacro dependency never enters
-target compile or link usage. A `[pmacro]` provider may depend on host C/C++ libraries through
-ordinary dependencies, but cannot recursively depend on another `[pmacro]` provider.
+Source, feature, and workspace fields match other dependencies. A pmacro dependency does not
+accept `pub` or `usage` and never enters target compile or link usage. A `[pmacro]` provider may
+depend on host C/C++ libraries through ordinary dependencies, but cannot recursively depend on
+another `[pmacro]` provider.
 
 ## `[runtime-dependencies.NAME]`
 
-Runtime dependencies use the same package sources and do not accept `visibility`, `features`, or
+Runtime dependencies use the same package sources and do not accept `pub`, `usage`, `features`, or
 `default-features`. They belong to runtime/install planning rather than compilation.
 
 ## `[workspace.dependencies.NAME]`
 
-The workspace declaration provides exactly one package source. It does not contain visibility or
-feature requests:
+The workspace declaration provides exactly one package source. It does not contain `pub`, `usage`,
+or feature requests:
 
 ```toml
 [workspace.dependencies.geometry]
@@ -89,13 +100,13 @@ Members opt in and own edge-local settings:
 ```toml
 [dependencies.geometry]
 workspace = true
-visibility = "public"
+pub = true
 features = ["simd"]
 ```
 
 For a workspace pmacro dependency, the member may set features and `default-features`, but omits
-visibility. Workspace development dependencies also omit visibility. Workspace runtime
-dependencies additionally omit feature fields.
+`pub` and `usage`. Workspace development dependencies may select usage but remain private.
+Workspace runtime dependencies additionally omit feature fields.
 
 ## Source and package conflicts
 

@@ -28,7 +28,6 @@ sources = ["main.cpp"]
 
 [dependencies.hello]
 path = ".."
-visibility = "private"
 ```
 
 Create `tests/main.cpp`:

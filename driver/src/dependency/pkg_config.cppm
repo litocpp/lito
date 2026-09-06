@@ -115,13 +115,6 @@ auto resolve_pkg_config_dependencies(
     auto provider = pkg_config_provider(config, rstd::move(resolved).unwrap().executable, platform);
     auto snapshots = rstd::collections::BTreeMap<String, lito::tools::pkg_config::Snapshot>::make();
     for (const auto& declaration : declarations) {
-        if (declaration.usage == lito::dependency::PkgConfigDependencyUsage::Compile &&
-            declaration.visibility == lito::dependency::DependencyVisibility::LinkOnly) {
-            return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
-                rstd::format("pkg-config dependency '{}' cannot use link visibility with compile "
-                             "usage",
-                             declaration.alias.as_str()));
-        }
         auto request = pkg_config_request(declaration);
         auto key     = lito::tools::pkg_config::module_spec(request);
         key.push_str(request.mode == lito::tools::pkg_config::QueryMode::Static ? "\nstatic"_str
@@ -147,14 +140,16 @@ auto resolve_pkg_config_dependencies(
         auto targets = Vec<cpp::ExternalTargetUsage>::make();
         targets.push(cpp::ExternalTargetUsage {
             .name            = snapshot.module.clone(),
-            .visibility      = declaration.visibility,
-            .compile_options = as<Clone>(snapshot.compile_fragments).clone(),
+            .consumption     = declaration.consumption,
+            .compile_options = declaration.consumption.usage.uses_compile()
+                                   ? as<Clone>(snapshot.compile_fragments).clone()
+                                   : Vec<String>::make(),
             .compile_source  = source.clone(),
             .identity        = snapshot.identity.clone(),
         });
         auto link_arguments    = lito::link::ArgumentSequence {};
         auto link_requirements = lito::link::Requirements {};
-        if (declaration.usage == lito::dependency::PkgConfigDependencyUsage::Link) {
+        if (declaration.consumption.usage.uses_link()) {
             link_arguments = lito::link::ArgumentSequence {
                 .tokens   = as<Clone>(snapshot.link_fragments).clone(),
                 .source   = rstd::move(source),

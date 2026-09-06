@@ -2,7 +2,7 @@ export module lito.core:manifest.dependency;
 
 import rstd;
 import :source.requirement;
-import :dependency.visibility;
+import :dependency.consumption;
 import :dependency.cargo;
 import :dependency.cmake;
 import :dependency.pkg_config;
@@ -28,19 +28,21 @@ struct PackageDependencySource {
 };
 
 struct DeclaredDependency {
-    String                                         name;
-    PackageDependencySource                        source;
-    Option<lito::dependency::DependencyVisibility> visibility;
-    Option<Vec<String>>                            features;
-    Option<bool>                                   default_features;
-    Option<PathBuf>                                declaration_root;
+    String                                    name;
+    PackageDependencySource                   source;
+    Option<lito::dependency::DependencyUsage> usage;
+    Option<bool>                              is_public;
+    Option<Vec<String>>                       features;
+    Option<bool>                              default_features;
+    Option<PathBuf>                           declaration_root;
 };
 
 struct WorkspaceDependencyReference {
-    String                                         name;
-    Option<lito::dependency::DependencyVisibility> visibility;
-    Option<Vec<String>>                            features;
-    Option<bool>                                   default_features;
+    String                                    name;
+    Option<lito::dependency::DependencyUsage> usage;
+    Option<bool>                              is_public;
+    Option<Vec<String>>                       features;
+    Option<bool>                              default_features;
 };
 
 struct DeclaredRuntimeDependency {
@@ -54,13 +56,8 @@ struct WorkspaceRuntimeDependencyReference {
 };
 
 struct WorkspacePkgConfigExternalDependencyReference {
-    String                                     alias;
-    lito::dependency::PkgConfigDependencyUsage usage {
-        lito::dependency::PkgConfigDependencyUsage::Link
-    };
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
+    String                                                alias;
+    lito::dependency::DependencyConsumption               consumption;
     Option<lito::dependency::ExternalDependencyCondition> condition;
 };
 

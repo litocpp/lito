@@ -6,7 +6,7 @@ export module lito.core:package.graph;
 import rstd;
 import :manifest.profile;
 import :source.requirement;
-import :dependency.visibility;
+import :dependency.consumption;
 import :dependency.source;
 import :manifest.package;
 import :package.identity;
@@ -27,12 +27,10 @@ enum class ProjectRootRole
 };
 
 struct ResolvedCppDependency {
-    String                                 name;
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
-    Vec<String> features;
-    bool        default_features { true };
+    String                                  name;
+    lito::dependency::DependencyConsumption consumption;
+    Vec<String>                             features;
+    bool                                    default_features { true };
 };
 
 struct ResolvedScriptDependency {

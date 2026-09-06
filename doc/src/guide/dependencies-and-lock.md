@@ -10,7 +10,6 @@ The dependency key must equal the provider package name:
 ```toml
 [dependencies.geometry]
 path = "../geometry"
-visibility = "private"
 ```
 
 Supported package sources are:
@@ -22,21 +21,29 @@ Supported package sources are:
 
 The dependency key is always the provider package name. Package aliases are not supported.
 
-A C/C++ library dependency may declare `visibility` and defaults to `private`:
+A C/C++ library dependency separates consumption from propagation:
 
-- `public` propagates the provider's public compile and link requirements through a library;
-- `private` makes the dependency available to the consumer package without exporting it;
-- `link` contributes the link closure without exposing compile usage.
+- `usage` selects `compile`, `link`, or both. It accepts a scalar string or a non-empty unique
+  string array and defaults to both facets;
+- `pub` defaults to `false`; when true, the selected facets become part of the consuming library's
+  public interface.
 
-Development dependencies omit visibility and are active for tests, benchmarks, and compile tests.
+For example, `usage = "link", pub = true` propagates only the link interface. A private static
+dependency still reaches the final linker as part of archive closure, while a shared library
+boundary stops private implementation dependencies. Development dependencies may select usage but
+remain private and are active for tests, benchmarks, and compile tests.
 Runtime dependencies describe packages needed by installation/runtime handling and do not accept
 compile feature requests.
+
+Lito still reads the deprecated `visibility = "public" | "private" | "link"` field for existing
+packages, but new manifests and generated output use only `pub` and `usage`. Legacy visibility
+cannot be mixed with the new fields.
 
 When an ordinary dependency resolves to a package with a `[pmacro]` target, it becomes a host
 compiler input. The dependency key must equal the provider package name and is used directly by
 `[[pmacro::attr("package-name::macro")]]` or
 `[[pmacro::derive("package-name::macro")]]`. Pmacro dependencies accept source and feature fields
-but no visibility, and never enter the target link closure. Cross-target builds still compile and
+but no `pub` or `usage`, and never enter the target link closure. Cross-target builds still compile and
 execute them with the host Clang toolchain.
 
 ## Features on dependencies
@@ -66,6 +73,12 @@ version = "1.2.3"
 source = "registry+https://registry.litocpp.org/"
 checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
+
+Registry package Index schema v1 stores every dependency as canonical `pub` plus an ordered usage
+array. The former v1 dependency shape containing `visibility` is not accepted. Publishing uses
+inspection protocol v5; a Registry service must advertise v5 support before a client with this
+protocol is deployed, because v4 cannot represent public link-only dependencies and is not used as
+a fallback.
 
 The configured Index, blob, API, and mirror endpoints are transport details and are not written to
 the lock. A normal build reuses its locked Registry releases and locally cached package Index

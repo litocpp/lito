@@ -8,11 +8,11 @@ module = "lito.toolchain"
 archive = "lito.toolchain"
 
 [dependencies]
-lito-core = { workspace = true, visibility = "public" }
-lito-cpp = { workspace = true, visibility = "public" }
-lito-frontend = { workspace = true, visibility = "public" }
-lito-tools = { workspace = true, visibility = "public" }
-rstd-std = { workspace = true, visibility = "public" }
-rstd-json = { workspace = true, visibility = "private" }
-rstd-serde = { workspace = true, visibility = "private" }
-rstd-nostd = { workspace = true, visibility = "link" }
+lito-core = { workspace = true, pub = true }
+lito-cpp = { workspace = true, pub = true }
+lito-frontend = { workspace = true, pub = true }
+lito-tools = { workspace = true, pub = true }
+rstd-std = { workspace = true, pub = true }
+rstd-json = { workspace = true }
+rstd-serde = { workspace = true }
+rstd-nostd = { workspace = true, usage = "link" }

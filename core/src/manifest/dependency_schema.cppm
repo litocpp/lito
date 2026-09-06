@@ -9,7 +9,7 @@ import rstd.toml;
 import :manifest.dependency;
 import :manifest.error;
 import :package.identity;
-import :dependency.visibility;
+import :dependency.consumption;
 import :dependency.cargo;
 import :dependency.cmake;
 import :dependency.pkg_config;
@@ -34,13 +34,121 @@ using Table = rstd::toml::Table;
 using namespace lito::manifest;
 using DataPath = rstd::serde::DataPath;
 
-auto parse_visibility(ref<str> value, ref<str> context)
-    -> ManifestSchemaResult<lito::dependency::DependencyVisibility> {
-    if (value == "public"_str) return Ok(lito::dependency::DependencyVisibility::Public);
-    if (value == "private"_str) return Ok(lito::dependency::DependencyVisibility::Private);
-    if (value == "link"_str) return Ok(lito::dependency::DependencyVisibility::LinkOnly);
-    return manifest_schema_failure<lito::dependency::DependencyVisibility>(
+enum class LegacyVisibility
+{
+    Public,
+    Private,
+    LinkOnly,
+};
+
+// TODO: Remove legacy dependency visibility support after the compatibility window.
+auto parse_legacy_visibility(ref<str> value, ref<str> context)
+    -> ManifestSchemaResult<LegacyVisibility> {
+    if (value == "public"_str) return Ok(LegacyVisibility::Public);
+    if (value == "private"_str) return Ok(LegacyVisibility::Private);
+    if (value == "link"_str) return Ok(LegacyVisibility::LinkOnly);
+    return manifest_schema_failure<LegacyVisibility>(
         rstd::format("{} must be public, private, or link", context));
+}
+
+auto parse_publicity(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<Option<bool>> {
+    auto value = member(specification, "pub"_str);
+    if (value.is_none()) return Ok(Option<bool> {});
+    auto parsed = (**value).as_bool();
+    if (parsed.is_none()) {
+        return manifest_schema_failure<Option<bool>>(
+            rstd::format("{}.pub must be a boolean", context));
+    }
+    return Ok(Some(*parsed));
+}
+
+auto usage_facet(ref<str> value, ref<str> context)
+    -> ManifestSchemaResult<lito::dependency::DependencyUsageFacet> {
+    using lito::dependency::DependencyUsageFacet;
+    if (value == "compile"_str) return Ok(DependencyUsageFacet::Compile);
+    if (value == "link"_str) return Ok(DependencyUsageFacet::Link);
+    if (value == "runtime"_str) return Ok(DependencyUsageFacet::Runtime);
+    return manifest_schema_failure<DependencyUsageFacet>(
+        rstd::format("{} must be 'compile', 'link', or 'runtime'", context));
+}
+
+auto parse_usage(Option<ref<Toml>> value, ref<str> context)
+    -> ManifestSchemaResult<Option<lito::dependency::DependencyUsage>> {
+    using lito::dependency::DependencyUsage;
+    using lito::dependency::DependencyUsageFacet;
+    if (value.is_none()) return Ok(Option<DependencyUsage> {});
+
+    auto has_compile = false;
+    auto has_link    = false;
+    auto has_runtime = false;
+    auto append      = [&](DependencyUsageFacet facet,
+                           ref<str>             item_context) -> ManifestSchemaResult<empty> {
+        auto* selected = &has_compile;
+        if (facet == DependencyUsageFacet::Link) selected = &has_link;
+        if (facet == DependencyUsageFacet::Runtime) selected = &has_runtime;
+        if (*selected) {
+            return manifest_schema_failure<empty>(
+                rstd::format("{} repeats a dependency usage facet", item_context));
+        }
+        *selected = true;
+        return Ok(empty {});
+    };
+
+    auto text = (**value).as_str();
+    if (text.is_some()) {
+        rstd_try(append(rstd_try(usage_facet(*text, context)), context));
+    } else {
+        auto array = (**value).as_array();
+        if (array.is_none()) {
+            return manifest_schema_failure<Option<DependencyUsage>>(
+                rstd::format("{} must be a string or an array of strings", context));
+        }
+        if ((**array).is_empty()) {
+            return manifest_schema_failure<Option<DependencyUsage>>(
+                rstd::format("{} must not be empty", context));
+        }
+        for (usize index {}; index < (**array).len(); ++index) {
+            auto item_context = rstd::format("{}[{}]", context, index);
+            auto item         = (**array)[index].as_str();
+            if (item.is_none()) {
+                return manifest_schema_failure<Option<DependencyUsage>>(
+                    rstd::format("{} must be a string", item_context.as_str()));
+            }
+            rstd_try(
+                append(rstd_try(usage_facet(*item, item_context.as_str())), item_context.as_str()));
+        }
+    }
+    auto usage = DependencyUsage::from_facets(has_compile, has_link, has_runtime);
+    if (usage.is_none()) {
+        return manifest_schema_failure<Option<DependencyUsage>>(
+            rstd::format("{} cannot combine runtime with compile or link", context));
+    }
+    return Ok(Some(*usage));
+}
+
+auto reject_legacy_mixing(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<empty> {
+    if (member(specification, "pub"_str).is_some()) {
+        return manifest_schema_failure<empty>(
+            rstd::format("{}.visibility cannot be combined with pub", context));
+    }
+    auto usage = member(specification, "usage"_str);
+    if (usage.is_some() && (**usage).as_array().is_some()) {
+        return manifest_schema_failure<empty>(
+            rstd::format("{}.visibility cannot be combined with an array usage", context));
+    }
+    return Ok(empty {});
+}
+
+auto legacy_visibility(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<Option<LegacyVisibility>> {
+    auto value = member(specification, "visibility"_str);
+    if (value.is_none()) return Ok(Option<LegacyVisibility> {});
+    rstd_try(reject_legacy_mixing(specification, context));
+    auto text = rstd_try(required_string(specification, "visibility"_str, context));
+    return Ok(Some(rstd_try(
+        parse_legacy_visibility(text.as_str(), rstd::format("{}.visibility", context).as_str()))));
 }
 
 auto parse_pkg_config_version(ref<str> value, ref<str> context)
@@ -83,19 +191,6 @@ auto parse_pkg_config_version(ref<str> value, ref<str> context)
         .comparison = comparison,
         .value      = String::make(normalized),
     });
-}
-
-auto parse_pkg_config_usage(const Toml& specification, ref<str> context)
-    -> ManifestSchemaResult<lito::dependency::PkgConfigDependencyUsage> {
-    auto value = rstd_try(optional_string(specification, "usage"_str, context));
-    if (value.is_none() || value->as_str() == "link"_str) {
-        return Ok(lito::dependency::PkgConfigDependencyUsage::Link);
-    }
-    if (value->as_str() == "compile"_str) {
-        return Ok(lito::dependency::PkgConfigDependencyUsage::Compile);
-    }
-    return manifest_schema_failure<lito::dependency::PkgConfigDependencyUsage>(
-        rstd::format("{}.usage must be 'link' or 'compile'", context));
 }
 
 auto cmake_name_character_is_valid(u8 value) -> bool {
@@ -541,12 +636,24 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
                                     development ? workspace_dev_dependency_reference_key
                                                 : workspace_dependency_reference_key));
         }
-        auto parsed_visibility = Option<lito::dependency::DependencyVisibility> {};
-        if (! development && member(**specification, "visibility"_str).is_some()) {
-            auto visibility =
-                rstd_try(required_string(**specification, "visibility"_str, context.as_str()));
-            parsed_visibility =
-                Some(rstd_try(parse_visibility(visibility.as_str(), "dependency.visibility"_str)));
+        auto parsed_usage  = rstd_try(parse_usage(member(**specification, "usage"_str),
+                                                  rstd::format("{}.usage", context).as_str()));
+        auto parsed_public = rstd_try(parse_publicity(**specification, context.as_str()));
+        if (! development) {
+            auto legacy = rstd_try(legacy_visibility(**specification, context.as_str()));
+            if (legacy.is_some()) {
+                if (member(**specification, "usage"_str).is_some()) {
+                    return manifest_schema_failure<ParsedDependencies>(rstd::format(
+                        "{}.visibility cannot be combined with usage", context.as_str()));
+                }
+                parsed_public = Some(*legacy == LegacyVisibility::Public);
+                if (*legacy == LegacyVisibility::LinkOnly) {
+                    parsed_usage = Some(lito::dependency::DependencyUsage::link_only());
+                }
+            }
+        } else if (parsed_public.is_some() && *parsed_public) {
+            return manifest_schema_failure<ParsedDependencies>(
+                rstd::format("{}.pub must be false for a development dependency", context));
         }
         auto requested_features = string_array(member(**specification, "features"_str),
                                                rstd::format("{}.features", context).as_str());
@@ -569,7 +676,8 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
         if (*inherited) {
             result.workspace_dependencies.push(WorkspaceDependencyReference {
                 .name             = name.clone(),
-                .visibility       = parsed_visibility,
+                .usage            = parsed_usage,
+                .is_public        = parsed_public,
                 .features         = rstd::move(parsed_features),
                 .default_features = default_features,
             });
@@ -581,7 +689,8 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
         result.explicit_dependencies.push(DeclaredDependency {
             .name             = name.clone(),
             .source           = rstd::move(source).unwrap(),
-            .visibility       = parsed_visibility,
+            .usage            = parsed_usage,
+            .is_public        = parsed_public,
             .features         = rstd::move(parsed_features),
             .default_features = default_features,
         });
@@ -761,24 +870,47 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
             rstd_try(reject_unknown(
                 **fields, context.as_str(), workspace_pkg_config_external_reference_key));
         }
-        auto visibility =
-            rstd_try(required_string(**specification, "visibility"_str, context.as_str()));
-        auto parsed_visibility =
-            rstd_try(parse_visibility(visibility.as_str(), "external pkg-config visibility"_str));
-        auto usage = rstd_try(parse_pkg_config_usage(**specification, context.as_str()));
-        if (usage == lito::dependency::PkgConfigDependencyUsage::Compile &&
-            parsed_visibility == lito::dependency::DependencyVisibility::LinkOnly) {
-            return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(rstd::format(
-                "{}.visibility must be public or private when usage is 'compile'", context));
+        auto dependency_consumption = lito::dependency::DependencyConsumption {};
+        auto legacy = rstd_try(legacy_visibility(**specification, context.as_str()));
+        if (legacy.is_some()) {
+            auto old_usage =
+                rstd_try(optional_string(**specification, "usage"_str, context.as_str()));
+            if (old_usage.is_some() && old_usage->as_str() != "link"_str &&
+                old_usage->as_str() != "compile"_str) {
+                return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(rstd::format(
+                    "{}.usage must be 'link' or 'compile' with legacy visibility", context));
+            }
+            const auto compile_only = old_usage.is_some() && old_usage->as_str() == "compile"_str;
+            if (compile_only && *legacy == LegacyVisibility::LinkOnly) {
+                return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(rstd::format(
+                    "{}.visibility must be public or private when legacy usage is 'compile'",
+                    context));
+            }
+            dependency_consumption.usage =
+                compile_only ? lito::dependency::DependencyUsage::compile_only()
+                : *legacy == LegacyVisibility::LinkOnly
+                    ? lito::dependency::DependencyUsage::link_only()
+                    : lito::dependency::DependencyUsage::compile_and_link();
+            dependency_consumption.is_public = *legacy == LegacyVisibility::Public;
+        } else {
+            auto usage = rstd_try(parse_usage(member(**specification, "usage"_str),
+                                              rstd::format("{}.usage", context).as_str()));
+            dependency_consumption.usage =
+                usage.is_some() ? *usage : lito::dependency::DependencyUsage::compile_and_link();
+            if (dependency_consumption.usage.uses_runtime()) {
+                return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(
+                    rstd::format("{}.usage does not support runtime", context));
+            }
+            auto is_public = rstd_try(parse_publicity(**specification, context.as_str()));
+            dependency_consumption.is_public = is_public.is_some() && *is_public;
         }
         auto condition =
             rstd_try(parse_external_dependency_condition(**specification, context.as_str()));
         if (*inherited) {
             result.workspace_dependencies.push(WorkspacePkgConfigExternalDependencyReference {
-                .alias      = alias.clone(),
-                .usage      = usage,
-                .visibility = parsed_visibility,
-                .condition  = rstd::move(condition),
+                .alias       = alias.clone(),
+                .consumption = dependency_consumption,
+                .condition   = rstd::move(condition),
             });
             continue;
         }
@@ -787,8 +919,7 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
         result.explicit_dependencies.push(lito::dependency::PkgConfigExternalDependency {
             .alias       = alias.clone(),
             .requirement = rstd::move(requirement).unwrap(),
-            .usage       = usage,
-            .visibility  = parsed_visibility,
+            .consumption = dependency_consumption,
             .condition   = rstd::move(condition),
         });
     }
@@ -832,38 +963,58 @@ auto parse_cmake_targets(const Toml& specification, const DataPath& owner_path)
         return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
             rstd::move(path), "is required"_str);
     }
-    auto targets = rstd_try(
-        decode_manifest_value<Vec<lito::manifest::wire::CMakeTarget>>(**value, path.clone()));
-    if (targets.is_empty()) {
+    auto targets = (**value).as_array();
+    if (targets.is_none()) {
+        return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+            rstd::move(path), "must be an array"_str);
+    }
+    if ((**targets).is_empty()) {
         return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
             rstd::move(path), "must not be empty"_str);
     }
-    auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
+    auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity((**targets).len());
     auto names  = rstd::collections::BTreeMap<String, empty>::make();
-    for (usize index {}; index < targets.len(); ++index) {
-        auto  item = path.with_index(index);
-        auto& wire = targets[index];
-        if (! cmake_target_is_valid(wire.name.as_str())) {
+    for (usize index {}; index < (**targets).len(); ++index) {
+        auto        item         = path.with_index(index);
+        const auto& target       = (**targets)[index];
+        auto        item_context = rstd::format("CMake target requirement [{}]", index);
+        auto        table        = rstd_try(table_value(target, item_context.as_str()));
+        rstd_try(reject_unknown(*table, item_context.as_str(), cmake_target_key));
+        auto name = rstd_try(required_string(target, "name"_str, item_context.as_str()));
+        if (! cmake_target_is_valid(name.as_str())) {
             return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
                 item.with_field("name"_str), "invalid CMake target name"_str);
         }
-        if (names.contains_key(wire.name.as_str())) {
+        if (names.contains_key(name.as_str())) {
             return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
                 item.with_field("name"_str), "CMake target is repeated"_str);
         }
-        auto visibility = lito::dependency::DependencyVisibility::Private;
-        if (wire.visibility.as_str() == "public"_str) {
-            visibility = lito::dependency::DependencyVisibility::Public;
-        } else if (wire.visibility.as_str() == "link"_str) {
-            visibility = lito::dependency::DependencyVisibility::LinkOnly;
-        } else if (wire.visibility.as_str() != "private"_str) {
-            return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                item.with_field("visibility"_str), "must be 'public', 'private', or 'link'"_str);
+        auto consumption = lito::dependency::DependencyConsumption {};
+        auto legacy      = rstd_try(legacy_visibility(target, item_context.as_str()));
+        if (legacy.is_some()) {
+            if (member(target, "usage"_str).is_some()) {
+                return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+                    rstd::format("{}.visibility cannot be combined with usage", item_context));
+            }
+            consumption.is_public = *legacy == LegacyVisibility::Public;
+            if (*legacy == LegacyVisibility::LinkOnly) {
+                consumption.usage = lito::dependency::DependencyUsage::link_only();
+            }
+        } else {
+            auto usage = rstd_try(parse_usage(member(target, "usage"_str),
+                                              rstd::format("{}.usage", item_context).as_str()));
+            if (usage.is_some()) consumption.usage = *usage;
+            if (consumption.usage.uses_runtime()) {
+                return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+                    rstd::format("{}.usage does not support runtime", item_context));
+            }
+            auto is_public        = rstd_try(parse_publicity(target, item_context.as_str()));
+            consumption.is_public = is_public.is_some() && *is_public;
         }
-        names.insert(wire.name.clone(), empty {});
+        names.insert(name.clone(), empty {});
         result.push(lito::dependency::CMakeTargetRequirement {
-            .name       = rstd::move(wire.name),
-            .visibility = visibility,
+            .name        = rstd::move(name),
+            .consumption = consumption,
         });
     }
     return Ok(rstd::move(result));
@@ -1190,35 +1341,45 @@ auto parse_cargo_consumption(const Toml& specification, ref<str> context)
             .value = rstd::move(profile_name).unwrap(),
         });
     }
-    auto usage_text = rstd_try(optional_string(specification, "usage"_str, context));
-    auto usage      = lito::dependency::CargoDependencyUsage::Link;
-    if (usage_text.is_some()) {
-        if (usage_text->as_str() == "runtime"_str) {
-            usage = lito::dependency::CargoDependencyUsage::Runtime;
-        } else if (usage_text->as_str() != "link"_str) {
+    auto dependency_consumption = lito::dependency::DependencyConsumption {
+        .usage = lito::dependency::DependencyUsage::link_only(),
+    };
+    auto legacy = rstd_try(legacy_visibility(specification, context));
+    if (legacy.is_some()) {
+        auto old_usage = rstd_try(optional_string(specification, "usage"_str, context));
+        if (old_usage.is_some() && old_usage->as_str() != "link"_str &&
+            old_usage->as_str() != "runtime"_str) {
             return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-                rstd::format("{}.usage must be 'link' or 'runtime'", context));
+                rstd::format("{}.usage must be 'link' or 'runtime' with legacy visibility",
+                             context));
         }
-    }
-    auto visibility_text = rstd_try(optional_string(specification, "visibility"_str, context));
-    auto visibility      = Option<lito::dependency::DependencyVisibility> {};
-    if (usage == lito::dependency::CargoDependencyUsage::Link) {
-        if (visibility_text.is_none()) {
+        if (old_usage.is_some() && old_usage->as_str() == "runtime"_str) {
             return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-                rstd::format("{}.visibility is required when usage is 'link'", context));
+                rstd::format("{}.visibility is not accepted when usage is 'runtime'", context));
         }
-        visibility = Some(
-            rstd_try(parse_visibility(visibility_text->as_str(), "external Cargo visibility"_str)));
-    } else if (visibility_text.is_some()) {
-        return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-            rstd::format("{}.visibility is not accepted when usage is 'runtime'", context));
+        dependency_consumption.is_public = *legacy == LegacyVisibility::Public;
+    } else {
+        auto usage = rstd_try(parse_usage(member(specification, "usage"_str),
+                                          rstd::format("{}.usage", context).as_str()));
+        if (usage.is_some()) dependency_consumption.usage = *usage;
+        if (dependency_consumption.usage.uses_compile() ||
+            (dependency_consumption.usage.uses_link() &&
+             dependency_consumption.usage.uses_runtime())) {
+            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+                rstd::format("{}.usage must select only 'link' or only 'runtime'", context));
+        }
+        auto is_public                   = rstd_try(parse_publicity(specification, context));
+        dependency_consumption.is_public = is_public.is_some() && *is_public;
+        if (dependency_consumption.usage.uses_runtime() && dependency_consumption.is_public) {
+            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+                rstd::format("{}.pub must be false when usage is 'runtime'", context));
+        }
     }
     return Ok(lito::dependency::CargoDependencyConsumption {
         .features         = rstd::move(features),
         .default_features = default_features,
         .profile          = rstd::move(profile),
-        .usage            = usage,
-        .visibility       = rstd::move(visibility),
+        .dependency       = dependency_consumption,
         .condition        = rstd_try(parse_external_dependency_condition(specification, context)),
     });
 }

@@ -98,7 +98,8 @@ auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "visibility"_str ||
            key == "builtin"_str || key == "workspace"_str || key == "features"_str ||
-           key == "default-features"_str || key == "version"_str || key == "registry"_str;
+           key == "default-features"_str || key == "version"_str || key == "registry"_str ||
+           key == "usage"_str || key == "pub"_str;
 }
 
 auto dev_dependency_key(ref<str> key) -> bool {
@@ -113,15 +114,16 @@ auto workspace_dependency_key(ref<str> key) -> bool {
 
 auto workspace_dependency_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "visibility"_str || key == "features"_str ||
-           key == "default-features"_str;
+           key == "default-features"_str || key == "usage"_str || key == "pub"_str;
 }
 
 auto workspace_dev_dependency_reference_key(ref<str> key) -> bool {
-    return key == "workspace"_str || key == "features"_str || key == "default-features"_str;
+    return key == "workspace"_str || key == "features"_str || key == "default-features"_str ||
+           key == "usage"_str || key == "pub"_str;
 }
 
 auto runtime_dependency_key(ref<str> key) -> bool {
-    return dev_dependency_key(key);
+    return dependency_key(key) && key != "visibility"_str && key != "usage"_str && key != "pub"_str;
 }
 
 auto workspace_runtime_dependency_reference_key(ref<str> key) -> bool {
@@ -135,8 +137,8 @@ auto external_dependencies_key(ref<str> key) -> bool {
 auto cargo_external_key(ref<str> key) -> bool {
     return key == "source"_str || key == "package"_str || key == "manifest-path"_str ||
            key == "features"_str || key == "default-features"_str || key == "profile"_str ||
-           key == "usage"_str || key == "visibility"_str || key == "condition"_str ||
-           key == "workspace"_str;
+           key == "usage"_str || key == "visibility"_str || key == "pub"_str ||
+           key == "condition"_str || key == "workspace"_str;
 }
 
 auto workspace_cargo_external_key(ref<str> key) -> bool {
@@ -146,7 +148,7 @@ auto workspace_cargo_external_key(ref<str> key) -> bool {
 auto workspace_cargo_external_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "features"_str || key == "default-features"_str ||
            key == "profile"_str || key == "usage"_str || key == "visibility"_str ||
-           key == "condition"_str;
+           key == "pub"_str || key == "condition"_str;
 }
 
 auto cmake_external_key(ref<str> key) -> bool {
@@ -154,6 +156,10 @@ auto cmake_external_key(ref<str> key) -> bool {
            key == "cache"_str || key == "config-directory"_str || key == "targets"_str ||
            key == "components"_str || key == "condition"_str || key == "workspace"_str ||
            key == "host-tools"_str;
+}
+
+auto cmake_target_key(ref<str> key) -> bool {
+    return key == "name"_str || key == "usage"_str || key == "pub"_str || key == "visibility"_str;
 }
 
 auto cmake_archive_variant_key(ref<str> key) -> bool {
@@ -185,8 +191,8 @@ auto workspace_cmake_external_reference_key(ref<str> key) -> bool {
 
 auto pkg_config_external_key(ref<str> key) -> bool {
     return key == "module"_str || key == "version"_str || key == "static"_str ||
-           key == "usage"_str || key == "visibility"_str || key == "condition"_str ||
-           key == "workspace"_str;
+           key == "usage"_str || key == "visibility"_str || key == "pub"_str ||
+           key == "condition"_str || key == "workspace"_str;
 }
 
 auto workspace_pkg_config_external_key(ref<str> key) -> bool {
@@ -195,7 +201,7 @@ auto workspace_pkg_config_external_key(ref<str> key) -> bool {
 
 auto workspace_pkg_config_external_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "usage"_str || key == "visibility"_str ||
-           key == "condition"_str;
+           key == "pub"_str || key == "condition"_str;
 }
 
 auto workspace_key(ref<str> key) -> bool {

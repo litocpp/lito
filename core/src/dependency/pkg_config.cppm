@@ -2,7 +2,7 @@ export module lito.core:dependency.pkg_config;
 
 import rstd;
 import :dependency.condition;
-import :dependency.visibility;
+import :dependency.consumption;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -25,12 +25,6 @@ enum class PkgConfigQueryMode
     Static,
 };
 
-enum class PkgConfigDependencyUsage
-{
-    Link,
-    Compile,
-};
-
 struct PkgConfigVersionRequirement {
     PkgConfigVersionOperator comparison { PkgConfigVersionOperator::Equal };
     String                   value;
@@ -45,8 +39,7 @@ struct PkgConfigDependencyRequirement {
 struct PkgConfigExternalDependency {
     String                              alias;
     PkgConfigDependencyRequirement      requirement;
-    PkgConfigDependencyUsage            usage { PkgConfigDependencyUsage::Link };
-    DependencyVisibility                visibility { DependencyVisibility::Private };
+    DependencyConsumption               consumption;
     Option<ExternalDependencyCondition> condition;
 };
 

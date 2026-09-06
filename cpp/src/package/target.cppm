@@ -27,10 +27,8 @@ enum class ArtifactKind
 };
 
 struct DependencySpec {
-    lito::package::PackageTargetId         target;
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
+    lito::package::PackageTargetId          target;
+    lito::dependency::DependencyConsumption consumption;
 };
 
 struct ProcMacroDependencySpec {

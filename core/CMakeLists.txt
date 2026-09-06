@@ -25,13 +25,13 @@ target_sources(
          src/dependency/asset.cppm
          src/dependency/cargo.cppm
          src/dependency/condition.cppm
+         src/dependency/consumption.cppm
          src/dependency/cmake.cppm
          src/dependency/error.cppm
          src/dependency/mod.cppm
          src/dependency/pkg_config.cppm
          src/dependency/source.cppm
          src/dependency/usage.cppm
-         src/dependency/visibility.cppm
          src/lock/error.cppm
          src/lock/flatpak.cppm
          src/lock/config.cppm

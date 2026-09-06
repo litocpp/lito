@@ -76,18 +76,16 @@ public:
 };
 
 struct ExternalTargetUsage {
-    String                                 name;
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
-    Vec<String> compile_options;
-    String      compile_source;
-    String      identity;
+    String                                  name;
+    lito::dependency::DependencyConsumption consumption;
+    Vec<String>                             compile_options;
+    String                                  compile_source;
+    String                                  identity;
 
     auto clone() const -> ExternalTargetUsage {
         return ExternalTargetUsage {
             .name            = name.clone(),
-            .visibility      = visibility,
+            .consumption     = consumption,
             .compile_options = as<Clone>(compile_options).clone(),
             .compile_source  = compile_source.clone(),
             .identity        = identity.clone(),
@@ -144,18 +142,16 @@ struct ExternalDependencyUsage {
 };
 
 struct ResolvedExternalTargetUsage {
-    String                                 name;
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
-    LanguageArgumentLayer   compile_arguments;
-    Vec<ResolvedHeaderRoot> header_roots;
-    String                  identity;
+    String                                  name;
+    lito::dependency::DependencyConsumption consumption;
+    LanguageArgumentLayer                   compile_arguments;
+    Vec<ResolvedHeaderRoot>                 header_roots;
+    String                                  identity;
 
     auto clone() const -> ResolvedExternalTargetUsage {
         return ResolvedExternalTargetUsage {
             .name              = name.clone(),
-            .visibility        = visibility,
+            .consumption       = consumption,
             .compile_arguments = as<Clone>(compile_arguments).clone(),
             .header_roots      = as<Clone>(header_roots).clone(),
             .identity          = identity.clone(),

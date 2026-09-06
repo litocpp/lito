@@ -124,7 +124,6 @@ sources = ["main.cpp"]
 
 [dependencies.fixture-profile-dependency]
 path = "../dependency"
-visibility = "private"
 )toml"_str,
         },
         {

@@ -62,8 +62,8 @@ using CMakePackageOperation    = lito::tools::cmake::CMakePackageOperation;
 using CMakeUsageSnapshot       = lito::tools::cmake::CMakeUsageSnapshot;
 
 struct CMakePackagePlan {
-    lito::tools::cmake::CMakePackagePlan        tool;
-    Vec<lito::dependency::DependencyVisibility> visibilities;
+    lito::tools::cmake::CMakePackagePlan         tool;
+    Vec<lito::dependency::DependencyConsumption> consumptions;
 };
 
 auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
@@ -118,8 +118,8 @@ auto ResolvedCMakeDependencyRequirement::clone() const -> ResolvedCMakeDependenc
     auto target_copy = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
     for (const auto& target : targets) {
         target_copy.push(lito::dependency::CMakeTargetRequirement {
-            .name       = target.name.clone(),
-            .visibility = target.visibility,
+            .name        = target.name.clone(),
+            .consumption = target.consumption,
         });
     }
     auto tool_copy =
@@ -445,8 +445,7 @@ auto resolve_cmake_package(const Vec<ResolvedCMakeDependencyRequirement>& requir
             }
             if (! present) {
                 merged.targets.push(lito::dependency::CMakeTargetRequirement {
-                    .name       = target.name.clone(),
-                    .visibility = lito::dependency::DependencyVisibility::Private,
+                    .name = target.name.clone(),
                 });
             }
         }
@@ -499,13 +498,14 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
     if (planned.is_err()) {
         return Err(cmake_error("plan CMake dependency"_str, rstd::move(planned).unwrap_err()));
     }
-    auto visibilities = Vec<lito::dependency::DependencyVisibility>::make();
+    auto consumptions = Vec<lito::dependency::DependencyConsumption>::make();
     for (const auto& target : requirement.targets) {
-        visibilities.push(lito::dependency::DependencyVisibility(target.visibility));
+        consumptions.push(lito::dependency::DependencyConsumption {
+            .usage = target.consumption.usage, .is_public = target.consumption.is_public });
     }
     return Ok(CMakePackagePlan {
         .tool         = rstd::move(planned).unwrap(),
-        .visibilities = rstd::move(visibilities),
+        .consumptions = rstd::move(consumptions),
     });
 }
 
@@ -518,14 +518,14 @@ auto execute_cmake_package(const CMakePackagePlan&                      plan,
         lito::tools::cmake::execute_cmake_package(plan.tool, environment, observer));
 }
 
-auto materialize_cmake_usage_impl(const CMakePackagePlan&                            plan,
-                                  const lito::tools::cmake::Request&                 requirement,
-                                  const Vec<lito::dependency::DependencyVisibility>& visibilities,
-                                  const CMakeUsageSnapshot&                          snapshots)
+auto materialize_cmake_usage_impl(const CMakePackagePlan&                             plan,
+                                  const lito::tools::cmake::Request&                  requirement,
+                                  const Vec<lito::dependency::DependencyConsumption>& consumptions,
+                                  const CMakeUsageSnapshot&                           snapshots)
     -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
     const auto& tool = plan.tool;
     if (snapshots.targets.len() != requirement.targets.len() ||
-        visibilities.len() != requirement.targets.len()) {
+        consumptions.len() != requirement.targets.len()) {
         return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
             rstd::format("CMake package '{}' usage snapshot has {} targets, expected {}",
                          requirement.package.as_str(),
@@ -553,8 +553,10 @@ auto materialize_cmake_usage_impl(const CMakePackagePlan&                       
         }
         targets.push(cpp::ExternalTargetUsage {
             .name            = target.name.clone(),
-            .visibility      = visibilities[index],
-            .compile_options = as<Clone>(snapshot.compile).clone(),
+            .consumption     = consumptions[index],
+            .compile_options = consumptions[index].usage.uses_compile()
+                                   ? as<Clone>(snapshot.compile).clone()
+                                   : Vec<String>::make(),
             .compile_source  = rstd::move(source),
             .identity        = rstd::move(identity).unwrap(),
         });
@@ -586,7 +588,12 @@ auto materialize_cmake_usage_impl(const CMakePackagePlan&                       
             .identity   = rstd::move(tool_identity),
         });
     }
-    auto links = lito::tools::cmake::materialize_link_tokens(snapshots.combined.link,
+    auto selected_links = Vec<String>::make();
+    for (usize index {}; index < snapshots.targets.len(); ++index) {
+        if (! consumptions[index].usage.uses_link()) continue;
+        for (const auto& token : snapshots.targets[index].link) selected_links.push(token.clone());
+    }
+    auto links = lito::tools::cmake::materialize_link_tokens(selected_links,
                                                              tool.area.query_build.as_path());
     if (links.is_err()) {
         return Err(cmake_error("materialize CMake link usage"_str, rstd::move(links).unwrap_err()));
@@ -611,7 +618,7 @@ auto materialize_cmake_usage_impl(const CMakePackagePlan&                       
 
 auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnapshot& snapshots)
     -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
-    return materialize_cmake_usage_impl(plan, plan.tool.requirement, plan.visibilities, snapshots);
+    return materialize_cmake_usage_impl(plan, plan.tool.requirement, plan.consumptions, snapshots);
 }
 
 auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
@@ -628,7 +635,7 @@ auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
     auto requirement       = cmake_request(consumer, plan.tool.requirement.find_install_prefix);
     requirement.components = as<Clone>(plan.tool.requirement.components).clone();
     auto projected_targets = Vec<lito::tools::cmake::CMakeTargetUsageSnapshot>::make();
-    auto visibilities      = Vec<lito::dependency::DependencyVisibility>::make();
+    auto consumptions      = Vec<lito::dependency::DependencyConsumption>::make();
     auto projected_link    = Vec<String>::make();
     for (const auto& target : consumer.targets) {
         auto index = Option<usize> {};
@@ -649,8 +656,11 @@ auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
             .compile = as<Clone>(snapshot.compile).clone(),
             .link    = as<Clone>(snapshot.link).clone(),
         });
-        for (const auto& token : snapshot.link) projected_link.push(token.clone());
-        visibilities.push(lito::dependency::DependencyVisibility(target.visibility));
+        if (target.consumption.usage.uses_link()) {
+            for (const auto& token : snapshot.link) projected_link.push(token.clone());
+        }
+        consumptions.push(lito::dependency::DependencyConsumption {
+            .usage = target.consumption.usage, .is_public = target.consumption.is_public });
     }
     auto projected_tools = Vec<lito::tools::cmake::CMakeHostToolSnapshot>::make();
     for (const auto& tool : consumer.host_tools) {
@@ -687,7 +697,7 @@ auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
             },
         .assets = rstd::move(projected_assets),
     };
-    return materialize_cmake_usage_impl(plan, requirement, visibilities, projected);
+    return materialize_cmake_usage_impl(plan, requirement, consumptions, projected);
 }
 
 } // namespace lito

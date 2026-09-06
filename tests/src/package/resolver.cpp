@@ -220,7 +220,6 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-cycle-b]
 path = "../b"
-visibility = "private"
 )graph"_str },
         { "b/lito.toml"_str, R"graph([package]
 name = "fixture-cycle-b"
@@ -234,7 +233,6 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-cycle-a]
 path = "../a"
-visibility = "private"
 )graph"_str },
     };
     return source_tree(files);
@@ -254,7 +252,6 @@ sources = ["source.cppm"]
 
 [dependencies.missing]
 path = "../does-not-exist"
-visibility = "private"
 )graph"_str },
     };
     return source_tree(files);
@@ -285,7 +282,6 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-expected]
 path = "../actual"
-visibility = "private"
 )graph"_str },
     };
     return source_tree(files);
@@ -364,11 +360,9 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-same-wrapper-one]
 path = "../wrapper-one"
-visibility = "private"
 
 [dependencies.fixture-same-wrapper-two]
 path = "../wrapper-two"
-visibility = "private"
 )graph"_str },
         { "two/lito.toml"_str, R"graph([package]
 name = "fixture-same-dependency"
@@ -392,7 +386,6 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-same-dependency]
 path = "../one"
-visibility = "private"
 )graph"_str },
         { "wrapper-two/lito.toml"_str, R"graph([package]
 name = "fixture-same-wrapper-two"
@@ -406,7 +399,6 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-same-dependency]
 path = "../two"
-visibility = "private"
 )graph"_str },
     };
     return source_tree(files);
@@ -511,7 +503,6 @@ sources = ["main.cpp"]
 
 [dependencies.missing]
 workspace = true
-visibility = "private"
 )graph"_str },
         { "app/main.cpp"_str, R"graph(int main() { return 0; }
 )graph"_str },
@@ -540,7 +531,6 @@ sources = ["main.cpp"]
 
 [dependencies.missing]
 workspace = true
-visibility = "private"
 )graph"_str },
         { "main.cpp"_str, R"graph(int main() { return 0; }
 )graph"_str },
@@ -760,7 +750,6 @@ link-stdlib = false
 
 [dependencies.fixture-local-registry-version-library]
 workspace = true
-visibility = "private"
 )toml"_str },
     };
     auto project = materialize("local-registry-version-mismatch"_str, files);
@@ -785,7 +774,6 @@ link-stdlib = false
 [dependencies.fixture-patched-registry-version-library]
 git = "https://example.invalid/patched-registry-version.git"
 version = "0.1.0"
-visibility = "private"
 )toml"_str },
         { "provider/lito.toml"_str, R"toml([package]
 name = "fixture-patched-registry-version-library"
@@ -907,7 +895,11 @@ builtin = "qt"
     auto project = materialize("builtin-script-dependency"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto graph = lito::package::resolve_package_graph(project->root.as_path());
-    ASSERT_TRUE(graph.is_ok());
+    if (graph.is_err()) {
+        auto message = error_chain_text(rstd::move(graph).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
     ASSERT_EQ(graph->packages.len(), usize(2));
 
     const lito::package::ResolvedPackage* consumer = nullptr;
@@ -942,17 +934,29 @@ module = "fixture.script.contract_mismatch"
 archive = "fixture-script-contract-mismatch"
 sources = ["lib.cppm"]
 
-[dependencies.lito-qt]
-builtin = "qt"
-visibility = "private"
+[dependencies.fixture-script-provider]
+path = "script"
+usage = "compile"
 )toml"_str },
         { "lib.cppm"_str, "export module fixture.script.contract_mismatch;\n"_str },
+        { "script/lito.toml"_str, R"toml([package]
+name = "fixture-script-provider"
+version = "0.1.0"
+
+[script]
+supports = ["build"]
+)toml"_str },
+        { "script/lib.lua"_str, "return {}\n"_str },
     };
     auto project = materialize("script-contract-mismatch"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_err());
-    EXPECT_TRUE(rstd::format("{}", graph.unwrap_err()).as_str().contains("C++ fields"_str));
+    auto message = error_chain_text(rstd::move(graph).unwrap_err());
+    if (! message.as_str().contains("C++ fields"_str) || ! message.as_str().contains("usage"_str)) {
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
 }
 
 TEST_F(PackageResolver, ScriptCatalogRejectsImporterRelativeModuleNames) {
@@ -1002,7 +1006,6 @@ link-stdlib = false
 
 [dependencies.fixture-effective-provider]
 path = "provider"
-visibility = "private"
 )toml"_str },
         { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
         { "provider/lito.toml"_str, R"toml([package]
@@ -1065,7 +1068,6 @@ sources = ["lib.cppm"]
 
 [dependencies.fixture-pmacro-host-lib]
 path = "../host-lib"
-visibility = "private"
 )toml"_str },
         { "provider/lib.cppm"_str, "export module fixture.pmacro.provider;\n"_str },
         { "host-lib/lito.toml"_str, R"toml([package]
@@ -1192,6 +1194,44 @@ sources = ["lib.cppm"]
     EXPECT_EQ(selected->host_package_names[usize {}].as_str(), "fixture-compiler-plugin"_str);
 }
 
+TEST_F(PackageResolver, PluginDependencyRejectsConsumptionFields) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-plugin-consumption"
+version = "0.1.0"
+
+[lib]
+name = "fixture-plugin-consumption"
+module = "fixture.plugin_consumption"
+archive = "fixture-plugin-consumption"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-compiler-plugin]
+path = "plugin"
+pub = false
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.plugin_consumption;\n"_str },
+        { "plugin/lito.toml"_str, R"toml([package]
+name = "fixture-compiler-plugin"
+version = "0.1.0"
+
+[plugin]
+module = "fixture.compiler_plugin"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "plugin/lib.cppm"_str, "export module fixture.compiler_plugin;\n"_str },
+    };
+    auto project = materialize("plugin-consumption"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(selected.is_err());
+    EXPECT_TRUE(error_chain_text(rstd::move(selected).unwrap_err())
+                    .as_str()
+                    .contains("usage and pub are not allowed"_str));
+}
+
 TEST_F(PackageResolver, PmacroBuiltinOverrideRequiresAPluginTarget) {
     constexpr ref<str> support_manifests[] = {
         R"toml([package]
@@ -1299,32 +1339,33 @@ sources = ["lib.cppm"]
                     .contains("cannot depend on plugin package"_str));
 }
 
-TEST_F(PackageResolver, PmacroDependencyRejectsVisibility) {
+TEST_F(PackageResolver, PmacroDependencyRejectsConsumptionFields) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]
-name = "fixture-pmacro-visibility"
+name = "fixture-pmacro-consumption"
 version = "0.1.0"
 
 [lib]
-name = "fixture-pmacro-visibility"
-module = "fixture.pmacro.visibility"
-archive = "fixture-pmacro-visibility"
+name = "fixture-pmacro-consumption"
+module = "fixture.pmacro.consumption"
+archive = "fixture-pmacro-consumption"
 sources = ["lib.cppm"]
 
-[dependencies.fixture-pmacro-visibility-provider]
+[dependencies.fixture-pmacro-consumption-provider]
 path = "provider"
-visibility = "private"
+usage = "link"
+pub = false
 )toml"_str },
-        { "lib.cppm"_str, "export module fixture.pmacro.visibility;\n"_str },
+        { "lib.cppm"_str, "export module fixture.pmacro.consumption;\n"_str },
         { "provider/lito.toml"_str, R"toml([package]
-name = "fixture-pmacro-visibility-provider"
+name = "fixture-pmacro-consumption-provider"
 version = "0.1.0"
 
 [pmacro]
-module = "fixture.pmacro.visibility_provider"
+module = "fixture.pmacro.consumption_provider"
 sources = ["lib.cppm"]
 )toml"_str },
-        { "provider/lib.cppm"_str, "export module fixture.pmacro.visibility_provider;\n"_str },
+        { "provider/lib.cppm"_str, "export module fixture.pmacro.consumption_provider;\n"_str },
         { "support/lito.toml"_str, R"toml([package]
 name = "pmacro"
 version = "0.3.0"
@@ -1335,14 +1376,14 @@ sources = ["lib.cppm"]
 )toml"_str },
         { "support/lib.cppm"_str, "export module pmacro;\n"_str },
     };
-    auto project = materialize("pmacro-visibility"_str, files);
+    auto project = materialize("pmacro-consumption"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto options =
         pmacro_source_options(project->root.join(PathBuf::from("support"_str).as_path()).as_path());
     auto graph = lito::package::resolve_package_graph(project->root.as_path(), rstd::move(options));
     ASSERT_TRUE(graph.is_err());
     auto message = error_chain_text(graph.unwrap_err());
-    if (! message.as_str().contains("visibility"_str)) {
+    if (! message.as_str().contains("usage and pub are not allowed"_str)) {
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
         return;
     }

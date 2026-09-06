@@ -21,7 +21,7 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
     ASSERT_TRUE(parser.is_ok());
 
     auto private_metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+        external_usage_metadata(lito::dependency::DependencyConsumption {}, *parser);
     ASSERT_TRUE(private_metadata.is_ok());
     auto private_plan =
         lito::cpp::resolve_native_targets(*private_metadata, "debug"_str, Vec<String>::make());
@@ -32,8 +32,8 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
     EXPECT_TRUE(private_plan->link_inputs[usize(1)][usize {}].is_Target());
     EXPECT_TRUE(private_plan->link_inputs[usize(1)][usize(1)].is_External());
 
-    auto public_metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Public, *parser);
+    auto public_metadata = external_usage_metadata(
+        lito::dependency::DependencyConsumption { .is_public = true }, *parser);
     ASSERT_TRUE(public_metadata.is_ok());
     auto public_plan =
         lito::cpp::resolve_native_targets(*public_metadata, "debug"_str, Vec<String>::make());
@@ -41,8 +41,11 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize {}]));
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize(1)]));
 
-    auto link_only_metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::LinkOnly, *parser);
+    auto link_only_metadata = external_usage_metadata(
+        lito::dependency::DependencyConsumption {
+            .usage = lito::dependency::DependencyUsage::link_only(),
+        },
+        *parser);
     ASSERT_TRUE(link_only_metadata.is_ok());
     auto link_only_plan =
         lito::cpp::resolve_native_targets(*link_only_metadata, "debug"_str, Vec<String>::make());
@@ -56,8 +59,7 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
 TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    auto metadata = external_usage_metadata(lito::dependency::DependencyConsumption {}, *parser);
     ASSERT_TRUE(metadata.is_ok());
 
     auto parsed = parser->parse(strings("-pthread"_str), "static library usage"_str);
@@ -86,8 +88,8 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
     EXPECT_EQ(planned->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
               "platform-api"_str);
 
-    metadata->targets[usize(1)].dependencies[usize {}].visibility =
-        lito::dependency::DependencyVisibility::LinkOnly;
+    metadata->targets[usize(1)].dependencies[usize {}].consumption.usage =
+        lito::dependency::DependencyUsage::link_only();
     auto link_only = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(link_only.is_ok());
     EXPECT_FALSE(lito::compiler::uses_posix_threads(
@@ -101,8 +103,7 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
 TEST(DependencyUsage, SharedLibraryStopsPrivateNativeLinkClosure) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    auto metadata = external_usage_metadata(lito::dependency::DependencyConsumption {}, *parser);
     ASSERT_TRUE(metadata.is_ok());
 
     auto& library         = metadata->targets[usize {}];
@@ -131,16 +132,22 @@ TEST(DependencyUsage, SharedLibraryStopsPrivateNativeLinkClosure) {
     EXPECT_TRUE(planned->linker_options[usize(1)].is_empty());
 }
 
-TEST(DependencyUsage, SharedLibraryRetainsExplicitPublicLinkInterface) {
+TEST(DependencyUsage, SharedLibraryRetainsPublicLinkOnlyInterface) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Public, *parser);
+    auto metadata = external_usage_metadata(
+        lito::dependency::DependencyConsumption {
+            .usage     = lito::dependency::DependencyUsage::link_only(),
+            .is_public = true,
+        },
+        *parser);
     ASSERT_TRUE(metadata.is_ok());
     metadata->targets[usize {}].artifact_kind = lito::cpp::ArtifactKind::SharedLibrary;
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
+    EXPECT_FALSE(has_external_macro(planned->contexts[usize {}]));
+    EXPECT_FALSE(has_external_macro(planned->contexts[usize(1)]));
     ASSERT_EQ(planned->link_inputs[usize(1)].len(), usize(2));
     EXPECT_TRUE(planned->link_inputs[usize(1)][usize {}].is_Target());
     EXPECT_TRUE(planned->link_inputs[usize(1)][usize(1)].is_External());
@@ -149,8 +156,7 @@ TEST(DependencyUsage, SharedLibraryRetainsExplicitPublicLinkInterface) {
 TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    auto metadata = external_usage_metadata(lito::dependency::DependencyConsumption {}, *parser);
     ASSERT_TRUE(metadata.is_ok());
 
     metadata->profiles[usize {}].cpp.common.threading = lito::compiler::ThreadingModel::Posix;
@@ -201,8 +207,11 @@ TEST(DependencyUsage, ExternalCompileOptionsResolveInTheConsumerLanguage) {
 TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::LinkOnly, *parser);
+    auto metadata = external_usage_metadata(
+        lito::dependency::DependencyConsumption {
+            .usage = lito::dependency::DependencyUsage::link_only(),
+        },
+        *parser);
     ASSERT_TRUE(metadata.is_ok());
 
     auto parsed = parser->parse(strings("-D_GLIBCXX_DEBUG=1"_str), "library ABI"_str);
@@ -243,8 +252,7 @@ auto rust_runtime_dependency(ref<str> identity, ref<str> source)
 TEST(DependencyUsage, RustStaticRuntimeDeduplicatesAnIdenticalClosure) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    auto metadata = external_usage_metadata(lito::dependency::DependencyConsumption {}, *parser);
     ASSERT_TRUE(metadata.is_ok());
     auto& external = metadata->targets[usize {}].external_dependencies;
     external.clear();
@@ -261,8 +269,7 @@ TEST(DependencyUsage, RustStaticRuntimeDeduplicatesAnIdenticalClosure) {
 TEST(DependencyUsage, RustStaticRuntimeRejectsDifferentClosuresInOneFinalTarget) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto metadata =
-        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    auto metadata = external_usage_metadata(lito::dependency::DependencyConsumption {}, *parser);
     ASSERT_TRUE(metadata.is_ok());
     auto& external = metadata->targets[usize {}].external_dependencies;
     external.clear();

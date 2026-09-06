@@ -258,9 +258,9 @@ auto visit_target(const PackageMetadata& package,
     for (auto pass = usize {}; pass < usize(2); ++pass) {
         const auto link_only = pass == usize {};
         for (const auto& dependency : package.targets[target].dependencies) {
-            if ((dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) !=
-                link_only)
-                continue;
+            const auto dependency_link_only = dependency.consumption.usage.uses_link() &&
+                                              ! dependency.consumption.usage.uses_compile();
+            if (dependency_link_only != link_only) continue;
             auto found = target_index(package, dependency.target);
             if (found.is_none()) {
                 return plan_failure<empty>(
@@ -293,12 +293,12 @@ auto visit_link_target(const PackageMetadata& package,
     for (auto pass = usize {}; pass < usize(2); ++pass) {
         const auto link_only = pass == usize {};
         for (const auto& dependency : package.targets[target].dependencies) {
-            if (public_interface_only &&
-                dependency.visibility != lito::dependency::DependencyVisibility::Public) {
+            if (! dependency.consumption.usage.uses_link()) continue;
+            if (public_interface_only && ! dependency.consumption.is_public) {
                 continue;
             }
-            if ((dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) !=
-                link_only) {
+            const auto dependency_link_only = ! dependency.consumption.usage.uses_compile();
+            if (dependency_link_only != link_only) {
                 continue;
             }
             auto found = target_index(package, dependency.target);
@@ -322,7 +322,7 @@ auto visit_link_target(const PackageMetadata& package,
 
 auto external_has_public_link_usage(const ResolvedExternalDependency& dependency) -> bool {
     for (const auto& target : dependency.targets) {
-        if (target.visibility == lito::dependency::DependencyVisibility::Public) return true;
+        if (target.consumption.is_public && target.consumption.usage.uses_link()) return true;
     }
     return false;
 }
@@ -345,8 +345,7 @@ auto resolve_import_requirements(const PackageMetadata& package,
         changed = false;
         for (auto importer : target_order) {
             for (const auto& dependency : package.targets[importer].dependencies) {
-                if (dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly)
-                    continue;
+                if (! dependency.consumption.usage.uses_compile()) continue;
                 auto provider = target_index(package, dependency.target);
                 if (provider.is_none() || ! selected[*provider]) {
                     return plan_failure<empty>(rstd::format(
@@ -950,7 +949,7 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                                                target_text(spec.id).as_str()));
             for (const auto& dependency : spec.external_dependencies) {
                 for (const auto& target : dependency.targets) {
-                    if (target.visibility != lito::dependency::DependencyVisibility::Public)
+                    if (! target.consumption.is_public || ! target.consumption.usage.uses_compile())
                         continue;
                     rstd_try(append_language_arguments(usage.arguments,
                                                        target.compile_arguments,
@@ -964,7 +963,8 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         auto exported_targets = Vec<TargetId>::make();
         append_unique(exported_targets, target);
         for (const auto& dependency : spec.dependencies) {
-            if (dependency.visibility != lito::dependency::DependencyVisibility::Public) continue;
+            if (! dependency.consumption.is_public || ! dependency.consumption.usage.uses_compile())
+                continue;
             auto  dependency_id = *target_index(package, dependency.target);
             auto& nested_usage  = *public_usage[dependency_id];
             append_unique(usage.include_directories, nested_usage.include_directories);
@@ -1040,13 +1040,11 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                                            target_text(spec.id).as_str()));
         for (const auto& dependency : spec.external_dependencies) {
             for (const auto& external_target : dependency.targets) {
-                const auto consumed_publicly =
-                    spec.id.kind != lito::package::PackageTargetKind::Library &&
-                    external_target.visibility == lito::dependency::DependencyVisibility::Public;
-                if (external_target.visibility != lito::dependency::DependencyVisibility::Private &&
-                    ! consumed_publicly) {
-                    continue;
-                }
+                if (! external_target.consumption.usage.uses_compile()) continue;
+                const auto exported_by_library =
+                    spec.id.kind == lito::package::PackageTargetKind::Library &&
+                    external_target.consumption.is_public;
+                if (exported_by_library) continue;
                 rstd_try(append_language_arguments(private_arguments,
                                                    external_target.compile_arguments,
                                                    target_text(spec.id).as_str(),
@@ -1058,10 +1056,10 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         auto visible = Vec<TargetId>::make();
         append_unique(visible, target);
         for (const auto& dependency : spec.dependencies) {
-            if (dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) continue;
+            if (! dependency.consumption.usage.uses_compile()) continue;
             auto dependency_id = *target_index(package, dependency.target);
             append_unique(visible, public_targets[dependency_id]);
-            if (dependency.visibility == lito::dependency::DependencyVisibility::Public) continue;
+            if (dependency.consumption.is_public) continue;
             const auto& usage = *public_usage[dependency_id];
             append_unique(private_include_directories, usage.include_directories);
             append_unique(private_definitions, usage.definitions);

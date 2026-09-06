@@ -257,7 +257,6 @@ name = "fixture-multi-consumer"
 sources = ["src/main.cpp"]
 [dependencies.fixture-multi-target]
 path = "../multi-target"
-visibility = "private"
 )"_str },
         { "multi-consumer/src/main.cpp"_str,
           "import fixture.multi;\nauto main() -> int { return fixture_value() == 42 ? 0 : 1; }\n"_str },

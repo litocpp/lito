@@ -38,16 +38,24 @@ Workspace external sources use the same concrete recipes but cannot themselves u
 - `module`: a non-empty pkg-config module name that does not start with `-`;
 - optional `version`, beginning with `=`, `<`, `>`, `<=`, or `>=`;
 - optional boolean `static`;
-- optional `usage = "link" | "compile"`, defaulting to `link`;
-- required `visibility = "public" | "private" | "link"`.
+- optional `usage = "compile" | "link"` or a non-empty unique array of those facets, defaulting to
+  both compile and link;
+- optional `pub`, defaulting to `false`.
 
-`usage = "link"` consumes both compile and link fragments from pkg-config. `usage = "compile"`
-consumes only compile fragments and requires `visibility = "public" | "private"`; it is intended
-for libraries whose ABI is loaded dynamically while their headers are still needed at build time.
+The compile facet consumes cflags and the link facet consumes libraries. `usage = "compile"` is
+therefore suitable for an ABI loaded dynamically while its headers remain build inputs;
+`usage = "link"` is genuinely link-only. Use `usage = ["compile", "link"]` to spell the complete
+interface explicitly. Scalar and singleton-array forms are equivalent, and array order has no
+meaning.
 
 `[workspace.external-dependencies.pkg-config.NAME]` declares `module`, `version`, and `static` but
-omits usage and visibility. A member reference sets `workspace = true`, optional `usage`, and
-required `visibility`.
+omits usage and publicity. A member reference sets `workspace = true` and owns optional `usage`
+and `pub`.
+
+Deprecated manifests containing `visibility` are still read. In that legacy shape, pkg-config
+`usage = "link"` meant compile plus link; migrating it mechanically to new `usage = "link"` would
+change behavior. Omit usage for the old complete interface, and use new link-only only when that is
+the intended consumption.
 
 ## CMake external dependencies
 
@@ -57,15 +65,16 @@ required `visibility`.
 [external-dependencies.cmake.vulkan]
 package = "Vulkan"
 targets = [
-  { name = "Vulkan::Vulkan", visibility = "private" },
+  { name = "Vulkan::Vulkan", usage = ["compile", "link"], pub = true },
 ]
 ```
 
 `NAME` is a manifest-local dependency alias. `package` is the actual CMake package identity. Generic
 integration passes it to `find_package`; an adapter receives it through
 `LITO_CMAKE_DEPENDENCY_PACKAGE`. It is also the identity matched by
-`tools.cmake.overrides.PACKAGE`, independently of the local alias. Every target entry has `name`
-and `visibility`.
+`tools.cmake.overrides.PACKAGE`, independently of the local alias. Every target entry has `name`;
+it may also select compile/link `usage` and `pub` with the same semantics and defaults as a normal
+C/C++ dependency.
 
 Optional fields are:
 
@@ -80,7 +89,7 @@ or Git source.
 
 `[workspace.external-dependencies.cmake.NAME]` declares `package`, `source`, `adapter`, `cache`, and
 `config-directory` but omits targets. A package reference uses `workspace = true` and supplies its
-selected target names and visibility. The package identity comes from the workspace declaration;
+selected target names, usage, and publicity. The package identity comes from the workspace declaration;
 the member reference does not repeat it.
 
 ### CMake asset sets
@@ -111,12 +120,11 @@ the files compile or link inputs.
 Optional fields are:
 
 - `manifest-path`, a normal relative path below the external source, defaulting to `Cargo.toml`;
-- `usage = "link" | "runtime"`, defaulting to `link`;
+- `usage = "link" | "runtime"`, or an equivalent singleton array, defaulting to `link`;
 - `features`, a unique list of Cargo feature names;
 - `default-features`, defaulting to `true`;
 - `profile`, the Cargo profile used as the inheritance base for Cargo-only policy;
-- `visibility = "public" | "private" | "link"`, required for link usage and rejected for runtime
-  usage;
+- `pub`, defaulting to `false` for link usage and required to remain false for runtime usage;
 - `condition`, evaluated in the consuming Lito package context.
 
 Cargo features are sorted before they enter the request. Without `profile`, Lito debug and plain
@@ -134,12 +142,12 @@ against the effective native target.
 
 `[workspace.external-dependencies.cargo.NAME]` owns `source`, `package`, and `manifest-path`. A
 member reference sets `workspace = true` and owns `usage`, `features`, `default-features`, `profile`,
-`visibility`, and `condition`. The referenced external source must also be declared by the
+`pub`, and `condition`. The referenced external source must also be declared by the
 workspace.
 
 The Cargo workspace must already contain `Cargo.lock`. Lito never creates or updates it. Link usage
 contributes only the discovered static library and its native link closure; headers, C++ wrappers,
-and include visibility remain normal package usage. Runtime usage contributes no C++ compile or
+and compile usage remain normal package usage. Runtime usage contributes no C++ compile or
 link requirements. An `install.lua` recipe selects its binary asset sets through `external_assets`.
 
 ## Owner boundary

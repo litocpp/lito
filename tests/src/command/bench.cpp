@@ -105,7 +105,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-multi-target]
 path = "../multi-target"
-visibility = "private"
 )bench"_str },
         { "multi-consumer/src/main.cpp"_str, R"bench(import fixture.multi;
 

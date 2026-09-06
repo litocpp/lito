@@ -27,7 +27,7 @@ does not copy it during installation.
 ## `[runtime-dependencies.NAME]`
 
 Runtime dependencies use the package source forms documented in [Dependencies](dependencies.md).
-They do not accept visibility or feature fields. Installation resolves them as packages, installs
+They do not accept `pub`, `usage`, or feature fields. Installation resolves them as packages, installs
 them dependency-first using their own recipes, and records their exact source identities in the
 managed package catalog. They do not enter the compile or link closure merely because they are
 runtime dependencies.

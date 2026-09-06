@@ -68,11 +68,6 @@ struct Feature {
 
 using Features = rstd::collections::BTreeMap<String, Feature>;
 
-struct CMakeTarget {
-    String name;
-    String visibility;
-};
-
 struct CMakeHostTool {
     String name;
     String target;
@@ -247,22 +242,6 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Feature> {
         rstd_try(serde::deserialize_record(
             deserializer, serde::UnknownFieldPolicy::Reject, default_enabled));
         return Ok(lito::manifest::wire::Feature { .default_enabled = default_enabled.take() });
-    }
-};
-
-template<>
-struct Impl<serde::Deserialize, lito::manifest::wire::CMakeTarget> {
-    template<typename Deserializer>
-    static auto deserialize(Deserializer& deserializer)
-        -> Result<lito::manifest::wire::CMakeTarget, typename Deserializer::error_type> {
-        auto name       = serde::RequiredField<String>("name"_str);
-        auto visibility = serde::RequiredField<String>("visibility"_str);
-        rstd_try(serde::deserialize_record(
-            deserializer, serde::UnknownFieldPolicy::Reject, name, visibility));
-        return Ok(lito::manifest::wire::CMakeTarget {
-            .name       = rstd_try(name.take(deserializer)),
-            .visibility = rstd_try(visibility.take(deserializer)),
-        });
     }
 };
 

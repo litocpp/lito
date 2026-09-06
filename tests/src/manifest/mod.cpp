@@ -191,7 +191,6 @@ archive = "fixture-registry-dependency"
 [dependencies.upstream-package]
 version = "^1.4"
 registry = "internal"
-visibility = "private"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -213,6 +212,195 @@ visibility = "private"
     EXPECT_FALSE(source.requirement.matches(*rejected));
 }
 
+TEST_F(Manifest, DependencyUsageNormalizesScalarAndArrayForms) {
+    auto project = manifest("dependency-usage-facets"_str, R"toml([package]
+name = "fixture-dependency-usage-facets"
+version = "0.1.0"
+
+[lib]
+name = "fixture-dependency-usage-facets"
+module = "fixture.dependency_usage_facets"
+archive = "fixture-dependency-usage-facets"
+
+[dependencies.combined]
+version = "1.0.0"
+usage = ["link", "compile"]
+
+[dependencies.link-public]
+version = "1.0.0"
+usage = "link"
+pub = true
+
+[dependencies.scalar]
+version = "1.0.0"
+usage = "compile"
+
+[dependencies.singleton]
+version = "1.0.0"
+usage = ["compile"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(4));
+    ASSERT_TRUE(loaded->dependencies[usize {}].usage.is_some());
+    EXPECT_TRUE(loaded->dependencies[usize {}].usage->uses_compile());
+    EXPECT_TRUE(loaded->dependencies[usize {}].usage->uses_link());
+    ASSERT_TRUE(loaded->dependencies[usize(1)].is_public.is_some());
+    EXPECT_TRUE(*loaded->dependencies[usize(1)].is_public);
+    EXPECT_EQ(*loaded->dependencies[usize {}].usage,
+              lito::dependency::DependencyUsage::compile_and_link());
+    EXPECT_EQ(*loaded->dependencies[usize(2)].usage, *loaded->dependencies[usize(3)].usage);
+
+    auto standalone = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(standalone.is_ok());
+    EXPECT_TRUE(standalone->as_str().contains("usage = \"compile\""_str));
+    EXPECT_TRUE(standalone->as_str().contains("usage = \"link\""_str));
+    EXPECT_TRUE(standalone->as_str().contains("pub = true"_str));
+    EXPECT_FALSE(standalone->as_str().contains("visibility"_str));
+    EXPECT_FALSE(standalone->as_str().contains("usage = [\"compile\", \"link\"]"_str));
+}
+
+TEST_F(Manifest, LegacyNormalDependencyInputIsNormalizedAtTheManifestBoundary) {
+    auto project = manifest("legacy-dependency-visibility"_str, R"toml([package]
+name = "fixture-legacy-dependency-visibility"
+version = "0.1.0"
+
+[lib]
+name = "fixture-legacy-dependency-visibility"
+module = "fixture.legacy_dependency_visibility"
+archive = "fixture-legacy-dependency-visibility"
+
+[dependencies.public-dependency]
+version = "1.0.0"
+visibility = "public"
+
+[dependencies.private-dependency]
+version = "1.0.0"
+visibility = "private"
+
+[dependencies.link-dependency]
+version = "1.0.0"
+visibility = "link"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(3));
+    const auto find = [&](ref<str> name) -> const lito::manifest::DeclaredDependency* {
+        for (const auto& dependency : loaded->dependencies) {
+            if (dependency.name == name) return &dependency;
+        }
+        return nullptr;
+    };
+    const auto* public_dependency  = find("public-dependency"_str);
+    const auto* private_dependency = find("private-dependency"_str);
+    const auto* link_dependency    = find("link-dependency"_str);
+    ASSERT_NE(public_dependency, nullptr);
+    ASSERT_NE(private_dependency, nullptr);
+    ASSERT_NE(link_dependency, nullptr);
+    ASSERT_TRUE(public_dependency->is_public.is_some());
+    EXPECT_TRUE(*public_dependency->is_public);
+    EXPECT_TRUE(public_dependency->usage.is_none());
+    ASSERT_TRUE(private_dependency->is_public.is_some());
+    EXPECT_FALSE(*private_dependency->is_public);
+    EXPECT_TRUE(private_dependency->usage.is_none());
+    ASSERT_TRUE(link_dependency->is_public.is_some());
+    EXPECT_FALSE(*link_dependency->is_public);
+    ASSERT_TRUE(link_dependency->usage.is_some());
+    EXPECT_FALSE(link_dependency->usage->uses_compile());
+    EXPECT_TRUE(link_dependency->usage->uses_link());
+}
+
+TEST_F(Manifest, DependencyUsageRejectsInvalidAndMixedShapes) {
+    constexpr ref<str> declarations[] = {
+        "usage = \"\""_str,
+        "usage = []"_str,
+        "usage = [\"compile\", \"compile\"]"_str,
+        "usage = [\"compile\", \"unknown\"]"_str,
+        "usage = 1"_str,
+        "visibility = \"public\"\npub = true"_str,
+        "visibility = \"link\"\nusage = [\"link\"]"_str,
+    };
+    auto index = usize {};
+    for (const auto declaration : declarations) {
+        auto contents = rstd::format(R"toml([package]
+name = "fixture-invalid-dependency-usage"
+version = "0.1.0"
+[lib]
+name = "fixture-invalid-dependency-usage"
+module = "fixture.invalid_dependency_usage"
+archive = "fixture-invalid-dependency-usage"
+[dependencies.fixture]
+version = "1.0.0"
+{}
+)toml",
+                                     declaration);
+        auto project  = manifest(rstd::format("invalid-dependency-usage-{}", index).as_str(),
+                                 contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        EXPECT_TRUE(loaded.is_err());
+        ++index;
+    }
+}
+
+TEST_F(Manifest, PublicDependenciesRequireALibraryConsumer) {
+    struct InvalidCase {
+        ref<str> name;
+        ref<str> declaration;
+    };
+    constexpr InvalidCase cases[] = {
+        { "package"_str, R"toml([dependencies.helper]
+version = "1.0.0"
+pub = true
+)toml"_str },
+        { "pkg-config"_str, R"toml([external-dependencies.pkg-config.helper]
+module = "helper"
+pub = true
+)toml"_str },
+        { "cmake"_str, R"toml([external-dependencies.cmake.helper]
+package = "Helper"
+targets = [{ name = "Helper::Helper", pub = true }]
+)toml"_str },
+        { "cargo"_str, R"toml([external-sources.rust]
+path = "rust"
+
+[external-dependencies.cargo.helper]
+source = "rust"
+package = "helper"
+pub = true
+)toml"_str },
+    };
+    for (const auto& item : cases) {
+        auto contents = rstd::format(R"toml([package]
+name = "fixture-public-dependency-without-library"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-public-dependency-without-library"
+link-stdlib = false
+
+{}
+)toml",
+                                     item.declaration);
+        auto project =
+            manifest(rstd::format("public-dependency-without-library-{}", item.name).as_str(),
+                     contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        EXPECT_TRUE(error_chain_text(rstd::move(loaded).unwrap_err())
+                        .as_str()
+                        .contains("requires the consuming package to have a library target"_str));
+    }
+}
+
 TEST_F(Manifest, LocalDependencyCarriesAnIndependentRegistryRequirement) {
     auto project = manifest("local-registry-dependency"_str, R"toml([package]
 name = "fixture-local-registry-dependency"
@@ -227,13 +415,11 @@ archive = "fixture-local-registry-dependency"
 path = "vendor/upstream"
 version = "^1.4"
 registry = "internal"
-visibility = "private"
 
 [dependencies.git-package]
 git = "https://example.invalid/git-package.git"
 tag = "v2.0.0"
 version = "2.0.0"
-visibility = "private"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -272,7 +458,6 @@ link-stdlib = false
 
 [dependencies.dependency]
 {}
-visibility = "private"
 )toml",
                                      index,
                                      index,
@@ -305,16 +490,16 @@ archive = "fixture-standalone-publish"
 [dependencies.same-registry]
 version = "^2.0"
 registry = "litocpp"
-visibility = "public"
+pub = true
 
 [dependencies.local-versioned]
 path = "vendor/local-versioned"
 version = "1.2.0"
-visibility = "private"
 
 [dev-dependencies.other-registry]
 version = "~3.1"
 registry = "community"
+usage = "compile"
 
 [dev-dependencies.local-only]
 path = "vendor/local-only"
@@ -359,6 +544,7 @@ builtin = "qt"
     EXPECT_FALSE(serialized->as_str().contains("vendor/local-versioned"_str));
     EXPECT_FALSE(serialized->as_str().contains("local-only"_str));
     EXPECT_TRUE(serialized->as_str().contains("[dev-dependencies.git-versioned]"_str));
+    EXPECT_TRUE(serialized->as_str().contains("usage = \"compile\""_str));
     EXPECT_FALSE(serialized->as_str().contains("example.invalid/git-versioned"_str));
     EXPECT_FALSE(serialized->as_str().contains("builtin-only"_str));
     EXPECT_FALSE(serialized->as_str().contains("registry = \"https://registry.example/\""_str));
@@ -380,7 +566,6 @@ archive = "fixture-standalone-versionless-normal"
 
 [dependencies.local-only]
 path = "vendor/local-only"
-visibility = "private"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -599,7 +784,6 @@ sources = ["source.cppm"]
 [dependencies.fixture-dependency]
 git = "https://example.invalid/dependency.git"
 commit = "0123456789abcdef"
-visibility = "private"
 )lito"_str },
     { "manifest-git-multiple-selectors"_str, R"lito([package]
 name = "fixture-git-multiple-selectors"
@@ -615,7 +799,6 @@ sources = ["source.cppm"]
 git = "https://example.invalid/dependency.git"
 branch = "main"
 rev = "0123456789abcdef"
-visibility = "private"
 )lito"_str },
     { "manifest-git-path-and-git"_str, R"lito([package]
 name = "fixture-git-path-and-git"
@@ -630,7 +813,6 @@ sources = ["source.cppm"]
 [dependencies.fixture-dependency]
 path = "../dependency"
 git = "https://example.invalid/dependency.git"
-visibility = "private"
 )lito"_str },
     { "manifest-git-url-fragment"_str, R"lito([package]
 name = "fixture-git-url-fragment"
@@ -644,7 +826,6 @@ sources = ["source.cppm"]
 
 [dependencies.fixture-dependency]
 git = "https://example.invalid/dependency.git#main"
-visibility = "private"
 )lito"_str },
     { "manifest-build-tools-duplicate-host"_str, R"lito([package]
 name = "build-tool-duplicate-host"
@@ -1010,7 +1191,7 @@ sources = ["source.cppm"]
 
 [dependencies."fixture.base"]
 path = "../base"
-visibility = "public"
+pub = true
 )lito"_str },
     { "manifest-toml-explicit-version-workspace-false"_str, R"lito([package]
 name = "fixture-version_workspace_false"
@@ -1029,7 +1210,7 @@ members = ["member"]
 [workspace.external-dependencies.cmake.fixture]
 package = "LitoFixture"
 path = "member"
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )lito"_str },
     { "workspace-dependency-definition-visibility"_str, R"lito([workspace]
 name = "fixture-workspace-dependency-definition-visibility"
@@ -1051,7 +1232,6 @@ archive = "fixture-workspace-dependency-reference-mixed"
 [dependencies.mixed]
 workspace = true
 path = "../mixed"
-visibility = "private"
 )lito"_str },
     { "workspace-mixed"_str, R"lito([workspace]
 name = "fixture-mixed-workspace"
@@ -1073,7 +1253,6 @@ archive = "fixture-registry-package-alias"
 [dependencies.local-name]
 version = "1.0.0"
 package = "upstream-package"
-visibility = "private"
 )lito"_str },
 };
 
@@ -1439,7 +1618,6 @@ private-definitions = ["FIXTURE_LINUX"]
 
 [dependencies.fixture-dependency]
 path = "dependency"
-visibility = "private"
 features = ["api"]
 default-features = false
 )toml"_str);
@@ -1671,7 +1849,6 @@ sources = ["source.cppm"]
 [dependencies.fixture-dependency]
 git = "https://example.invalid/dependency.git"
 commit = "0123456789abcdef0123456789abcdef01234567"
-visibility = "private"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -1698,7 +1875,7 @@ archive = "fixture-registry-dependency-edit"
 [dependencies.sample]
 git = "https://example.invalid/sample.git"
 tag = "v1"
-visibility = "public"
+pub = true
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto package     = lito::registry::RegistryPackageName::parse("sample"_str);
@@ -1717,8 +1894,9 @@ visibility = "public"
     EXPECT_EQ(dependency.name.as_str(), "sample"_str);
     EXPECT_EQ(dependency.source.resolution.as_Registry().registry->as_str(), "litocpp"_str);
     EXPECT_EQ(dependency.source.resolution.as_Registry().requirement.text(), "0.4"_str);
-    ASSERT_TRUE(dependency.visibility.is_some());
-    EXPECT_EQ(*dependency.visibility, lito::dependency::DependencyVisibility::Public);
+    EXPECT_TRUE(dependency.usage.is_none());
+    ASSERT_TRUE(dependency.is_public.is_some());
+    EXPECT_TRUE(*dependency.is_public);
 
     auto contents = rstd::fs::read_to_string(edited->path.as_path());
     ASSERT_TRUE(contents.is_ok());

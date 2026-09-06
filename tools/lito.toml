@@ -8,8 +8,8 @@ module = "lito.tools"
 archive = "lito.tools"
 
 [dependencies]
-lito-core = { workspace = true, visibility = "public" }
-rstd-std = { workspace = true, visibility = "public" }
-rstd-json = { workspace = true, visibility = "public" }
-rstd-toml = { workspace = true, visibility = "public" }
-rstd-nostd = { workspace = true, visibility = "link" }
+lito-core = { workspace = true, pub = true }
+rstd-std = { workspace = true, pub = true }
+rstd-json = { workspace = true, pub = true }
+rstd-toml = { workspace = true, pub = true }
+rstd-nostd = { workspace = true, usage = "link" }

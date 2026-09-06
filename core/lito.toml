@@ -8,9 +8,9 @@ module = "lito.core"
 archive = "lito.core"
 
 [dependencies]
-rstd-std = { workspace = true, visibility = "public" }
-rstd-json = { workspace = true, visibility = "private" }
-rstd-serde = { workspace = true, visibility = "private" }
-rstd-toml = { workspace = true, visibility = "private" }
-rstd-nostd = { workspace = true, visibility = "link" }
-licrypto = { workspace = true, visibility = "public" }
+rstd-std = { workspace = true, pub = true }
+rstd-json = { workspace = true }
+rstd-serde = { workspace = true }
+rstd-toml = { workspace = true }
+rstd-nostd = { workspace = true, usage = "link" }
+licrypto = { workspace = true, pub = true }

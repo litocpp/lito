@@ -14,13 +14,13 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
-inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v4"_str;
-inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v4"_str;
+inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v5"_str;
+inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v5"_str;
 inline constexpr auto REGISTRY_INSPECTION_CANDIDATE_SCHEMA =
-    "lito.registry.verified-publish-candidate.v4"_str;
+    "lito.registry.verified-publish-candidate.v5"_str;
 inline constexpr auto REGISTRY_INSPECTION_FAILURE_SCHEMA =
-    "lito.registry.package-check-failure.v4"_str;
-inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v4"_str;
+    "lito.registry.package-check-failure.v5"_str;
+inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v5"_str;
 
 struct RegistryInspectionProtocolError {
     String message;
@@ -175,14 +175,12 @@ auto dependency_kind_text(RegistryDependencyKind kind) noexcept -> ref<str> {
     rstd::unreachable();
 }
 
-auto dependency_visibility_text(lito::dependency::DependencyVisibility visibility) noexcept
-    -> ref<str> {
-    switch (visibility) {
-    case lito::dependency::DependencyVisibility::Public: return "public"_str;
-    case lito::dependency::DependencyVisibility::Private: return "private"_str;
-    case lito::dependency::DependencyVisibility::LinkOnly: return "link"_str;
-    }
-    rstd::unreachable();
+auto dependency_usage_json(lito::dependency::DependencyUsage usage) -> Json {
+    auto result = rstd::json::Array::make();
+    if (usage.uses_compile()) result.push(string_json("compile"_str));
+    if (usage.uses_link()) result.push(string_json("link"_str));
+    if (usage.uses_runtime()) result.push(string_json("runtime"_str));
+    return Json::Array(rstd::move(result));
 }
 
 auto failure_code_text(RegistryArtifactFailureCode code) noexcept -> ref<str> {
@@ -203,14 +201,42 @@ auto dependency_kind(ref<str> value, ref<str> context)
         rstd::format("{}.kind is unsupported", context));
 }
 
-auto dependency_visibility(ref<str> value, ref<str> context)
-    -> RegistryInspectionProtocolResult<lito::dependency::DependencyVisibility> {
-    using lito::dependency::DependencyVisibility;
-    if (value == "public"_str) return Ok(DependencyVisibility::Public);
-    if (value == "private"_str) return Ok(DependencyVisibility::Private);
-    if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
-    return protocol_failure<DependencyVisibility>(
-        rstd::format("{}.visibility is unsupported", context));
+auto dependency_usage(const Json& value, ref<str> context)
+    -> RegistryInspectionProtocolResult<lito::dependency::DependencyUsage> {
+    auto array = value.as_array();
+    if (array.is_none()) {
+        return protocol_failure<lito::dependency::DependencyUsage>(
+            rstd::format("{} must be an array", context));
+    }
+    auto compile = false;
+    auto link    = false;
+    auto runtime = false;
+    for (usize index {}; index < (*array)->len(); ++index) {
+        auto text = (**array)[index].as_str();
+        if (text.is_none()) {
+            return protocol_failure<lito::dependency::DependencyUsage>(
+                rstd::format("{}[{}] must be a string", context, index));
+        }
+        auto* selected = &compile;
+        if (*text == "link"_str)
+            selected = &link;
+        else if (*text == "runtime"_str)
+            selected = &runtime;
+        else if (*text != "compile"_str)
+            return protocol_failure<lito::dependency::DependencyUsage>(
+                rstd::format("{}[{}] is unsupported", context, index));
+        if (*selected) {
+            return protocol_failure<lito::dependency::DependencyUsage>(
+                rstd::format("{} repeats '{}'", context, *text));
+        }
+        *selected = true;
+    }
+    auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime);
+    if (result.is_none()) {
+        return protocol_failure<lito::dependency::DependencyUsage>(
+            rstd::format("{} is empty or mixes runtime with native usage", context));
+    }
+    return Ok(*result);
 }
 
 auto canonical_size(const Json& value, ref<str> field, ref<str> context)
@@ -234,7 +260,8 @@ auto parse_dependency(const Json& value, usize index)
                               "package"_str,
                               "requirement"_str,
                               "kind"_str,
-                              "visibility"_str,
+                              "pub"_str,
+                              "usage"_str,
                               "features"_str,
                               "default_features"_str }));
     auto registry = rstd_try(parse_registry_value(
@@ -262,6 +289,19 @@ auto parse_dependency(const Json& value, usize index)
         }
         features.push(String::make(*feature));
     }
+    auto kind  = rstd_try(dependency_kind(
+        rstd_try(string_member(value, "kind"_str, context.as_str())), context.as_str()));
+    auto usage = rstd_try(dependency_usage(*rstd_try(member(value, "usage"_str, context.as_str())),
+                                           rstd::format("{}.usage", context.as_str()).as_str()));
+    auto is_public = rstd_try(bool_member(value, "pub"_str, context.as_str()));
+    if (usage.uses_runtime() != (kind == RegistryDependencyKind::Runtime)) {
+        return protocol_failure<RegistryDependencyProjection>(
+            rstd::format("{}.kind and usage do not describe the same lifecycle", context));
+    }
+    if (kind != RegistryDependencyKind::Normal && is_public) {
+        return protocol_failure<RegistryDependencyProjection>(
+            rstd::format("{}.pub cannot be true for development or runtime dependencies", context));
+    }
     return Ok(RegistryDependencyProjection {
         .alias = String::make(rstd_try(string_member(value, "alias"_str, context.as_str()))),
         .package =
@@ -269,11 +309,10 @@ auto parse_dependency(const Json& value, usize index)
                 .registry = rstd::move(registry),
                 .name     = rstd::move(package),
             },
-        .requirement      = rstd::move(requirement),
-        .kind             = rstd_try(dependency_kind(
-            rstd_try(string_member(value, "kind"_str, context.as_str())), context.as_str())),
-        .visibility       = rstd_try(dependency_visibility(
-            rstd_try(string_member(value, "visibility"_str, context.as_str())), context.as_str())),
+        .requirement = rstd::move(requirement),
+        .kind        = kind,
+        .consumption =
+            lito::dependency::DependencyConsumption { .usage = usage, .is_public = is_public },
         .features         = rstd::move(features),
         .default_features = rstd_try(bool_member(value, "default_features"_str, context.as_str())),
     });
@@ -288,8 +327,8 @@ auto dependency_json(const RegistryDependencyProjection& dependency) -> Json {
     value.insert(String::make("package"_str), string_json(dependency.package.name.as_str()));
     value.insert(String::make("requirement"_str), string_json(dependency.requirement.text()));
     value.insert(String::make("kind"_str), string_json(dependency_kind_text(dependency.kind)));
-    value.insert(String::make("visibility"_str),
-                 string_json(dependency_visibility_text(dependency.visibility)));
+    value.insert(String::make("pub"_str), Json::Bool(dependency.consumption.is_public));
+    value.insert(String::make("usage"_str), dependency_usage_json(dependency.consumption.usage));
     value.insert(String::make("features"_str), Json::Array(rstd::move(features)));
     value.insert(String::make("default_features"_str), Json::Bool(dependency.default_features));
     return Json::Object(rstd::move(value));
@@ -407,7 +446,7 @@ auto lito::registry::registry_inspector_capabilities_json() -> String {
     formats.push(string_json(RegistryArchiveFormat::TAR_ZSTD_V1));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str),
-                string_json("lito.registry.inspector-capabilities.v4"_str));
+                string_json("lito.registry.inspector-capabilities.v5"_str));
     root.insert(String::make("protocols"_str), Json::Array(rstd::move(protocols)));
     root.insert(String::make("archive_formats"_str), Json::Array(rstd::move(formats)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));

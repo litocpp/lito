@@ -8,4 +8,4 @@ module = "demo.app"
 archive = "demo.app"
 
 [dependencies]
-demo-base = { path = "../demo-base", visibility = "public" }
+demo-base = { path = "../demo-base", pub = true }

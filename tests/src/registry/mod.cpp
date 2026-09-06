@@ -13,13 +13,13 @@ using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 
 constexpr auto package_index_fixture =
-    R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"1.2.3","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^1.0.0","kind":"normal","visibility":"public","features":["fast"],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
+    R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"1.2.3","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^1.0.0","kind":"normal","pub":true,"usage":["compile","link"],"features":["fast"],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
 
 constexpr auto changed_package_index_fixture =
     R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"1.2.3","checksum":"2222222222222222222222222222222222222222222222222222222222222222","dependencies":[],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
 
 constexpr auto solver_sample_fixture =
-    R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"2.0.0","checksum":"6666666666666666666666666666666666666666666666666666666666666666","dependencies":[],"yanked":true,"published_at":"2026-08-20T12:34:56Z"},{"version":"1.5.0","checksum":"3333333333333333333333333333333333333333333333333333333333333333","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^2.0.0","kind":"normal","visibility":"public","features":[],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"},{"version":"1.2.3","checksum":"9999999999999999999999999999999999999999999999999999999999999999","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^1.0.0","kind":"normal","visibility":"public","features":[],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
+    R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"2.0.0","checksum":"6666666666666666666666666666666666666666666666666666666666666666","dependencies":[],"yanked":true,"published_at":"2026-08-20T12:34:56Z"},{"version":"1.5.0","checksum":"3333333333333333333333333333333333333333333333333333333333333333","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^2.0.0","kind":"normal","pub":true,"usage":["compile","link"],"features":[],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"},{"version":"1.2.3","checksum":"9999999999999999999999999999999999999999999999999999999999999999","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^1.0.0","kind":"normal","pub":true,"usage":["compile","link"],"features":[],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
 
 constexpr auto solver_helper_fixture =
     R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"helper","releases":[{"version":"2.0.0","checksum":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","dependencies":[],"yanked":false,"published_at":"2026-08-20T12:34:56Z"},{"version":"1.0.0","checksum":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","dependencies":[],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
@@ -433,6 +433,23 @@ TEST(RegistryMetadata, ParsesTrustedRawIndexAndChecksRequestContext) {
               "1111111111111111111111111111111111111111111111111111111111111111"_str);
     ASSERT_EQ(release.dependencies.len(), usize(1));
     EXPECT_EQ(release.dependencies[usize {}].alias.as_str(), "helper"_str);
+    EXPECT_TRUE(release.dependencies[usize {}].consumption.is_public);
+    EXPECT_TRUE(release.dependencies[usize {}].consumption.usage.uses_compile());
+    EXPECT_TRUE(release.dependencies[usize {}].consumption.usage.uses_link());
+
+    constexpr auto legacy_visibility =
+        R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"1.2.3","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^1.0.0","kind":"normal","visibility":"link","features":[],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
+    EXPECT_TRUE(
+        lito::registry::parse_package_index(legacy_visibility.as_bytes(), expected).is_err());
+
+    constexpr auto public_development =
+        R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"1.2.3","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[{"alias":"helper","registry":"https://registry.example/","package":"helper","requirement":"^1.0.0","kind":"development","pub":true,"usage":["compile","link"],"features":[],"default_features":true}],"yanked":false,"published_at":"2026-08-20T12:34:56Z"}]})json"_str;
+    EXPECT_TRUE(
+        lito::registry::parse_package_index(public_development.as_bytes(), expected).is_err());
+
+    constexpr auto version_two =
+        R"json({"schema":"lito.registry.package-index.v2","registry":"https://registry.example/","package":"sample","releases":[]})json"_str;
+    EXPECT_TRUE(lito::registry::parse_package_index(version_two.as_bytes(), expected).is_err());
 
     EXPECT_TRUE(lito::registry::parse_package_index(package_index_fixture.as_bytes(),
                                                     registry_package("other"_str))
@@ -1013,11 +1030,16 @@ archive = "sample"
     ASSERT_TRUE(parsed->metadata.readme.is_some());
     EXPECT_EQ(parsed->metadata.readme->checksum, first->candidate.metadata.readme->checksum);
 
+    constexpr auto version_four_candidate =
+        R"json({"schema":"lito.registry.verified-publish-candidate.v4"})json"_str;
+    EXPECT_TRUE(lito::registry::parse_verified_publish_candidate(version_four_candidate.as_bytes())
+                    .is_err());
+
     auto capabilities =
         rstd::json::from_str(lito::registry::registry_inspector_capabilities_json().as_str())
             .unwrap();
     EXPECT_EQ(capabilities["schema"_str].as_str().unwrap(),
-              "lito.registry.inspector-capabilities.v4"_str);
+              "lito.registry.inspector-capabilities.v5"_str);
 }
 
 TEST(RegistryArchive, RejectsExternalInputsWithAStableCheckCode) {

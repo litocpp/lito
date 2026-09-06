@@ -66,7 +66,6 @@ name = "fixture-associated-workspace-test"
 sources = ["main.cpp"]
 [dependencies.fixture-associated-workspace-library]
 workspace = true
-visibility = "private"
 )"_str },
         { "tests/main.cpp"_str, "import fixture.associated.workspace;\n"_str },
         { "benches/lito.toml"_str, R"([package]
@@ -78,7 +77,6 @@ name = "fixture-associated-workspace-benchmark"
 sources = ["main.cpp"]
 [dependencies.fixture-associated-workspace-library]
 path = "../library"
-visibility = "private"
 )"_str },
         { "benches/main.cpp"_str, "import fixture.associated.workspace;\n"_str },
     };
@@ -130,7 +128,6 @@ name = "fixture-conventional-test"
 sources = ["main.cpp"]
 [dependencies.fixture-conventional-library]
 path = ".."
-visibility = "private"
 )"_str },
         { "tests/main.cpp"_str, "import fixture.conventional;\n"_str },
     };
@@ -167,7 +164,6 @@ name = "fixture-conventional-workspace-test"
 sources = ["main.cpp"]
 [dependencies.fixture-conventional-workspace-library]
 path = "../../library"
-visibility = "private"
 [dependencies.fixture-conventional-workspace-macro]
 path = "../macro"
 )"_str },
@@ -189,7 +185,6 @@ source = "pass.cpp"
 outcome = "success"
 [dependencies.fixture-conventional-workspace-library]
 path = "../../library"
-visibility = "private"
 )"_str },
         { "tests/compile/pass.cpp"_str, "import fixture.conventional.workspace;\n"_str },
     };
@@ -207,7 +202,6 @@ name = "fixture-conventional-boundary-root"
 sources = ["main.cpp"]
 [dependencies.fixture-conventional-boundary-dependency]
 path = "../dependency"
-visibility = "private"
 )"_str },
         { "dependency/lito.toml"_str, R"([package]
 name = "fixture-conventional-boundary-dependency"

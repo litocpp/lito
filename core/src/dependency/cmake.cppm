@@ -5,7 +5,7 @@ export module lito.core:dependency.cmake;
 
 import rstd;
 import :dependency.condition;
-import :dependency.visibility;
+import :dependency.consumption;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -41,8 +41,8 @@ struct CMakeCacheEntry {
 };
 
 struct CMakeTargetRequirement {
-    String               name;
-    DependencyVisibility visibility { DependencyVisibility::Private };
+    String                name;
+    DependencyConsumption consumption;
 };
 
 struct CMakeHostToolRequirement {
@@ -79,8 +79,8 @@ struct CMakeDependencyRequirement {
         auto target_copy = Vec<CMakeTargetRequirement>::with_capacity(targets.len());
         for (const auto& target : targets) {
             target_copy.push(CMakeTargetRequirement {
-                .name       = target.name.clone(),
-                .visibility = target.visibility,
+                .name        = target.name.clone(),
+                .consumption = target.consumption,
             });
         }
         auto result = CMakeDependencyRequirement {

@@ -66,7 +66,7 @@ packages exist in the dependency graph.
 
 The workspace can also own reusable dependency, external dependency, and external source
 declarations. Members opt into those declarations with `workspace = true`; the member still owns
-visibility and feature requests where those are target-local decisions.
+`pub`, `usage`, and feature requests where those are edge-local decisions.
 
 ## Associated development projects
 

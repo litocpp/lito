@@ -31,7 +31,6 @@ TEST_F(FormatCommand, FormatsLocalProjectWithoutResolvingDependencies) {
     manifest_text->push_str(R"toml(
 [dependencies.fixture-format-remote]
 git = "https://example.invalid/fixture-format-remote.git"
-visibility = "private"
 )toml"_str);
     ASSERT_TRUE(rstd::fs::write(manifest.as_path(), manifest_text->as_str().as_bytes()).is_ok());
 

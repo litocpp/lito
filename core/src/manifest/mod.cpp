@@ -540,10 +540,63 @@ auto assemble_manifest_document(PathBuf                               root,
                 dependency.name.as_str()));
         }
     }
-    auto       external_dependencies   = rstd::move(external).unwrap();
-    auto       parsed_external_sources = rstd::move(external_sources).unwrap();
-    auto       parsed_source_groups    = rstd::move(source_groups).unwrap();
-    const auto has_external_source     = [&](ref<str> name) {
+    auto external_dependencies   = rstd::move(external).unwrap();
+    auto parsed_external_sources = rstd::move(external_sources).unwrap();
+    auto parsed_source_groups    = rstd::move(source_groups).unwrap();
+    if (! has_library) {
+        const auto reject_public = [](bool     is_public,
+                                      ref<str> owner) -> ManifestSchemaResult<empty> {
+            if (! is_public) return Ok(empty {});
+            return manifest_schema_failure<empty>(rstd::format(
+                "{}.pub requires the consuming package to have a library target", owner));
+        };
+        for (const auto& dependency : parsed_dependencies.explicit_dependencies) {
+            rstd_try(reject_public(dependency.is_public.is_some() && *dependency.is_public,
+                                   rstd::format("dependency '{}'", dependency.name).as_str()));
+        }
+        for (const auto& dependency : parsed_dependencies.workspace_dependencies) {
+            rstd_try(reject_public(dependency.is_public.is_some() && *dependency.is_public,
+                                   rstd::format("dependency '{}'", dependency.name).as_str()));
+        }
+        for (const auto& dependency : external_dependencies.pkg_config) {
+            rstd_try(reject_public(
+                dependency.consumption.is_public,
+                rstd::format("pkg-config external dependency '{}'", dependency.alias).as_str()));
+        }
+        for (const auto& dependency : external_dependencies.workspace_pkg_config) {
+            rstd_try(reject_public(
+                dependency.consumption.is_public,
+                rstd::format("pkg-config external dependency '{}'", dependency.alias).as_str()));
+        }
+        const auto reject_public_cmake =
+            [&](const auto& dependency) -> ManifestSchemaResult<empty> {
+            for (const auto& target : dependency.targets) {
+                rstd_try(reject_public(target.consumption.is_public,
+                                       rstd::format("CMake external dependency '{}' target '{}'",
+                                                    dependency.alias,
+                                                    target.name)
+                                           .as_str()));
+            }
+            return Ok(empty {});
+        };
+        for (const auto& dependency : external_dependencies.cmake) {
+            rstd_try(reject_public_cmake(dependency));
+        }
+        for (const auto& dependency : external_dependencies.workspace_cmake) {
+            rstd_try(reject_public_cmake(dependency));
+        }
+        for (const auto& dependency : external_dependencies.cargo) {
+            rstd_try(reject_public(
+                dependency.consumption.dependency.is_public,
+                rstd::format("Cargo external dependency '{}'", dependency.alias).as_str()));
+        }
+        for (const auto& dependency : external_dependencies.workspace_cargo) {
+            rstd_try(reject_public(
+                dependency.consumption.dependency.is_public,
+                rstd::format("Cargo external dependency '{}'", dependency.alias).as_str()));
+        }
+    }
+    const auto has_external_source = [&](ref<str> name) {
         for (const auto& source : parsed_external_sources.explicit_sources) {
             if (source.name == name) return true;
         }

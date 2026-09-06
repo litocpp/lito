@@ -85,19 +85,19 @@ sources = [
 ]
 
 [dependencies]
-lito-core = { workspace = true, visibility = "private" }
-lito-pack = { workspace = true, visibility = "private" }
-lito-cpp = { workspace = true, visibility = "private" }
-lito-tools = { workspace = true, visibility = "private" }
-lito-toolchain = { workspace = true, visibility = "private" }
-lito-driver = { workspace = true, visibility = "private" }
-lito-frontend = { workspace = true, visibility = "private" }
-luato = { workspace = true, visibility = "private" }
-rstd-std = { workspace = true, visibility = "private" }
-rstd-json = { workspace = true, visibility = "private" }
-rstd-serde = { workspace = true, visibility = "private" }
-rstd-toml = { workspace = true, visibility = "private" }
-rstd-test = { workspace = true, visibility = "private" }
-rstd-bench = { workspace = true, visibility = "private" }
-rstd-nostd = { workspace = true, visibility = "link" }
+lito-core = { workspace = true }
+lito-pack = { workspace = true }
+lito-cpp = { workspace = true }
+lito-tools = { workspace = true }
+lito-toolchain = { workspace = true }
+lito-driver = { workspace = true }
+lito-frontend = { workspace = true }
+luato = { workspace = true }
+rstd-std = { workspace = true }
+rstd-json = { workspace = true }
+rstd-serde = { workspace = true }
+rstd-toml = { workspace = true }
+rstd-test = { workspace = true }
+rstd-bench = { workspace = true }
+rstd-nostd = { workspace = true, usage = "link" }
 pmacro-basic-provider = { path = "proc-macro/basic" }

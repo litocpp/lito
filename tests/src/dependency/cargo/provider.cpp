@@ -180,7 +180,10 @@ TEST_F(CargoProvider, EffectivePlainProfileProjectsTypedCargoConfigurationByLang
                 .profile = Some(lito::dependency::CargoProfileName {
                     .value = String::make("packaging"_str),
                 }),
-                .usage   = lito::dependency::CargoDependencyUsage::Runtime,
+                .dependency =
+                    lito::dependency::DependencyConsumption {
+                        .usage = lito::dependency::DependencyUsage::runtime_only(),
+                    },
             },
     };
     auto cpp = lito::resolve_cargo_profile_configuration(
@@ -199,9 +202,9 @@ TEST_F(CargoProvider, EffectivePlainProfileProjectsTypedCargoConfigurationByLang
     EXPECT_FALSE(*cpp->debug_assertions);
     EXPECT_EQ(*cpp->strip, lito::tools::cargo::ProfileStrip::DebugInfo);
 
-    declaration.consumption.profile = None();
-    declaration.consumption.usage   = lito::dependency::CargoDependencyUsage::Link;
-    auto c                          = lito::resolve_cargo_profile_configuration(
+    declaration.consumption.profile          = None();
+    declaration.consumption.dependency.usage = lito::dependency::DependencyUsage::link_only();
+    auto c                                   = lito::resolve_cargo_profile_configuration(
         "owner"_str, declaration, *profile, lito::manifest::PackageLanguage::C);
     ASSERT_TRUE(c.is_ok());
     EXPECT_EQ(c->inherits.as_str(), "dev"_str);

@@ -37,8 +37,6 @@ manifest-path = "crates/ffi/Cargo.toml"
 features = ["zeta", "alpha"]
 default-features = false
 profile = "ffi-release"
-usage = "link"
-visibility = "link"
 condition = "feature.rust"
 )toml"_str },
         { "lib.cppm"_str, "export module cargo.manifest;\n"_str },
@@ -60,9 +58,9 @@ condition = "feature.rust"
     EXPECT_FALSE(cargo.consumption.default_features);
     ASSERT_TRUE(cargo.consumption.profile.is_some());
     EXPECT_EQ(cargo.consumption.profile->as_str(), "ffi-release"_str);
-    EXPECT_EQ(cargo.consumption.usage, lito::dependency::CargoDependencyUsage::Link);
-    ASSERT_TRUE(cargo.consumption.visibility.is_some());
-    EXPECT_EQ(*cargo.consumption.visibility, lito::dependency::DependencyVisibility::LinkOnly);
+    EXPECT_TRUE(cargo.consumption.dependency.usage.uses_link());
+    EXPECT_FALSE(cargo.consumption.dependency.usage.uses_compile());
+    EXPECT_FALSE(cargo.consumption.dependency.is_public);
     ASSERT_TRUE(cargo.consumption.condition.is_some());
     EXPECT_EQ(cargo.consumption.condition->source.as_str(), "feature.rust"_str);
     ASSERT_TRUE(cargo.declaration_root.is_some());
@@ -77,10 +75,41 @@ condition = "feature.rust"
     ASSERT_TRUE(standalone.is_ok());
     EXPECT_TRUE(standalone->as_str().contains("[external-dependencies.cargo.ffi]"_str));
     EXPECT_TRUE(standalone->as_str().contains("manifest-path = \"crates/ffi/Cargo.toml\""_str));
-    EXPECT_TRUE(standalone->as_str().contains("usage = \"link\""_str));
+    EXPECT_FALSE(standalone->as_str().contains("usage = \"link\""_str));
     EXPECT_FALSE(standalone->as_str().contains("crate-type"_str));
     EXPECT_TRUE(standalone->as_str().contains("features = [\"alpha\", \"zeta\"]"_str));
     EXPECT_TRUE(standalone->as_str().contains("default-features = false"_str));
+}
+
+TEST_F(CargoManifest, LegacyCargoLinkConsumptionIsNormalizedAtTheManifestBoundary) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "cargo-legacy-consumption"
+version = "0.1.0"
+[lib]
+name = "cargo-legacy-consumption"
+module = "cargo.legacy_consumption"
+archive = "cargo.legacy_consumption"
+[external-sources.rust]
+path = "rust"
+[external-dependencies.cargo.ffi]
+source = "rust"
+package = "fixture-ffi"
+usage = "link"
+visibility = "public"
+)toml"_str },
+        { "rust/Cargo.toml"_str, "[package]\nname = \"fixture-ffi\"\n"_str },
+    };
+    auto project = materialize("cargo-legacy-consumption"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto manifest = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(manifest.is_ok());
+    ASSERT_EQ(manifest->cargo_external_dependencies.len(), usize(1));
+    const auto& consumption =
+        manifest->cargo_external_dependencies[usize {}].consumption.dependency;
+    EXPECT_TRUE(consumption.usage.uses_link());
+    EXPECT_FALSE(consumption.usage.uses_compile());
+    EXPECT_TRUE(consumption.is_public);
 }
 
 TEST_F(CargoManifest, CargoSchemaRejectsInvalidProviderContracts) {
@@ -89,24 +118,30 @@ TEST_F(CargoManifest, CargoSchemaRejectsInvalidProviderContracts) {
         ref<str> declaration;
     };
     constexpr InvalidCase cases[] = {
+        { "legacy-pub-mix"_str, R"toml(source = "rust"
+package = "fixture-ffi"
+visibility = "public"
+pub = true)toml"_str },
+        { "legacy-array-mix"_str, R"toml(source = "rust"
+package = "fixture-ffi"
+visibility = "link"
+usage = ["link"])toml"_str },
         { "removed-crate-type"_str, R"toml(source = "rust"
 package = "fixture-ffi"
-crate-type = "staticlib"
-visibility = "private")toml"_str },
+crate-type = "staticlib")toml"_str },
         { "invalid-usage"_str, R"toml(source = "rust"
 package = "fixture-ffi"
-usage = "build"
-visibility = "private")toml"_str },
+usage = "build")toml"_str },
         { "manifest-escape"_str, R"toml(source = "rust"
 package = "fixture-ffi"
-manifest-path = "../Cargo.toml"
-visibility = "private")toml"_str },
+manifest-path = "../Cargo.toml")toml"_str },
         { "duplicate-feature"_str, R"toml(source = "rust"
 package = "fixture-ffi"
 features = ["same", "same"]
-visibility = "private")toml"_str },
-        { "missing-visibility"_str, R"toml(source = "rust"
-package = "fixture-ffi")toml"_str },
+)toml"_str },
+        { "empty-usage"_str, R"toml(source = "rust"
+package = "fixture-ffi"
+usage = [])toml"_str },
         { "runtime-visibility"_str, R"toml(source = "rust"
 package = "fixture-ffi"
 usage = "runtime"
@@ -183,8 +218,8 @@ condition = "true"
     const auto& cargo = manifest.cargo_external_dependencies[usize {}];
     EXPECT_EQ(cargo.recipe.source.as_str(), "rust"_str);
     EXPECT_EQ(cargo.recipe.package.as_str(), "fixture-ffi"_str);
-    EXPECT_EQ(cargo.consumption.usage, lito::dependency::CargoDependencyUsage::Runtime);
-    EXPECT_TRUE(cargo.consumption.visibility.is_none());
+    EXPECT_TRUE(cargo.consumption.dependency.usage.uses_runtime());
+    EXPECT_FALSE(cargo.consumption.dependency.is_public);
     ASSERT_EQ(cargo.consumption.features.len(), usize(1));
     EXPECT_EQ(cargo.consumption.features[usize {}].as_str(), "member"_str);
     ASSERT_TRUE(cargo.declaration_root.is_some());

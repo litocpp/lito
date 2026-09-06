@@ -309,7 +309,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-c-lib]
 path = "../c-lib"
-visibility = "private"
 )toml"_str },
         { "app/src/main.cpp"_str, R"cpp(#ifndef LITO_CPP_GLOBAL
 #error LITO_CPP_GLOBAL must be provided by the C++ option domain
@@ -417,7 +416,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-generated-lib]
 workspace = true
-visibility = "private"
 )toml"_str },
         { "app/src/main.cpp"_str, R"cpp(import fixture.generated;
 
@@ -491,7 +489,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-host-tool]
 workspace = true
-visibility = "private"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "bin",
@@ -768,7 +765,7 @@ path = "tools"
 package = "FixtureTools"
 source = "tools"
 adapter = "tools/adapter.cmake"
-targets = [{ name = "FixtureTools::usage", visibility = "private" }]
+targets = [{ name = "FixtureTools::usage" }]
 host-tools = [
   { name = "shell", target = "FixtureTools::shell" },
   { name = "copy", target = "FixtureTools::copy" },
@@ -866,8 +863,8 @@ package = "Qt6"
 source = "tools"
 adapter = "tools/adapter.cmake"
 targets = [
-  { name = "Qt6::Protobuf", visibility = "private" },
-  { name = "Qt6::ProtobufQuick", visibility = "private" },
+  { name = "Qt6::Protobuf" },
+  { name = "Qt6::ProtobufQuick" },
 ]
 host-tools = [
   { name = "moc", target = "Qt6::moc" },
@@ -1133,7 +1130,7 @@ commit = "0123456789abcdef0123456789abcdef01234567"
 [external-dependencies.cmake.fixture]
 package = "LitoOverrideFixture"
 source = "fixture"
-targets = [{ name = "LitoOverrideFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoOverrideFixture::fixture" }]
 )toml"_str },
         { "main.cpp"_str, R"cpp(#ifndef LITO_SYSTEM_OVERRIDE_FIXTURE
 #error expected system CMake package usage
@@ -1233,7 +1230,7 @@ package = "LitoFixture"
 components = ["Core"]
 source = "fixture"
 config-directory = "lib/cmake/LitoFixture"
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )toml"_str },
         { "main.cpp"_str, R"cpp(int lito_fixture_value();
 
@@ -1505,7 +1502,6 @@ default = false
 
 [dependencies.fixture-feature-provider]
 path = "../provider"
-visibility = "private"
 features = ["api"]
 default-features = false
 )toml"_str },
@@ -1585,7 +1581,6 @@ options = ["-fvisibility=default"]
 
 [dependencies.fixture-hidden-lib]
 path = "../hidden-lib"
-visibility = "private"
 )toml"_str },
         { "default-app/src/main.cpp"_str, R"cpp(import fixture.visibility.hidden;
 
@@ -1622,7 +1617,6 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-default-lib]
 path = "../default-lib"
-visibility = "private"
 )toml"_str },
         { "hidden-app/src/main.cpp"_str, R"cpp(import fixture.visibility.public_;
 

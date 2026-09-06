@@ -734,8 +734,8 @@ auto clone_dependencies(const Vec<DependencySpec>& dependencies) -> Vec<Dependen
     auto result = Vec<DependencySpec>::with_capacity(dependencies.len());
     for (const auto& dependency : dependencies) {
         result.push(DependencySpec {
-            .target     = dependency.target.clone(),
-            .visibility = dependency.visibility,
+            .target      = dependency.target.clone(),
+            .consumption = dependency.consumption,
         });
     }
     return result;
@@ -1048,7 +1048,7 @@ auto resolve_external_usage(Vec<ExternalDependencyUsage>    dependencies,
             }
             targets.push(ResolvedExternalTargetUsage {
                 .name              = rstd::move(target.name),
-                .visibility        = target.visibility,
+                .consumption       = target.consumption,
                 .compile_arguments = rstd::move(arguments),
                 .header_roots      = rstd::move(header_roots),
                 .identity          = rstd::move(target.identity),
@@ -1267,8 +1267,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                  cpp_dependency.name.as_str()));
             }
             dependencies.push(DependencySpec {
-                .target     = (**library).clone(),
-                .visibility = cpp_dependency.visibility,
+                .target      = (**library).clone(),
+                .consumption = cpp_dependency.consumption,
             });
         }
         auto proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
@@ -1331,8 +1331,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                      cpp_dependency.name.as_str()));
                 }
                 dev_dependencies.push(DependencySpec {
-                    .target     = (**library).clone(),
-                    .visibility = lito::dependency::DependencyVisibility::Private,
+                    .target      = (**library).clone(),
+                    .consumption = cpp_dependency.consumption,
                 });
             }
         }
@@ -1364,8 +1364,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             if (development_target(kind)) {
                 for (const auto& dependency : dev_dependencies) {
                     target_dependencies.push(DependencySpec {
-                        .target     = dependency.target.clone(),
-                        .visibility = lito::dependency::DependencyVisibility::Private,
+                        .target      = dependency.target.clone(),
+                        .consumption = dependency.consumption,
                     });
                 }
                 for (const auto& dependency : dev_proc_macro_dependencies) {
@@ -1380,8 +1380,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             if (kind != lito::package::PackageTargetKind::Library && own_library.is_some()) {
                 target_dependencies.push(DependencySpec {
-                    .target     = (**own_library).clone(),
-                    .visibility = lito::dependency::DependencyVisibility::Private,
+                    .target = (**own_library).clone(),
                 });
             }
             auto target_link =
@@ -1424,8 +1423,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             auto compile_plugin_dependencies = clone_plugin_dependencies(plugin_dependencies);
             for (const auto& dependency : dev_dependencies) {
                 compile_dependencies.push(DependencySpec {
-                    .target     = dependency.target.clone(),
-                    .visibility = lito::dependency::DependencyVisibility::Private,
+                    .target      = dependency.target.clone(),
+                    .consumption = dependency.consumption,
                 });
             }
             for (const auto& dependency : dev_proc_macro_dependencies) {
@@ -1439,8 +1438,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             if (own_library.is_some()) {
                 compile_dependencies.push(DependencySpec {
-                    .target     = (**own_library).clone(),
-                    .visibility = lito::dependency::DependencyVisibility::Private,
+                    .target = (**own_library).clone(),
                 });
             }
             targets.push(ResolvedTarget {

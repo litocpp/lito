@@ -73,7 +73,7 @@ auto directly_visible(const PackagePlan& package, TargetId importer, TargetId pr
     const auto& importer_target = package.package->targets[importer];
     const auto& provider_target = package.package->targets[provider];
     for (const auto& dependency : importer_target.dependencies) {
-        if (dependency.visibility != lito::dependency::DependencyVisibility::LinkOnly &&
+        if (dependency.consumption.usage.uses_compile() &&
             dependency.target == provider_target.id) {
             return true;
         }
@@ -100,7 +100,7 @@ auto publicly_reexported(const PackagePlan&      package,
                          TargetId                importer,
                          UnitId                  provider) -> bool {
     for (const auto& dependency : package.package->targets[importer].dependencies) {
-        if (dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) continue;
+        if (! dependency.consumption.usage.uses_compile()) continue;
         auto dependency_target = target_index(package, dependency.target);
         if (dependency_target.is_none()) continue;
         if (contains_unit(public_target_units[*dependency_target], provider)) return true;

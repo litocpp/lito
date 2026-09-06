@@ -200,7 +200,7 @@ TEST_F(Update, LocalGitPatchConfigResolvesAnUnreachableSourceAsPath) {
                                "\n"
                                "[dependencies.patch-fixture]\n"
                                "git = \"https://example.invalid/patch-fixture.git\"\n"
-                               "visibility = \"private\"\n"_str.as_bytes())
+                               ""_str.as_bytes())
             .is_ok());
     ASSERT_TRUE(
         rstd::fs::write_atomic(project.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
@@ -260,7 +260,6 @@ link-stdlib = false
 
 [dependencies.fixture-registry-patch]
 version = "=0.1.0"
-visibility = "private"
 )toml"_str },
         { "provider/lito.toml"_str, R"toml([package]
 name = "fixture-registry-patch"

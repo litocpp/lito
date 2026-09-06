@@ -43,7 +43,7 @@ archive = "cmake_valid"
 package = "Vulkan"
 components = ["Headers"]
 condition = "!feature.qt"
-targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
+targets = [{ name = "Vulkan::Vulkan", pub = true }]
 [external-sources.fixture]
 path = "package"
 [external-dependencies.cmake.fixture]
@@ -53,9 +53,9 @@ config-directory = "lib/cmake/LitoFixture"
 cache = { LITO_FIXTURE_OPTION = true }
 host-tools = [{ name = "generator", target = "LitoFixture::generator" }]
 targets = [
-  { name = "LitoFixture::fixture", visibility = "private" },
-  { name = "LitoFixture::headers", visibility = "public" },
-  { name = "LitoFixture::order", visibility = "link" },
+  { name = "LitoFixture::fixture" },
+  { name = "LitoFixture::headers", pub = true },
+  { name = "LitoFixture::order", usage = "link" },
 ]
 )"_str },
         { "package/CMakeLists.txt"_str, "cmake_minimum_required(VERSION 3.28)\n"_str },
@@ -119,6 +119,39 @@ targets = [
     EXPECT_FALSE(resolved.source.as_Directory().root.as_path().to_str().unwrap().is_empty());
 }
 
+TEST_F(CMakeManifest, LegacyCMakeTargetVisibilityIsNormalizedAtTheManifestBoundary) {
+    auto project = manifest_project("cmake-legacy-consumption"_str, R"toml([package]
+name = "cmake-legacy-consumption"
+version = "0.1.0"
+[lib]
+name = "cmake-legacy-consumption"
+module = "cmake_legacy_consumption"
+archive = "cmake_legacy_consumption"
+[external-dependencies.cmake.fixture]
+package = "Fixture"
+targets = [
+  { name = "Fixture::public", visibility = "public" },
+  { name = "Fixture::private", visibility = "private" },
+  { name = "Fixture::link", visibility = "link" },
+]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
+    const auto& targets = loaded->cmake_external_dependencies[usize {}].targets;
+    ASSERT_EQ(targets.len(), usize(3));
+    EXPECT_TRUE(targets[usize {}].consumption.is_public);
+    EXPECT_TRUE(targets[usize {}].consumption.usage.uses_compile());
+    EXPECT_TRUE(targets[usize {}].consumption.usage.uses_link());
+    EXPECT_FALSE(targets[usize(1)].consumption.is_public);
+    EXPECT_TRUE(targets[usize(1)].consumption.usage.uses_compile());
+    EXPECT_TRUE(targets[usize(1)].consumption.usage.uses_link());
+    EXPECT_FALSE(targets[usize(2)].consumption.is_public);
+    EXPECT_FALSE(targets[usize(2)].consumption.usage.uses_compile());
+    EXPECT_TRUE(targets[usize(2)].consumption.usage.uses_link());
+}
+
 TEST_F(CMakeManifest, CMakeSourceAdapterIsTypedAndResolvedByPackageOwner) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([package]
@@ -134,7 +167,7 @@ path = "project"
 package = "LitoSourceAdapter"
 source = "fixture"
 adapter = "adapter.cmake"
-targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
+targets = [{ name = "LitoSourceAdapter::fixture" }]
 )"_str },
         { "adapter.cmake"_str, "set(LitoSourceAdapter_VERSION \"4.5.6\")\n"_str },
         { "project/CMakeLists.txt"_str, "cmake_minimum_required(VERSION 3.28)\n"_str },
@@ -178,7 +211,7 @@ path = "shaders"
 [external-dependencies.cmake.shader]
 package = "FixtureShader"
 source = "shaders"
-targets = [{ name = "FixtureShader::shader", visibility = "private" }]
+targets = [{ name = "FixtureShader::shader" }]
 )"_str },
         { "shaders/CMakeLists.txt"_str,
           "cmake_minimum_required(VERSION 3.28)\nproject(FixtureShader)\n"_str },
@@ -264,7 +297,7 @@ path = "project"
 package = "LitoSourceAdapter"
 source = "fixture"
 adapter = "adapter.cmake"
-targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
+targets = [{ name = "LitoSourceAdapter::fixture" }]
 )"_str },
         { "adapter.cmake"_str, "set(LitoSourceAdapter_VERSION \"1.0.0\")\n"_str },
         { "project/CMakeLists.txt"_str, "cmake_minimum_required(VERSION 3.28)\n"_str },
@@ -324,79 +357,91 @@ TEST_F(CMakeManifest, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
         ref<str> dependency;
     };
     constexpr InvalidManifest manifests[] = {
+        { "runtime-usage"_str, R"([external-dependencies.cmake.fixture]
+package = "Fixture"
+targets = [{ name = "Fixture::fixture", usage = "runtime" }]
+)"_str },
+        { "legacy-pub-mix"_str, R"([external-dependencies.cmake.fixture]
+package = "Fixture"
+targets = [{ name = "Fixture::fixture", visibility = "public", pub = true }]
+)"_str },
+        { "legacy-array-mix"_str, R"([external-dependencies.cmake.fixture]
+package = "Fixture"
+targets = [{ name = "Fixture::fixture", visibility = "link", usage = ["link"] }]
+)"_str },
         { "adapter-config-directory"_str, R"([external-dependencies.cmake.fixture]
 package = "Fixture"
 path = "package"
 adapter = "adapter.cmake"
 config-directory = "lib/cmake/Fixture"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "legacy-find-package"_str, R"([external-dependencies.cmake.fixture]
 find-package = "Fixture"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "add-subdirectory-install"_str, R"([external-dependencies.cmake.fixture]
 package = "Fixture"
 path = "package"
 add-subdirectory = false
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "add-subdirectory-type"_str, R"([external-dependencies.cmake.fixture]
 package = "Fixture"
 path = "package"
 integration = "build-tree"
 add-subdirectory = "false"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "add-subdirectory-without-adapter"_str, R"([external-dependencies.cmake.fixture]
 package = "Fixture"
 path = "package"
 integration = "build-tree"
 add-subdirectory = false
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "archive-missing-sha"_str, R"([external-dependencies.cmake.fixture]
 package = "Fixture"
 archive = "https://example.com/fixture.tar.gz"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "build-tree-installed"_str, R"([external-dependencies.cmake.fixture]
 package = "Fixture"
 integration = "build-tree"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "config-directory-parent"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 path = "package"
 config-directory = "../LitoFixture"
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )"_str },
         { "duplicate-target"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 targets = [
-  { name = "LitoFixture::fixture", visibility = "private" },
-  { name = "LitoFixture::fixture", visibility = "public" },
+  { name = "LitoFixture::fixture" },
+  { name = "LitoFixture::fixture", pub = true },
 ]
 )"_str },
         { "duplicate-component"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 components = ["Core", "Core"]
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )"_str },
         { "empty-components"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 components = []
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )"_str },
         { "invalid-condition"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 condition = "feature.qt &&"
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )"_str },
         { "unsafe-component"_str, R"toml([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 components = ["Core;include(evil)"]
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )toml"_str },
         { "empty-targets"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
@@ -405,12 +450,12 @@ targets = []
         { "installed-cache"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 cache = { LITO_FIXTURE_OPTION = true }
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )"_str },
         { "installed-config-directory"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 config-directory = "lib/cmake/LitoFixture"
-targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture" }]
 )"_str },
         { "legacy-dependency"_str, R"([dependencies.fixture]
 cmake = "LitoFixture"
@@ -424,7 +469,7 @@ module = "lito-fixture"
 )"_str },
         { "unsafe-target"_str, R"toml([external-dependencies.cmake.fixture]
 package = "LitoFixture"
-targets = [{ name = "LitoFixture::fixture)", visibility = "private" }]
+targets = [{ name = "LitoFixture::fixture)" }]
 )toml"_str },
     };
     for (const auto& manifest : manifests) {
@@ -456,7 +501,7 @@ sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 [external-dependencies.cmake.fixture]
 package = "Fixture"
 source = "fixture"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -511,8 +556,7 @@ archives = { x86_64 = { archive = "https://example.com/fixture-linux64.tar.gz", 
                          "[external-sources.fixture]\n{}\n"
                          "[external-dependencies.cmake.fixture]\npackage = \"Fixture\"\n"
                          "source = \"fixture\"\n"
-                         "targets = [{{ name = \"Fixture::fixture\", "
-                         "visibility = \"private\" }}]\n",
+                         "targets = [{{ name = \"Fixture::fixture\" }}]\n",
                          manifest.name,
                          manifest.source);
         auto project = manifest_project(manifest.name, contents.as_str());
@@ -620,7 +664,7 @@ sources = ["main.cpp"]
 [external-dependencies.cmake.fixture]
 workspace = true
 condition = "true"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
+targets = [{ name = "Fixture::fixture" }]
 )"_str },
         { "app/main.cpp"_str, "int main() { return 0; }\n"_str },
     };
@@ -704,7 +748,7 @@ module = "cmake_unnamespaced_target"
 archive = "cmake_unnamespaced_target"
 [external-dependencies.cmake.quickjs]
 package = "qjs"
-targets = [{ name = "qjs", visibility = "private" }]
+targets = [{ name = "qjs" }]
 )"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());

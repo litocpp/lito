@@ -71,7 +71,6 @@ sources = ["main.cpp"]
 
 [dependencies.fixture-lock-dependency]
 path = "dependency"
-visibility = "private"
 )toml"_str,
             },
             { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },

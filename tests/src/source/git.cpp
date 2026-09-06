@@ -30,26 +30,24 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
                     "[workspace]\nname = \"owned-workspace\"\nmembers = [\"pkg\"]\n"_str.as_bytes())
                     .is_ok());
     ASSERT_TRUE(
-        rstd::fs::write_atomic(
-            package.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
-            "[package]\n"
-            "name = \"owned-fixture\"\n"
-            "version = \"0.1.0\"\n"
-            "\n"
-            "[lib]\n"
-            "name = \"owned-fixture\"\n"
-            "module = \"owned.fixture\"\n"
-            "archive = \"owned.fixture\"\n"
-            "sources = [\"source.cppm\"]\n"
-            "\n"
-            "[external-sources.shaders]\n"
-            "path = \"shaders\"\n"
-            "\n"
-            "[external-dependencies.cmake.shader]\n"
-            "package = \"FixtureShader\"\n"
-            "source = \"shaders\"\n"
-            "targets = [{ name = \"FixtureShader::shader\", visibility = \"private\" }]\n"_str
-                .as_bytes())
+        rstd::fs::write_atomic(package.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+                               "[package]\n"
+                               "name = \"owned-fixture\"\n"
+                               "version = \"0.1.0\"\n"
+                               "\n"
+                               "[lib]\n"
+                               "name = \"owned-fixture\"\n"
+                               "module = \"owned.fixture\"\n"
+                               "archive = \"owned.fixture\"\n"
+                               "sources = [\"source.cppm\"]\n"
+                               "\n"
+                               "[external-sources.shaders]\n"
+                               "path = \"shaders\"\n"
+                               "\n"
+                               "[external-dependencies.cmake.shader]\n"
+                               "package = \"FixtureShader\"\n"
+                               "source = \"shaders\"\n"
+                               "targets = [{ name = \"FixtureShader::shader\" }]\n"_str.as_bytes())
             .is_ok());
     ASSERT_TRUE(
         rstd::fs::write_atomic(package.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
@@ -91,7 +89,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
                                  "[dependencies.owned-fixture]\n"
                                  "git = \"{}\"\n"
                                  "commit = \"{}\"\n"
-                                 "visibility = \"private\"\n",
+                                 "",
                                  *url,
                                  commit->as_str());
     ASSERT_TRUE(
@@ -397,7 +395,7 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
         "[external-dependencies.cmake.changed]\n"
         "package = \"Changed\"\n"
         "source = \"changed\"\n"
-        "targets = [{{ name = \"Changed::changed\", visibility = \"private\" }}]\n",
+        "targets = [{{ name = \"Changed::changed\" }}]\n",
         manifest);
     ASSERT_TRUE(
         rstd::fs::write_atomic(patch_manifest.as_path(), changed_manifest.as_str().as_bytes())
@@ -418,7 +416,7 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
                                          "[dependencies.patch-fixture]\n"
                                          "git = \"{}\"\n"
                                          "commit = \"{}\"\n"
-                                         "visibility = \"private\"\n",
+                                         "",
                                          *url,
                                          commit->as_str());
     ASSERT_TRUE(

@@ -262,17 +262,19 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
 TEST_F(CMakePlan, PackageResolutionMergesRequirementsAndRejectsContractConflicts) {
     auto first_targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     first_targets.push(lito::dependency::CMakeTargetRequirement {
-        .name       = String::make("Fixture::core"_str),
-        .visibility = lito::dependency::DependencyVisibility::Public,
+        .name        = String::make("Fixture::core"_str),
+        .consumption = lito::dependency::DependencyConsumption { .is_public = true },
     });
     auto second_targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     second_targets.push(lito::dependency::CMakeTargetRequirement {
-        .name       = String::make("Fixture::core"_str),
-        .visibility = lito::dependency::DependencyVisibility::LinkOnly,
+        .name = String::make("Fixture::core"_str),
+        .consumption =
+            lito::dependency::DependencyConsumption {
+                .usage = lito::dependency::DependencyUsage::link_only(),
+            },
     });
     second_targets.push(lito::dependency::CMakeTargetRequirement {
-        .name       = String::make("Fixture::extra"_str),
-        .visibility = lito::dependency::DependencyVisibility::Private,
+        .name = String::make("Fixture::extra"_str),
     });
     auto requirements = Vec<lito::ResolvedCMakeDependencyRequirement>::make();
     requirements.push(lito::ResolvedCMakeDependencyRequirement {
@@ -298,8 +300,9 @@ TEST_F(CMakePlan, PackageResolutionMergesRequirementsAndRejectsContractConflicts
     EXPECT_EQ(merged->requirement.components[usize {}].as_str(), "Core"_str);
     EXPECT_EQ(merged->requirement.components[usize(1)].as_str(), "Extra"_str);
     ASSERT_EQ(merged->requirement.targets.len(), usize(2));
-    EXPECT_EQ(merged->requirement.targets[usize {}].visibility,
-              lito::dependency::DependencyVisibility::Private);
+    EXPECT_FALSE(merged->requirement.targets[usize {}].consumption.is_public);
+    EXPECT_TRUE(merged->requirement.targets[usize {}].consumption.usage.uses_compile());
+    EXPECT_TRUE(merged->requirement.targets[usize {}].consumption.usage.uses_link());
 
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
@@ -333,17 +336,15 @@ TEST_F(CMakePlan, PackageResolutionMergesRequirementsAndRejectsContractConflicts
     auto core_usage = lito::materialize_cmake_usage(*plan, snapshot, requirements[usize {}]);
     ASSERT_TRUE(core_usage.is_ok());
     ASSERT_EQ(core_usage->targets.len(), usize(1));
-    EXPECT_EQ(core_usage->targets[usize {}].visibility,
-              lito::dependency::DependencyVisibility::Public);
+    EXPECT_TRUE(core_usage->targets[usize {}].consumption.is_public);
     ASSERT_EQ(core_usage->link_arguments.tokens.len(), usize(1));
     EXPECT_EQ(core_usage->link_arguments.tokens[usize {}].as_str(), "-lfixture-core"_str);
     auto extra_usage = lito::materialize_cmake_usage(*plan, snapshot, requirements[usize(1)]);
     ASSERT_TRUE(extra_usage.is_ok());
     ASSERT_EQ(extra_usage->targets.len(), usize(2));
-    EXPECT_EQ(extra_usage->targets[usize {}].visibility,
-              lito::dependency::DependencyVisibility::LinkOnly);
-    EXPECT_EQ(extra_usage->targets[usize(1)].visibility,
-              lito::dependency::DependencyVisibility::Private);
+    EXPECT_FALSE(extra_usage->targets[usize {}].consumption.usage.uses_compile());
+    EXPECT_TRUE(extra_usage->targets[usize {}].consumption.usage.uses_link());
+    EXPECT_FALSE(extra_usage->targets[usize(1)].consumption.is_public);
     ASSERT_EQ(extra_usage->link_arguments.tokens.len(), usize(2));
 
     requirements[usize(1)].source = lito::ResolvedCMakeDependencySource::Find();

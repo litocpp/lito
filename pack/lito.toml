@@ -15,9 +15,9 @@ host-tool = true
 link-stdlib = false
 
 [dependencies]
-lito-core = { workspace = true, visibility = "public" }
-lito-zstd = { workspace = true, visibility = "private" }
-licrypto = { workspace = true, visibility = "private" }
-rstd-std = { workspace = true, visibility = "public" }
-rstd-json = { workspace = true, visibility = "private" }
-rstd-nostd = { workspace = true, visibility = "link" }
+lito-core = { workspace = true, pub = true }
+lito-zstd = { workspace = true }
+licrypto = { workspace = true }
+rstd-std = { workspace = true, pub = true }
+rstd-json = { workspace = true }
+rstd-nostd = { workspace = true, usage = "link" }

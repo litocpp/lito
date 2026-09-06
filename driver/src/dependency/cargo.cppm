@@ -130,9 +130,9 @@ auto resolve_cargo_profile_configuration(
         .debug_info       = cargo_debug_info(native),
         .lto              = cargo_lto(native),
         .debug_assertions = native.ndebug.is_some() ? Some(! *native.ndebug) : None(),
-        .strip = declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Runtime
-                     ? cargo_strip(native)
-                     : Option<lito::tools::cargo::ProfileStrip> {},
+        .strip            = declaration.consumption.dependency.usage.uses_runtime()
+                                ? cargo_strip(native)
+                                : Option<lito::tools::cargo::ProfileStrip> {},
     };
     auto projection = lito::tools::cargo::profile_configuration_identity(result);
     auto digest     = licrypto::sha256_hex(projection.as_str());
@@ -249,9 +249,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     append(lito::tools::cargo::profile_configuration_identity(profile).as_str());
     append(lito::manifest::package_language_name(language));
     append(target);
-    append(declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Link
-               ? "link"_str
-               : "runtime"_str);
+    append(declaration.consumption.dependency.usage.uses_link() ? "link"_str : "runtime"_str);
     append(declaration.consumption.default_features ? "default-features"_str
                                                     : "no-default-features"_str);
     for (const auto& feature : declaration.consumption.features) append(feature.as_str());
@@ -359,7 +357,7 @@ auto resolve_cargo_dependencies(
             .jobs             = jobs,
             .offline          = configuration.offline,
         };
-        if (declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Runtime) {
+        if (declaration.consumption.dependency.usage.uses_runtime()) {
             auto snapshot = lito::tools::cargo::build_binaries(
                 *provider_cache, *metadata, request, environment, cargo_observer(observer));
             if (snapshot.is_err()) {
@@ -422,14 +420,10 @@ auto resolve_cargo_dependencies(
         auto source_text = rstd::format("Cargo dependency '{}' package '{}'",
                                         declaration.alias.as_str(),
                                         declaration.recipe.package.as_str());
-        if (declaration.consumption.visibility.is_none()) {
-            return lito::dependency::dependency_failure<ResolvedCargoDependencies>(rstd::format(
-                "Cargo link dependency '{}' is missing visibility", declaration.alias.as_str()));
-        }
-        auto targets = Vec<cpp::ExternalTargetUsage>::make();
+        auto targets     = Vec<cpp::ExternalTargetUsage>::make();
         targets.push(cpp::ExternalTargetUsage {
             .name           = snapshot->package.library->name.clone(),
-            .visibility     = *declaration.consumption.visibility,
+            .consumption    = declaration.consumption.dependency,
             .compile_source = source_text.clone(),
             .identity       = snapshot->identity.clone(),
         });

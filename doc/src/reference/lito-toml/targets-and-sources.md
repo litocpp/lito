@@ -35,7 +35,7 @@ dependencies, but cannot depend on another compiler plugin.
 An ordinary dependency that resolves to `[plugin]` is a host-only compiler dependency. Lito builds
 it before target compilation and attaches the completed product to the dependent target's compile
 invocations. It does not contribute target include directories, modules, archives, shared
-libraries, or install artifacts. `visibility` is therefore rejected for a plugin dependency.
+libraries, or install artifacts. `pub` and `usage` are therefore rejected for a plugin dependency.
 
 ## `[pmacro]`
 
