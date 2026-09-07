@@ -18,6 +18,10 @@ if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
   message(FATAL_ERROR "lito only supports clang")
 endif()
 
+if(APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0 CACHE STRING "Minimum macOS deployment target")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -43,9 +47,10 @@ if(WIN32)
       "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 else()
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>")
-  add_link_options(
-    "$<$<LINK_LANGUAGE:CXX>:-stdlib=libc++>"
-    "$<$<LINK_LANGUAGE:CXX>:-nostdlib++>")
+  add_link_options("$<$<LINK_LANGUAGE:CXX>:-stdlib=libc++>")
+  if(NOT APPLE)
+    add_link_options("$<$<LINK_LANGUAGE:CXX>:-nostdlib++>")
+  endif()
 endif()
 
 set(RSTD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
@@ -55,7 +60,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG e313f5757920c3badff0dee13c90188a0c37bd81)
+  GIT_TAG 8ad75f4bbb814041092b99ae38782226409f7471)
 
 FetchContent_MakeAvailable(rstd)
 
@@ -63,7 +68,7 @@ set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   luato
   GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG 3b1ecb2ac97ad6e7c2a54e6b09cd82afbf765e7d)
+  GIT_TAG 1108558a253728e6ec42fe6863d86f844c89c50c)
 FetchContent_MakeAvailable(luato)
 
 if(NOT LITO_USE_SYSTEM_ZSTD)

@@ -140,19 +140,27 @@ auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchE
             return Ok(empty {});
         }
         if (! inside || line.is_empty()) return Ok(empty {});
-        if (line.contains("(framework directory)"_str)) {
-            return environment_failure<empty>(
-                rstd::format("framework include search is unsupported: {}", line));
+        constexpr auto framework_marker = " (framework directory)"_str;
+        auto           framework        = line.ends_with(framework_marker);
+        auto           directory_text  = line;
+        if (framework) {
+            auto prefix = line.get(usize {}, line.len() - framework_marker.len());
+            if (prefix.is_none() || prefix->trim_ascii().is_empty()) {
+                return environment_failure<empty>(
+                    rstd::format("clang emitted an invalid framework include directory: {}", line));
+            }
+            directory_text = prefix->trim_ascii();
         }
-        auto directory = PathBuf::from(line);
+        auto directory = PathBuf::from(directory_text);
         auto canonical = rstd::fs::canonicalize(directory.as_path());
         if (canonical.is_err()) {
             return Err(ToolchainError::Io(String::make("resolve clang include directory"_str),
                                           rstd::move(directory),
                                           rstd::move(canonical).unwrap_err()));
         }
-        entries.push(
-            IncludeSearchEntry { .directory = rstd::move(canonical).unwrap(), .system = system });
+        entries.push(IncludeSearchEntry { .directory = rstd::move(canonical).unwrap(),
+                                          .system = system,
+                                          .framework = framework });
         return Ok(empty {});
     });
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -303,7 +311,7 @@ auto environment_identity(ref<str>                       builtin_identity,
         hash ^= 0;
         hash *= prime;
     };
-    add("lito-clang-preprocessor-environment-v2"_str);
+    add("lito-clang-preprocessor-environment-v3"_str);
     add(context_id);
     add(builtin_identity);
     add(language == PreprocessorLanguage::C ? lito::c::C_IDENTIFIER_RULE_ID
@@ -316,6 +324,7 @@ auto environment_identity(ref<str>                       builtin_identity,
         }
         add(*text);
         add(include.system ? "system"_str : "quote"_str);
+        add(include.framework ? "framework"_str : "directory"_str);
     }
     static constexpr char digits[] = "0123456789abcdef";
     char                  result[16];

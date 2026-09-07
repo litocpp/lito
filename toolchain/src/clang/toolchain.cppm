@@ -1003,19 +1003,24 @@ public:
             for (const auto& directory : projection.system_include_directories) {
                 if (directory.as_str() == value) return true;
             }
+            for (const auto& directory : projection.framework_include_directories) {
+                if (directory.as_str() == value) return true;
+            }
             return false;
         };
         for (const auto& entry : (*environment)->include_search) {
             auto directory = entry.directory.as_path().to_string_lossy();
             if (contains(directory.as_str())) continue;
-            if (entry.system)
+            if (entry.framework)
+                projection.framework_include_directories.push(rstd::move(directory));
+            else if (entry.system)
                 projection.system_include_directories.push(rstd::move(directory));
             else
                 projection.user_include_directories.push(rstd::move(directory));
         }
         projection.identity = licrypto::sha256_hex(
             rstd::format(
-                "lito-build-tool-preprocessor-projection-v1\nprojection={}\nenvironment={}",
+                "lito-build-tool-preprocessor-projection-v2\nprojection={}\nenvironment={}",
                 projection.identity.as_str(),
                 (*environment)->identity.as_str())
                 .as_str());
@@ -1041,7 +1046,8 @@ public:
                 return false;
             };
             return contains(projection.user_include_directories) ||
-                   contains(projection.system_include_directories);
+                   contains(projection.system_include_directories) ||
+                   contains(projection.framework_include_directories);
         };
         auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
         for (const auto& entry : (*environment)->include_search) {

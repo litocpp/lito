@@ -31,6 +31,10 @@ local function append_preprocessor_arguments(arguments, environment)
     append(arguments, "-I")
     append(arguments, value)
   end
+  for _, value in ipairs(environment.framework_include_directories or {}) do
+    append(arguments, "-F")
+    append(arguments, value)
+  end
 end
 
 local function append_plugin_metadata(arguments, metadata)
@@ -64,6 +68,9 @@ local function depfile_roots(environment)
     append(result, value)
   end
   for _, value in ipairs(environment.system_include_directories) do
+    append(result, value)
+  end
+  for _, value in ipairs(environment.framework_include_directories or {}) do
     append(result, value)
   end
   return result

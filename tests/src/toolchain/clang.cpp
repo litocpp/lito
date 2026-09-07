@@ -5,6 +5,7 @@ import rstd.test;
 import lito.test.cpp;
 import lito.core;
 import lito.cpp;
+import lito.frontend.preprocessor;
 import lito.frontend.result;
 import lito.toolchain;
 
@@ -12,6 +13,50 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito;
 using namespace lito_test;
+
+TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
+    auto directory = rstd::fs::TempDir::make("lito-framework-include-test"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto root       = PathBuf::from(directory->path());
+    auto headers    = root.join(PathBuf::from("Frameworks/Foo.framework/Headers"_str).as_path());
+    auto header     = headers.join(PathBuf::from("Foo.h"_str).as_path());
+    auto search_dir = root.join(PathBuf::from("Frameworks"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(headers.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(header.as_path(), "#pragma once\n"_str.as_bytes()).is_ok());
+
+    auto include_search = Vec<IncludeSearchEntry>::make();
+    include_search.push(IncludeSearchEntry {
+        .directory = search_dir.clone(),
+        .system    = true,
+        .framework = true,
+    });
+    auto environment = PreprocessorEnvironment {
+        .key = PreprocessorEnvironmentKey::make("framework-test"_str, root.as_path()),
+        .builtin_environment =
+            rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(ClangBuiltinEnvironmentSnapshot {}),
+        .native_definitions  = Vec<lito::frontend::preprocessor::SharedMacroDefinition>::make(),
+        .command_line_macros = Vec<lito::frontend::preprocessor::PredefinedMacroOperation>::make(),
+        .semantic_context     = BuiltinSemanticContext {},
+        .include_search       = rstd::move(include_search),
+        .query_command        = Vec<String>::make(),
+        .identity             = String::make(),
+        .date                 = String::make(),
+        .time                 = String::make(),
+    };
+    auto resolver = ClangIncludeResolver(environment);
+    auto result   = resolver.resolve(lito::frontend::preprocessor::IncludeRequest {
+        .name           = String::make("Foo/Foo.h"_str),
+        .kind           = lito::frontend::preprocessor::IncludeKind::Angled,
+        .including_path = root.join(PathBuf::from("main.cpp"_str).as_path()),
+    });
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(result->is_some());
+    auto canonical = rstd::fs::canonicalize(header.as_path());
+    ASSERT_TRUE(canonical.is_ok());
+    EXPECT_EQ(result->as_ref()->path.as_path(), canonical->as_path());
+    EXPECT_EQ(result->as_ref()->search_index, usize(1));
+    EXPECT_TRUE(result->as_ref()->system);
+}
 
 TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
     const auto resolve = [](ref<str> triple) {
