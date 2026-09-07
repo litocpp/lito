@@ -31,26 +31,27 @@ struct RegistryBlobTransport {
 };
 
 class RegistryBlobCache {
-    PathBuf                  cache_root_;
-    RegistryEndpointTemplate endpoint_;
-    RegistryNetworkPolicy    network_ { RegistryNetworkPolicy::Online };
-    RegistryBlobTransport    transport_;
-    const Vec<PathBuf>*      source_bundles_ {};
+    PathBuf                          cache_root_;
+    RegistryDownloadEndpointTemplate endpoint_;
+    RegistryNetworkPolicy            network_ { RegistryNetworkPolicy::Online };
+    RegistryBlobTransport            transport_;
+    const Vec<PathBuf>*              source_bundles_ {};
 
 public:
-    RegistryBlobCache(PathBuf                  cache_root,
-                      RegistryEndpointTemplate endpoint,
-                      RegistryNetworkPolicy    network,
-                      RegistryBlobTransport    transport,
-                      const Vec<PathBuf>*      source_bundles = nullptr)
+    RegistryBlobCache(PathBuf                          cache_root,
+                      RegistryDownloadEndpointTemplate endpoint,
+                      RegistryNetworkPolicy            network,
+                      RegistryBlobTransport            transport,
+                      const Vec<PathBuf>*              source_bundles = nullptr)
         : cache_root_(rstd::move(cache_root)),
           endpoint_(rstd::move(endpoint)),
           network_(network),
           transport_(transport),
           source_bundles_(source_bundles) {}
 
-    auto acquire(const RegistryPackageId& package, const PackageChecksum& checksum)
-        -> RegistryArtifactResult<VerifiedRegistryBlob>;
+    auto acquire(const RegistryPackageId& package,
+                 const SemanticVersion&   version,
+                 const PackageChecksum&   checksum) -> RegistryArtifactResult<VerifiedRegistryBlob>;
     auto publish(const RegistryPackageId& package, slice<u8> contents)
         -> RegistryArtifactResult<VerifiedRegistryBlob>;
 };
@@ -291,6 +292,7 @@ auto discard(ref<rstd::path::Path> path) -> void {
 } // namespace
 
 auto lito::registry::RegistryBlobCache::acquire(const RegistryPackageId& package,
+                                                const SemanticVersion&   version,
                                                 const PackageChecksum&   checksum)
     -> RegistryArtifactResult<VerifiedRegistryBlob> {
     auto layout = blob_layout(cache_root_.as_path(), checksum);
@@ -328,8 +330,8 @@ auto lito::registry::RegistryBlobCache::acquire(const RegistryPackageId& package
     auto staging   = rstd_try(reserve_staging(layout, package));
     auto requested = transport_.download(transport_.context,
                                          RegistryBlobDownloadRequest {
-                                             .package = package.clone(),
-                                             .url     = endpoint_.render(checksum.text().as_str()),
+                                             .package     = package.clone(),
+                                             .url         = endpoint_.render(package.name, version),
                                              .destination = staging.clone(),
                                          });
     if (requested.is_err()) {

@@ -49,12 +49,12 @@ struct RegistryHttpTransport {
 };
 
 class RegistryIndexClient {
-    PathBuf                   cache_root_;
-    RegistryId                registry_;
-    RegistryEndpointTemplate  endpoint_;
-    RegistryNetworkPolicy     network_ { RegistryNetworkPolicy::Online };
-    RegistryIndexUpdatePolicy update_ { RegistryIndexUpdatePolicy::Reuse };
-    RegistryHttpTransport     transport_;
+    PathBuf                       cache_root_;
+    RegistryId                    registry_;
+    RegistryIndexEndpointTemplate endpoint_;
+    RegistryNetworkPolicy         network_ { RegistryNetworkPolicy::Online };
+    RegistryIndexUpdatePolicy     update_ { RegistryIndexUpdatePolicy::Reuse };
+    RegistryHttpTransport         transport_;
 
     static auto load_provider(void* context, const RegistryPackageId& package) noexcept
         -> RegistryIndexLoadResult;
@@ -379,7 +379,7 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
         return Ok(cached->as_ref().unwrap().index.clone());
     }
 
-    auto endpoint = endpoint_.render(package.name.as_str());
+    auto endpoint = endpoint_.render(package.name);
     auto request  = RegistryHttpRequest {
         .package = package.clone(),
         .url     = endpoint.clone(),

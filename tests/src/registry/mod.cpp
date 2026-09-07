@@ -50,9 +50,13 @@ auto registry_fixed_endpoint(ref<str> value) -> lito::registry::RegistryFixedEnd
     return lito::registry::RegistryFixedEndpoint::parse(value).unwrap();
 }
 
-auto registry_endpoint(ref<str> value, lito::registry::RegistryEndpointKind kind)
-    -> lito::registry::RegistryEndpointTemplate {
-    return lito::registry::RegistryEndpointTemplate::parse(value, kind).unwrap();
+auto registry_index_endpoint(ref<str> value) -> lito::registry::RegistryIndexEndpointTemplate {
+    return lito::registry::RegistryIndexEndpointTemplate::parse(value).unwrap();
+}
+
+auto registry_download_endpoint(ref<str> value)
+    -> lito::registry::RegistryDownloadEndpointTemplate {
+    return lito::registry::RegistryDownloadEndpointTemplate::parse(value).unwrap();
 }
 
 auto registry_test_config() -> lito::config::NamedRegistryConfig {
@@ -61,11 +65,10 @@ auto registry_test_config() -> lito::config::NamedRegistryConfig {
         .identity = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .endpoints =
             lito::registry::RegistryDataEndpoints {
-                .index = registry_endpoint("https://registry.example/v1/index/{package}.json"_str,
-                                           lito::registry::RegistryEndpointKind::Index),
-                .blob  = registry_endpoint(
-                    "https://registry.example/v1/blobs/sha256/{checksum}.tar.zst"_str,
-                    lito::registry::RegistryEndpointKind::Blob),
+                .index =
+                    registry_index_endpoint("https://registry.example/v1/index/{package}.json"_str),
+                .download = registry_download_endpoint(
+                    "https://registry.example/packages/{package}/{package}-{version}.tar.zst"_str),
             },
         .api   = registry_fixed_endpoint("https://registry.example/"_str),
         .token = {},
@@ -139,6 +142,7 @@ struct IndexHttpFixture {
 
 struct BlobTransportFixture {
     String bytes;
+    String last_url;
     usize  calls {};
 
     static auto download(void*                                              context,
@@ -146,6 +150,7 @@ struct BlobTransportFixture {
         -> lito::registry::RegistryArtifactResult<empty> {
         auto& self = *static_cast<BlobTransportFixture*>(context);
         ++self.calls;
+        self.last_url = request.url.clone();
         auto written =
             rstd::fs::write(request.destination.as_path(), self.bytes.as_str().as_bytes());
         if (written.is_err()) {
@@ -277,7 +282,7 @@ auto publish_session_json(ref<str> state,
 auto publish_request(ref<rstd::path::Path> archive, const lito::config::RegistryBearerToken& token)
     -> lito::registry::RegistryPublishRequest {
     return lito::registry::RegistryPublishRequest {
-        .api     = registry_fixed_endpoint("https://api.registry.example/"_str),
+        .api     = registry_fixed_endpoint("https://registry.example/api/"_str),
         .token   = rstd::addressof(token),
         .package = registry_package("sample"_str),
         .version = registry_version("1.2.3"_str),
@@ -320,6 +325,22 @@ TEST(RegistryConfig, AllowsHttpOnlyForLoopbackApiEndpoints) {
         lito::registry::RegistryFixedEndpoint::parse("http://registry.example/"_str).is_err());
     EXPECT_TRUE(
         lito::registry::RegistryFixedEndpoint::parse("http://localhost.invalid/"_str).is_err());
+}
+
+TEST(RegistryConfig, DownloadEndpointRequiresPackageAndVersion) {
+    auto endpoint = lito::registry::RegistryDownloadEndpointTemplate::parse(
+        "https://registry.example/packages/{package}/{package}-{version}.tar.zst"_str);
+    ASSERT_TRUE(endpoint.is_ok());
+    auto package = lito::registry::RegistryPackageName::parse("sample"_str).unwrap();
+    auto version = registry_version("1.2.3-rc.1"_str);
+    EXPECT_EQ(endpoint->render(package, version).as_str(),
+              "https://registry.example/packages/sample/sample-1.2.3-rc.1.tar.zst"_str);
+    EXPECT_TRUE(lito::registry::RegistryDownloadEndpointTemplate::parse(
+                    "https://registry.example/packages/{package}.tar.zst"_str)
+                    .is_err());
+    EXPECT_TRUE(lito::registry::RegistryDownloadEndpointTemplate::parse(
+                    "https://registry.example/packages/{package}/{version}/{checksum}.tar.zst"_str)
+                    .is_err());
 }
 
 TEST(RegistryPackageSpec, SeparatesVersionRequirementsFromCliOnlyTags) {
@@ -372,8 +393,10 @@ TEST(RegistryPublish, UploadsAndReturnsWhenSubmissionQueuesCheck) {
     ASSERT_EQ(fixture.methods.len(), usize(3));
     EXPECT_EQ(fixture.methods[usize {}].as_str(), "POST"_str);
     EXPECT_EQ(fixture.methods[usize(1)].as_str(), "PUT"_str);
-    EXPECT_TRUE(
-        fixture.urls[usize(2)].as_str().ends_with("/v1/publish/sessions/session-1/submit"_str));
+    EXPECT_EQ(fixture.urls[usize {}].as_str(),
+              "https://registry.example/api/v1/publish/sessions"_str);
+    EXPECT_EQ(fixture.urls[usize(2)].as_str(),
+              "https://registry.example/api/v1/publish/sessions/session-1/submit"_str);
     EXPECT_TRUE(fixture.api_authorized);
     EXPECT_TRUE(fixture.upload_uses_archive);
 }
@@ -613,9 +636,8 @@ TEST(RegistryIndexCache, DoesNotSendAnEtagToAnotherEndpoint) {
 
     auto mirror          = primary.clone();
     mirror.mirror        = Some(lito::registry::RegistryDataEndpoints {
-        .index = registry_endpoint("https://mirror.example/index/{package}.json"_str,
-                                   lito::registry::RegistryEndpointKind::Index),
-        .blob  = primary.endpoints.blob.clone(),
+        .index    = registry_index_endpoint("https://mirror.example/index/{package}.json"_str),
+        .download = primary.endpoints.download.clone(),
     });
     fixture.not_modified = true;
     auto refreshed =
@@ -680,22 +702,26 @@ TEST(RegistryBlobCache, VerifiesNewBytesAndSharesCompletedContent) {
     auto fixture = BlobTransportFixture { .bytes = bytes.clone() };
     auto primary = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),
-        registry_endpoint("https://primary.example/blobs/{checksum}.tar.zst"_str,
-                          lito::registry::RegistryEndpointKind::Blob),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Online,
         fixture.transport());
-    auto first = primary.acquire(registry_package("sample"_str), checksum);
+    auto first =
+        primary.acquire(registry_package("sample"_str), registry_version("1.2.3"_str), checksum);
     ASSERT_TRUE(first.is_ok());
     EXPECT_EQ(first->size, as_cast<u64>(bytes.len()));
     EXPECT_EQ(fixture.calls, usize(1));
+    EXPECT_EQ(fixture.last_url.as_str(),
+              "https://primary.example/packages/sample/sample-1.2.3.tar.zst"_str);
 
     auto mirror = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),
-        registry_endpoint("https://mirror.example/content/{checksum}"_str,
-                          lito::registry::RegistryEndpointKind::Blob),
+        registry_download_endpoint(
+            "https://mirror.example/packages/{package}/{version}/{package}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Offline,
         lito::registry::RegistryBlobTransport {});
-    auto reused = mirror.acquire(registry_package("sample"_str), checksum);
+    auto reused =
+        mirror.acquire(registry_package("sample"_str), registry_version("1.2.3"_str), checksum);
     ASSERT_TRUE(reused.is_ok());
     EXPECT_EQ(reused->path.as_path(), first->path.as_path());
     EXPECT_EQ(fixture.calls, usize(1));
@@ -708,12 +734,13 @@ TEST(RegistryBlobCache, RejectsDownloadedBytesWithTheWrongChecksum) {
     auto fixture = BlobTransportFixture { .bytes = String::make("wrong bytes"_str) };
     auto cache   = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),
-        registry_endpoint("https://primary.example/blobs/{checksum}.tar.zst"_str,
-                          lito::registry::RegistryEndpointKind::Blob),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Online,
         fixture.transport());
     auto acquired = cache.acquire(
         registry_package("sample"_str),
+        registry_version("1.2.3"_str),
         package_checksum("1111111111111111111111111111111111111111111111111111111111111111"_str));
     ASSERT_TRUE(acquired.is_err());
     EXPECT_EQ(acquired.unwrap_err().kind, lito::registry::RegistryArtifactErrorKind::Digest);
@@ -733,12 +760,13 @@ TEST(RegistryBlobCache, VerifiesExternalSourceBundleBytes) {
     bundles.push(rstd::move(bundle_root));
     auto cache = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path()),
-        registry_endpoint("https://primary.example/blobs/{checksum}.tar.zst"_str,
-                          lito::registry::RegistryEndpointKind::Blob),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Offline,
         lito::registry::RegistryBlobTransport {},
         rstd::addressof(bundles));
-    auto acquired = cache.acquire(registry_package("sample"_str), checksum);
+    auto acquired =
+        cache.acquire(registry_package("sample"_str), registry_version("1.2.3"_str), checksum);
     ASSERT_TRUE(acquired.is_err());
     EXPECT_EQ(acquired.unwrap_err().kind, lito::registry::RegistryArtifactErrorKind::Digest);
 }
@@ -770,8 +798,8 @@ archive = "sample"
     auto fixture = CopyBlobTransportFixture { .source = archive.clone() };
     auto online  = lito::registry::RegistrySourceResolver(
         cache.clone(),
-        registry_endpoint("https://primary.example/blobs/{checksum}.tar.zst"_str,
-                          lito::registry::RegistryEndpointKind::Blob),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Online,
         fixture.transport());
     auto first = online.materialize(package, version, built->archive.checksum);
@@ -786,8 +814,8 @@ archive = "sample"
 
     auto offline = lito::registry::RegistrySourceResolver(
         rstd::move(cache),
-        registry_endpoint("https://mirror.example/content/{checksum}"_str,
-                          lito::registry::RegistryEndpointKind::Blob),
+        registry_download_endpoint(
+            "https://mirror.example/packages/{package}/{version}/{package}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Offline,
         lito::registry::RegistryBlobTransport {});
     auto reused = offline.materialize(package, version, built->archive.checksum);

@@ -273,7 +273,7 @@ auto lito::registry::RegistryGraphClient::materialize(Vec<lito::source::Registry
                 "Registry '{}' is not configured", selected.package.registry.as_str()));
         }
         auto sources = RegistrySourceResolver(cache_root_.clone(),
-                                              (**config).effective_endpoints()->blob.clone(),
+                                              (**config).effective_endpoints()->download.clone(),
                                               network_,
                                               blobs_,
                                               source_bundles_);

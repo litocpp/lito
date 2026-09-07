@@ -3,6 +3,8 @@ export module lito.core:registry.config;
 import rstd;
 import :parse.value;
 import :registry.error;
+import :registry.identity;
+import :registry.version;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -10,33 +12,44 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
-enum class RegistryEndpointKind
-{
-    Index,
-    Blob,
-};
+class RegistryIndexEndpointTemplate : public DefaultInClass<RegistryIndexEndpointTemplate, Clone> {
+    String value_;
 
-class RegistryEndpointTemplate : public DefaultInClass<RegistryEndpointTemplate, Clone> {
-    String               value_;
-    RegistryEndpointKind kind_ { RegistryEndpointKind::Index };
-
-    RegistryEndpointTemplate(String value, RegistryEndpointKind kind)
-        : value_(rstd::move(value)), kind_(kind) {}
+    explicit RegistryIndexEndpointTemplate(String value): value_(rstd::move(value)) {}
 
 public:
-    static auto parse(ref<str> value, RegistryEndpointKind kind)
-        -> RegistryValueResult<RegistryEndpointTemplate>;
+    static auto parse(ref<str> value) -> RegistryValueResult<RegistryIndexEndpointTemplate>;
 
     auto as_str() const noexcept -> ref<str> { return value_.as_str(); }
-    auto kind() const noexcept -> RegistryEndpointKind { return kind_; }
-    auto render(ref<str> value) const -> String;
-    auto clone() const -> RegistryEndpointTemplate {
-        return RegistryEndpointTemplate(value_.clone(), kind_);
+    auto render(const RegistryPackageName& package) const -> String;
+    auto clone() const -> RegistryIndexEndpointTemplate {
+        return RegistryIndexEndpointTemplate(value_.clone());
     }
 
-    friend auto operator==(const RegistryEndpointTemplate& left,
-                           const RegistryEndpointTemplate& right) noexcept -> bool {
-        return left.kind_ == right.kind_ && left.value_ == right.value_;
+    friend auto operator==(const RegistryIndexEndpointTemplate& left,
+                           const RegistryIndexEndpointTemplate& right) noexcept -> bool {
+        return left.value_ == right.value_;
+    }
+};
+
+class RegistryDownloadEndpointTemplate
+    : public DefaultInClass<RegistryDownloadEndpointTemplate, Clone> {
+    String value_;
+
+    explicit RegistryDownloadEndpointTemplate(String value): value_(rstd::move(value)) {}
+
+public:
+    static auto parse(ref<str> value) -> RegistryValueResult<RegistryDownloadEndpointTemplate>;
+
+    auto as_str() const noexcept -> ref<str> { return value_.as_str(); }
+    auto render(const RegistryPackageName& package, const SemanticVersion& version) const -> String;
+    auto clone() const -> RegistryDownloadEndpointTemplate {
+        return RegistryDownloadEndpointTemplate(value_.clone());
+    }
+
+    friend auto operator==(const RegistryDownloadEndpointTemplate& left,
+                           const RegistryDownloadEndpointTemplate& right) noexcept -> bool {
+        return left.value_ == right.value_;
     }
 };
 
@@ -59,27 +72,18 @@ public:
 };
 
 struct RegistryDataEndpoints {
-    RegistryEndpointTemplate index;
-    RegistryEndpointTemplate blob;
+    RegistryIndexEndpointTemplate    index;
+    RegistryDownloadEndpointTemplate download;
 
     auto clone() const -> RegistryDataEndpoints {
         return RegistryDataEndpoints {
-            .index = index.clone(),
-            .blob  = blob.clone(),
+            .index    = index.clone(),
+            .download = download.clone(),
         };
     }
 };
 
 } // namespace lito::registry
-
-auto registry_endpoint_placeholder(lito::registry::RegistryEndpointKind kind) -> ref<str> {
-    using lito::registry::RegistryEndpointKind;
-    switch (kind) {
-    case RegistryEndpointKind::Index: return "{package}"_str;
-    case RegistryEndpointKind::Blob: return "{checksum}"_str;
-    }
-    return ""_str;
-}
 
 auto replace_registry_endpoint_placeholder(ref<str> input,
                                            ref<str> placeholder,
@@ -98,35 +102,62 @@ auto replace_registry_endpoint_placeholder(ref<str> input,
     }
 }
 
-auto lito::registry::RegistryEndpointTemplate::parse(ref<str> value, RegistryEndpointKind kind)
-    -> RegistryValueResult<RegistryEndpointTemplate> {
-    auto placeholder = registry_endpoint_placeholder(kind);
-    auto position    = value.find(placeholder);
+auto valid_registry_endpoint(ref<str> value, String candidate) -> bool {
+    if (candidate.as_str().contains("{"_str) || candidate.as_str().contains("}"_str)) return false;
+    auto parsed = lito::parse::HttpsUrl::parse(candidate.as_str());
+    return parsed.is_ok() && parsed->url()->fragment().is_none() && ! value.contains("?"_str);
+}
+
+auto lito::registry::RegistryIndexEndpointTemplate::parse(ref<str> value)
+    -> RegistryValueResult<RegistryIndexEndpointTemplate> {
+    constexpr auto placeholder = "{package}"_str;
+    auto           position    = value.find(placeholder);
     if (position.is_none()) {
-        return registry_value_failure<RegistryEndpointTemplate>(rstd::format(
+        return registry_value_failure<RegistryIndexEndpointTemplate>(rstd::format(
             "registry endpoint must contain exactly one '{}' placeholder", placeholder));
     }
     auto suffix = value.get(*position + placeholder.len(), value.len()).unwrap();
     if (suffix.contains(placeholder)) {
-        return registry_value_failure<RegistryEndpointTemplate>(rstd::format(
+        return registry_value_failure<RegistryIndexEndpointTemplate>(rstd::format(
             "registry endpoint must contain exactly one '{}' placeholder", placeholder));
     }
     auto candidate = replace_registry_endpoint_placeholder(value, placeholder, "value"_str);
-    if (candidate.as_str().contains("{"_str) || candidate.as_str().contains("}"_str)) {
-        return registry_value_failure<RegistryEndpointTemplate>(
-            "registry endpoint contains an unknown placeholder"_str);
-    }
-    auto parsed = lito::parse::HttpsUrl::parse(candidate.as_str());
-    if (parsed.is_err() || parsed->url()->fragment().is_some() || value.contains("?"_str)) {
-        return registry_value_failure<RegistryEndpointTemplate>(
+    if (! valid_registry_endpoint(value, rstd::move(candidate))) {
+        return registry_value_failure<RegistryIndexEndpointTemplate>(
             "registry endpoint must be an absolute HTTPS URL without a fragment"_str);
     }
-    return Ok(RegistryEndpointTemplate(String::make(value), kind));
+    return Ok(RegistryIndexEndpointTemplate(String::make(value)));
 }
 
-auto lito::registry::RegistryEndpointTemplate::render(ref<str> value) const -> String {
+auto lito::registry::RegistryIndexEndpointTemplate::render(const RegistryPackageName& package) const
+    -> String {
     return replace_registry_endpoint_placeholder(
-        value_.as_str(), registry_endpoint_placeholder(kind_), value);
+        value_.as_str(), "{package}"_str, package.as_str());
+}
+
+auto lito::registry::RegistryDownloadEndpointTemplate::parse(ref<str> value)
+    -> RegistryValueResult<RegistryDownloadEndpointTemplate> {
+    if (! value.contains("{package}"_str) || ! value.contains("{version}"_str)) {
+        return registry_value_failure<RegistryDownloadEndpointTemplate>(
+            "registry download endpoint must contain '{package}' and '{version}' placeholders"_str);
+    }
+    auto candidate = replace_registry_endpoint_placeholder(value, "{package}"_str, "package"_str);
+    candidate =
+        replace_registry_endpoint_placeholder(candidate.as_str(), "{version}"_str, "1.0.0"_str);
+    if (! valid_registry_endpoint(value, rstd::move(candidate))) {
+        return registry_value_failure<RegistryDownloadEndpointTemplate>(
+            "registry download endpoint must be an absolute HTTPS URL without a query, fragment, or unknown placeholder"_str);
+    }
+    return Ok(RegistryDownloadEndpointTemplate(String::make(value)));
+}
+
+auto lito::registry::RegistryDownloadEndpointTemplate::render(const RegistryPackageName& package,
+                                                              const SemanticVersion& version) const
+    -> String {
+    auto rendered =
+        replace_registry_endpoint_placeholder(value_.as_str(), "{package}"_str, package.as_str());
+    return replace_registry_endpoint_placeholder(
+        rendered.as_str(), "{version}"_str, version.text().as_str());
 }
 
 auto loopback_api_authority(ref<str> authority) -> bool {

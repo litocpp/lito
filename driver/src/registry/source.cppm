@@ -26,14 +26,14 @@ class RegistrySourceResolver {
     RegistryBlobCache blobs_;
 
 public:
-    RegistrySourceResolver(PathBuf                  cache_root,
-                           RegistryEndpointTemplate blob_endpoint,
-                           RegistryNetworkPolicy    network,
-                           RegistryBlobTransport    transport,
-                           const Vec<PathBuf>*      source_bundles = nullptr)
+    RegistrySourceResolver(PathBuf                          cache_root,
+                           RegistryDownloadEndpointTemplate download_endpoint,
+                           RegistryNetworkPolicy            network,
+                           RegistryBlobTransport            transport,
+                           const Vec<PathBuf>*              source_bundles = nullptr)
         : cache_root_(cache_root.clone()),
           blobs_(rstd::move(cache_root),
-                 rstd::move(blob_endpoint),
+                 rstd::move(download_endpoint),
                  network,
                  transport,
                  source_bundles) {}
@@ -227,7 +227,7 @@ auto lito::registry::RegistrySourceResolver::materialize(const RegistryPackageId
                                                          const PackageChecksum&   checksum)
     -> RegistryArtifactResult<MaterializedRegistrySource> {
     auto layout = source_layout(cache_root_.as_path(), checksum);
-    auto blob   = rstd_try(blobs_.acquire(package, checksum));
+    auto blob   = rstd_try(blobs_.acquire(package, version, checksum));
     auto inspected =
         PackageArchiveInspector::inspect_at_root(blob, package, version, layout.tree.as_path());
     if (inspected.is_err()) return Err(rstd::move(inspected).unwrap_err());

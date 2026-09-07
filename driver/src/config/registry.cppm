@@ -210,25 +210,29 @@ auto parse_fixed_endpoint(const Toml& value, ref<str> key, ref<str> context)
         });
 }
 
-auto parse_endpoint_template(const Toml&                          value,
-                             ref<str>                             key,
-                             ref<str>                             context,
-                             lito::registry::RegistryEndpointKind kind)
-    -> lito::config::ConfigResult<lito::registry::RegistryEndpointTemplate> {
+auto parse_index_endpoint(const Toml& value, ref<str> key, ref<str> context)
+    -> lito::config::ConfigResult<lito::registry::RegistryIndexEndpointTemplate> {
     auto field = rstd::format("{}.{}", context, key);
-    return parse_registry_value<lito::registry::RegistryEndpointTemplate>(
-        rstd_try(required_string(value, key, context)), field.as_str(), [kind](ref<str> text) {
-            return lito::registry::RegistryEndpointTemplate::parse(text, kind);
+    return parse_registry_value<lito::registry::RegistryIndexEndpointTemplate>(
+        rstd_try(required_string(value, key, context)), field.as_str(), [](ref<str> text) {
+            return lito::registry::RegistryIndexEndpointTemplate::parse(text);
+        });
+}
+
+auto parse_download_endpoint(const Toml& value, ref<str> key, ref<str> context)
+    -> lito::config::ConfigResult<lito::registry::RegistryDownloadEndpointTemplate> {
+    auto field = rstd::format("{}.{}", context, key);
+    return parse_registry_value<lito::registry::RegistryDownloadEndpointTemplate>(
+        rstd_try(required_string(value, key, context)), field.as_str(), [](ref<str> text) {
+            return lito::registry::RegistryDownloadEndpointTemplate::parse(text);
         });
 }
 
 auto parse_data_endpoints(const Toml& value, ref<str> context)
     -> lito::config::ConfigResult<lito::registry::RegistryDataEndpoints> {
     return Ok(lito::registry::RegistryDataEndpoints {
-        .index = rstd_try(parse_endpoint_template(
-            value, "index"_str, context, lito::registry::RegistryEndpointKind::Index)),
-        .blob  = rstd_try(parse_endpoint_template(
-            value, "blob"_str, context, lito::registry::RegistryEndpointKind::Blob)),
+        .index    = rstd_try(parse_index_endpoint(value, "index"_str, context)),
+        .download = rstd_try(parse_download_endpoint(value, "download"_str, context)),
     });
 }
 
@@ -261,7 +265,7 @@ auto parse_named_registry(ref<str> name, const Toml& value)
     rstd_try(reject_unknown(
         *value_table,
         context.as_str(),
-        { "identity"_str, "index"_str, "blob"_str, "api"_str, "mirror"_str, "token"_str }));
+        { "identity"_str, "index"_str, "download"_str, "api"_str, "mirror"_str, "token"_str }));
     auto identity_field = rstd::format("{}.identity", context);
     auto identity       = parse_registry_value<lito::registry::RegistryId>(
         rstd_try(required_string(value, "identity"_str, context.as_str())),
@@ -274,8 +278,8 @@ auto parse_named_registry(ref<str> name, const Toml& value)
     if (mirror_value.is_some()) {
         auto mirror_context = rstd::format("{}.mirror", context);
         auto mirror_table   = rstd_try(table(**mirror_value, mirror_context.as_str()));
-        rstd_try(
-            reject_unknown(*mirror_table, mirror_context.as_str(), { "index"_str, "blob"_str }));
+        rstd_try(reject_unknown(
+            *mirror_table, mirror_context.as_str(), { "index"_str, "download"_str }));
         mirror = Some(rstd_try(parse_data_endpoints(**mirror_value, mirror_context.as_str())));
     }
     return Ok(lito::config::NamedRegistryConfig {
@@ -397,8 +401,8 @@ auto compiled_global_config() -> lito::config::ConfigResult<Toml> {
 [registries.litocpp]
 identity = "https://registry.litocpp.org/"
 index = "https://registry.litocpp.org/v1/index/{package}.json"
-blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
-api = "https://registry.litocpp.org/"
+download = "https://registry.litocpp.org/packages/{package}/{package}-{version}.tar.zst"
+api = "https://registry.litocpp.org/api/"
 )toml"_str;
     auto           parsed  = rstd::toml::from_str(litocpp);
     if (parsed.is_err()) {

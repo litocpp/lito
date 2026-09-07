@@ -352,7 +352,7 @@ token = "secret-value"
 
 [registries.litocpp.mirror]
 index = "https://mirror.example/v1/index/{package}.json"
-blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
+download = "https://mirror.example/packages/{package}/{package}-{version}.tar.zst"
 )toml"_str;
     ASSERT_TRUE(rstd::fs::write(path.as_path(), contents.as_bytes()).is_ok());
 #if ! defined(_WIN32)
@@ -366,13 +366,17 @@ blob = "https://mirror.example/v1/blobs/sha256/{checksum}.tar.zst"
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_TRUE(loaded->default_registry().is_some());
     const auto& registry = **loaded->default_registry();
+    auto        package  = lito::registry::RegistryPackageName::parse("luato"_str).unwrap();
+    auto        version  = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
     EXPECT_EQ(registry.name.as_str(), "litocpp"_str);
     EXPECT_EQ(registry.identity.as_str(), "https://registry.litocpp.org/"_str);
-    EXPECT_EQ(registry.api.as_str(), "https://registry.litocpp.org/"_str);
-    EXPECT_EQ(registry.endpoints.index.render("luato"_str).as_str(),
+    EXPECT_EQ(registry.api.as_str(), "https://registry.litocpp.org/api/"_str);
+    EXPECT_EQ(registry.endpoints.index.render(package).as_str(),
               "https://registry.litocpp.org/v1/index/luato.json"_str);
-    EXPECT_EQ(registry.effective_endpoints()->index.render("luato"_str).as_str(),
+    EXPECT_EQ(registry.effective_endpoints()->index.render(package).as_str(),
               "https://mirror.example/v1/index/luato.json"_str);
+    EXPECT_EQ(registry.effective_endpoints()->download.render(package, version).as_str(),
+              "https://mirror.example/packages/luato/luato-1.2.3.tar.zst"_str);
     ASSERT_TRUE(registry.token.is_some());
     EXPECT_EQ(registry.token->authorization_header().as_str(), "Bearer secret-value"_str);
 }
@@ -381,6 +385,9 @@ TEST_F(Config, RegistryGlobalConfigRejectsUnknownFieldsAndInvalidValues) {
     constexpr ref<str> invalid[] = {
         R"toml([registries.litocpp]
 index = "https://registry.litocpp.org/v1/index/fixed.json"
+)toml"_str,
+        R"toml([registries.litocpp]
+blob = "https://registry.litocpp.org/v1/blobs/sha256/{checksum}.tar.zst"
 )toml"_str,
         R"toml([registries.litocpp]
 token = "contains whitespace"

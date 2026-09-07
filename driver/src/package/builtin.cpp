@@ -75,7 +75,7 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
     }
     auto cache =
         lito::registry::RegistryBlobCache(cache_root_.clone(),
-                                          (*configured)->effective_endpoints()->blob.clone(),
+                                          (*configured)->effective_endpoints()->download.clone(),
                                           lito::registry::RegistryNetworkPolicy::Offline,
                                           {});
     auto blob = cache.publish(descriptor->package, input->archive);

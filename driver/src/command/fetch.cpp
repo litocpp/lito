@@ -458,12 +458,13 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             cleanup();
             return Err(rstd::into<CommandError>(rstd::move(data).unwrap_err()));
         }
-        auto blobs =
-            lito::registry::RegistryBlobCache(PathBuf::from(data->root()),
-                                              (**configured).effective_endpoints()->blob.clone(),
-                                              lito::registry::RegistryNetworkPolicy::Offline,
-                                              {});
-        auto blob = blobs.acquire(*source.registry_package, *source.package_checksum);
+        auto blobs = lito::registry::RegistryBlobCache(
+            PathBuf::from(data->root()),
+            (**configured).effective_endpoints()->download.clone(),
+            lito::registry::RegistryNetworkPolicy::Offline,
+            {});
+        auto blob = blobs.acquire(
+            *source.registry_package, *source.registry_version, *source.package_checksum);
         if (blob.is_err()) {
             cleanup();
             return fetch_failure<usize>(rstd::format(
