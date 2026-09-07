@@ -964,10 +964,33 @@ private:
         return Ok(resolved->is_some());
     }
 
-    auto expand(ScratchTokenVec input, DisabledMacros& disabled) -> Result<ScratchTokenVec> {
+    auto expand(ScratchTokenVec input, DisabledMacros& disabled, bool preserve_defined = false)
+        -> Result<ScratchTokenVec> {
         auto output = scratch_tokens();
         for (auto index = usize {}; index < input.len();) {
             auto token = rstd::move(input[index]);
+            if (preserve_defined && token.text.as_str() == "defined"_str) {
+                output.push(rstd::move(token));
+                ++index;
+                auto parenthesized = index < input.len() &&
+                                     input[index].text.as_str() == "("_str;
+                if (parenthesized) {
+                    output.push(rstd::move(input[index]));
+                    ++index;
+                }
+                if (index < input.len()) {
+                    auto operand = rstd::move(input[index]);
+                    operand.disable_expand = true;
+                    output.push(rstd::move(operand));
+                    ++index;
+                }
+                if (parenthesized && index < input.len() &&
+                    input[index].text.as_str() == ")"_str) {
+                    output.push(rstd::move(input[index]));
+                    ++index;
+                }
+                continue;
+            }
             if (token.kind != TokenKind::Identifier || token.disable_expand) {
                 output.push(rstd::move(token));
                 ++index;
@@ -1059,7 +1082,8 @@ private:
                         return Err(
                             failure("_Pragma requires one string literal"_str, token.expansion));
                     }
-                    auto expanded_argument = expand(rstd::move(arguments[usize {}]), disabled);
+                    auto expanded_argument =
+                        expand(rstd::move(arguments[usize {}]), disabled, preserve_defined);
                     if (expanded_argument.is_err()) {
                         return Err(rstd::move(expanded_argument).unwrap_err());
                     }
@@ -1200,7 +1224,7 @@ private:
             if (event.is_err()) return Err(rstd::move(event).unwrap_err());
             auto dynamic_builtin = definition.is_dynamic_builtin();
             disabled.push(rstd::move(macro), dynamic_builtin);
-            auto rescanned = expand(rstd::move(replacement), disabled);
+            auto rescanned = expand(rstd::move(replacement), disabled, preserve_defined);
             disabled.pop();
             if (rescanned.is_err()) return rescanned;
             for (auto& item : *rescanned) output.push(rstd::move(item));
@@ -1261,16 +1285,50 @@ private:
     }
 
     auto condition_value(const ScratchTokenVec& line) -> Result<bool> {
-        auto defined = replace_defined(line);
-        if (defined.is_err()) return Err(rstd::move(defined).unwrap_err());
         auto disabled = disabled_macros();
-        auto expanded = expand(rstd::move(defined).unwrap(), disabled);
-        if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
-        auto filtered = scratch_tokens();
-        for (auto& token : *expanded) {
-            if (token.kind != TokenKind::Newline) filtered.push(rstd::move(token));
+        auto current  = clone_tokens_counted(line, TokenCloneKind::Other);
+        auto seen     = scratch_token_vectors();
+        auto tokens_equal = [](const ScratchTokenVec& left, const ScratchTokenVec& right) -> bool {
+            if (left.len() != right.len()) return false;
+            for (usize index = usize {}; index < left.len(); ++index) {
+                const auto& lhs = left[index];
+                const auto& rhs = right[index];
+                if (lhs.kind != rhs.kind || lhs.text.as_str() != rhs.text.as_str() ||
+                    lhs.disable_expand != rhs.disable_expand) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        for (;;) {
+            // A macro replacement may produce another `defined` operator. Keep
+            // applying the two standard preprocessing steps until the token
+            // stream reaches a fixed point; the state set is the termination
+            // guard for the only case that cannot converge.
+            auto defined = replace_defined(current);
+            if (defined.is_err()) return Err(rstd::move(defined).unwrap_err());
+            auto expanded = expand(rstd::move(defined).unwrap(), disabled, true);
+            if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
+            auto next = scratch_tokens();
+            for (auto& token : *expanded) {
+                if (token.kind != TokenKind::Newline) next.push(rstd::move(token));
+            }
+            if (tokens_equal(current, next)) {
+                current = rstd::move(next);
+                break;
+            }
+            for (const auto& previous : seen) {
+                if (! tokens_equal(previous, next)) continue;
+                auto location = next.is_empty() ? SourceLocation {} : next[usize {}].expansion;
+                return Err(failure("cyclic macro expansion in conditional expression"_str,
+                                   location));
+            }
+            seen.push(clone_tokens_counted(current, TokenCloneKind::Other));
+            current = rstd::move(next);
         }
-        auto value = evaluate_expression(filtered.as_slice());
+
+        auto value = evaluate_expression(current.as_slice());
         if (value.is_err()) return Err(rstd::move(value).unwrap_err());
         return Ok(*value != i64 {});
     }

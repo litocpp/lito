@@ -24,6 +24,7 @@ export namespace lito::toolchain
 struct IncludeSearchEntry {
     PathBuf directory;
     bool    system { true };
+    bool    framework { false };
 };
 
 struct BuiltinSemanticContext {

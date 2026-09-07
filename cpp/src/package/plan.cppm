@@ -501,11 +501,13 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
         for (const auto& macro : context.language.as_Cpp().options.preprocessor.macros)
             append_macro(macro);
     }
-    auto identity = String::make("lito-preprocessor-projection-v1\n"_str);
+    auto identity = String::make("lito-preprocessor-projection-v2\n"_str);
     for (const auto& value : result.user_include_directories)
         identity.push_str(rstd::format("include:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.system_include_directories)
         identity.push_str(rstd::format("system:{}:{}\n", value.len(), value.as_str()).as_str());
+    for (const auto& value : result.framework_include_directories)
+        identity.push_str(rstd::format("framework:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.definitions)
         identity.push_str(rstd::format("define:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.undefinitions)

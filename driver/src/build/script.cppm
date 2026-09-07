@@ -1378,6 +1378,8 @@ public:
                      lua_string_array(projection->user_include_directories)));
         rstd_try(set(String::make("system_include_directories"_str),
                      lua_string_array(projection->system_include_directories)));
+        rstd_try(set(String::make("framework_include_directories"_str),
+                     lua_string_array(projection->framework_include_directories)));
         rstd_try(set(String::make("definitions"_str), lua_string_array(projection->definitions)));
         rstd_try(
             set(String::make("undefinitions"_str), lua_string_array(projection->undefinitions)));

@@ -13,6 +13,26 @@ using namespace rstd::literals;
 export namespace lito::toolchain
 {
 
+auto include_candidate_path(ref<rstd::path::Path> directory,
+                            ref<str>                  name,
+                            bool                      framework) -> PathBuf {
+    if (! framework) return PathBuf::from(directory).join(PathBuf::from(name).as_path());
+
+    auto separator = name.find("/"_str);
+    if (separator.is_none() || *separator == usize {} || *separator + usize(1) >= name.len()) {
+        return PathBuf::from(directory).join(PathBuf::from(name).as_path());
+    }
+
+    auto parts             = name.split_at(*separator);
+    auto framework_name    = parts.template get<0>();
+    auto framework_header  = parts.template get<1>();
+    auto framework_bundle  = rstd::format("{}.framework", framework_name);
+    auto framework_headers = PathBuf::from(directory)
+                                 .join(PathBuf::from(framework_bundle.as_str()).as_path())
+                                 .join(PathBuf::from("Headers"_str).as_path());
+    return framework_headers.join(PathBuf::from(framework_header).as_path());
+}
+
 class ClangIncludeResolver {
 public:
     explicit ClangIncludeResolver(const PreprocessorEnvironment& environment)
@@ -37,7 +57,7 @@ public:
             auto parent = request.including_path.as_path().parent();
             if (parent.is_some()) {
                 auto resolved =
-                    candidate(*parent, request.name.as_str(), usize {}, false, dependency);
+                    candidate(*parent, request.name.as_str(), usize {}, false, false, dependency);
                 if (resolved.is_err()) return resolved;
                 if (resolved->is_some()) {
                     dependencies_.push(rstd::move(dependency));
@@ -49,8 +69,12 @@ public:
         if (start == usize {}) start = usize(1);
         for (auto index = start; index <= environment_.include_search.len(); ++index) {
             const auto& entry    = environment_.include_search[index - usize(1)];
-            auto        resolved = candidate(
-                entry.directory.as_path(), request.name.as_str(), index, entry.system, dependency);
+            auto        resolved = candidate(entry.directory.as_path(),
+                                             request.name.as_str(),
+                                             index,
+                                             entry.system,
+                                             entry.framework,
+                                             dependency);
             if (resolved.is_err()) return resolved;
             if (resolved->is_some()) {
                 dependencies_.push(rstd::move(dependency));
@@ -70,9 +94,10 @@ private:
                    ref<str>                           name,
                    usize                              search_index,
                    bool                               system,
+                   bool                               framework,
                    frontend::IncludeLookupDependency& dependency)
         -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
-        auto requested = PathBuf::from(directory).join(PathBuf::from(name).as_path());
+        auto requested = include_candidate_path(directory, name, framework);
         auto exists    = frontend::lookup_candidate_exists(requested.as_path());
         if (exists.is_err()) {
             return Err(
@@ -123,7 +148,8 @@ public:
         if (request.kind == preprocessor::EmbedKind::Quoted) {
             auto parent = request.including_path.as_path().parent();
             if (parent.is_some()) {
-                auto resolved = candidate(*parent, request.name.as_str(), usize {}, dependency);
+                auto resolved =
+                    candidate(*parent, request.name.as_str(), usize {}, false, dependency);
                 if (resolved.is_err()) return resolved;
                 if (resolved->is_some()) {
                     dependencies_.push(rstd::move(dependency));
@@ -133,8 +159,11 @@ public:
         }
         for (auto index = usize(1); index <= environment_.include_search.len(); ++index) {
             const auto& entry = environment_.include_search[index - usize(1)];
-            auto        resolved =
-                candidate(entry.directory.as_path(), request.name.as_str(), index, dependency);
+            auto        resolved = candidate(entry.directory.as_path(),
+                                             request.name.as_str(),
+                                             index,
+                                             entry.framework,
+                                             dependency);
             if (resolved.is_err()) return resolved;
             if (resolved->is_some()) {
                 dependencies_.push(rstd::move(dependency));
@@ -153,9 +182,10 @@ private:
     auto candidate(ref<rstd::path::Path>            directory,
                    ref<str>                         name,
                    usize                            search_index,
+                   bool                             framework,
                    frontend::EmbedLookupDependency& dependency)
         -> preprocessor::Result<Option<preprocessor::EmbedResolution>> {
-        auto requested = PathBuf::from(directory).join(PathBuf::from(name).as_path());
+        auto requested = include_candidate_path(directory, name, framework);
         auto exists    = frontend::lookup_candidate_exists(requested.as_path());
         if (exists.is_err()) {
             return Err(

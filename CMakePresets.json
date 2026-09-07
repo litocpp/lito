@@ -5,20 +5,14 @@
       "name": "clang-base",
       "hidden": true,
       "generator": "Ninja",
-      "cacheVariables": {
-        "CMAKE_C_COMPILER": "/nix/opt/llvm/22/bin/clang",
-        "CMAKE_CXX_COMPILER": "/nix/opt/llvm/22/bin/clang++"
-      }
+      "description": "Base preset for the Clang/LLVM 22+ toolchain required by Lito. The C/C++ compilers are auto-detected from PATH (prefer LLVM's bin dir, e.g. /opt/homebrew/opt/llvm/bin), so ensure an LLVM 22+ clang-clang++ is first on PATH, or set the CC/CXX env variables."
     },
     {
       "name": "debug",
       "inherits": "clang-base",
       "binaryDir": "${sourceDir}/build/cmake-debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "FETCHCONTENT_SOURCE_DIR_LICRYPTO": "${sourceDir}/../licrypto",
-        "FETCHCONTENT_SOURCE_DIR_LUATO": "${sourceDir}/../luato",
-        "FETCHCONTENT_SOURCE_DIR_RSTD": "${sourceDir}/../rstd"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
@@ -26,10 +20,7 @@
       "inherits": "clang-base",
       "binaryDir": "${sourceDir}/build/cmake-release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "FETCHCONTENT_SOURCE_DIR_LICRYPTO": "${sourceDir}/../licrypto",
-        "FETCHCONTENT_SOURCE_DIR_LUATO": "${sourceDir}/../luato",
-        "FETCHCONTENT_SOURCE_DIR_RSTD": "${sourceDir}/../rstd"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     }
   ],

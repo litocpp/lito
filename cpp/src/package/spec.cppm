@@ -97,6 +97,7 @@ struct CompileContext {
 struct PreprocessorProjection {
     Vec<String> user_include_directories;
     Vec<String> system_include_directories;
+    Vec<String> framework_include_directories;
     Vec<String> definitions;
     Vec<String> undefinitions;
     String      identity;
