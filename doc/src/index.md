@@ -1,7 +1,7 @@
 # Lito
 
-Lito is a module-first build tool for C++. A fixed `lito.toml` describes packages, workspaces,
-targets, dependencies, and build policy. Lito discovers C++ module sources from their logical
+Lito is a module-first build tool for C++. It uses `lito.toml` to define packages, workspaces,
+targets, dependencies, and build policy. It also discovers C++ module sources from their logical
 names, resolves a package and BMI graph, and then drives Clang, LLD, and LLVM tools.
 
 Choose a path:

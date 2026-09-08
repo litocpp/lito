@@ -1,7 +1,7 @@
 # `lito.toml` Reference
 
-Every Lito project uses the fixed file name `lito.toml`. Unknown top-level tables, fields, and nested
-fields are errors. A manifest root is exactly one of:
+Every Lito project uses `lito.toml` as its manifest file name. Unknown top-level tables, fields, and
+nested fields are errors. A manifest root is exactly one of:
 
 - a package manifest with required `[package]`;
 - a workspace manifest with required `[workspace]`.

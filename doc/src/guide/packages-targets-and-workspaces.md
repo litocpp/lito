@@ -2,7 +2,7 @@
 
 ## Project discovery
 
-Lito searches from the effective working directory for the nearest fixed `lito.toml`. Use the
+Lito searches from the effective working directory for the nearest `lito.toml` manifest. Use the
 global `-C DIRECTORY` option to select another working directory without changing the shell.
 
 A manifest is either a package manifest or a workspace manifest. A directory does not declare both
