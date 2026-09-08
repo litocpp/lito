@@ -1725,6 +1725,7 @@ options = ["-Wall"]
 linker-options = ["-Wl,--as-needed"]
 threads = true
 system-libraries = ["dl", "user32"]
+frameworks = ["CoreAudio", "Foundation"]
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -1736,6 +1737,29 @@ system-libraries = ["dl", "user32"]
     ASSERT_EQ(loaded->usage.system_libraries.len(), usize(2));
     EXPECT_EQ(loaded->usage.system_libraries[usize {}].as_str(), "dl"_str);
     EXPECT_EQ(loaded->usage.system_libraries[usize(1)].as_str(), "user32"_str);
+    ASSERT_EQ(loaded->usage.frameworks.len(), usize(2));
+    EXPECT_EQ(loaded->usage.frameworks[usize {}].name.as_str(), "CoreAudio"_str);
+    EXPECT_EQ(loaded->usage.frameworks[usize(1)].name.as_str(), "Foundation"_str);
+    EXPECT_EQ(loaded->usage.frameworks[usize {}].source.as_str(), "manifest.usage.frameworks"_str);
+}
+
+TEST_F(Manifest, RejectsEmptyFrameworkUsage) {
+    auto project = manifest("empty-framework-usage"_str, R"toml([package]
+name = "fixture-empty-framework-usage"
+version = "0.1.0"
+
+[lib]
+name = "fixture-empty-framework-usage"
+archive = "fixture.empty_framework_usage"
+module = "fixture.empty_framework_usage"
+sources = ["lib.cppm"]
+
+[usage]
+frameworks = []
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    EXPECT_TRUE(loaded.is_err());
 }
 
 TEST_F(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {

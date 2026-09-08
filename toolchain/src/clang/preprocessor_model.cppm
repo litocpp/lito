@@ -37,7 +37,17 @@ enum class PreprocessorLanguage
 {
     C,
     Cpp,
+    ObjectiveCpp,
 };
+
+constexpr auto preprocessor_language_name(PreprocessorLanguage language) noexcept -> ref<str> {
+    switch (language) {
+    case PreprocessorLanguage::C: return clang_options::C_SOURCE;
+    case PreprocessorLanguage::Cpp: return clang_options::CXX_SOURCE;
+    case PreprocessorLanguage::ObjectiveCpp: return clang_options::OBJECTIVE_CXX_SOURCE;
+    }
+    return {};
+}
 
 struct PreprocessorMacroDirective {
     bool   defined { true };
@@ -81,19 +91,26 @@ struct QueriedBuiltinCapabilityCache {
 using SharedQueriedBuiltinCapabilityCache = rstd::sync::Arc<QueriedBuiltinCapabilityCache>;
 
 struct PreprocessorEnvironmentKey {
-    String  context_id;
-    PathBuf working_directory;
+    String               context_id;
+    PathBuf              working_directory;
+    PreprocessorLanguage language { PreprocessorLanguage::Cpp };
 
-    static auto make(ref<str> context_id, ref<rstd::path::Path> working_directory)
+    static auto make(ref<str>              context_id,
+                     ref<rstd::path::Path> working_directory,
+                     PreprocessorLanguage  language = PreprocessorLanguage::Cpp)
         -> PreprocessorEnvironmentKey {
         return PreprocessorEnvironmentKey {
             .context_id        = String::make(context_id),
             .working_directory = PathBuf::from(working_directory),
+            .language          = language,
         };
     }
 
-    auto matches(ref<str> context, ref<rstd::path::Path> working) const noexcept -> bool {
-        return context_id.as_str() == context && working_directory.as_path() == working;
+    auto matches(ref<str>              context,
+                 ref<rstd::path::Path> working,
+                 PreprocessorLanguage  requested) const noexcept -> bool {
+        return context_id.as_str() == context && working_directory.as_path() == working &&
+               language == requested;
     }
 };
 

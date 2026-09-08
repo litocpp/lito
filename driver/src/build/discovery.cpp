@@ -76,12 +76,16 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root,
         return discovery_failure<cpp::ResolvedSource>(
             rstd::format("unsupported source extension: {}", declared));
     }
+    const auto dialect = lito::manifest::objective_cpp_manifest_source(resolved.as_path())
+                             ? cpp::CppSourceDialect::ObjectiveCpp
+                             : cpp::CppSourceDialect::Cpp;
     return Ok(cpp::ResolvedSource {
         .relative_path   = PathBuf::from(*relative),
         .canonical_path  = rstd::move(resolved),
         .source_root     = PathBuf::from(source_root),
         .origin_identity = rstd::format("path:{}", source_root),
         .origin          = cpp::SourceOrigin::Explicit,
+        .cpp_dialect     = dialect,
     });
 }
 
@@ -127,6 +131,9 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
         }
         auto key = path_text(*relative);
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
+        const auto dialect = lito::manifest::objective_cpp_manifest_source(resolved.as_path())
+                                 ? cpp::CppSourceDialect::ObjectiveCpp
+                                 : cpp::CppSourceDialect::Cpp;
         entries.push(SourceEntry {
             .key = rstd::move(key).unwrap(),
             .source =
@@ -136,6 +143,7 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
                     .source_root     = PathBuf::from(source_root),
                     .origin_identity = rstd::format("path:{}", source_root),
                     .origin          = cpp::SourceOrigin::Convention,
+                    .cpp_dialect     = dialect,
                 },
         });
     }
@@ -320,6 +328,7 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
                                                  candidate.source.canonical_path.as_path(),
                                                  compile_context,
                                                  package.targets[candidate.target].compile_metadata,
+                                                 candidate.source.cpp_dialect,
                                                  candidate.source.source_root.as_path());
         if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
         auto projected = analysis_service.project(rstd::move(analysis).unwrap(),
@@ -639,6 +648,28 @@ auto validate_generated_source_module(const cpp::ResolvedSource&     source,
         source.canonical_path.as_path())));
 }
 
+auto validate_source_dialect(const cpp::ResolvedSource&     source,
+                             const cpp::SourceScanArtifact& artifact) -> BuildResult<empty> {
+    if (source.cpp_dialect != cpp::CppSourceDialect::ObjectiveCpp) return Ok(empty {});
+    if (! artifact.language.is_Cpp()) {
+        return Err(BuildError::Message(rstd::format(
+            "Objective-C++ source '{}' was not scanned as C++", source.canonical_path.as_path())));
+    }
+    const auto& facts = artifact.language.as_Cpp().facts;
+    if (facts.provided.is_none() && facts.implementation_module.is_none()) return Ok(empty {});
+    return Err(
+        BuildError::Message(rstd::format("Objective-C++ source '{}' must be an ordinary "
+                                         "implementation source and cannot declare a C++ module",
+                                         source.canonical_path.as_path())));
+}
+
+auto validate_source_scan(const cpp::ResolvedSource&     source,
+                          const cpp::SourceScanArtifact& artifact) -> BuildResult<empty> {
+    auto dialect = validate_source_dialect(source, artifact);
+    if (dialect.is_err()) return dialect;
+    return validate_generated_source_module(source, artifact);
+}
+
 template<typename Plan>
 auto discover_sources(const cpp::PackageMetadata&    package,
                       const Plan&                    plan,
@@ -766,8 +797,8 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                             context.id.as_str(),
                                             candidate.source.module_provider_allowed);
             if (candidate.source.scan_artifact.is_some()) {
-                auto valid = validate_generated_source_module(candidate.source,
-                                                              *candidate.source.scan_artifact);
+                auto valid =
+                    validate_source_scan(candidate.source, *candidate.source.scan_artifact);
                 if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
                 prepared.push(None());
                 continue;
@@ -778,6 +809,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                                  candidate.source.canonical_path.as_path(),
                                                  context,
                                                  target.compile_metadata,
+                                                 candidate.source.cpp_dialect,
                                                  candidate.source.source_root.as_path(),
                                                  ScanSourceOrigin::Discovery);
             if (task.is_err()) {
@@ -856,8 +888,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                         cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
                 }
                 auto artifact = rstd::move(projected).unwrap();
-                auto valid =
-                    validate_generated_source_module(queue[completion.node].source, artifact);
+                auto valid    = validate_source_scan(queue[completion.node].source, artifact);
                 if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
                 return Ok(rstd::move(artifact));
             }();

@@ -338,6 +338,21 @@ auto append_conditional_unique(Vec<lito::dependency::IncludeDirectoryRequirement
     }
 }
 
+auto append_conditional_unique(Vec<lito::dependency::DeclaredFrameworkRequirement>&       output,
+                               const Vec<lito::dependency::DeclaredFrameworkRequirement>& input)
+    -> void {
+    for (const auto& value : input) {
+        auto present = false;
+        for (const auto& existing : output) {
+            if (existing.name.as_str() == value.name.as_str()) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) output.push(value.clone());
+    }
+}
+
 struct DefinitionRecord {
     String name;
     String value;
@@ -420,6 +435,7 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
         append_conditional_unique(usage.options, overlay.values.options);
         append_conditional_unique(usage.linker_options, overlay.values.linker_options);
         append_conditional_unique(usage.system_libraries, overlay.values.system_libraries);
+        append_conditional_unique(usage.frameworks, overlay.values.frameworks);
         append_conditional_unique(usage.private_include_directory_requirements,
                                   overlay.values.private_include_directory_requirements);
         append_conditional_unique(usage.public_include_directory_requirements,
@@ -576,6 +592,21 @@ auto resolve_usage_link(const lito::manifest::PackageManifest& package,
         result.system_libraries.push(lito::link::SystemLibraryRequirement {
             .name   = library.clone(),
             .source = usage_source(package, "usage.system-libraries"_str),
+        });
+    }
+    for (const auto& framework : usage.frameworks) {
+        if (! valid_system_library_name(framework.name.as_str())) {
+            return adapter_failure<UsageLinkResolution>(
+                rstd::format("{} contains invalid framework name '{}'",
+                             framework.source.as_str(),
+                             framework.name.as_str()));
+        }
+        result.frameworks.push(lito::link::FrameworkRequirement {
+            .name   = framework.name.clone(),
+            .source = rstd::format("package '{}' manifest '{}' {}",
+                                   package.name.as_str(),
+                                   package.manifest_path.as_path(),
+                                   framework.source.as_str()),
         });
     }
     auto normalized = lito::link::normalize_arguments(lito::link::ArgumentSequence {
@@ -1743,6 +1774,7 @@ auto append_package_sources(PackageSpec& package, Vec<ResolvedTargetSources> sou
                 .origin_identity = rstd::move(source.origin_identity),
                 .external        = source.external,
                 .generated       = source.generated,
+                .cpp_dialect     = source.cpp_dialect,
                 .expected_module = rstd::move(source.expected_module),
                 .scan_artifact   = rstd::move(source.scan_artifact),
             });

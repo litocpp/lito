@@ -954,7 +954,9 @@ public:
 
     auto builtin_context(const cpp::CompileContext& context) const
         -> ToolchainResult<ClangBuiltinContext> {
-        return make_builtin_context(context);
+        return make_builtin_context(context,
+                                    context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                                                            : toolchain::PreprocessorLanguage::Cpp);
     }
 
     auto statistics() const -> ToolchainStatistics {
@@ -992,7 +994,11 @@ public:
     auto preprocessor_environment_identity(const cpp::CompileContext& compile_context,
                                            ref<rstd::path::Path>      working_directory) const
         -> ToolchainResult<String> {
-        auto environment = environment_for(compile_context, working_directory);
+        auto environment =
+            environment_for(compile_context,
+                            working_directory,
+                            compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                                                            : toolchain::PreprocessorLanguage::Cpp);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
         return Ok((*environment)->identity.clone());
     }
@@ -1000,7 +1006,11 @@ public:
     auto build_tool_preprocessor_projection(const cpp::CompileContext& compile_context,
                                             ref<rstd::path::Path>      working_directory) const
         -> ToolchainResult<cpp::PreprocessorProjection> {
-        auto environment = environment_for(compile_context, working_directory);
+        auto environment =
+            environment_for(compile_context,
+                            working_directory,
+                            compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                                                            : toolchain::PreprocessorLanguage::Cpp);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
         auto       projection = cpp::preprocessor_projection(compile_context);
         const auto contains   = [&](ref<str> value) {
@@ -1037,7 +1047,11 @@ public:
     auto header_roots(const cpp::CompileContext& compile_context,
                       ref<rstd::path::Path>      working_directory) const
         -> ToolchainResult<Vec<cpp::ResolvedHeaderRoot>> {
-        auto environment = environment_for(compile_context, working_directory);
+        auto environment =
+            environment_for(compile_context,
+                            working_directory,
+                            compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                                                            : toolchain::PreprocessorLanguage::Cpp);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
         auto       projection    = cpp::preprocessor_projection(compile_context);
         const auto is_configured = [&](ref<rstd::path::Path> directory) {
@@ -1073,12 +1087,14 @@ public:
 
     auto prepare_scan_input(const cpp::CompileContext&         compile_context,
                             const cpp::PackageCompileMetadata& compile_metadata,
+                            cpp::CppSourceDialect              cpp_dialect,
                             ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<toolchain::PreparedScanInput> {
         return prepare_scan_input_with_catalog(
             compile_context,
             toolchain::SharedPackageMacroCatalog::make(
                 toolchain::PackageMacroCatalog::make(compile_metadata)),
+            cpp_dialect,
             working_directory);
     }
 
@@ -1088,6 +1104,7 @@ public:
         return prepare_scan_input_with_catalog(
             compile_context,
             toolchain::SharedPackageMacroCatalog::make(toolchain::PackageMacroCatalog::system()),
+            cpp::CppSourceDialect::Cpp,
             working_directory);
     }
 
@@ -1097,7 +1114,8 @@ public:
                     ref<rstd::path::Path>              working_directory,
                     frontend::FrontendService&         frontend_service) const
         -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
-        auto input = prepare_scan_input(compile_context, compile_metadata, working_directory);
+        auto input = prepare_scan_input(
+            compile_context, compile_metadata, cpp::CppSourceDialect::Cpp, working_directory);
         if (input.is_err()) {
             return Err(rstd::move(input).unwrap_err());
         }
@@ -1194,6 +1212,7 @@ private:
 
     auto prepare_scan_input_with_catalog(const cpp::CompileContext&           compile_context,
                                          toolchain::SharedPackageMacroCatalog external_macros,
+                                         cpp::CppSourceDialect                cpp_dialect,
                                          ref<rstd::path::Path> working_directory) const
         -> ToolchainResult<toolchain::PreparedScanInput> {
         if (compile_context.language.is_C()) {
@@ -1213,13 +1232,16 @@ private:
                 }
             }
         }
-        auto environment = environment_for(compile_context, working_directory);
+        const auto language = compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                              : cpp_dialect == cpp::CppSourceDialect::ObjectiveCpp
+                                  ? toolchain::PreprocessorLanguage::ObjectiveCpp
+                                  : toolchain::PreprocessorLanguage::Cpp;
+        auto       environment = environment_for(compile_context, working_directory, language);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
         return Ok(toolchain::PreparedScanInput {
             .environment     = rstd::move(environment).unwrap(),
             .external_macros = rstd::move(external_macros),
-            .language = compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
-                                                        : toolchain::PreprocessorLanguage::Cpp,
+            .language        = language,
         });
     }
 
@@ -1353,6 +1375,12 @@ public:
         const auto& source_unit  = prepared.unit.language.as_Cpp();
         const auto& scan         = scan_result.language.as_Cpp().facts;
         const auto  provides_bmi = scan.provided.is_some();
+        if (prepared.unit.cpp_dialect == cpp::CppSourceDialect::ObjectiveCpp &&
+            (provides_bmi || scan.implementation_module.is_some())) {
+            return failure<CompileInvocation>(
+                rstd::format("Objective-C++ source '{}' cannot provide or implement a C++ module",
+                             prepared.unit.source.as_path()));
+        }
         if ((provides_bmi && disposition == cpp::CppCompileDisposition::ObjectOnly) ||
             (! provides_bmi && disposition != cpp::CppCompileDisposition::ObjectOnly)) {
             return failure<CompileInvocation>(
@@ -1367,6 +1395,11 @@ public:
         auto command    = Vec<String>::make();
         auto context    = append_compile_context(command, *prepared.unit.context, false);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        if (prepared.unit.cpp_dialect == cpp::CppSourceDialect::ObjectiveCpp) {
+            toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
+            toolchain::command::push_option(command,
+                                            toolchain::clang_options::OBJECTIVE_CXX_SOURCE);
+        }
         auto overlay = append_source_overlay(command, prepared.unit.source_overlay);
         if (overlay.is_err()) return Err(rstd::move(overlay).unwrap_err());
         if (prepared.unit.owner.is_StandardLibrary()) {
@@ -1407,7 +1440,7 @@ public:
         } else if (scan.implementation_module.is_some()) {
             toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
             toolchain::command::push_option(command, toolchain::clang_options::CXX_SOURCE);
-        } else {
+        } else if (prepared.unit.cpp_dialect == cpp::CppSourceDialect::Cpp) {
             auto extension      = prepared.unit.source.as_path().extension();
             auto extension_text = extension.is_some() ? (*extension).to_str() : None();
             if (extension_text.is_some() && *extension_text == "cppm"_str) {
@@ -1571,9 +1604,9 @@ public:
             }
             if (! link_requirements.runtime_search_paths.is_empty() ||
                 ! link_requirements.system_libraries.is_empty() ||
-                link_requirements.posix_threads) {
+                ! link_requirements.frameworks.is_empty() || link_requirements.posix_threads) {
                 return failure<rstd::time::Duration>(
-                    "bare WebAssembly output cannot use native runtime search paths, threads or system libraries"_str);
+                    "bare WebAssembly output cannot use native runtime search paths, threads, system libraries or frameworks"_str);
             }
             if (context.wasm->entry == lito::config::WasmEntry::None) {
                 toolchain::command::push_option(command, "-Wl,--no-entry"_str);
@@ -1711,6 +1744,18 @@ public:
             option.push_str(target.family == TargetFamily::Windows ? ".lib"_str
                                                                    : requirement.name.as_str());
             command.push(rstd::move(option));
+        }
+        if (! link_requirements.frameworks.is_empty() && target.platform != TargetPlatform::Macos) {
+            const auto& requirement = link_requirements.frameworks[usize {}];
+            return failure<rstd::time::Duration>(
+                rstd::format("framework '{}' required by {} is unsupported for target '{}'",
+                             requirement.name.as_str(),
+                             requirement.source.as_str(),
+                             target.triple.as_str()));
+        }
+        for (const auto& requirement : link_requirements.frameworks) {
+            toolchain::command::push_option(command, "-framework"_str);
+            command.push(requirement.name.clone());
         }
         toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
         pushed = toolchain::command::push_path(command, output_path);
@@ -1896,8 +1941,9 @@ private:
           argument_parser_(rstd::move(argument_parser)),
           environment_(rstd::move(environment)) {}
 
-    auto environment_for(const cpp::CompileContext& compile_context,
-                         ref<rstd::path::Path>      working_directory) const
+    auto environment_for(const cpp::CompileContext&      compile_context,
+                         ref<rstd::path::Path>           working_directory,
+                         toolchain::PreprocessorLanguage language) const
         -> ToolchainResult<toolchain::SharedPreprocessorEnvironment> {
         auto working_text = working_directory.to_str();
         if (working_text.is_none()) {
@@ -1905,13 +1951,14 @@ private:
                 "preprocessor working directory '{}' is not valid UTF-8", working_directory));
         }
         for (const auto& existing : preprocessor_environments_) {
-            if (existing->key.matches(compile_context.scan_id.as_str(), working_directory)) {
+            if (existing->key.matches(
+                    compile_context.scan_id.as_str(), working_directory, language)) {
                 ++toolchain_statistics_.preprocessor_environment_hits;
                 return Ok(existing.clone());
             }
         }
 
-        auto builtin_context = make_builtin_context(compile_context);
+        auto builtin_context = make_builtin_context(compile_context, language);
         if (builtin_context.is_err()) {
             return Err(rstd::move(builtin_context).unwrap_err());
         }
@@ -1974,8 +2021,8 @@ private:
         }
         auto queried = toolchain::query_preprocessor_environment(
             command,
-            toolchain::PreprocessorEnvironmentKey::make(compile_context.scan_id.as_str(),
-                                                        working_directory),
+            toolchain::PreprocessorEnvironmentKey::make(
+                compile_context.scan_id.as_str(), working_directory, language),
             rstd::move(builtin_environment).unwrap(),
             rstd::move(builtin_values.semantic),
             builtin_values.language,
@@ -1988,9 +2035,14 @@ private:
         return Ok(rstd::move(environment));
     }
 
-    auto make_builtin_context(const cpp::CompileContext& context) const
+    auto make_builtin_context(const cpp::CompileContext&      context,
+                              toolchain::PreprocessorLanguage language) const
         -> ToolchainResult<ClangBuiltinContext> {
         if (context.language.is_C()) {
+            if (language != toolchain::PreprocessorLanguage::C) {
+                return failure<ClangBuiltinContext>(
+                    "C compile context requires C preprocessor language"_str);
+            }
             const auto& c       = context.language.as_C().options;
             auto        command = Vec<String>::make();
             auto        pushed  = toolchain::command::push_path(command, c_compiler_.as_path());
@@ -2024,6 +2076,10 @@ private:
             });
         }
         const auto& cpp_options = context.language.as_Cpp().options;
+        if (language == toolchain::PreprocessorLanguage::C) {
+            return failure<ClangBuiltinContext>(
+                "C++ compile context cannot use C preprocessor language"_str);
+        }
         if (! cpp::is_supported_cpp_standard(cpp_options.language.standard.as_str())) {
             return failure<ClangBuiltinContext>(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
@@ -2046,6 +2102,8 @@ private:
         if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
         append_typed_options(command, cpp_options, compile_target_.info, true);
         auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
+        key.push_str(toolchain::preprocessor_language_name(language));
+        key.push_ascii('\n');
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
         key.push_str(compiler_identity_.version.as_str());
@@ -2064,7 +2122,7 @@ private:
                     .exceptions        = cpp_options.language.exceptions,
                 },
             .key             = rstd::move(key),
-            .language        = toolchain::PreprocessorLanguage::Cpp,
+            .language        = language,
             .ignored_options = cpp_options.diagnostics.warnings.len() +
                                cpp_options.diagnostics.options.len() +
                                cpp_options.preprocessor.macros.len(),

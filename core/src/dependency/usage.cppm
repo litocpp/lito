@@ -27,17 +27,27 @@ struct IncludeDirectoryRequirement {
     }
 };
 
+struct DeclaredFrameworkRequirement {
+    String name;
+    String source;
+
+    auto clone() const -> DeclaredFrameworkRequirement {
+        return DeclaredFrameworkRequirement { .name = name.clone(), .source = source.clone() };
+    }
+};
+
 struct DeclaredUsageRequirements {
-    Vec<PathBuf>                     public_include_directories;
-    Vec<PathBuf>                     private_include_directories;
-    Vec<String>                      public_definitions;
-    Vec<String>                      private_definitions;
-    Vec<String>                      options;
-    Vec<String>                      linker_options;
-    bool                             threads { false };
-    Vec<String>                      system_libraries;
-    Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
-    Vec<IncludeDirectoryRequirement> public_include_directory_requirements;
+    Vec<PathBuf>                      public_include_directories;
+    Vec<PathBuf>                      private_include_directories;
+    Vec<String>                       public_definitions;
+    Vec<String>                       private_definitions;
+    Vec<String>                       options;
+    Vec<String>                       linker_options;
+    bool                              threads { false };
+    Vec<String>                       system_libraries;
+    Vec<DeclaredFrameworkRequirement> frameworks;
+    Vec<IncludeDirectoryRequirement>  private_include_directory_requirements;
+    Vec<IncludeDirectoryRequirement>  public_include_directory_requirements;
 };
 
 } // namespace lito::dependency

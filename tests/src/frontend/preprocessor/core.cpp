@@ -210,6 +210,39 @@ auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second
     return false;
 }
 
+TEST(Preprocessor, ImportIncludesEachHeaderOnceAcrossIncludeDirectives) {
+    auto sources = MemorySources {};
+    sources.add("/first.hpp"_str, "FIRST\n#import \"first.hpp\"\n"_str);
+    sources.add("/second.hpp"_str, "SECOND\n"_str);
+    sources.add("/main.mm"_str,
+                "#import \"first.hpp\"\n#include \"first.hpp\"\n#import \"first.hpp\"\n"
+                "#include \"second.hpp\"\n#import \"second.hpp\"\n#include \"second.hpp\"\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto result      = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/main.mm"_str),
+            .environment_identity = String::make("import-once"_str),
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(result.is_ok());
+    usize first {}, second {};
+    for (const auto& token : result->tokens) {
+        if (token.text.as_str() == "FIRST"_str) ++first;
+        if (token.text.as_str() == "SECOND"_str) ++second;
+    }
+    EXPECT_EQ(first, usize(1));
+    EXPECT_EQ(second, usize(1));
+}
+
 auto run_preprocessor_test() -> int {
     auto sources = MemorySources {};
     sources.add("/config.hpp"_str, "#pragma once\n#define LITO_VALUE 7\n"_str);

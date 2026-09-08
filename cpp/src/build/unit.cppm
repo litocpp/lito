@@ -38,6 +38,7 @@ struct UnitSpec {
     PathBuf                        cache_record;
     Option<PathBuf>                compile_test_record;
     LanguageSourceUnit             language;
+    CppSourceDialect               cpp_dialect { CppSourceDialect::Cpp };
     const CompileContext*          context {};
     const PackageCompileMetadata*  compile_metadata {};
     const ResolvedCompileTestCase* compile_test {};

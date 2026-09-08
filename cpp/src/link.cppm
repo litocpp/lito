@@ -60,6 +60,15 @@ struct SystemLibraryRequirement : DefaultInClass<SystemLibraryRequirement, Clone
     }
 };
 
+struct FrameworkRequirement : DefaultInClass<FrameworkRequirement, Clone> {
+    String name;
+    String source;
+
+    auto clone() const -> FrameworkRequirement {
+        return FrameworkRequirement { .name = name.clone(), .source = source.clone() };
+    }
+};
+
 struct RuntimeSearchRequirement : DefaultInClass<RuntimeSearchRequirement, Clone> {
     String path;
     String source;
@@ -73,6 +82,7 @@ struct Requirements {
     bool                          posix_threads { false };
     Vec<String>                   thread_sources;
     Vec<SystemLibraryRequirement> system_libraries;
+    Vec<FrameworkRequirement>     frameworks;
     Vec<RuntimeSearchRequirement> runtime_search_paths;
 
     auto clone() const -> Requirements {
@@ -80,6 +90,7 @@ struct Requirements {
             .posix_threads        = posix_threads,
             .thread_sources       = as<Clone>(thread_sources).clone(),
             .system_libraries     = as<Clone>(system_libraries).clone(),
+            .frameworks           = as<Clone>(frameworks).clone(),
             .runtime_search_paths = as<Clone>(runtime_search_paths).clone(),
         };
     }
@@ -236,6 +247,11 @@ auto requirements_identity(const Requirements& requirements) -> String {
                                                : "posix-threads=false\n"_str);
     for (const auto& requirement : requirements.system_libraries) {
         result.push_str("system-library="_str);
+        result.push_str(requirement.name.as_str());
+        result.push_ascii('\n');
+    }
+    for (const auto& requirement : requirements.frameworks) {
+        result.push_str("framework="_str);
         result.push_str(requirement.name.as_str());
         result.push_ascii('\n');
     }
@@ -415,6 +431,13 @@ auto append_requirements(Requirements& output, const Requirements& input) -> voi
             if (existing.name == requirement.name.as_str()) present = true;
         }
         if (! present) output.system_libraries.push(requirement.clone());
+    }
+    for (const auto& requirement : input.frameworks) {
+        auto present = false;
+        for (const auto& existing : output.frameworks) {
+            if (existing.name == requirement.name.as_str()) present = true;
+        }
+        if (! present) output.frameworks.push(requirement.clone());
     }
     for (const auto& requirement : input.runtime_search_paths) {
         append_runtime_search(output, requirement.path.as_str(), requirement.source.as_str());

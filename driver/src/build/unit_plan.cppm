@@ -107,6 +107,7 @@ auto append_build_units(PreparedBuildUnits&       result,
                     .compile_test_record    = rstd::move(compile_test_record),
                     .language         = context->language.is_C() ? cpp::LanguageSourceUnit::C()
                                                                  : cpp::LanguageSourceUnit::Cpp(),
+                    .cpp_dialect      = source.cpp_dialect,
                     .context          = context,
                     .compile_metadata = rstd::addressof(target_spec.compile_metadata),
                     .compile_test     = compile_test,

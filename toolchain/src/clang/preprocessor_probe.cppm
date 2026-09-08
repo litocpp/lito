@@ -325,6 +325,7 @@ auto environment_identity(ref<str>                       builtin_identity,
     add(builtin_identity);
     add(language == PreprocessorLanguage::C ? lito::c::C_IDENTIFIER_RULE_ID
                                             : cpp::CPP_IDENTIFIER_RULE_ID);
+    add(preprocessor_language_name(language));
     for (const auto& include : includes) {
         auto text = include.directory.as_path().to_str();
         if (text.is_none()) {
@@ -583,9 +584,7 @@ auto query_clang_capabilities(const Vec<String>&                        base_com
     command::push_option(command_line, clang_options::PREPROCESS);
     command::push_option(command_line, clang_options::NO_LINE_MARKERS);
     command::push_option(command_line, clang_options::LANGUAGE);
-    command::push_option(command_line,
-                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
-                                                             : clang_options::CXX_SOURCE);
+    command::push_option(command_line, preprocessor_language_name(language));
     command::push_option(command_line, clang_options::STANDARD_INPUT);
     auto output =
         run_command_with_input(command_line, source.as_str(), environment, Some(working_directory));
@@ -660,9 +659,8 @@ auto query_clang_standard_library_capabilities(const Vec<String>&               
                                                ref<rstd::path::Path>             working_directory,
                                                const ResolvedProcessEnvironment& environment)
     -> ToolchainResult<QueriedCapabilities> {
-    auto catalog = language == PreprocessorLanguage::Cpp
-                       ? standard_library_capabilities()
-                       : Vec<preprocessor::BuiltinQueryKey>::make();
+    auto catalog = language != PreprocessorLanguage::C ? standard_library_capabilities()
+                                                       : Vec<preprocessor::BuiltinQueryKey>::make();
     return query_clang_capabilities(
         base_command, catalog, semantic_context, language, working_directory, environment);
 }

@@ -1246,6 +1246,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                                source.path.as_path(),
                                                                package_plan.contexts[target],
                                                                target_spec.compile_metadata,
+                                                               source.cpp_dialect,
                                                                target_spec.root.as_path());
                 if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
                 auto projected = authoritative_analysis.project(rstd::move(analyzed).unwrap(),

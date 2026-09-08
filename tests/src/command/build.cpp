@@ -20,6 +20,32 @@ protected:
                                         ref<str> logical_name = "std"_str) -> void;
 };
 
+TEST_F(BuildCommand, BuildsObjectiveCppSourceWithMatchingScanLanguage) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "objective-cpp-source"
+version = "0.1.0"
+
+[[bin]]
+name = "objective-cpp-source"
+sources = ["main.mm"]
+link-stdlib = false
+)toml"_str },
+        { "main.mm"_str, R"cpp(#ifndef __OBJC__
+#error Objective-C++ language mode required
+#endif
+int main() { return 0; }
+)cpp"_str },
+    };
+    auto project = materialize("objective-cpp-source"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(build_request(project->root.as_path(),
+                                           build_root("objective-cpp-source"_str).as_path(),
+                                           Vec<String>::make(),
+                                           build_profile("release"_str)));
+    ASSERT_TRUE(built.is_ok());
+}
+
 struct CMakeOverrideEvents {
     usize fetch {};
     usize source_operations {};

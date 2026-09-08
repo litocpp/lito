@@ -18,6 +18,12 @@ enum class SourceOrigin
     Convention,
 };
 
+enum class CppSourceDialect
+{
+    Cpp,
+    ObjectiveCpp,
+};
+
 struct ResolvedSource {
     PathBuf                    relative_path;
     PathBuf                    canonical_path;
@@ -30,6 +36,7 @@ struct ResolvedSource {
     SourceOrigin               origin { SourceOrigin::Explicit };
     bool                       module_companion { false };
     bool                       module_context_required { false };
+    CppSourceDialect           cpp_dialect { CppSourceDialect::Cpp };
     Option<String>             expected_module;
     Option<SourceScanArtifact> scan_artifact;
 };

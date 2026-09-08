@@ -7,6 +7,7 @@ import rstd;
 import lito.core;
 import :build.scan;
 import :compiler.option;
+import :source.discovery;
 
 using namespace rstd::prelude;
 
@@ -77,6 +78,7 @@ struct TargetSource {
     String                     origin_identity;
     bool                       external { false };
     bool                       generated { false };
+    CppSourceDialect           cpp_dialect { CppSourceDialect::Cpp };
     Option<String>             expected_module;
     Option<SourceScanArtifact> scan_artifact;
     Option<TransformedSource>  transformed;

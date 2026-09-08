@@ -21,7 +21,15 @@ auto cpp_manifest_source(ref<rstd::path::Path> path) noexcept -> bool {
     if (extension.is_none()) return false;
     auto text = (*extension).to_str();
     if (text.is_none()) return false;
-    return *text == "cppm"_str || *text == "cpp"_str || *text == "cc"_str || *text == "cxx"_str;
+    return *text == "cppm"_str || *text == "cpp"_str || *text == "cc"_str || *text == "cxx"_str ||
+           *text == "mm"_str;
+}
+
+auto objective_cpp_manifest_source(ref<rstd::path::Path> path) noexcept -> bool {
+    auto extension = path.extension();
+    if (extension.is_none()) return false;
+    auto text = (*extension).to_str();
+    return text.is_some() && *text == "mm"_str;
 }
 
 auto supported_manifest_source(ref<rstd::path::Path> path) noexcept -> bool {

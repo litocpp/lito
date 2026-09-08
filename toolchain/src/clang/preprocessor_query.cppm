@@ -28,9 +28,7 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
     command::push_option(macro_command, clang_options::DUMP_MACROS);
     command::push_option(macro_command, clang_options::PREPROCESS);
     command::push_option(macro_command, clang_options::LANGUAGE);
-    command::push_option(macro_command,
-                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
-                                                             : clang_options::CXX_SOURCE);
+    command::push_option(macro_command, preprocessor_language_name(language));
     command::push_option(macro_command, clang_options::STANDARD_INPUT);
     auto macro_output =
         run_command_with_input(macro_command, ""_str, environment, Some(working_directory));
@@ -113,9 +111,7 @@ auto query_text_builtins(const Vec<String>&                base_command,
     command::push_option(command_line, clang_options::PREPROCESS);
     command::push_option(command_line, clang_options::NO_LINE_MARKERS);
     command::push_option(command_line, clang_options::LANGUAGE);
-    command::push_option(command_line,
-                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
-                                                             : clang_options::CXX_SOURCE);
+    command::push_option(command_line, preprocessor_language_name(language));
     command::push_option(command_line, clang_options::STANDARD_INPUT);
     auto output =
         run_command_with_input(command_line,
@@ -193,9 +189,7 @@ auto query_preprocessor_environment(const Vec<String>&                     base_
     command::push_option(include_command, clang_options::PREPROCESS);
     command::push_option(include_command, clang_options::VERBOSE);
     command::push_option(include_command, clang_options::LANGUAGE);
-    command::push_option(include_command,
-                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
-                                                             : clang_options::CXX_SOURCE);
+    command::push_option(include_command, preprocessor_language_name(language));
     command::push_option(include_command, clang_options::STANDARD_INPUT);
     auto include_output =
         run_command_with_input(include_command, ""_str, environment, Some(working_directory));

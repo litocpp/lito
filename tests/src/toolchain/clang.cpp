@@ -391,6 +391,42 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wunknown-attributes"_str));
 }
 
+TEST(ClangToolchain, EmitsObjectiveCppLanguageForObjectiveCppUnits) {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_ok());
+    auto toolchain = rstd::move(created).unwrap();
+    auto options   = cpp_options(
+        "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
+    auto context = cpp::CompileContext {
+        .id       = String::make("objective-cpp-context"_str),
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(options), cpp::CppPublicRequirements {}),
+    };
+    auto prepared = cpp::PreparedUnit {
+        .unit =
+            cpp::UnitSpec {
+                .source      = PathBuf::from("/tmp/lito-objective-cpp-source.mm"_str),
+                .object      = PathBuf::from("/tmp/lito-objective-cpp-source.o"_str),
+                .cpp_dialect = cpp::CppSourceDialect::ObjectiveCpp,
+                .context     = rstd::addressof(context),
+            },
+        .working_directory = PathBuf::from("/tmp"_str),
+    };
+    auto invocation = toolchain.prepare_compile(
+        prepared, cpp::ScanResult {}, Vec<cpp::ModuleArtifactDependency>::make());
+    ASSERT_TRUE(invocation.is_ok());
+    EXPECT_TRUE(has_argument(invocation->arguments, "-x"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "objective-c++"_str));
+}
+
+TEST(ClangPreprocessor, NamesObjectiveCppLanguageMode) {
+    EXPECT_EQ(toolchain::preprocessor_language_name(PreprocessorLanguage::ObjectiveCpp),
+              "objective-c++"_str);
+}
+
 TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),

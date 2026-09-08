@@ -188,6 +188,7 @@ public:
                  ref<rstd::path::Path>                 source,
                  const cpp::CompileContext&            context,
                  const cpp::PackageCompileMetadata&    compile_metadata,
+                 cpp::CppSourceDialect                 cpp_dialect,
                  ref<rstd::path::Path>                 working_directory,
                  ScanSourceOrigin origin) -> BuildResult<FrontendAnalysisTask> {
         auto record = layout_.cache_scan(target, relative_source);
@@ -196,8 +197,8 @@ public:
         }
         auto target_identity  = lito::package::package_target_id_text(target);
         auto environment_span = profiler_.span(ScanProbe::Environment);
-        auto scan_input =
-            toolchain_.prepare_scan_input(context, compile_metadata, working_directory);
+        auto scan_input       = toolchain_.prepare_scan_input(
+            context, compile_metadata, cpp_dialect, working_directory);
         auto environment_finished = profiler_.complete(environment_span);
         if (environment_finished.is_err()) {
             return Err(
@@ -249,6 +250,7 @@ public:
                  ref<rstd::path::Path>                 source,
                  const cpp::CompileContext&            context,
                  const cpp::PackageCompileMetadata&    compile_metadata,
+                 cpp::CppSourceDialect                 cpp_dialect,
                  ref<rstd::path::Path>                 working_directory)
         -> BuildResult<frontend::FrontendAnalysis> {
         auto task = prepare(target,
@@ -257,6 +259,7 @@ public:
                             source,
                             context,
                             compile_metadata,
+                            cpp_dialect,
                             working_directory,
                             ScanSourceOrigin::Discovery);
         if (task.is_err()) return Err(rstd::move(task).unwrap_err());

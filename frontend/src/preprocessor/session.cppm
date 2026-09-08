@@ -1644,7 +1644,10 @@ private:
         return Some(rstd::move(guard));
     }
 
-    auto handle_include(ScratchTokenVec line, bool next, SourceLocation location) -> Result<empty> {
+    auto handle_include(ScratchTokenVec line,
+                        bool            next,
+                        SourceLocation  location,
+                        bool            import_once = false) -> Result<empty> {
         auto direct_header =
             line.len() == usize(1) && line[usize {}].kind == TokenKind::StringLiteral;
         direct_header =
@@ -1688,7 +1691,7 @@ private:
             .location = location,
         });
         if (event.is_err()) return Err(rstd::move(event).unwrap_err());
-        return process_file(value.path.as_path(), Some(value.search_index));
+        return process_file(value.path.as_path(), Some(value.search_index), import_once);
     }
 
     auto handle_conditional(ref<str>               directive,
@@ -1847,13 +1850,19 @@ private:
         }
     }
 
-    auto process_file(ref<rstd::path::Path> path, Option<usize> search_index) -> Result<empty> {
+    auto process_file(ref<rstd::path::Path> path,
+                      Option<usize>         search_index,
+                      bool                  import_once = false) -> Result<empty> {
         if (include_stack_.len() >= request_.maximum_include_depth) {
             return Err(Error::make(rstd::format("maximum include depth exceeded at '{}'", path)));
         }
         auto path_value = path.to_str();
         if (path_value.is_some() && once_files_.contains_key(*path_value)) {
             return Ok(empty {});
+        }
+        if (path_value.is_some() && import_once) {
+            once_files_.insert(String::make(*path_value), empty {});
+            if (entered_files_.contains_key(*path_value)) return Ok(empty {});
         }
         if (path_value.is_some()) {
             auto guard = include_guards_.get(*path_value);
@@ -1868,6 +1877,7 @@ private:
             as<SourceProvider>(source_provider_)
                 .load(path, main_file ? SourceLoadRole::Primary : SourceLoadRole::Include);
         if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
+        if (path_value.is_some()) entered_files_.insert(String::make(*path_value), empty {});
         input_bytes_ += (*loaded)->snapshot->contents.len();
         ++raw_statistics_.files;
         raw_statistics_.source_tokens += (*loaded)->tokens.len().to_primitive();
@@ -1962,9 +1972,12 @@ private:
                 auto event =
                     emit_name(EventKind::MacroUndefined, rest[usize {}].text.as_str(), location);
                 if (event.is_err()) return Err(rstd::move(event).unwrap_err());
-            } else if (keyword == "include"_str || keyword == "include_next"_str) {
-                auto included =
-                    handle_include(rstd::move(rest), keyword == "include_next"_str, location);
+            } else if (keyword == "include"_str || keyword == "include_next"_str ||
+                       keyword == "import"_str) {
+                auto included = handle_include(rstd::move(rest),
+                                               keyword == "include_next"_str,
+                                               location,
+                                               keyword == "import"_str);
                 if (included.is_err()) return Err(rstd::move(included).unwrap_err());
             } else if (keyword == "embed"_str) {
                 auto embedded = handle_embed(rstd::move(rest), location);
@@ -2082,6 +2095,7 @@ private:
     Vec<PresumedLineMapping>                    line_mappings_;
     Vec<CommentTrivia>                          active_comments_;
     rstd::collections::BTreeMap<String, empty>  once_files_;
+    rstd::collections::BTreeMap<String, empty>  entered_files_;
     rstd::collections::BTreeMap<String, String> include_guards_;
     rstd::collections::BTreeMap<String, Vec<Option<MacroDefinitionHandle>>> macro_stacks_;
     usize                                                                   counter_ {};

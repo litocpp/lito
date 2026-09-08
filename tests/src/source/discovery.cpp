@@ -114,6 +114,29 @@ sources = {}
     }
 }
 
+TEST_F(SourceDiscovery, ResolvesObjectiveCppDialectAtDiscovery) {
+    const ProjectFile files[] = {
+        { "bridge.mm"_str, "int bridge_value() { return 1; }\n"_str },
+    };
+    auto project = materialize("objective-cpp-dialect"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto declared = Vec<PathBuf>::make();
+    declared.push(PathBuf::from("bridge.mm"_str));
+    auto target = lito::cpp::ResolvedTarget {
+        .language = lito::manifest::PackageLanguage::Cpp,
+        .source =
+            lito::manifest::TargetSourceManifest {
+                .declared_sources = rstd::move(declared),
+            },
+        .root        = project->root.clone(),
+        .source_root = project->root.clone(),
+    };
+    auto discovered = lito::discover_explicit_sources(target);
+    ASSERT_TRUE(discovered.is_ok());
+    ASSERT_EQ(discovered->sources.len(), usize(1));
+    EXPECT_EQ(discovered->sources[usize {}].cpp_dialect, lito::cpp::CppSourceDialect::ObjectiveCpp);
+}
+
 TEST_F(SourceDiscovery, SourceGroupsRetainOriginsAcrossMultipleRoots) {
     const ProjectFile files[] = {
         { "local.c"_str, "int local_value(void) { return 1; }\n"_str },

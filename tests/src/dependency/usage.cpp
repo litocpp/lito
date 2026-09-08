@@ -76,6 +76,16 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
             .name   = String::make("platform-api"_str),
             .source = String::make("static library usage"_str),
         });
+    metadata->targets[usize {}].usage.link_requirements.frameworks.push(
+        lito::link::FrameworkRequirement {
+            .name   = String::make("CoreAudio"_str),
+            .source = String::make("static library usage"_str),
+        });
+    metadata->targets[usize {}].external_dependencies[usize {}].link_requirements.frameworks.push(
+        lito::link::FrameworkRequirement {
+            .name   = String::make("CoreAudio"_str),
+            .source = String::make("external static library usage"_str),
+        });
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
@@ -87,6 +97,11 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
     ASSERT_EQ(planned->link_requirements[usize(1)].system_libraries.len(), usize(1));
     EXPECT_EQ(planned->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
               "platform-api"_str);
+    ASSERT_EQ(planned->link_requirements[usize(1)].frameworks.len(), usize(1));
+    EXPECT_EQ(planned->link_requirements[usize(1)].frameworks[usize {}].name.as_str(),
+              "CoreAudio"_str);
+    EXPECT_EQ(planned->link_requirements[usize(1)].frameworks[usize {}].source.as_str(),
+              "static library usage"_str);
 
     metadata->targets[usize(1)].dependencies[usize {}].consumption.usage =
         lito::dependency::DependencyUsage::link_only();
@@ -98,6 +113,7 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
     ASSERT_EQ(link_only->link_requirements[usize(1)].system_libraries.len(), usize(1));
     EXPECT_EQ(link_only->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
               "platform-api"_str);
+    ASSERT_EQ(link_only->link_requirements[usize(1)].frameworks.len(), usize(1));
 }
 
 TEST(DependencyUsage, SharedLibraryStopsPrivateNativeLinkClosure) {
