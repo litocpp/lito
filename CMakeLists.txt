@@ -4,7 +4,7 @@ set(CMAKE_LINKER_TYPE LLD)
 
 project(
   lito
-  VERSION 0.7.1
+  VERSION 0.8.0
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
@@ -58,7 +58,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 8ad75f4bbb814041092b99ae38782226409f7471)
+  GIT_TAG 21f422f0e7f409dcd1b503523ceaa6dc63b54b06)
 
 FetchContent_MakeAvailable(rstd)
 
@@ -66,7 +66,7 @@ set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   luato
   GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG 1108558a253728e6ec42fe6863d86f844c89c50c)
+  GIT_TAG 9ad07ca2604022319c0178b7f5543220baf87050)
 FetchContent_MakeAvailable(luato)
 
 if(NOT LITO_USE_SYSTEM_ZSTD)
@@ -80,7 +80,7 @@ endif()
 FetchContent_Declare(
   licrypto
   GIT_REPOSITORY https://github.com/litocpp/licrypto.git
-  GIT_TAG 6da5a3ad56de7a19fe77198d18f1ce041478911b)
+  GIT_TAG 18345239cc68869646a6522e6e258a4eba3dec20)
 FetchContent_MakeAvailable(licrypto)
 
 add_subdirectory(third-party/zstd)

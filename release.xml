@@ -1,3 +1,15 @@
+<release version="0.8.0" date="2026-09-08">
+  <description>
+    <ul>
+      <li>Support macOS and Darwin toolchains.</li>
+      <li>support Objc++ and frameworks.</li>
+      <li>Support dependency publicity, usage facets, and Registry patches.</li>
+      <li>Support Clang target query macros.</li>
+      <li>Improve generated source scheduling.</li>
+      <li>Produce reproducible package archives.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.7.1" date="2026-08-31">
   <description>
     <ul>
