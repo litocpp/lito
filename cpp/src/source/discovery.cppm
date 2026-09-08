@@ -25,6 +25,8 @@ struct ResolvedSource {
     String                     origin_identity;
     bool                       external { false };
     bool                       generated { false };
+    bool                       module_provider_allowed { true };
+    bool                       implementation_module_required { false };
     SourceOrigin               origin { SourceOrigin::Explicit };
     bool                       module_companion { false };
     bool                       module_context_required { false };

@@ -1397,6 +1397,9 @@ public:
             if (cpp_context.bmi.source_embedding == cpp::BmiSourceEmbeddingPolicy::EmbedAll) {
                 toolchain::command::push_option(command, toolchain::clang_options::EMBED_ALL_FILES);
             }
+        } else if (scan.implementation_module.is_some()) {
+            toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
+            toolchain::command::push_option(command, toolchain::clang_options::CXX_SOURCE);
         } else {
             auto extension      = prepared.unit.source.as_path().extension();
             auto extension_text = extension.is_some() ? (*extension).to_str() : None();

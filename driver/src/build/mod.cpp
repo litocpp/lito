@@ -779,6 +779,17 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto cache_environment = rstd::move(created_environment).unwrap();
     auto scan_cache        = ScanCacheSession::create(cache_environment);
+    auto execution_domain  = ExecutionDomainId {
+        .value = rstd::format(
+            "{}\n{}\n{}\n{}\n{}",
+            cache_environment.key(),
+            project.platform.effective_target.triple.as_str(),
+            toolchain.compiler_identity().build_identity.as_str(),
+            toolchain.linker_identity().build_identity.as_str(),
+            lito::config::standard_library_name(
+                metadata.profiles[native_target_plan.profile].cpp.abi.standard_library)),
+    };
+    auto native_graph = make_native_action_graph(metadata.targets.len());
 
     stage_timing.record(BuildStage::TargetPrepare, target_prepare_started.elapsed());
     auto script_declaration_result = stage_timing.measure(BuildStage::Script, [&] {
@@ -818,19 +829,27 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
         host_selection = rstd::move(resolved_host).unwrap();
         for (auto target : host_selection.target_order) {
-            if (! cpp::has_generated_compile_inputs(metadata.targets[target])) continue;
+            if (! cpp::has_deferred_generated_sources(metadata.targets[target])) continue;
             return build_failure<BuildSummary>(rstd::format(
-                "host-tool target '{}' cannot consume generated compile inputs",
+                "host-tool target '{}' cannot consume generated sources produced after scan",
                 lito::package::package_target_id_text(metadata.targets[target].id).as_str()));
         }
     }
+
+    auto before_scan_script = stage_timing.measure(BuildStage::Script, [&] {
+        return script_declaration.execute_before_scan(
+            native_graph.graph, execution_domain, execution->jobs);
+    });
+    rstd_try(rstd::move(before_scan_script));
+    rstd_try(
+        materialize_build_script_inputs(metadata, native_target_plan.contexts, layout, *selected));
 
     auto scan_started           = rstd::time::Instant::now();
     auto scan_span              = profiler.span(ScanProbe::Total);
     auto toolchain_header_roots = profiler.measure(
         ScanProbe::Environment, [&]() -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
             auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
-            for (auto target : host_selection.target_order) {
+            for (auto target : native_target_plan.target_order) {
                 auto resolved =
                     toolchain.header_roots(native_target_plan.contexts[target],
                                            metadata.targets[target].source_root.as_path());
@@ -849,7 +868,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto header_ownership =
         cpp::resolve_header_ownership(metadata,
-                                      host_selection.target_order.as_slice(),
+                                      native_target_plan.target_order.as_slice(),
                                       rstd::move(toolchain_header_roots).unwrap());
     auto analysis_service = FrontendAnalysisService::make(
         layout, toolchain, header_ownership, frontend_service, scan_cache, profiler);
@@ -859,14 +878,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto existing_source_sets = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_source_selection(metadata,
                                                  native_target_plan,
-                                                 host_selection.target_order,
+                                                 native_target_plan.target_order,
                                                  semantic_scan_graph,
                                                  analysis_service,
                                                  request.observer,
                                                  execution->jobs,
                                                  execution->max_in_flight,
                                                  false,
-                                                 SourceDiscoveryScope::Existing);
+                                                 SourceDiscoveryScope::BeforeScan);
     });
     if (existing_source_sets.is_err()) {
         return Err(rstd::move(existing_source_sets).unwrap_err());
@@ -920,16 +939,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto reused           = usize {};
     auto build_timing     = BuildTimingReport {};
     auto package_tools    = ResolvedPackageHostTools {};
-    auto execution_domain = ExecutionDomainId {
-        .value = rstd::format(
-            "{}\n{}\n{}\n{}\n{}",
-            cache_environment.key(),
-            project.platform.effective_target.triple.as_str(),
-            toolchain.compiler_identity().build_identity.as_str(),
-            toolchain.linker_identity().build_identity.as_str(),
-            lito::config::standard_library_name(package_plan.profile->cpp.abi.standard_library)),
-    };
-    auto native_graph     = make_native_action_graph(package.targets.len());
     auto compile_progress = CompileProgressTracker {};
 
     if (! host_selection.target_order.is_empty()) {
@@ -1043,7 +1052,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
     }
 
-    auto script_result = stage_timing.measure(BuildStage::Script, [&] {
+    auto script_result     = stage_timing.measure(BuildStage::Script, [&] {
         return script_declaration.execute(package_tools,
                                           package,
                                           package_plan,
@@ -1051,66 +1060,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                           execution_domain,
                                           execution->jobs);
     });
-    auto script_report = rstd_try(rstd::move(script_result));
-    rstd_try(materialize_build_script_inputs(
-        metadata, package, package_plan.contexts, layout, *selected));
-    auto resolved_header_roots = profiler.measure(
-        ScanProbe::Environment, [&]() -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
-            auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
-            for (auto target : package_plan.target_order) {
-                auto resolved = toolchain.header_roots(
-                    package_plan.contexts[target], metadata.targets[target].source_root.as_path());
-                if (resolved.is_err()) {
-                    return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
-                }
-                for (auto& root : *resolved) roots.push(rstd::move(root));
-            }
-            if (plugin_sdk.is_some()) {
-                for (const auto& root : plugin_sdk->header_roots) roots.push(root.clone());
-            }
-            return Ok(rstd::move(roots));
-        });
-    if (resolved_header_roots.is_err()) {
-        return Err(rstd::move(resolved_header_roots).unwrap_err());
-    }
-    header_ownership = cpp::resolve_header_ownership(
-        metadata, package_plan.target_order.as_slice(), rstd::move(resolved_header_roots).unwrap());
+    auto script_report     = rstd_try(rstd::move(script_result));
     auto runtime_result    = stage_timing.measure(BuildStage::RuntimeResource, [&] {
         return resolve_runtime_resources(metadata, layout, selected_targets, request.observer);
     });
     auto runtime_resources = rstd_try(rstd::move(runtime_result));
-
-    auto remaining_existing_targets = Vec<cpp::TargetId>::make();
-    for (auto target : package_plan.target_order) {
-        auto scanned = false;
-        for (auto host_target : host_selection.target_order) {
-            if (host_target == target) {
-                scanned = true;
-                break;
-            }
-        }
-        if (! scanned) remaining_existing_targets.emplace_back(target);
-    }
-    auto remaining_existing_sources = profiler.measure(ScanProbe::Discovery, [&] {
-        return discover_package_source_selection(metadata,
-                                                 package_plan,
-                                                 remaining_existing_targets,
-                                                 semantic_scan_graph,
-                                                 analysis_service,
-                                                 request.observer,
-                                                 execution->jobs,
-                                                 execution->max_in_flight,
-                                                 false,
-                                                 SourceDiscoveryScope::Existing);
-    });
-    if (remaining_existing_sources.is_err()) {
-        return Err(rstd::move(remaining_existing_sources).unwrap_err());
-    }
-    auto appended_existing_sources =
-        cpp::append_package_sources(package, rstd::move(remaining_existing_sources).unwrap());
-    if (appended_existing_sources.is_err()) {
-        return Err(rstd::into<BuildError>(rstd::move(appended_existing_sources).unwrap_err()));
-    }
 
     auto generated_sources = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_source_selection(metadata,
@@ -1122,7 +1076,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                  execution->jobs,
                                                  execution->max_in_flight,
                                                  true,
-                                                 SourceDiscoveryScope::Generated);
+                                                 SourceDiscoveryScope::AfterScan);
     });
     if (generated_sources.is_err()) return Err(rstd::move(generated_sources).unwrap_err());
     auto appended_sources =

@@ -52,13 +52,20 @@ struct ExternalSourceRootCatalog {
     Vec<ExternalSourceRoot> sources;
 };
 
+enum class GeneratedSourceAvailability
+{
+    BeforeScan,
+    AfterScan,
+};
+
 struct ResolvedSourceGroup {
-    String       name;
-    PathBuf      root;
-    String       identity;
-    Vec<PathBuf> sources;
-    bool         generated { false };
-    bool         external { false };
+    String                      name;
+    PathBuf                     root;
+    String                      identity;
+    Vec<PathBuf>                sources;
+    bool                        generated { false };
+    bool                        external { false };
+    GeneratedSourceAvailability availability { GeneratedSourceAvailability::BeforeScan };
 };
 
 enum class GeneratedArtifactRole
@@ -100,25 +107,31 @@ struct ResolvedTarget {
     PackageCompileMetadata                       compile_metadata;
 };
 
-auto add_generated_source(ResolvedTarget& target, PathBuf source) -> bool {
+auto add_generated_source(ResolvedTarget&             target,
+                          PathBuf                     source,
+                          GeneratedSourceAvailability availability) -> bool {
     for (const auto& group : target.source_groups) {
         for (const auto& existing : group.sources) {
             if (existing.as_path() == source.as_path()) return false;
         }
     }
     for (auto& group : target.source_groups) {
-        if (! group.generated || group.name != "build-script"_str) continue;
+        if (! group.generated || group.name != "build-script"_str ||
+            group.availability != availability) {
+            continue;
+        }
         group.sources.push(rstd::move(source));
         return true;
     }
     auto sources = Vec<PathBuf>::make();
     sources.push(rstd::move(source));
     target.source_groups.push(ResolvedSourceGroup {
-        .name      = String::make("build-script"_str),
-        .root      = target.root.clone(),
-        .identity  = String::make("build-script-generated"_str),
-        .sources   = rstd::move(sources),
-        .generated = true,
+        .name         = String::make("build-script"_str),
+        .root         = target.root.clone(),
+        .identity     = String::make("build-script-generated"_str),
+        .sources      = rstd::move(sources),
+        .generated    = true,
+        .availability = availability,
     });
     return true;
 }
@@ -138,12 +151,12 @@ auto add_generated_include_directory(ResolvedTarget& target, PathBuf path) -> bo
     return true;
 }
 
-auto has_generated_compile_inputs(const ResolvedTarget& target) noexcept -> bool {
+auto has_deferred_generated_sources(const ResolvedTarget& target) noexcept -> bool {
     for (const auto& group : target.source_groups) {
-        if (group.generated && ! group.sources.is_empty()) return true;
-    }
-    for (const auto& requirement : target.usage.private_include_directory_requirements) {
-        if (requirement.root == lito::dependency::IncludeDirectoryRoot::Generated) return true;
+        if (group.generated && group.availability == GeneratedSourceAvailability::AfterScan &&
+            ! group.sources.is_empty()) {
+            return true;
+        }
     }
     return false;
 }

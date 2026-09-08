@@ -589,6 +589,87 @@ auto action_string_array(const luato::Array& values, ref<str> context)
     return Ok(rstd::move(result));
 }
 
+enum class GeneratedOutputKind
+{
+    Other,
+    Header,
+    Source,
+};
+
+struct DeclaredActionOutput {
+    String              path;
+    GeneratedOutputKind kind { GeneratedOutputKind::Other };
+};
+
+auto inferred_generated_output_kind(ref<str> path) noexcept -> GeneratedOutputKind {
+    auto source    = PathBuf::from(path);
+    auto extension = source.as_path().extension();
+    if (extension.is_none()) return GeneratedOutputKind::Other;
+    auto text = extension->to_str();
+    if (text == Some("h"_str) || text == Some("hpp"_str)) return GeneratedOutputKind::Header;
+    if (text == Some("cpp"_str) || text == Some("cppm"_str)) return GeneratedOutputKind::Source;
+    return GeneratedOutputKind::Other;
+}
+
+constexpr auto generated_output_kind_name(GeneratedOutputKind kind) noexcept -> ref<str> {
+    switch (kind) {
+    case GeneratedOutputKind::Other: return "file"_str;
+    case GeneratedOutputKind::Header: return "header"_str;
+    case GeneratedOutputKind::Source: return "source"_str;
+    }
+    return "file"_str;
+}
+
+auto action_output(const luato::Value& value, ref<str> context, usize index)
+    -> BuildScriptResult<DeclaredActionOutput> {
+    if (value.is_String()) {
+        auto path = value.as_String().value.clone();
+        return Ok(DeclaredActionOutput {
+            .path = path.clone(),
+            .kind = inferred_generated_output_kind(path.as_str()),
+        });
+    }
+    if (! value.is_Table()) {
+        return action_request_failure<DeclaredActionOutput>(
+            rstd::format("{}[{}] must be a string or output table", context, index + usize(1)));
+    }
+    const auto& table = *value.as_Table().value;
+    auto        known = Vec<String>::make();
+    known.push(String::make("path"_str));
+    known.push(String::make("source"_str));
+    auto checked = table.reject_unknown_fields(known.as_slice());
+    if (checked.is_err()) {
+        return action_request_failure<DeclaredActionOutput>(
+            rstd::format("{}", checked.unwrap_err()));
+    }
+    auto path = table.required<String>("path"_str);
+    if (path.is_err()) {
+        return action_request_failure<DeclaredActionOutput>(rstd::format("{}", path.unwrap_err()));
+    }
+    auto kind = inferred_generated_output_kind(path->as_str());
+    if (table.contains("source"_str)) {
+        auto source = table.required<bool>("source"_str);
+        if (source.is_err()) {
+            return action_request_failure<DeclaredActionOutput>(
+                rstd::format("{}", source.unwrap_err()));
+        }
+        kind = *source ? GeneratedOutputKind::Source : GeneratedOutputKind::Other;
+    }
+    return Ok(DeclaredActionOutput {
+        .path = rstd::move(path).unwrap(),
+        .kind = kind,
+    });
+}
+
+auto action_output_array(const luato::Array& values, ref<str> context)
+    -> BuildScriptResult<Vec<DeclaredActionOutput>> {
+    auto result = Vec<DeclaredActionOutput>::with_capacity(values.len());
+    for (usize index {}; index < values.len(); ++index) {
+        result.push(rstd_try(action_output(values.values()[index], context, index)));
+    }
+    return Ok(rstd::move(result));
+}
+
 auto lua_string_array(const Vec<String>& values) -> luato::Array {
     auto result = Vec<luato::Value>::with_capacity(values.len());
     for (const auto& value : values) result.push(luato::Value::String(value.clone()));
@@ -950,10 +1031,12 @@ auto collect_action_outputs(ref<rstd::path::Path> root,
 }
 
 struct GeneratedActionOutput {
-    String  package;
-    PathBuf relative;
-    String  action_identity;
-    usize   producer {};
+    String                           package;
+    PathBuf                          relative;
+    String                           action_identity;
+    usize                            producer {};
+    GeneratedOutputKind              kind { GeneratedOutputKind::Other };
+    cpp::GeneratedSourceAvailability availability { cpp::GeneratedSourceAvailability::BeforeScan };
 };
 
 struct ResolvedActionInput {
@@ -992,21 +1075,22 @@ enum class RegisteredActionKind
 };
 
 struct RegisteredAction {
-    RegisteredActionKind         kind { RegisteredActionKind::Process };
-    String                       package;
-    String                       identity;
-    String                       label;
-    PathBuf                      working_directory;
-    Option<ResolvedActionTool>   tool;
-    Vec<ResolvedActionTool>      tools;
-    Vec<ResolvedActionInputRoot> input_roots;
-    Vec<String>                  arguments;
-    Vec<ResolvedActionInput>     inputs;
-    Vec<PathBuf>                 outputs;
-    Option<usize>                output_working_directory;
-    Option<usize>                depfile_output;
-    Vec<PathBuf>                 depfile_roots;
-    String                       content;
+    RegisteredActionKind             kind { RegisteredActionKind::Process };
+    String                           package;
+    String                           identity;
+    String                           label;
+    PathBuf                          working_directory;
+    Option<ResolvedActionTool>       tool;
+    Vec<ResolvedActionTool>          tools;
+    Vec<ResolvedActionInputRoot>     input_roots;
+    Vec<String>                      arguments;
+    Vec<ResolvedActionInput>         inputs;
+    Vec<PathBuf>                     outputs;
+    Option<usize>                    output_working_directory;
+    Option<usize>                    depfile_output;
+    Vec<PathBuf>                     depfile_roots;
+    String                           content;
+    cpp::GeneratedSourceAvailability availability { cpp::GeneratedSourceAvailability::BeforeScan };
 };
 
 auto replace_all(String& value, ref<str> marker, ref<str> replacement) -> usize {
@@ -1065,6 +1149,11 @@ struct PackageHostToolHandle {
 struct GeneratedActionWorkerResult {
     usize                    action {};
     BuildScriptResult<empty> outcome;
+};
+
+struct PublishedGeneratedAction {
+    usize         action {};
+    BuildActionId id;
 };
 
 class ToolActionSession {
@@ -1410,13 +1499,19 @@ public:
             return action_request_failure<bool>(
                 "generated compile sources require a C++ target"_str);
         }
-        auto extension = output->relative.as_path().extension();
-        if (extension.is_none() || extension->to_str() != Some("cpp"_str)) {
+        if (output->kind != GeneratedOutputKind::Source) {
             return action_request_failure<bool>(
-                rstd::format("generated compile source '{}' must use the '.cpp' extension",
+                rstd::format("generated output '{}' is not declared or inferred as a source",
                              output->relative.as_path()));
         }
-        return Ok(cpp::add_generated_source(metadata_->targets[*target], output->relative.clone()));
+        if (output->availability == cpp::GeneratedSourceAvailability::BeforeScan &&
+            ! lito::manifest::cpp_manifest_source(output->relative.as_path())) {
+            return action_request_failure<bool>(
+                rstd::format("generated compile source '{}' has an unsupported C++ extension",
+                             output->relative.as_path()));
+        }
+        return Ok(cpp::add_generated_source(
+            metadata_->targets[*target], output->relative.clone(), output->availability));
     }
 
     auto add_generated_include(luato::OpaqueHandle target_handle, String relative)
@@ -1503,7 +1598,10 @@ public:
             package = request.required<String>("package"_str);
         else if (default_package_.is_some())
             package = Ok(default_package_->clone());
-        auto output  = request.required<String>("output"_str);
+        const luato::Value* output_value {};
+        for (const auto& entry : request.entries()) {
+            if (entry.key == "output"_str) output_value = rstd::addressof(entry.value);
+        }
         auto content = request.required<String>("content"_str);
         auto inputs  = luato::Array::make();
         if (request.contains("inputs"_str)) {
@@ -1518,9 +1616,8 @@ public:
             return action_request_failure<ToolActionOutcome>(
                 rstd::format("{}", package.unwrap_err()));
         }
-        if (output.is_err()) {
-            return action_request_failure<ToolActionOutcome>(
-                rstd::format("{}", output.unwrap_err()));
+        if (output_value == nullptr) {
+            return action_request_failure<ToolActionOutcome>("lito.write.output is required"_str);
         }
         if (content.is_err()) {
             return action_request_failure<ToolActionOutcome>(
@@ -1557,8 +1654,9 @@ public:
             return action_request_failure<ToolActionOutcome>(
                 "lito.write.content contains an unresolved input marker"_str);
         }
+        auto output = rstd_try(action_output(*output_value, "lito.write.output"_str, usize {}));
         auto relative =
-            rstd_try(normal_relative_path(rstd::move(output).unwrap(), "lito.write.output"_str));
+            rstd_try(normal_relative_path(rstd::move(output.path), "lito.write.output"_str));
         rstd_try(
             output_registry_->claim(package->as_str(), relative.as_path(), script_owner_.as_str()));
         auto identity_text =
@@ -1567,6 +1665,8 @@ public:
                          profile_.as_str(),
                          relative.as_path(),
                          licrypto::sha256_hex(rendered.as_str().as_bytes()).as_str());
+        identity_text.push_str("\noutput-kind:"_str);
+        identity_text.push_str(generated_output_kind_name(output.kind));
         for (const auto& input : input_records) {
             identity_text.push_str("\ninput:"_str);
             identity_text.push_str(input.path.as_path().to_string_lossy().as_str());
@@ -1585,6 +1685,8 @@ public:
         }
         auto outputs = Vec<PathBuf>::make();
         outputs.push(rstd::move(relative));
+        auto output_kinds = Vec<GeneratedOutputKind>::make();
+        output_kinds.emplace_back(output.kind);
         auto identity = licrypto::sha256_hex(identity_text.as_str());
         auto producer = actions_.len();
         actions_.push(RegisteredAction {
@@ -1597,7 +1699,9 @@ public:
             .outputs           = outputs.clone(),
             .content           = rstd::move(rendered),
         });
-        return Ok(make_outcome(false, package->as_str(), outputs, identity.as_str(), producer));
+        actions_[producer].availability = resolve_action_availability(actions_[producer]);
+        return Ok(make_outcome(
+            false, package->as_str(), outputs, output_kinds, identity.as_str(), producer));
     }
 
     auto copy(const luato::Table& request) -> BuildScriptResult<ToolActionOutcome> {
@@ -1616,18 +1720,18 @@ public:
             package = request.required<String>("package"_str);
         else if (default_package_.is_some())
             package = Ok(default_package_->clone());
-        auto                output = request.required<String>("output"_str);
+        const luato::Value* output_value {};
         const luato::Value* input {};
         for (const auto& entry : request.entries()) {
             if (entry.key == "input"_str) input = rstd::addressof(entry.value);
+            if (entry.key == "output"_str) output_value = rstd::addressof(entry.value);
         }
         if (package.is_err()) {
             return action_request_failure<ToolActionOutcome>(
                 rstd::format("{}", package.unwrap_err()));
         }
-        if (output.is_err()) {
-            return action_request_failure<ToolActionOutcome>(
-                rstd::format("{}", output.unwrap_err()));
+        if (output_value == nullptr) {
+            return action_request_failure<ToolActionOutcome>("lito.copy.output is required"_str);
         }
         if (input == nullptr) {
             return action_request_failure<ToolActionOutcome>("lito.copy.input is required"_str);
@@ -1644,21 +1748,26 @@ public:
         }
         auto resolved = rstd_try(resolve_action_input(
             *input, package->as_str(), *package_root, usize {}, "lito.copy.input"_str));
+        auto output   = rstd_try(action_output(*output_value, "lito.copy.output"_str, usize {}));
         auto relative =
-            rstd_try(normal_relative_path(rstd::move(output).unwrap(), "lito.copy.output"_str));
+            rstd_try(normal_relative_path(rstd::move(output.path), "lito.copy.output"_str));
         rstd_try(
             output_registry_->claim(package->as_str(), relative.as_path(), script_owner_.as_str()));
-        auto identity = licrypto::sha256_hex(rstd::format("lito-copy-action-v1\n{}\n{}\n{}:{}\n{}",
-                                                          package->as_str(),
-                                                          profile_.as_str(),
-                                                          resolved.path.as_path(),
-                                                          resolved.digest.as_str(),
-                                                          relative.as_path())
-                                                 .as_str());
-        auto inputs   = Vec<ResolvedActionInput>::make();
+        auto identity = licrypto::sha256_hex(
+            rstd::format("lito-copy-action-v1\n{}\n{}\n{}:{}\n{}\noutput-kind:{}",
+                         package->as_str(),
+                         profile_.as_str(),
+                         resolved.path.as_path(),
+                         resolved.digest.as_str(),
+                         relative.as_path(),
+                         generated_output_kind_name(output.kind))
+                .as_str());
+        auto inputs = Vec<ResolvedActionInput>::make();
         inputs.push(rstd::move(resolved));
         auto outputs = Vec<PathBuf>::make();
         outputs.push(rstd::move(relative));
+        auto output_kinds = Vec<GeneratedOutputKind>::make();
+        output_kinds.emplace_back(output.kind);
         auto producer = actions_.len();
         actions_.push(RegisteredAction {
             .kind              = RegisteredActionKind::Copy,
@@ -1669,7 +1778,9 @@ public:
             .inputs            = rstd::move(inputs),
             .outputs           = outputs.clone(),
         });
-        return Ok(make_outcome(false, package->as_str(), outputs, identity.as_str(), producer));
+        actions_[producer].availability = resolve_action_availability(actions_[producer]);
+        return Ok(make_outcome(
+            false, package->as_str(), outputs, output_kinds, identity.as_str(), producer));
     }
 
     auto transform(const luato::Table& request) -> BuildScriptResult<ToolActionOutcome> {
@@ -1717,18 +1828,20 @@ public:
                 "lito.transform.input is not an output owned by the selected package"_str);
         }
         auto declared_outputs =
-            rstd_try(action_string_array(*outputs, "lito.transform.outputs"_str));
+            rstd_try(action_output_array(*outputs, "lito.transform.outputs"_str));
         if (declared_outputs.len() != usize(2)) {
             return action_request_failure<ToolActionOutcome>(
                 "cpp-leading-preamble transform requires exactly two outputs"_str);
         }
         auto output_paths = Vec<PathBuf>::make();
+        auto output_kinds = Vec<GeneratedOutputKind>::make();
         for (auto& output : declared_outputs) {
             auto relative =
-                rstd_try(normal_relative_path(rstd::move(output), "transform output"_str));
+                rstd_try(normal_relative_path(rstd::move(output.path), "transform output"_str));
             rstd_try(output_registry_->claim(
                 package->as_str(), relative.as_path(), script_owner_.as_str()));
             output_paths.push(rstd::move(relative));
+            output_kinds.emplace_back(output.kind);
         }
         auto generated   = rstd_try(layout_->create_generated_package_directory(package->as_str()));
         auto source_path = generated.join(source->relative.as_path());
@@ -1736,6 +1849,12 @@ public:
                                           kind->as_str(),
                                           source->action_identity.as_str(),
                                           profile_.as_str());
+        for (usize index {}; index < output_paths.len(); ++index) {
+            identity_text.push_str("\noutput:"_str);
+            identity_text.push_str(output_paths[index].as_path().to_string_lossy().as_str());
+            identity_text.push_ascii(':');
+            identity_text.push_str(generated_output_kind_name(output_kinds[index]));
+        }
         if (lua_state_ != nullptr) {
             auto loaded_identities = Vec<String>::make();
             for (const auto& module : lua_state_->loaded_modules())
@@ -1763,8 +1882,9 @@ public:
             .inputs            = rstd::move(inputs),
             .outputs           = output_paths.clone(),
         });
-        return Ok(
-            make_outcome(false, package->as_str(), output_paths, identity.as_str(), producer));
+        actions_[producer].availability = resolve_action_availability(actions_[producer]);
+        return Ok(make_outcome(
+            false, package->as_str(), output_paths, output_kinds, identity.as_str(), producer));
     }
 
     auto set_lua_state(const luato::State& state) noexcept -> void {
@@ -1789,7 +1909,7 @@ public:
             closure.push_str("\nmodule:"_str);
             closure.push_str(module.as_str());
         }
-        return refresh_action_identities(closure.as_str());
+        return refresh_action_identities(closure.as_str(), None());
     }
 
     auto host_tool_targets() const -> Vec<lito::package::PackageTargetId> {
@@ -1806,6 +1926,29 @@ public:
             for (const auto& tool : action.tools) append(tool);
         }
         return result;
+    }
+
+    auto validate_action_schedule() const -> BuildScriptResult<empty> {
+        for (const auto& output : generated_outputs_) {
+            if (output->availability != cpp::GeneratedSourceAvailability::AfterScan ||
+                output->kind == GeneratedOutputKind::Other) {
+                continue;
+            }
+            auto extension = output->relative.as_path().extension();
+            auto text      = extension.is_some() ? extension->to_str() : None();
+            if (output->kind == GeneratedOutputKind::Header || text == Some("h"_str) ||
+                text == Some("hpp"_str)) {
+                return action_request_failure<empty>(
+                    rstd::format("generated header '{}' cannot be produced after source scan",
+                                 output->relative.as_path()));
+            }
+            if (text == Some("cppm"_str)) {
+                return action_request_failure<empty>(rstd::format(
+                    "generated module interface source '{}' cannot be produced after source scan",
+                    output->relative.as_path()));
+            }
+        }
+        return Ok(empty {});
     }
 
     auto bind_host_tools(const ResolvedPackageHostTools& tools) -> BuildScriptResult<empty> {
@@ -1843,7 +1986,9 @@ public:
                 bound = true;
             }
         }
-        return bound ? refresh_action_identities(closure.as_str()) : Ok(empty {});
+        return bound ? refresh_action_identities(closure.as_str(),
+                                                 Some(cpp::GeneratedSourceAvailability::AfterScan))
+                     : Ok(empty {});
     }
 
     void synchronize_generated_identities(cpp::PackageSpec& package,
@@ -2000,7 +2145,7 @@ public:
                 "build-tool action cwd escapes package root"_str);
         }
         auto arguments        = rstd_try(action_string_array(*args, "lito.run.args"_str));
-        auto declared_outputs = rstd_try(action_string_array(*outputs, "lito.run.outputs"_str));
+        auto declared_outputs = rstd_try(action_output_array(*outputs, "lito.run.outputs"_str));
         if (arguments.is_empty() || inputs->is_empty() || declared_outputs.is_empty()) {
             return action_request_failure<ToolActionOutcome>(
                 "build-tool action requires args, inputs, and outputs"_str);
@@ -2015,9 +2160,10 @@ public:
             input_records.push(rstd::move(resolved));
         }
         auto output_paths = Vec<PathBuf>::make();
+        auto output_kinds = Vec<GeneratedOutputKind>::make();
         for (auto& output : declared_outputs) {
-            auto relative =
-                rstd_try(normal_relative_path(rstd::move(output), "build-tool action output"_str));
+            auto relative = rstd_try(
+                normal_relative_path(rstd::move(output.path), "build-tool action output"_str));
             for (const auto& existing : output_paths) {
                 if (existing.as_path() == relative.as_path()) {
                     return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidOutput(
@@ -2027,6 +2173,7 @@ public:
             rstd_try(output_registry_->claim(
                 package->as_str(), relative.as_path(), script_owner_.as_str()));
             output_paths.push(rstd::move(relative));
+            output_kinds.emplace_back(output.kind);
         }
         auto output_working_directory = Option<usize> {};
         if (request.contains("output_cwd"_str)) {
@@ -2161,9 +2308,12 @@ public:
             identity_text.push_ascii(':');
             identity_text.push_str(input_records[index].digest.as_str());
         }
-        for (const auto& output : output_paths) {
+        for (usize index {}; index < output_paths.len(); ++index) {
+            const auto& output = output_paths[index];
             identity_text.push_str("\noutput:"_str);
             identity_text.push_str(output.as_path().to_string_lossy().as_str());
+            identity_text.push_ascii(':');
+            identity_text.push_str(generated_output_kind_name(output_kinds[index]));
         }
         if (depfile_output_index.is_some()) {
             identity_text.push_str("\ndepfile:"_str);
@@ -2198,17 +2348,39 @@ public:
             .depfile_output           = depfile_output_index,
             .depfile_roots            = rstd::move(depfile_roots),
         });
-        return Ok(
-            make_outcome(false, package->as_str(), output_paths, identity.as_str(), producer));
+        actions_[producer].availability = resolve_action_availability(actions_[producer]);
+        return Ok(make_outcome(
+            false, package->as_str(), output_paths, output_kinds, identity.as_str(), producer));
     }
 
-    auto publish_actions(BuildActionGraph& graph, const ExecutionDomainId& domain)
-        -> BuildScriptResult<Vec<BuildActionId>> {
+    auto publish_actions(BuildActionGraph&                graph,
+                         const ExecutionDomainId&         domain,
+                         cpp::GeneratedSourceAvailability availability)
+        -> BuildScriptResult<Vec<PublishedGeneratedAction>> {
+        auto selected = Vec<u8>::with_capacity(actions_.len());
+        auto required = Vec<u8>::with_capacity(actions_.len());
+        for (usize index {}; index < actions_.len(); ++index) {
+            auto included = action_availability(index) == availability ? u8(1) : u8 {};
+            selected.emplace_back(included);
+            required.emplace_back(included);
+        }
+        for (usize cursor = actions_.len(); cursor > usize {}; --cursor) {
+            auto index = cursor - usize(1);
+            if (required[index] == u8 {}) continue;
+            for (const auto& input : actions_[index].inputs) {
+                if (input.producer.is_some()) required[*input.producer] = u8(1);
+            }
+        }
         auto outputs = Vec<Vec<BuildArtifactId>>::with_capacity(actions_.len());
-        for (const auto& action : actions_) {
-            auto generated = layout_->generated_package_directory(action.package.as_str());
+        for (usize index {}; index < actions_.len(); ++index) {
+            if (required[index] == u8 {}) {
+                outputs.emplace_back();
+                continue;
+            }
+            const auto& action    = actions_[index];
+            auto        generated = layout_->generated_package_directory(action.package.as_str());
             if (generated.is_err()) {
-                return script_failure<Vec<BuildActionId>>(
+                return script_failure<Vec<PublishedGeneratedAction>>(
                     rstd::format("{}", generated.unwrap_err()));
             }
             auto action_outputs = Vec<BuildArtifactId>::with_capacity(action.outputs.len());
@@ -2221,7 +2393,7 @@ public:
                     .path   = Some(generated->join(output.as_path())),
                 });
                 if (artifact.is_err()) {
-                    return script_failure<Vec<BuildActionId>>(
+                    return script_failure<Vec<PublishedGeneratedAction>>(
                         rstd::format("{}", artifact.unwrap_err()));
                 }
                 action_outputs.emplace_back(*artifact);
@@ -2229,8 +2401,9 @@ public:
             outputs.push(rstd::move(action_outputs));
         }
 
-        auto action_ids = Vec<BuildActionId>::with_capacity(actions_.len());
+        auto action_ids = Vec<PublishedGeneratedAction>::make();
         for (usize index {}; index < actions_.len(); ++index) {
+            if (selected[index] == u8 {}) continue;
             const auto& action = actions_[index];
             auto        inputs = Vec<BuildArtifactId>::make();
             const auto  append_tool =
@@ -2267,7 +2440,7 @@ public:
                     .initially_ready = true,
                 });
                 if (artifact.is_err()) {
-                    return script_failure<Vec<BuildActionId>>(
+                    return script_failure<Vec<PublishedGeneratedAction>>(
                         rstd::format("{}", artifact.unwrap_err()));
                 }
                 inputs.emplace_back(*artifact);
@@ -2275,13 +2448,13 @@ public:
             for (const auto& input : action.inputs) {
                 if (input.producer.is_some()) {
                     if (*input.producer >= outputs.len()) {
-                        return action_request_failure<Vec<BuildActionId>>(
+                        return action_request_failure<Vec<PublishedGeneratedAction>>(
                             "generated action input refers to an unknown producer"_str);
                     }
                     auto producer_root = layout_->generated_package_directory(
                         actions_[*input.producer].package.as_str());
                     if (producer_root.is_err()) {
-                        return script_failure<Vec<BuildActionId>>(
+                        return script_failure<Vec<PublishedGeneratedAction>>(
                             rstd::format("{}", producer_root.unwrap_err()));
                     }
                     auto matched = Option<BuildArtifactId> {};
@@ -2294,7 +2467,7 @@ public:
                         }
                     }
                     if (matched.is_none()) {
-                        return action_request_failure<Vec<BuildActionId>>(
+                        return action_request_failure<Vec<PublishedGeneratedAction>>(
                             "generated action input does not match its producer output"_str);
                     }
                     inputs.emplace_back(*matched);
@@ -2309,7 +2482,7 @@ public:
                     .initially_ready = true,
                 });
                 if (artifact.is_err()) {
-                    return script_failure<Vec<BuildActionId>>(
+                    return script_failure<Vec<PublishedGeneratedAction>>(
                         rstd::format("{}", artifact.unwrap_err()));
                 }
                 inputs.emplace_back(*artifact);
@@ -2326,27 +2499,31 @@ public:
                 .outputs  = outputs[index].clone(),
             });
             if (registered.is_err()) {
-                return script_failure<Vec<BuildActionId>>(
+                return script_failure<Vec<PublishedGeneratedAction>>(
                     rstd::format("{}", registered.unwrap_err()));
             }
-            action_ids.emplace_back(*registered);
+            action_ids.push(PublishedGeneratedAction { .action = index, .id = *registered });
         }
         auto valid = graph.validate();
         if (valid.is_err()) {
-            return script_failure<Vec<BuildActionId>>(rstd::format("{}", valid.unwrap_err()));
+            return script_failure<Vec<PublishedGeneratedAction>>(
+                rstd::format("{}", valid.unwrap_err()));
         }
         return Ok(rstd::move(action_ids));
     }
 
-    auto execute(BuildActionGraph& graph, const ExecutionDomainId& domain, usize jobs)
-        -> BuildScriptResult<empty> {
+    auto execute(BuildActionGraph&                graph,
+                 const ExecutionDomainId&         domain,
+                 cpp::GeneratedSourceAvailability availability,
+                 usize                            jobs) -> BuildScriptResult<empty> {
         if (jobs == usize {}) {
             return action_request_failure<empty>(
                 "generated action jobs must be greater than zero"_str);
         }
         if (actions_.is_empty()) return Ok(empty {});
-        auto published    = rstd_try(publish_actions(graph, domain));
-        auto worker_count = jobs < actions_.len() ? jobs : actions_.len();
+        auto published = rstd_try(publish_actions(graph, domain, availability));
+        if (published.is_empty()) return Ok(empty {});
+        auto worker_count = jobs < published.len() ? jobs : published.len();
         auto pool         = rstd::thread::ThreadPoolBuilder::make()
                                 .worker_count(worker_count)
                                 .thread_name(String::make("lito-generate"_str))
@@ -2368,30 +2545,31 @@ public:
         auto tasks     = rstd::move(task_set).unwrap_unchecked();
         auto completed = usize {};
         auto in_flight = usize {};
-        while (completed < actions_.len()) {
+        while (completed < published.len()) {
             while (in_flight < worker_count) {
                 auto selected = Option<usize> {};
                 for (usize index {}; index < published.len(); ++index) {
-                    if ((**graph.action(published[index])).state == BuildActionState::Ready) {
+                    if ((**graph.action(published[index].id)).state == BuildActionState::Ready) {
                         selected = Some(index);
                         break;
                     }
                 }
                 if (selected.is_none()) break;
                 auto index  = *selected;
-                auto marked = graph.mark_running(published[index]);
+                auto marked = graph.mark_running(published[index].id);
                 if (marked.is_err()) {
                     tasks.cancel_pending();
                     tasks.close();
                     rstd::move(workers).join();
                     return script_failure<empty>(rstd::format("{}", marked.unwrap_err()));
                 }
-                auto session = this;
-                auto submitted =
-                    tasks.try_submit([session, index]() -> GeneratedActionWorkerResult {
+                auto session      = this;
+                auto action_index = published[index].action;
+                auto submitted    = tasks.try_submit(
+                    [session, index, action_index]() -> GeneratedActionWorkerResult {
                         return GeneratedActionWorkerResult {
                             .action  = index,
-                            .outcome = session->execute_action(session->actions_[index]),
+                            .outcome = session->execute_action(session->actions_[action_index]),
                         };
                     });
                 if (submitted.is_err()) {
@@ -2443,13 +2621,13 @@ public:
                     "generated action completion does not match a running action"_str);
             }
             if (result.outcome.is_err()) {
-                static_cast<void>(graph.mark_failed(published[result.action]));
+                static_cast<void>(graph.mark_failed(published[result.action].id));
                 tasks.cancel_pending();
                 tasks.close();
                 rstd::move(workers).join();
                 return Err(rstd::move(result.outcome).unwrap_err());
             }
-            auto marked = graph.mark_succeeded(published[result.action]);
+            auto marked = graph.mark_succeeded(published[result.action].id);
             if (marked.is_err()) {
                 tasks.cancel_pending();
                 tasks.close();
@@ -2464,10 +2642,36 @@ public:
     }
 
 private:
-    auto refresh_action_identities(ref<str> closure) -> BuildScriptResult<empty> {
+    auto action_availability(usize index) const noexcept -> cpp::GeneratedSourceAvailability {
+        if (index >= actions_.len()) return cpp::GeneratedSourceAvailability::AfterScan;
+        return actions_[index].availability;
+    }
+
+    auto resolve_action_availability(const RegisteredAction& action) const noexcept
+        -> cpp::GeneratedSourceAvailability {
+        if ((action.tool.is_some() && action.tool->target.is_some())) {
+            return cpp::GeneratedSourceAvailability::AfterScan;
+        }
+        for (const auto& tool : action.tools) {
+            if (tool.target.is_some()) return cpp::GeneratedSourceAvailability::AfterScan;
+        }
+        for (const auto& input : action.inputs) {
+            if (input.producer.is_some() && action_availability(*input.producer) ==
+                                                cpp::GeneratedSourceAvailability::AfterScan) {
+                return cpp::GeneratedSourceAvailability::AfterScan;
+            }
+        }
+        return cpp::GeneratedSourceAvailability::BeforeScan;
+    }
+
+    auto refresh_action_identities(ref<str>                                 closure,
+                                   Option<cpp::GeneratedSourceAvailability> availability)
+        -> BuildScriptResult<empty> {
         auto previous = Vec<String>::with_capacity(actions_.len());
-        for (auto& action : actions_) {
+        for (usize index {}; index < actions_.len(); ++index) {
+            auto& action = actions_[index];
             previous.push(action.identity.clone());
+            if (availability.is_some() && action_availability(index) != *availability) continue;
             action.identity = licrypto::sha256_hex(
                 rstd::format("{}\n{}", action.identity.as_str(), closure).as_str());
         }
@@ -3093,18 +3297,22 @@ private:
         return nullptr;
     }
 
-    auto make_outcome(bool                changed,
-                      ref<str>            package,
-                      const Vec<PathBuf>& outputs,
-                      ref<str>            identity,
-                      usize               producer) -> ToolActionOutcome {
+    auto make_outcome(bool                            changed,
+                      ref<str>                        package,
+                      const Vec<PathBuf>&             outputs,
+                      const Vec<GeneratedOutputKind>& output_kinds,
+                      ref<str>                        identity,
+                      usize                           producer) -> ToolActionOutcome {
         auto handles = Vec<luato::OpaqueHandle>::with_capacity(outputs.len());
-        for (const auto& output : outputs) {
-            auto owned = Box<GeneratedActionOutput>::make(GeneratedActionOutput {
+        for (usize index {}; index < outputs.len(); ++index) {
+            const auto& output = outputs[index];
+            auto        owned  = Box<GeneratedActionOutput>::make(GeneratedActionOutput {
                 .package         = String::make(package),
                 .relative        = output.clone(),
                 .action_identity = String::make(identity),
                 .producer        = producer,
+                .kind            = output_kinds[index],
+                .availability    = action_availability(producer),
             });
             handles.push(luato::OpaqueHandle { .identity = rstd::addressof(*owned) });
             generated_outputs_.push(rstd::move(owned));
@@ -3441,7 +3649,6 @@ auto transform_callback(ToolActionSession& session, luato::CallFrame& frame)
 }
 
 auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
-                                  cpp::PackageSpec&                 package,
                                   Vec<cpp::CompileContext>&         contexts,
                                   const BuildLayout&                layout,
                                   const cpp::SourceTargetSelection& selection)
@@ -3494,18 +3701,9 @@ auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
             }
             auto include = rstd::move(canonical).unwrap();
             if (! repeated) target.usage.private_include_directories.push(include.clone());
-            auto package_repeated = false;
-            for (const auto& existing :
-                 package.targets[target_id].usage.private_include_directories) {
-                if (existing.as_path() == include.as_path()) package_repeated = true;
-            }
-            if (! package_repeated) {
-                package.targets[target_id].usage.private_include_directories.push(include.clone());
-            }
             cpp::add_private_include_directory(contexts[target_id], rstd::move(include));
         }
         target.usage.private_include_directory_requirements.clear();
-        package.targets[target_id].usage.private_include_directory_requirements.clear();
     }
     return Ok(empty {});
 }
@@ -3574,6 +3772,22 @@ public:
         return result;
     }
 
+    auto validate_action_schedule() const -> BuildScriptResult<empty> {
+        for (const auto& invocation : invocations_) {
+            rstd_try(invocation.actions.validate_action_schedule());
+        }
+        return Ok(empty {});
+    }
+
+    auto execute_before_scan(BuildActionGraph& graph, const ExecutionDomainId& domain, usize jobs)
+        -> BuildScriptResult<empty> {
+        for (auto& invocation : invocations_) {
+            rstd_try(invocation.actions.execute(
+                graph, domain, cpp::GeneratedSourceAvailability::BeforeScan, jobs));
+        }
+        return Ok(empty {});
+    }
+
     auto execute(const ResolvedPackageHostTools& tools,
                  cpp::PackageSpec&               package,
                  cpp::PackagePlan&               plan,
@@ -3584,7 +3798,8 @@ public:
         for (auto& invocation : invocations_) {
             rstd_try(invocation.actions.bind_host_tools(tools));
             invocation.actions.synchronize_generated_identities(package, plan);
-            rstd_try(invocation.actions.execute(graph, domain, jobs));
+            rstd_try(invocation.actions.execute(
+                graph, domain, cpp::GeneratedSourceAvailability::AfterScan, jobs));
             invocation.configure.report().executed = true;
             invocation.configure.report().elapsed  = invocation.elapsed;
             auto finished                          = rstd_try(invocation.configure.finish());
@@ -4040,16 +4255,16 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
         if (result.is_err()) return Err(rstd::move(result).unwrap_err());
         declaration.push(rstd::move(result).unwrap());
     }
+    rstd_try(declaration.validate_action_schedule());
     return Ok(rstd::move(declaration));
 }
 
 auto materialize_build_script_inputs(cpp::PackageMetadata&             metadata,
-                                     cpp::PackageSpec&                 package,
                                      Vec<cpp::CompileContext>&         contexts,
                                      const BuildLayout&                layout,
                                      const cpp::SourceTargetSelection& selection)
     -> BuildScriptResult<empty> {
-    return materialize_generated_inputs(metadata, package, contexts, layout, selection);
+    return materialize_generated_inputs(metadata, contexts, layout, selection);
 }
 
 } // namespace lito
