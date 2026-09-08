@@ -12,6 +12,7 @@ import lito.toolchain;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito;
+using namespace lito::toolchain;
 using namespace lito_test;
 
 TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
@@ -32,16 +33,16 @@ TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
     });
     auto environment = PreprocessorEnvironment {
         .key = PreprocessorEnvironmentKey::make("framework-test"_str, root.as_path()),
-        .builtin_environment =
-            rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(ClangBuiltinEnvironmentSnapshot {}),
+        .builtin_environment = rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(
+            ClangBuiltinEnvironmentSnapshot {}),
         .native_definitions  = Vec<lito::frontend::preprocessor::SharedMacroDefinition>::make(),
         .command_line_macros = Vec<lito::frontend::preprocessor::PredefinedMacroOperation>::make(),
-        .semantic_context     = BuiltinSemanticContext {},
-        .include_search       = rstd::move(include_search),
-        .query_command        = Vec<String>::make(),
-        .identity             = String::make(),
-        .date                 = String::make(),
-        .time                 = String::make(),
+        .semantic_context    = BuiltinSemanticContext {},
+        .include_search      = rstd::move(include_search),
+        .query_command       = Vec<String>::make(),
+        .identity            = String::make(),
+        .date                = String::make(),
+        .time                = String::make(),
     };
     auto resolver = ClangIncludeResolver(environment);
     auto result   = resolver.resolve(lito::frontend::preprocessor::IncludeRequest {

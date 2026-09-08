@@ -13,19 +13,17 @@ using namespace rstd::literals;
 export namespace lito::toolchain
 {
 
-auto include_candidate_path(ref<rstd::path::Path> directory,
-                            ref<str>                  name,
-                            bool                      framework) -> PathBuf {
+auto include_candidate_path(ref<rstd::path::Path> directory, ref<str> name, bool framework)
+    -> PathBuf {
     if (! framework) return PathBuf::from(directory).join(PathBuf::from(name).as_path());
 
-    auto separator = name.find("/"_str);
-    if (separator.is_none() || *separator == usize {} || *separator + usize(1) >= name.len()) {
+    auto parts = name.split_once("/"_str);
+    if (parts.is_none() || parts->get<0>().is_empty() || parts->get<1>().is_empty()) {
         return PathBuf::from(directory).join(PathBuf::from(name).as_path());
     }
 
-    auto parts             = name.split_at(*separator);
-    auto framework_name    = parts.template get<0>();
-    auto framework_header  = parts.template get<1>();
+    auto framework_name    = parts->get<0>();
+    auto framework_header  = parts->get<1>();
     auto framework_bundle  = rstd::format("{}.framework", framework_name);
     auto framework_headers = PathBuf::from(directory)
                                  .join(PathBuf::from(framework_bundle.as_str()).as_path())
@@ -158,7 +156,7 @@ public:
             }
         }
         for (auto index = usize(1); index <= environment_.include_search.len(); ++index) {
-            const auto& entry = environment_.include_search[index - usize(1)];
+            const auto& entry    = environment_.include_search[index - usize(1)];
             auto        resolved = candidate(entry.directory.as_path(),
                                              request.name.as_str(),
                                              index,
