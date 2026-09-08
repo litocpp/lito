@@ -170,6 +170,7 @@ class PackageGraphResolver {
     PreparedRegistryMap        registry_sources_ { PreparedRegistryMap::make() };
     Vec<PreparedRegistryPatch> registry_patches_;
     StringSet                  discovered_ { StringSet::make() };
+    StringSet                  builtin_packages_ { StringSet::make() };
     usize                      jobs_ { usize(1) };
 
     auto prepare_registry_patches() -> PackageResult<empty> {
@@ -257,6 +258,7 @@ class PackageGraphResolver {
             return Ok(source.clone());
         }
         if (! source.is_Builtin()) return Ok(source.clone());
+        builtin_packages_.insert(String::make(expected_name), empty {});
         auto id       = source.as_Builtin().id.as_str();
         auto override = sources_.builtin_package(id);
         if (override.is_some() && (*override)->is_Registry()) {
@@ -1146,6 +1148,10 @@ public:
             [](const ResolvedProjectRoot& left, const ResolvedProjectRoot& right) {
                 return left.name < right.name;
             });
+        auto builtin_packages = Vec<String>::with_capacity(builtin_packages_.len());
+        for (auto name : builtin_packages_.keys()) {
+            builtin_packages.push(name->clone());
+        }
         return ResolvedPackageGraph {
             .name              = rstd::move(name),
             .roots             = rstd::move(roots),
@@ -1155,6 +1161,7 @@ public:
             .root_is_workspace = root_is_workspace,
             .profile           = rstd::move(profile),
             .sources           = sources_.finish(),
+            .builtin_packages  = rstd::move(builtin_packages),
             .packages          = rstd::move(packages_),
         };
     }

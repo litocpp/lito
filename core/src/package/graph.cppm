@@ -121,6 +121,7 @@ struct ResolvedPackageGraph {
     bool                                     root_is_workspace { false };
     lito::manifest::ProjectProfile           profile;
     Vec<lito::source::ResolvedPackageSource> sources;
+    Vec<String>                              builtin_packages;
     Vec<ResolvedPackage>                     packages;
 };
 

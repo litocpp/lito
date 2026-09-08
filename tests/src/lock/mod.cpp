@@ -92,6 +92,43 @@ sources = ["lib.cppm"]
         return materialize(name, files);
     }
 
+    auto project_with_builtin_dependency(ref<str> name)
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
+        const ProjectFile files[] = {
+            {
+                "lito.toml"_str,
+                R"toml([package]
+name = "fixture-lock"
+version = "1.0.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-lock"
+sources = ["main.cpp"]
+
+[dependencies.fixture-lock-dependency]
+builtin = "fixture"
+)toml"_str,
+            },
+            { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+            {
+                "dependency/lito.toml"_str,
+                R"toml([package]
+name = "fixture-lock-dependency"
+version = "1.0.0"
+
+[lib]
+name = "fixture-lock-dependency"
+module = "fixture.lock.dependency"
+archive = "fixture-lock-dependency"
+sources = ["lib.cppm"]
+)toml"_str,
+            },
+            { "dependency/lib.cppm"_str, "export module fixture.lock.dependency;\n"_str },
+        };
+        return materialize(name, files);
+    }
+
     auto current(ref<rstd::path::Path> directory) -> bool {
         auto session = lito::lock::load_lock_session(directory, true);
         if (session.is_err()) return false;
@@ -139,18 +176,24 @@ TEST_F(Lock, VersionOneUsesPackageNames) {
 }
 
 TEST_F(Lock, BuiltinPackagesAreNotWritten) {
-    auto fixture = project_with_dependency("builtin-package"_str);
+    auto fixture = project_with_builtin_dependency("builtin-package"_str);
     ASSERT_TRUE(fixture.is_ok());
     auto session = lito::lock::load_lock_session(fixture->root.as_path(), false);
     ASSERT_TRUE(session.is_ok());
     auto options = session->take_resolution_options();
+    options.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {
+        .id     = String::make("fixture"_str),
+        .source = lito::source::BuiltinPackageSource::Path(
+            fixture->root.join(PathBuf::from("dependency"_str).as_path())),
+    });
     auto graph = lito::package::resolve_package_graph(fixture->root.as_path(), rstd::move(options));
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(2));
-    for (auto& package : graph->packages) {
+    ASSERT_EQ(graph->builtin_packages.len(), usize(1));
+    EXPECT_EQ(graph->builtin_packages[usize {}].as_str(), "fixture-lock-dependency"_str);
+    for (const auto& package : graph->packages) {
         if (package.manifest.name.as_str() != "fixture-lock-dependency"_str) continue;
-        package.source.kind    = lito::source::PackageSourceKind::Builtin;
-        package.source.builtin = String::make("fixture"_str);
+        EXPECT_EQ(package.source.kind, lito::source::PackageSourceKind::Path);
     }
     auto synchronized = lito::lock::sync_lock(*graph, rstd::move(session).unwrap());
     ASSERT_TRUE(synchronized.is_ok());

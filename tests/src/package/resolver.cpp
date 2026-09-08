@@ -901,6 +901,8 @@ builtin = "qt"
         return;
     }
     ASSERT_EQ(graph->packages.len(), usize(2));
+    ASSERT_EQ(graph->builtin_packages.len(), usize(1));
+    EXPECT_EQ(graph->builtin_packages[usize {}].as_str(), "lito-qt"_str);
 
     const lito::package::ResolvedPackage* consumer = nullptr;
     const lito::package::ResolvedPackage* provider = nullptr;
@@ -1104,6 +1106,8 @@ sources = ["lib.cppm"]
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
         return;
     }
+    ASSERT_EQ(selected->graph.builtin_packages.len(), usize(1));
+    EXPECT_EQ(selected->graph.builtin_packages[usize {}].as_str(), "pmacro"_str);
 
     const lito::package::ResolvedPackage* consumer = nullptr;
     const lito::package::ResolvedPackage* provider = nullptr;

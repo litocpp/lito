@@ -124,17 +124,14 @@ auto locked_source_wire(const LockedSource& source) -> LockedSourceWire {
 auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_version)
     -> LockResult<lito::lock::wire::Document> {
     auto builtin_packages = StringSet::make();
-    for (const auto& package : graph.packages) {
-        if (package.source.kind == lito::source::PackageSourceKind::Builtin) {
-            builtin_packages.insert(package.manifest.name.clone(), empty {});
-        }
+    for (const auto& package : graph.builtin_packages) {
+        builtin_packages.insert(package.clone(), empty {});
     }
 
     auto package_indices = Vec<usize>::with_capacity(graph.packages.len());
     for (usize index {}; index < graph.packages.len(); ++index) {
-        if (graph.packages[index].source.kind != lito::source::PackageSourceKind::Builtin) {
-            package_indices.push(usize(index));
-        }
+        if (builtin_packages.contains_key(graph.packages[index].manifest.name.as_str())) continue;
+        package_indices.push(usize(index));
     }
     rstd::slice_::sort_unstable_by(
         package_indices.as_mut_slice().as_mut_ref(), [&graph](usize left, usize right) {
