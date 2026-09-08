@@ -28,9 +28,10 @@ struct IncludeSearchEntry {
 };
 
 struct BuiltinSemanticContext {
-    String language_standard;
-    bool   rtti { false };
-    bool   exceptions { false };
+    String     language_standard;
+    TargetInfo target;
+    bool       rtti { false };
+    bool       exceptions { false };
 };
 
 enum class PreprocessorLanguage

@@ -2010,6 +2010,7 @@ private:
                     toolchain::BuiltinSemanticContext {
                         .language_standard =
                             String::make(lito::manifest::c_standard_name(c.standard)),
+                        .target = compile_target_.info.clone(),
                     },
                 .key             = rstd::move(key),
                 .language        = toolchain::PreprocessorLanguage::C,
@@ -2053,6 +2054,7 @@ private:
             .semantic =
                 toolchain::BuiltinSemanticContext {
                     .language_standard = cpp_options.language.standard.clone(),
+                    .target            = compile_target_.info.clone(),
                     .rtti              = cpp_options.language.rtti,
                     .exceptions        = cpp_options.language.exceptions,
                 },

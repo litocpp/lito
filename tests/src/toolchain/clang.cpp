@@ -15,6 +15,37 @@ using namespace lito;
 using namespace lito::toolchain;
 using namespace lito_test;
 
+namespace
+{
+
+auto target_builtin_environment(lito::system::TargetInfo target) -> PreprocessorEnvironment {
+    return PreprocessorEnvironment {
+        .key                 = PreprocessorEnvironmentKey::make("target-builtin-test"_str,
+                                                                PathBuf::from("."_str).as_path()),
+        .builtin_environment = rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(
+            ClangBuiltinEnvironmentSnapshot {}),
+        .native_definitions  = Vec<lito::frontend::preprocessor::SharedMacroDefinition>::make(),
+        .command_line_macros = Vec<lito::frontend::preprocessor::PredefinedMacroOperation>::make(),
+        .semantic_context =
+            BuiltinSemanticContext {
+                .target = rstd::move(target),
+            },
+        .include_search = Vec<IncludeSearchEntry>::make(),
+        .query_command  = Vec<String>::make(),
+        .identity       = String::make(),
+        .date           = String::make(),
+        .time           = String::make(),
+    };
+}
+
+template<typename Query>
+auto target_builtin(ClangBuiltinProvider& provider, ref<str> argument) -> i64 {
+    return provider.evaluate(lito::frontend::preprocessor::BuiltinQueryKey::make<Query>(argument))
+        .unwrap();
+}
+
+} // namespace
+
 TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
     auto directory = rstd::fs::TempDir::make("lito-framework-include-test"_str);
     ASSERT_TRUE(directory.is_ok());
@@ -57,6 +88,31 @@ TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
     EXPECT_EQ(result->as_ref()->path.as_path(), canonical->as_path());
     EXPECT_EQ(result->as_ref()->search_index, usize(1));
     EXPECT_TRUE(result->as_ref()->system);
+}
+
+TEST(ClangPreprocessor, EvaluatesTargetBuiltinsFromEffectiveTarget) {
+    namespace preprocessor = lito::frontend::preprocessor;
+
+    auto macos_environment = target_builtin_environment(
+        lito::system::parse_target_info("x86_64-apple-darwin25.6.0"_str).unwrap());
+    auto macos = ClangBuiltinProvider(macos_environment, PathBuf::from("."_str).as_path());
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetArchQuery>(macos, "x86_64"_str), i64(1));
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetArchQuery>(macos, "aarch64"_str), i64 {});
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetVendorQuery>(macos, "APPLE"_str), i64(1));
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetOsQuery>(macos, "macos"_str), i64(1));
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetOsQuery>(macos, "darwin"_str), i64(1));
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetOsQuery>(macos, "linux"_str), i64 {});
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetEnvironmentQuery>(macos, "unknown"_str), i64(1));
+
+    auto android_environment = target_builtin_environment(
+        lito::system::parse_target_info("aarch64-unknown-linux-android24"_str).unwrap());
+    auto android = ClangBuiltinProvider(android_environment, PathBuf::from("."_str).as_path());
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetOsQuery>(android, "linux"_str), i64(1));
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetOsQuery>(android, "android"_str), i64 {});
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetEnvironmentQuery>(android, "android"_str),
+              i64(1));
+    EXPECT_EQ(target_builtin<preprocessor::IsTargetEnvironmentQuery>(android, "android24"_str),
+              i64(1));
 }
 
 TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
