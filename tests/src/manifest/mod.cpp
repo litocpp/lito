@@ -212,6 +212,77 @@ registry = "internal"
     EXPECT_FALSE(source.requirement.matches(*rejected));
 }
 
+TEST_F(Manifest, RegistryDependencyVersionShorthandMatchesTableDeclaration) {
+    auto project = manifest("registry-dependency-version-shorthand"_str, R"toml([package]
+name = "fixture-registry-dependency-version-shorthand"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-registry-dependency-version-shorthand"
+link-stdlib = false
+
+[dependencies]
+shorthand-package = "^1.4"
+table-package = { version = "^1.4" }
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(2));
+    for (const auto& dependency : loaded->dependencies) {
+        ASSERT_TRUE(dependency.source.resolution.is_Registry());
+        ASSERT_TRUE(dependency.source.publication.is_some());
+        const auto& source = dependency.source.resolution.as_Registry();
+        EXPECT_TRUE(source.registry.is_none());
+        EXPECT_EQ(source.package.as_str(), dependency.name.as_str());
+        EXPECT_EQ(source.requirement.text(), "^1.4"_str);
+        EXPECT_TRUE(dependency.usage.is_none());
+        EXPECT_TRUE(dependency.is_public.is_none());
+        EXPECT_TRUE(dependency.features.is_none());
+        EXPECT_TRUE(dependency.default_features.is_none());
+    }
+
+    auto standalone = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(standalone.is_ok());
+    EXPECT_TRUE(standalone->as_str().contains("[dependencies.shorthand-package]"_str));
+    EXPECT_TRUE(standalone->as_str().contains("version = \"^1.4\""_str));
+}
+
+TEST_F(Manifest, RegistryDependencyVersionShorthandRejectsUnsupportedShapes) {
+    constexpr ref<str> declarations[] = {
+        "[dependencies]\ndependency = \"\"\n"_str,
+        "[dependencies]\ndependency = 1\n"_str,
+        "[dev-dependencies]\ndependency = \"0.1.0\"\n"_str,
+        "[runtime-dependencies]\ndependency = \"0.1.0\"\n"_str,
+    };
+    auto index = usize {};
+    for (auto declaration : declarations) {
+        auto contents = rstd::format(R"toml([package]
+name = "fixture-registry-dependency-version-shorthand-{}"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-registry-dependency-version-shorthand-{}"
+link-stdlib = false
+
+{})toml",
+                                     index,
+                                     index,
+                                     declaration);
+        auto name     = rstd::format("registry-dependency-version-shorthand-invalid-{}", index);
+        auto project  = manifest(name.as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        EXPECT_TRUE(loaded.is_err());
+        ++index;
+    }
+}
+
 TEST_F(Manifest, DependencyUsageNormalizesScalarAndArrayForms) {
     auto project = manifest("dependency-usage-facets"_str, R"toml([package]
 name = "fixture-dependency-usage-facets"
@@ -2069,6 +2140,50 @@ pub = true
     ASSERT_TRUE(contents.is_ok());
     EXPECT_FALSE(contents->as_str().contains("example.invalid"_str));
     EXPECT_FALSE(contents->as_str().contains("# normalized"_str));
+}
+
+TEST_F(Manifest, RegistryDependencyEditUsesAndPromotesVersionShorthand) {
+    auto project = manifest("registry-dependency-shorthand-edit"_str, R"toml([package]
+name = "fixture-registry-dependency-shorthand-edit"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-registry-dependency-shorthand-edit"
+link-stdlib = false
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto package = lito::registry::RegistryPackageName::parse("sample"_str);
+    ASSERT_TRUE(package.is_ok());
+
+    auto initial_requirement = lito::registry::VersionRequirement::parse("0.4"_str);
+    ASSERT_TRUE(initial_requirement.is_ok());
+    auto added = lito::manifest::add_registry_dependency(
+        project->root.as_path(), *package, *initial_requirement);
+    ASSERT_TRUE(added.is_ok());
+    auto contents = rstd::fs::read_to_string(added->path.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    EXPECT_TRUE(contents->as_str().contains("sample = \"0.4\""_str));
+
+    auto updated_requirement = lito::registry::VersionRequirement::parse("^0.5"_str);
+    ASSERT_TRUE(updated_requirement.is_ok());
+    auto updated = lito::manifest::add_registry_dependency(
+        project->root.as_path(), *package, *updated_requirement);
+    ASSERT_TRUE(updated.is_ok());
+    contents = rstd::fs::read_to_string(updated->path.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    EXPECT_TRUE(contents->as_str().contains("sample = \"^0.5\""_str));
+
+    auto promoted = lito::manifest::add_registry_dependency(
+        project->root.as_path(), *package, *updated_requirement, Some(String::make("litocpp"_str)));
+    ASSERT_TRUE(promoted.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(1));
+    ASSERT_TRUE(loaded->dependencies[usize {}].source.resolution.is_Registry());
+    const auto& source = loaded->dependencies[usize {}].source.resolution.as_Registry();
+    ASSERT_TRUE(source.registry.is_some());
+    EXPECT_EQ(source.registry->as_str(), "litocpp"_str);
+    EXPECT_EQ(source.requirement.text(), "^0.5"_str);
 }
 
 TEST_F(Manifest, ProjectInitializationCreatesALoadableBinaryPackage) {

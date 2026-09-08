@@ -600,6 +600,14 @@ auto parse_package_dependency_source(const Toml& specification,
     });
 }
 
+auto parse_package_dependency_version(ref<str> version, ref<str> context, ref<str> dependency_name)
+    -> ManifestSchemaResult<PackageDependencySource> {
+    auto fields = Table::make();
+    fields.insert(String::make("version"_str), Toml::String(String::make(version)));
+    auto specification = Toml::Table(rstd::move(fields));
+    return parse_package_dependency_source(specification, context, dependency_name);
+}
+
 struct ParsedDependencies {
     Vec<DeclaredDependency>           explicit_dependencies;
     Vec<WorkspaceDependencyReference> workspace_dependencies;
@@ -624,7 +632,26 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
                 name.as_str()));
         }
         auto specification = (**table).get(name.as_str());
-        auto fields        = table_value(**specification, context.as_str());
+        auto shorthand     = (**specification).as_str();
+        if (! development && shorthand.is_some()) {
+            auto source =
+                parse_package_dependency_version(*shorthand, context.as_str(), name.as_str());
+            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+            result.explicit_dependencies.push(DeclaredDependency {
+                .name             = name.clone(),
+                .source           = rstd::move(source).unwrap(),
+                .usage            = Option<lito::dependency::DependencyUsage> {},
+                .is_public        = Option<bool> {},
+                .features         = Option<Vec<String>> {},
+                .default_features = Option<bool> {},
+            });
+            continue;
+        }
+        if (! development && (**specification).as_table().is_none()) {
+            return manifest_schema_failure<ParsedDependencies>(rstd::format(
+                "{} must be a Registry version string or dependency table", context.as_str()));
+        }
+        auto fields = table_value(**specification, context.as_str());
         if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
         rstd_try(reject_unknown(
             **fields, context.as_str(), development ? dev_dependency_key : dependency_key));
@@ -765,7 +792,22 @@ auto parse_workspace_dependencies(Option<ref<Toml>> value)
                 rstd::format("workspace dependency alias '{}' is invalid", name.as_str()));
         }
         auto specification = (**table).get(name.as_str());
-        auto fields        = table_value(**specification, context.as_str());
+        auto shorthand     = (**specification).as_str();
+        if (shorthand.is_some()) {
+            auto source =
+                parse_package_dependency_version(*shorthand, context.as_str(), name.as_str());
+            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+            result.push(WorkspaceDependencyDefinition {
+                .name   = name.clone(),
+                .source = rstd::move(source).unwrap(),
+            });
+            continue;
+        }
+        if ((**specification).as_table().is_none()) {
+            return manifest_schema_failure<Vec<WorkspaceDependencyDefinition>>(rstd::format(
+                "{} must be a Registry version string or dependency table", context.as_str()));
+        }
+        auto fields = table_value(**specification, context.as_str());
         if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
         rstd_try(reject_unknown(**fields, context.as_str(), workspace_dependency_key));
         auto source =

@@ -297,3 +297,114 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(member_graph->packages.len(), usize(2));
     EXPECT_EQ(member_graph->packages[usize {}].dependencies.len(), usize(1));
 }
+
+TEST_F(Workspace, WorkspaceDependencyVersionShorthandMaterializesForMembers) {
+    const ProjectFile files[] = {
+        {
+            "lito.toml"_str,
+            R"toml([workspace]
+name = "fixture-workspace-registry-shorthand"
+members = ["app"]
+
+[workspace.dependencies]
+fixture-registry-library = "^1.4"
+)toml"_str,
+        },
+        {
+            "app/lito.toml"_str,
+            R"toml([package]
+name = "fixture-workspace-registry-shorthand-app"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-workspace-registry-shorthand-app"
+link-stdlib = false
+
+[dependencies.fixture-registry-library]
+workspace = true
+)toml"_str,
+        },
+    };
+    auto project = materialize("workspace-registry-version-shorthand"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto document = lito::manifest::load_manifest_document(project->root.as_path());
+    ASSERT_TRUE(document.is_ok());
+    ASSERT_TRUE(document->workspace.is_some());
+    ASSERT_EQ(document->workspace->dependencies.len(), usize(1));
+    const auto& definition = document->workspace->dependencies[usize {}];
+    ASSERT_TRUE(definition.source.resolution.is_Registry());
+    EXPECT_EQ(definition.source.resolution.as_Registry().requirement.text(), "^1.4"_str);
+
+    auto catalog =
+        lito::workspace::load_workspace_catalog(rstd::move(document->workspace).unwrap());
+    ASSERT_TRUE(catalog.is_ok());
+    auto app = catalog->package("fixture-workspace-registry-shorthand-app"_str);
+    ASSERT_TRUE(app.is_some());
+    ASSERT_EQ((**app).dependencies.len(), usize(1));
+    const auto& dependency = (**app).dependencies[usize {}];
+    ASSERT_TRUE(dependency.source.resolution.is_Registry());
+    EXPECT_EQ(dependency.source.resolution.as_Registry().requirement.text(), "^1.4"_str);
+    ASSERT_TRUE(dependency.declaration_root.is_some());
+    EXPECT_EQ(dependency.declaration_root->as_path(), project->root.as_path());
+}
+
+TEST_F(Workspace, WorkspaceDependencyVersionShorthandRejectsUnsupportedShapes) {
+    constexpr ref<str> declarations[] = {
+        "dependency = \"\""_str,
+        "dependency = 1"_str,
+    };
+    auto index = usize {};
+    for (auto declaration : declarations) {
+        auto contents = rstd::format(R"toml([workspace]
+name = "fixture-workspace-registry-shorthand-invalid-{}"
+members = ["app"]
+
+[workspace.dependencies]
+{}
+)toml",
+                                     index,
+                                     declaration);
+        auto name     = rstd::format("workspace-registry-version-shorthand-invalid-{}", index);
+        auto project  = manifest(name.as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        auto error = rstd::move(loaded).unwrap_err();
+        EXPECT_TRUE(
+            error_chain_text(error).as_str().contains("workspace dependency 'dependency'"_str));
+        ++index;
+    }
+}
+
+TEST_F(Workspace, WorkspaceRegistryDependencyEditUsesVersionShorthand) {
+    auto project = manifest("workspace-registry-version-shorthand-edit"_str, R"toml([workspace]
+name = "fixture-workspace-registry-shorthand-edit"
+members = ["app"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto package     = lito::registry::RegistryPackageName::parse("sample"_str);
+    auto requirement = lito::registry::VersionRequirement::parse("0.4"_str);
+    ASSERT_TRUE(package.is_ok());
+    ASSERT_TRUE(requirement.is_ok());
+
+    auto added =
+        lito::manifest::add_registry_dependency(project->root.as_path(), *package, *requirement);
+    ASSERT_TRUE(added.is_ok());
+    auto contents = rstd::fs::read_to_string(added->path.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    EXPECT_TRUE(contents->as_str().contains("sample = \"0.4\""_str));
+
+    auto promoted = lito::manifest::add_registry_dependency(
+        project->root.as_path(), *package, *requirement, Some(String::make("litocpp"_str)));
+    ASSERT_TRUE(promoted.is_ok());
+    auto document = lito::manifest::load_manifest_document(project->root.as_path());
+    ASSERT_TRUE(document.is_ok());
+    ASSERT_TRUE(document->workspace.is_some());
+    ASSERT_EQ(document->workspace->dependencies.len(), usize(1));
+    ASSERT_TRUE(document->workspace->dependencies[usize {}].source.resolution.is_Registry());
+    const auto& source =
+        document->workspace->dependencies[usize {}].source.resolution.as_Registry();
+    ASSERT_TRUE(source.registry.is_some());
+    EXPECT_EQ(source.registry->as_str(), "litocpp"_str);
+    EXPECT_EQ(source.requirement.text(), "0.4"_str);
+}

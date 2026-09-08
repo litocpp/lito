@@ -12,6 +12,17 @@ package aliases are not supported:
 - `version = "REQUIREMENT"` for a Registry package, optionally with `registry = "NAME"`;
 - `workspace = true` to reuse `[workspace.dependencies.NAME]`.
 
+A dependency from the default Registry may use its version requirement directly as a string:
+
+```toml
+[dependencies]
+geometry = "^1.4"
+```
+
+This is equivalent to `geometry = { version = "^1.4" }`. Use the table form when selecting a
+named Registry or declaring `pub`, `usage`, `features`, or `default-features`. The string form is not
+accepted by `dev-dependencies` or `runtime-dependencies`.
+
 `commit` is a full 40-digit hexadecimal Git object ID. Git URLs and selectors must be non-empty, may
 not start with `-`, and URLs may not contain a fragment.
 
@@ -89,6 +100,15 @@ Runtime dependencies use the same package sources and do not accept `pub`, `usag
 
 The workspace declaration provides exactly one package source. It does not contain `pub`, `usage`,
 or feature requests:
+
+```toml
+[workspace.dependencies]
+geometry = "^1.4"
+```
+
+The string form declares a package from the default Registry and is equivalent to
+`geometry = { version = "^1.4" }`. Use a dependency table for path, Git, builtin, or named Registry
+sources:
 
 ```toml
 [workspace.dependencies.geometry]

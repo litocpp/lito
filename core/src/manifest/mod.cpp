@@ -805,29 +805,42 @@ auto lito::manifest::add_registry_dependency(ref<rstd::path::Path> requested_dir
         return manifest_edit_failure<ManifestDependencyEdit>(path.as_path(),
                                                              "dependencies must be a table"_str);
     }
-    auto dependency = (**dependency_table).get_mut(package.as_str());
-    if (dependency.is_none()) {
-        (**dependency_table).insert(String::make(package.as_str()), Toml::Table(Table::make()));
-        dependency = (**dependency_table).get_mut(package.as_str());
-    }
-    auto fields = (**dependency).as_table_mut();
-    if (fields.is_none()) {
-        return manifest_edit_failure<ManifestDependencyEdit>(path.as_path(),
-                                                             "dependency must be a table"_str);
-    }
-    constexpr ref<str> source_keys[] = {
-        "path"_str,   "git"_str,     "branch"_str,    "tag"_str,     "rev"_str,
-        "commit"_str, "builtin"_str, "workspace"_str, "version"_str, "registry"_str,
-    };
-    for (auto key : source_keys) (void)(**fields).remove(key);
-    (**fields).insert(String::make("version"_str), Toml::String(String::make(requirement.text())));
-    if (registry.is_some()) {
-        if (registry->is_empty()) {
-            return manifest_edit_failure<ManifestDependencyEdit>(
-                path.as_path(), "Registry name must not be empty"_str);
+    auto       dependency = (**dependency_table).get_mut(package.as_str());
+    const auto use_shorthand =
+        registry.is_none() && (dependency.is_none() || (**dependency).as_str().is_some());
+    if (use_shorthand) {
+        auto version = Toml::String(String::make(requirement.text()));
+        if (dependency.is_some())
+            **dependency = rstd::move(version);
+        else
+            (**dependency_table).insert(String::make(package.as_str()), rstd::move(version));
+    } else {
+        if (dependency.is_none()) {
+            (**dependency_table).insert(String::make(package.as_str()), Toml::Table(Table::make()));
+            dependency = (**dependency_table).get_mut(package.as_str());
+        } else if ((**dependency).as_str().is_some()) {
+            **dependency = Toml::Table(Table::make());
         }
-        (**fields).insert(String::make("registry"_str),
-                          Toml::String(rstd::move(registry).unwrap()));
+        auto fields = (**dependency).as_table_mut();
+        if (fields.is_none()) {
+            return manifest_edit_failure<ManifestDependencyEdit>(
+                path.as_path(), "dependency must be a Registry version string or table"_str);
+        }
+        constexpr ref<str> source_keys[] = {
+            "path"_str,   "git"_str,     "branch"_str,    "tag"_str,     "rev"_str,
+            "commit"_str, "builtin"_str, "workspace"_str, "version"_str, "registry"_str,
+        };
+        for (auto key : source_keys) (void)(**fields).remove(key);
+        (**fields).insert(String::make("version"_str),
+                          Toml::String(String::make(requirement.text())));
+        if (registry.is_some()) {
+            if (registry->is_empty()) {
+                return manifest_edit_failure<ManifestDependencyEdit>(
+                    path.as_path(), "Registry name must not be empty"_str);
+            }
+            (**fields).insert(String::make("registry"_str),
+                              Toml::String(rstd::move(registry).unwrap()));
+        }
     }
     auto validated = assemble_manifest_document(rstd::move(root), path.clone(), document.clone());
     if (validated.is_err()) {
