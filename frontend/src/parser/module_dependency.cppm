@@ -56,8 +56,7 @@ struct ScopedAttributeParseState {
 auto parse_name(const Vec<lexical::Token>& tokens, usize start, ref<str> context)
     -> lexical::Result<Option<ParsedName>> {
     if (start >= tokens.len()) return Ok(None());
-    if (tokens[start].text.as_str() == "<"_str ||
-        tokens[start].kind == lexical::TokenKind::StringLiteral ||
+    if (tokens[start].text == "<"_str || tokens[start].kind == lexical::TokenKind::StringLiteral ||
         tokens[start].kind == lexical::TokenKind::HeaderName) {
         return frontend_failure<Option<ParsedName>>(
             rstd::format("{} uses an unsupported header unit at line {}",
@@ -66,23 +65,23 @@ auto parse_name(const Vec<lexical::Token>& tokens, usize start, ref<str> context
     }
     auto index  = start;
     auto result = String::make();
-    if (tokens[index].text.as_str() == ":"_str) {
+    if (tokens[index].text == ":"_str) {
         result.push_ascii(':');
         ++index;
     }
     if (index >= tokens.len() || tokens[index].kind != lexical::TokenKind::Identifier) {
         return Ok(None());
     }
-    result.push_str(tokens[index].text.as_str());
+    result.push_str(tokens[index].text.utf8().unwrap());
     ++index;
     while (index + usize(1) < tokens.len() &&
-           (tokens[index].text.as_str() == "."_str || tokens[index].text.as_str() == ":"_str) &&
+           (tokens[index].text == "."_str || tokens[index].text == ":"_str) &&
            tokens[index + usize(1)].kind == lexical::TokenKind::Identifier) {
-        result.push_str(tokens[index].text.as_str());
-        result.push_str(tokens[index + usize(1)].text.as_str());
+        result.push_str(tokens[index].text.utf8().unwrap());
+        result.push_str(tokens[index + usize(1)].text.utf8().unwrap());
         index += usize(2);
     }
-    if (index >= tokens.len() || tokens[index].text.as_str() != ";"_str) return Ok(None());
+    if (index >= tokens.len() || tokens[index].text != ";"_str) return Ok(None());
     return Ok(Some(ParsedName { .value = rstd::move(result) }));
 }
 
@@ -119,6 +118,9 @@ public:
 
     auto consume(slice<lexical::Token> tokens) -> lexical::Result<empty> {
         for (const auto& token : tokens) {
+            if (token.kind == lexical::TokenKind::Identifier && token.text.utf8().is_err())
+                return Err(lexical::Error::at(String::make("invalid UTF-8 identifier"_str),
+                                              token.expansion));
             while (states_.len() <= token.expansion.source) states_.emplace_back();
             while (attribute_states_.len() <= token.expansion.source) {
                 attribute_states_.emplace_back();
@@ -129,7 +131,7 @@ public:
                                      scoped_attributes_[token.expansion.source]);
             auto& state = states_[token.expansion.source];
             if (token.kind == lexical::TokenKind::Newline) continue;
-            auto text = token.text.as_str();
+            const auto& text = token.text;
             if (text == "{"_str) {
                 ++state.brace_depth;
                 state.candidate        = Vec<lexical::Token>::make();
@@ -164,7 +166,7 @@ public:
                 continue;
             }
             if (state.candidate.len() == usize(1) &&
-                state.candidate[usize {}].text.as_str() == "export"_str && text != "module"_str &&
+                state.candidate[usize {}].text == "export"_str && text != "module"_str &&
                 text != "import"_str) {
                 state.candidate        = Vec<lexical::Token>::make();
                 state.ignore_statement = text != ";"_str;
@@ -240,7 +242,7 @@ private:
                                          ScopedAttributeParseState& state,
                                          Vec<ScopedAttributeUse>&   attributes) -> void {
         if (token.kind == lexical::TokenKind::Newline) return;
-        const auto text = token.text.as_str();
+        const auto& text = token.text;
         if (! state.in_list) {
             if (text == "["_str) {
                 if (state.first_open) {
@@ -304,9 +306,9 @@ private:
         if (state.complete) return;
         if (token.kind == lexical::TokenKind::Identifier) {
             if (state.scope.is_none()) {
-                state.scope = Some(String::make(text));
+                state.scope = Some(String::make(text.utf8().unwrap()));
             } else if (state.separator) {
-                append_scoped_attribute(attributes, state.scope->as_str(), text);
+                append_scoped_attribute(attributes, state.scope->as_str(), text.utf8().unwrap());
                 state.complete = true;
             } else {
                 state.complete = true;
@@ -322,12 +324,12 @@ private:
 
     auto parse_candidate(const Vec<lexical::Token>& candidate) -> lexical::Result<empty> {
         auto declaration = usize {};
-        auto exported    = candidate[usize {}].text.as_str() == "export"_str;
+        auto exported    = candidate[usize {}].text == "export"_str;
         if (exported) declaration = usize(1);
         if (declaration >= candidate.len()) return Ok(empty {});
-        auto keyword = candidate[declaration].text.as_str();
+        auto keyword = candidate[declaration].text.utf8().unwrap();
         if (keyword == "module"_str && declaration + usize(1) < candidate.len() &&
-            candidate[declaration + usize(1)].text.as_str() == ";"_str) {
+            candidate[declaration + usize(1)].text == ";"_str) {
             return Ok(empty {});
         }
         if (keyword == "import"_str && exported &&

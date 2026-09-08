@@ -14,9 +14,12 @@ using PpResult = lito::frontend::preprocessor::Result<T>;
 class MemorySources {
 public:
     auto add(ref<str> path, ref<str> contents) -> void {
-        files_.insert(String::make(path), String::make(contents));
+        add_bytes(path, Vec<u8>::from(contents.as_bytes()));
     }
 
+    auto add_bytes(ref<str> path, Vec<u8> contents) -> void {
+        files_.insert(String::make(path), rstd::move(contents));
+    }
     auto contains(ref<str> path) const -> bool { return files_.contains_key(path); }
 
     auto load(ref<rstd::path::Path> path, SourceLoadRole role) -> PpResult<SharedScanFileStorage> {
@@ -34,8 +37,9 @@ public:
         if (contents.is_none()) {
             return Err(lito::frontend::preprocessor::Error::make("memory source is missing"_str));
         }
-        auto snapshot = make_source_snapshot(SourceBuffer { .path = rstd::path::PathBuf::from(path),
-                                                            .contents = (**contents).clone() });
+        auto snapshot = make_source_snapshot(rstd::path::PathBuf::from(path),
+                                             lito::frontend::lexical::SourceText::from_bytes(
+                                                 Vec<u8>::from((**contents).as_slice())));
         auto source   = SourceFile { .snapshot = snapshot.clone() };
         auto lexed    = lex_scan_file(source);
         if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
@@ -46,7 +50,7 @@ public:
     usize include_loads {};
 
 private:
-    rstd::collections::BTreeMap<String, String> files_;
+    rstd::collections::BTreeMap<String, Vec<u8>> files_;
 };
 
 class MemoryIncludes {
@@ -183,8 +187,8 @@ public:
 
 auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second) -> bool {
     for (auto index = usize {}; index + usize(1) < tokens.len(); ++index) {
-        if (tokens[index].text.as_str() == first &&
-            tokens[index + usize(1)].text.as_str() == second) {
+        if (tokens[index].text.utf8().unwrap() == first &&
+            tokens[index + usize(1)].text.utf8().unwrap() == second) {
             return true;
         }
     }
@@ -193,7 +197,7 @@ auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second
 
 auto contains_token(const Vec<Token>& tokens, ref<str> value) -> bool {
     for (const auto& token : tokens) {
-        if (token.text.as_str() == value) return true;
+        if (token.text.utf8().unwrap() == value) return true;
     }
     return false;
 }
@@ -201,9 +205,9 @@ auto contains_token(const Vec<Token>& tokens, ref<str> value) -> bool {
 auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second, ref<str> third)
     -> bool {
     for (auto index = usize {}; index + usize(2) < tokens.len(); ++index) {
-        if (tokens[index].text.as_str() == first &&
-            tokens[index + usize(1)].text.as_str() == second &&
-            tokens[index + usize(2)].text.as_str() == third) {
+        if (tokens[index].text.utf8().unwrap() == first &&
+            tokens[index + usize(1)].text.utf8().unwrap() == second &&
+            tokens[index + usize(2)].text.utf8().unwrap() == third) {
             return true;
         }
     }
@@ -265,6 +269,121 @@ TEST(Preprocessor, IncludeAndProbeShareOrderedContextsAndPopFrames) {
     EXPECT_EQ(includes.traces[usize(4)].as_str(), "leaf.h|/main.cpp:0"_str);
 }
 
+auto invalid_source_bytes(ref<str> prefix, ref<str> suffix) -> Vec<u8> {
+    auto bytes = Vec<u8>::from(prefix.as_bytes());
+    bytes.push(u8(0xA9));
+    bytes.extend_from_slice(suffix.as_bytes());
+    return bytes;
+}
+
+TEST(Preprocessor, PreservesByteCommentsLiteralsAndMacroSpelling) {
+    auto sources = MemorySources {};
+    auto bytes   = invalid_source_bytes("/* "_str, " */\r\n#define RAW \""_str);
+    bytes.push(u8(0xA9));
+    bytes.extend_from_slice(
+        "\"\n#define STR(x) #x\n#define CAT(a,b) a##b\nRAW STR(RAW) STR(\""_str.as_bytes());
+    bytes.push(u8(0xA9));
+    bytes.extend_from_slice("\") CAT(L,RAW)\n#if 0\nint "_str.as_bytes());
+    bytes.push(u8(0xA9));
+    bytes.extend_from_slice(";\n#endif\nint valid;\n"_str.as_bytes());
+    sources.add_bytes("/main.cpp"_str, rstd::move(bytes));
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto result      = preprocess(
+        PreprocessRequest {
+            .source                 = rstd::path::PathBuf::from("/main.cpp"_str),
+            .environment_identity   = String::make("byte-source"_str),
+            .retain_active_comments = true,
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_EQ(result->active_comments.len(), usize(1));
+    EXPECT_TRUE(result->active_comments[usize {}].text.utf8().is_err());
+    EXPECT_EQ(result->active_comments[usize {}].text.display().as_str(), "/* \\xA9 */"_str);
+    usize raw_literals {};
+    bool  valid_identifier = false;
+    for (const auto& token : result->tokens) {
+        if (token.kind == TokenKind::StringLiteral && token.text.utf8().is_err()) ++raw_literals;
+        if (token.text == "valid"_str) valid_identifier = true;
+    }
+    EXPECT_EQ(raw_literals, usize(2));
+    EXPECT_TRUE(valid_identifier);
+}
+
+TEST(Preprocessor, RejectsInvalidUtf8AtSemanticBoundaries) {
+    struct Case {
+        ref<str> prefix;
+        ref<str> suffix;
+    };
+    const Case cases[] = {
+        { "int "_str, ";\n"_str },
+        { "#include \""_str, "\"\n"_str },
+        { "#if defined("_str, ")\n#endif\n"_str },
+        { "#if 1"_str, "\n#endif\n"_str },
+        { "#define "_str, " 1\n"_str },
+    };
+    for (const auto& item : cases) {
+        auto sources = MemorySources {};
+        sources.add_bytes("/main.cpp"_str, invalid_source_bytes(item.prefix, item.suffix));
+        auto includes    = MemoryIncludes(sources);
+        auto builtins    = TestBuiltins {};
+        auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+        auto pragmas     = IgnorePragmas {};
+        auto events      = TestEvents {};
+        auto result      = preprocess(
+            PreprocessRequest {
+                .source               = rstd::path::PathBuf::from("/main.cpp"_str),
+                .environment_identity = String::make("invalid-byte-source"_str),
+            },
+            sources,
+            includes,
+            builtins,
+            identifiers,
+            pragmas,
+            events);
+        ASSERT_TRUE(result.is_err());
+        EXPECT_TRUE(result.unwrap_err().message.as_str().contains("UTF-8"_str));
+    }
+}
+
+TEST(Preprocessor, EscapesRawDiagnosticBytesWithoutChangingDirectiveMeaning) {
+    const ref<str> directives[] = { "#error "_str, "#warning "_str };
+    for (auto directive : directives) {
+        auto sources = MemorySources {};
+        sources.add_bytes("/main.cpp"_str, invalid_source_bytes(directive, "\n"_str));
+        auto includes    = MemoryIncludes(sources);
+        auto builtins    = TestBuiltins {};
+        auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+        auto pragmas     = IgnorePragmas {};
+        auto events      = TestEvents {};
+        auto result      = preprocess(
+            PreprocessRequest {
+                .source               = rstd::path::PathBuf::from("/main.cpp"_str),
+                .environment_identity = String::make("byte-diagnostic"_str),
+            },
+            sources,
+            includes,
+            builtins,
+            identifiers,
+            pragmas,
+            events);
+        if (directive == "#error "_str) {
+            ASSERT_TRUE(result.is_err());
+            EXPECT_TRUE(result.unwrap_err().message.as_str().contains("\\xA9"_str));
+        } else {
+            EXPECT_TRUE(result.is_ok());
+        }
+    }
+}
+
 TEST(Preprocessor, ImportIncludesEachHeaderOnceAcrossIncludeDirectives) {
     auto sources = MemorySources {};
     sources.add("/first.hpp"_str, "FIRST\n#import \"first.hpp\"\n"_str);
@@ -291,8 +410,8 @@ TEST(Preprocessor, ImportIncludesEachHeaderOnceAcrossIncludeDirectives) {
     ASSERT_TRUE(result.is_ok());
     usize first {}, second {};
     for (const auto& token : result->tokens) {
-        if (token.text.as_str() == "FIRST"_str) ++first;
-        if (token.text.as_str() == "SECOND"_str) ++second;
+        if (token.text.utf8().unwrap() == "FIRST"_str) ++first;
+        if (token.text.utf8().unwrap() == "SECOND"_str) ++second;
     }
     EXPECT_EQ(first, usize(1));
     EXPECT_EQ(second, usize(1));
@@ -417,7 +536,7 @@ auto run_preprocessor_test() -> int {
     if (! contains_sequence(result->tokens, "2"_str, "+"_str, "2"_str)) return 7;
     auto joined = usize {};
     for (const auto& token : result->tokens) {
-        if (token.text.as_str() == "9"_str) ++joined;
+        if (token.text.utf8().unwrap() == "9"_str) ++joined;
     }
     if (joined != usize(4)) return 11;
     if (! contains_token(result->tokens, "\"alpha beta\""_str)) return 19;
@@ -466,7 +585,8 @@ auto run_preprocessor_test() -> int {
     }
     if (result->active_comments.len() != usize(1) ||
         result->active_comments[usize {}].kind != CommentKind::OuterDocumentation ||
-        ! result->active_comments[usize {}].text.as_str().contains("active documentation"_str)) {
+        ! result->active_comments[usize {}].text.utf8().unwrap().contains(
+            "active documentation"_str)) {
         return 14;
     }
 
@@ -525,7 +645,7 @@ TEST(PreprocessorMacro, OwnsParsedSourceAndCompilesCommandLineReplacement) {
     }();
     ASSERT_TRUE(retained.is_some());
     ASSERT_EQ((**retained).replacement.len(), usize(3));
-    EXPECT_EQ((**retained).replacement[usize(2)].text.as_str(), "17"_str);
+    EXPECT_EQ((**retained).replacement[usize(2)].text.utf8().unwrap(), "17"_str);
     EXPECT_EQ((**retained).operations().len(), usize(3));
 
     auto function = parse_command_line_macro_definition(
@@ -542,7 +662,7 @@ TEST(PreprocessorMacro, OwnsParsedSourceAndCompilesCommandLineReplacement) {
     auto defaulted = parse_command_line_macro_definition("LITO_DEFAULT"_str);
     ASSERT_TRUE(defaulted.is_ok());
     ASSERT_EQ(defaulted->replacement.len(), usize(1));
-    EXPECT_EQ(defaulted->replacement[usize {}].text.as_str(), "1"_str);
+    EXPECT_EQ(defaulted->replacement[usize {}].text.utf8().unwrap(), "1"_str);
 }
 
 TEST(Preprocessor, LookupCandidateTreatsRegularAncestorAsAbsent) {

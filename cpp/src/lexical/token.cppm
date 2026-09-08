@@ -207,8 +207,9 @@ using CppReservedIdentifierSet = StaticNameSet<CppAtomicKeyword,
 struct CppIdentifierTokenMatcher {
     auto matches(const frontend::lexical::Token& token) const noexcept -> bool {
         return token.kind == frontend::lexical::TokenKind::Identifier &&
+               token.text.utf8().is_ok() &&
                ! CppReservedIdentifierSet::contains(token.text.comparable_hash(),
-                                                    token.text.as_str());
+                                                    token.text.utf8().unwrap());
     }
 };
 

@@ -511,42 +511,40 @@ private:
     }
 
     auto stringify(slice<Token> argument, const Token& origin) -> Token {
-        auto text = String::make();
-        text.push_ascii('"');
+        auto text = Vec<u8>::make();
+        text.push(u8('"'));
         auto first = true;
         for (const auto& token : argument) {
             if (token.kind == TokenKind::Newline) continue;
-            if (! first && token.leading_space) text.push_ascii(' ');
-            auto value = token.text.as_str();
-            auto begin = usize {};
-            for (auto index = usize {}; index < value.len(); ++index) {
-                auto byte = value[index];
-                if (byte == u8('\\') || byte == u8('"')) {
-                    text.push_str(value.get(begin, index).unwrap());
-                    text.push_ascii('\\');
-                    text.push_ascii(byte);
-                    begin = index + usize(1);
-                }
+            if (! first && token.leading_space) text.push(u8(' '));
+            auto value = token.text.as_bytes();
+            for (auto byte : value) {
+                if ((token.kind == TokenKind::StringLiteral ||
+                     token.kind == TokenKind::CharacterLiteral) &&
+                    (byte == u8('\\') || byte == u8('"')))
+                    text.push(u8('\\'));
+                text.push(u8(byte));
             }
-            text.push_str(value.get(begin, value.len()).unwrap());
             first = false;
         }
-        text.push_ascii('"');
+        text.push(u8('"'));
         auto result = clone_token(origin);
         ++raw_statistics_.synthetic_tokens;
         result.kind = TokenKind::StringLiteral;
-        result.text = rstd::move(text);
+        result.text = TokenText(rstd::move(text));
         return result;
     }
 
     auto string_contents(const Token& token, ref<str> purpose) -> Result<String> {
+        if (token.text.utf8().is_err())
+            return Err(failure(rstd::format("{} requires UTF-8 text", purpose), token.expansion));
         if (token.kind != TokenKind::StringLiteral || token.text.len() < usize(2) ||
-            token.text.as_str().as_bytes()[usize {}] != u8('"') ||
-            token.text.as_str().as_bytes()[token.text.len() - usize(1)] != u8('"')) {
+            token.text.utf8().unwrap().as_bytes()[usize {}] != u8('"') ||
+            token.text.utf8().unwrap().as_bytes()[token.text.len() - usize(1)] != u8('"')) {
             return Err(failure(rstd::format("{} requires an ordinary string literal", purpose),
                                token.expansion));
         }
-        auto contents = token.text.as_str().get(usize(1), token.text.len() - usize(1));
+        auto contents = token.text.utf8().unwrap().get(usize(1), token.text.len() - usize(1));
         if (contents.is_none()) {
             return Err(failure(rstd::format("{} has an invalid string literal", purpose),
                                token.expansion));
@@ -556,8 +554,8 @@ private:
 
     auto pragma_macro_name(const ScratchTokenVec& tokens, SourceLocation location)
         -> Result<String> {
-        if (tokens.len() != usize(4) || tokens[usize(1)].text.as_str() != "("_str ||
-            tokens[usize(3)].text.as_str() != ")"_str) {
+        if (tokens.len() != usize(4) || tokens[usize(1)].text != "("_str ||
+            tokens[usize(3)].text != ")"_str) {
             return Err(failure("macro stack pragma requires one string literal"_str, location));
         }
         auto name = string_contents(tokens[usize(2)], "macro stack pragma"_str);
@@ -570,7 +568,7 @@ private:
     }
 
     auto handle_pragma(ScratchTokenVec tokens, SourceLocation location) -> Result<empty> {
-        if (tokens.len() == usize(1) && tokens[usize {}].text.as_str() == "once"_str) {
+        if (tokens.len() == usize(1) && tokens[usize {}].text == "once"_str) {
             if (include_stack_.is_empty()) {
                 return Err(failure("pragma once has no current source"_str, location));
             }
@@ -579,9 +577,9 @@ private:
             if (text.is_some()) once_files_.insert(String::make(*text), empty {});
             return Ok(empty {});
         }
-        if (! tokens.is_empty() && (tokens[usize {}].text.as_str() == "push_macro"_str ||
-                                    tokens[usize {}].text.as_str() == "pop_macro"_str)) {
-            auto push = tokens[usize {}].text.as_str() == "push_macro"_str;
+        if (! tokens.is_empty() && (tokens[usize {}].text == "push_macro"_str ||
+                                    tokens[usize {}].text == "pop_macro"_str)) {
+            auto push = tokens[usize {}].text == "push_macro"_str;
             auto name = pragma_macro_name(tokens, location);
             if (name.is_err()) return Err(rstd::move(name).unwrap_err());
             if (push) {
@@ -647,14 +645,14 @@ private:
     auto pasted(Token left, const Token& right) -> Result<Token> {
         ++raw_statistics_.macro_token_pastes;
         ++raw_statistics_.synthetic_tokens;
-        left.text.push_str(right.text.as_str());
+        left.text.push_bytes(right.text.as_bytes());
         if (left.text.is_empty()) {
             return Err(failure("token paste produced an empty token"_str, left.expansion));
         }
-        auto classified = classify_preprocessing_token(left.text.clone(), left.expansion);
+        auto classified = classify_preprocessing_token(left.text.clone_bytes(), left.expansion);
         if (classified.is_err()) {
             return Err(failure(rstd::format("token paste '{}' did not form one preprocessing token",
-                                            left.text.as_str()),
+                                            left.text.display().as_str()),
                                left.expansion));
         }
         left.kind = *classified;
@@ -679,11 +677,11 @@ private:
         auto depth  = usize {};
         for (auto index = open + usize(1); index < input.len(); ++index) {
             const auto& token = input[index];
-            if (token.text.as_str() == "("_str) {
+            if (token.text == "("_str) {
                 ++depth;
                 continue;
             }
-            if (token.text.as_str() == ")"_str) {
+            if (token.text == ")"_str) {
                 if (depth == usize {}) {
                     ranges.push(ArgumentRange { .begin = begin, .end = index });
                     return Ok(
@@ -692,7 +690,7 @@ private:
                 --depth;
                 continue;
             }
-            if (token.text.as_str() == ","_str && depth == usize {}) {
+            if (token.text == ","_str && depth == usize {}) {
                 ranges.push(ArgumentRange { .begin = begin, .end = index });
                 begin = index + usize(1);
                 continue;
@@ -817,7 +815,7 @@ private:
                                 operation.parameter == fixed;
             if (operation.paste_before) {
                 auto comma_variadic = raw_variadic && ! result.is_empty() &&
-                                      result[result.len() - usize(1)].text.as_str() == ","_str;
+                                      result[result.len() - usize(1)].text == ","_str;
                 if (comma_variadic) {
                     if (piece.is_empty()) (void)result.pop();
                     for (auto& item : piece) result.push(rstd::move(item));
@@ -886,7 +884,7 @@ private:
     auto joined_argument(const ScratchTokenVec& tokens) -> String {
         auto result = String::make();
         for (const auto& token : tokens) {
-            if (token.kind != TokenKind::Newline) result.push_str(token.text.as_str());
+            if (token.kind != TokenKind::Newline) result.push_str(token.text.utf8().unwrap());
         }
         return result;
     }
@@ -894,6 +892,10 @@ private:
     template<typename Query>
     auto evaluate_builtin_query(const ScratchTokenVec& argument, const Token& origin)
         -> Result<i64> {
+        for (const auto& token : argument) {
+            if (token.text.utf8().is_err())
+                return Err(failure("builtin argument requires UTF-8 text"_str, token.expansion));
+        }
         using Handler = typename Query::Handler;
 
         auto value = String::make();
@@ -903,7 +905,7 @@ private:
                     failure(rstd::format("builtin '{}' requires one identifier", Query::name),
                             origin.expansion));
             }
-            value = argument[usize {}].text.clone();
+            value = String::make(argument[usize {}].text.utf8().unwrap());
         } else if constexpr (Handler::form == BuiltinQueryArgumentForm::StringLiteral) {
             if (argument.len() != usize(1)) {
                 return Err(
@@ -923,13 +925,17 @@ private:
 
     auto include_query(const Token& origin, bool include_next, const ScratchTokenVec& argument)
         -> Result<bool> {
+        for (const auto& token : argument) {
+            if (token.text.utf8().is_err())
+                return Err(failure("header name requires UTF-8 text"_str, token.expansion));
+        }
         if (include_stack_.is_empty()) {
             return Err(failure("include query has no current source"_str, origin.expansion));
         }
         auto kind   = include_next ? IncludeKind::NextQuoted : IncludeKind::Quoted;
         auto header = String::make();
         if (argument.len() == usize(1) && argument[usize {}].kind == TokenKind::StringLiteral) {
-            auto text  = argument[usize {}].text.as_str();
+            auto text  = argument[usize {}].text.utf8().unwrap();
             auto bytes = text.as_bytes();
             if (bytes.len() < usize(2))
                 return Err(failure("invalid include query"_str, origin.expansion));
@@ -937,11 +943,11 @@ private:
             if (inside.is_none())
                 return Err(failure("invalid include query"_str, origin.expansion));
             header = String::make(*inside);
-        } else if (argument.len() >= usize(2) && argument[usize {}].text.as_str() == "<"_str &&
-                   argument[argument.len() - usize(1)].text.as_str() == ">"_str) {
+        } else if (argument.len() >= usize(2) && argument[usize {}].text == "<"_str &&
+                   argument[argument.len() - usize(1)].text == ">"_str) {
             kind = include_next ? IncludeKind::NextAngled : IncludeKind::Angled;
             for (auto index = usize(1); index + usize(1) < argument.len(); ++index) {
-                header.push_str(argument[index].text.as_str());
+                header.push_str(argument[index].text.utf8().unwrap());
             }
         } else {
             return Err(
@@ -978,10 +984,10 @@ private:
         auto output = scratch_tokens();
         for (auto index = usize {}; index < input.len();) {
             auto token = rstd::move(input[index]);
-            if (preserve_defined && token.text.as_str() == "defined"_str) {
+            if (preserve_defined && token.text == "defined"_str) {
                 output.push(rstd::move(token));
                 ++index;
-                auto parenthesized = index < input.len() && input[index].text.as_str() == "("_str;
+                auto parenthesized = index < input.len() && input[index].text == "("_str;
                 if (parenthesized) {
                     output.push(rstd::move(input[index]));
                     ++index;
@@ -992,7 +998,7 @@ private:
                     output.push(rstd::move(operand));
                     ++index;
                 }
-                if (parenthesized && index < input.len() && input[index].text.as_str() == ")"_str) {
+                if (parenthesized && index < input.len() && input[index].text == ")"_str) {
                     output.push(rstd::move(input[index]));
                     ++index;
                 }
@@ -1003,6 +1009,8 @@ private:
                 ++index;
                 continue;
             }
+            if (token.text.utf8().is_err())
+                return Err(failure("invalid UTF-8 identifier"_str, token.expansion));
             auto revision = macros_.revision();
             if (token.is_known_unavailable_macro(revision)) {
                 ++raw_statistics_.macro_negative_cache_hits;
@@ -1010,7 +1018,7 @@ private:
                 ++index;
                 continue;
             }
-            auto name       = token.text.as_str();
+            auto name       = token.text.utf8().unwrap();
             auto name_hash  = token.text.comparable_hash();
             auto name_bytes = name.as_bytes();
             if (! name_bytes.is_empty() && name_bytes[usize {}] == u8('_')) {
@@ -1079,7 +1087,7 @@ private:
                 if (token.text.matches<PragmaBuiltin>()) {
                     auto open = index + usize(1);
                     while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                    if (open >= input.len() || input[open].text.as_str() != "("_str) {
+                    if (open >= input.len() || input[open].text != "("_str) {
                         return Err(failure("_Pragma requires parentheses"_str, token.expansion));
                     }
                     auto parsed = parse_arguments(input, open);
@@ -1115,7 +1123,7 @@ private:
                     building_module) {
                     auto open = index + usize(1);
                     while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                    if (open >= input.len() || input[open].text.as_str() != "("_str) {
+                    if (open >= input.len() || input[open].text != "("_str) {
                         return Err(failure(rstd::format("builtin '{}' requires parentheses", name),
                                            token.expansion));
                     }
@@ -1200,7 +1208,7 @@ private:
             if ((**found).parameters.is_some()) {
                 auto open = next;
                 while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                if (open >= input.len() || input[open].text.as_str() != "("_str) {
+                if (open >= input.len() || input[open].text != "("_str) {
                     output.push(rstd::move(token));
                     ++index;
                     continue;
@@ -1244,15 +1252,16 @@ private:
         auto parsed = parse_macro_definition(line, MacroDefinition::scratch(scratch_allocator_));
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
         auto external =
-            prepare_external_macro(line[usize {}].text.as_str(), line[usize {}].expansion);
+            prepare_external_macro(line[usize {}].text.utf8().unwrap(), line[usize {}].expansion);
         if (external.is_err()) return Err(rstd::move(external).unwrap_err());
         auto macro = rstd::move(parsed).unwrap();
         record_macro_definition(macro);
         auto previous = macros_.define(rstd::move(macro));
         (void)previous;
         if (send_event) {
-            auto event = emit_name(
-                EventKind::MacroDefined, line[usize {}].text.as_str(), line[usize {}].expansion);
+            auto event = emit_name(EventKind::MacroDefined,
+                                   line[usize {}].text.utf8().unwrap(),
+                                   line[usize {}].expansion);
             if (event.is_err()) return event;
         }
         return Ok(empty {});
@@ -1262,25 +1271,27 @@ private:
         auto result = scratch_tokens();
         for (auto index = usize {}; index < line.len();) {
             const auto& token = line[index];
-            if (token.text.as_str() != "defined"_str) {
+            if (token.text != "defined"_str) {
                 result.push(clone_token(token));
                 ++index;
                 continue;
             }
             auto cursor        = index + usize(1);
-            auto parenthesized = cursor < line.len() && line[cursor].text.as_str() == "("_str;
+            auto parenthesized = cursor < line.len() && line[cursor].text == "("_str;
             if (parenthesized) ++cursor;
             if (cursor >= line.len() || line[cursor].kind != TokenKind::Identifier) {
                 return Err(failure("defined requires an identifier"_str, token.expansion));
             }
             const auto& identifier = line[cursor].text;
-            auto        contains   = contains_macro(identifier.as_str(), line[cursor].expansion);
+            if (identifier.utf8().is_err())
+                return Err(failure("invalid UTF-8 identifier"_str, line[cursor].expansion));
+            auto contains = contains_macro(identifier.utf8().unwrap(), line[cursor].expansion);
             if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
             auto value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
-                                                                  identifier.as_str());
+                                                                  identifier.utf8().unwrap());
             ++cursor;
             if (parenthesized) {
-                if (cursor >= line.len() || line[cursor].text.as_str() != ")"_str) {
+                if (cursor >= line.len() || line[cursor].text != ")"_str) {
                     return Err(failure("defined requires a closing ')'"_str, token.expansion));
                 }
                 ++cursor;
@@ -1300,7 +1311,7 @@ private:
             for (usize index = usize {}; index < left.len(); ++index) {
                 const auto& lhs = left[index];
                 const auto& rhs = right[index];
-                if (lhs.kind != rhs.kind || lhs.text.as_str() != rhs.text.as_str() ||
+                if (lhs.kind != rhs.kind || lhs.text != rhs.text ||
                     lhs.disable_expand != rhs.disable_expand) {
                     return false;
                 }
@@ -1344,7 +1355,7 @@ private:
         auto result = String::make();
         for (auto index = begin; index < line.len(); ++index) {
             if (! result.is_empty()) result.push_ascii(' ');
-            result.push_str(line[index].text.as_str());
+            result.push_str(line[index].text.display().as_str());
         }
         return result;
     }
@@ -1359,16 +1370,16 @@ private:
 
     auto embed_parameter_tokens(slice<Token> line, usize& cursor, SourceLocation location)
         -> Result<Vec<Token>> {
-        if (cursor >= line.len() || line[cursor].text.as_str() != "("_str) {
+        if (cursor >= line.len() || line[cursor].text != "("_str) {
             return Err(failure("#embed parameter requires parentheses"_str, location));
         }
         ++cursor;
         auto depth  = usize(1);
         auto result = Vec<Token>::make();
         while (cursor < line.len()) {
-            if (line[cursor].text.as_str() == "("_str) {
+            if (line[cursor].text == "("_str) {
                 ++depth;
-            } else if (line[cursor].text.as_str() == ")"_str) {
+            } else if (line[cursor].text == ")"_str) {
                 --depth;
                 if (depth == usize {}) {
                     ++cursor;
@@ -1411,11 +1422,14 @@ private:
             if (name.is_err()) return Err(rstd::move(name).unwrap_err());
             result.name = rstd::move(name).unwrap();
             ++cursor;
-        } else if (tokens[cursor].text.as_str() == "<"_str) {
+        } else if (tokens[cursor].text == "<"_str) {
             result.kind = EmbedKind::Angled;
             ++cursor;
-            while (cursor < tokens.len() && tokens[cursor].text.as_str() != ">"_str) {
-                result.name.push_str(tokens[cursor].text.as_str());
+            while (cursor < tokens.len() && tokens[cursor].text != ">"_str) {
+                if (tokens[cursor].text.utf8().is_err())
+                    return Err(
+                        failure("resource name requires UTF-8 text"_str, tokens[cursor].expansion));
+                result.name.push_str(tokens[cursor].text.utf8().unwrap());
                 ++cursor;
             }
             if (cursor >= tokens.len()) {
@@ -1438,14 +1452,14 @@ private:
             if (tokens[cursor].kind != TokenKind::Identifier) {
                 return Err(failure("invalid #embed parameter"_str, tokens[cursor].expansion));
             }
-            auto component          = embed_parameter_name(tokens[cursor].text.as_str());
+            auto component          = embed_parameter_name(tokens[cursor].text.utf8().unwrap());
             auto name               = String::make(component);
             auto parameter_location = tokens[cursor].expansion;
             ++cursor;
-            if (cursor + usize(1) < tokens.len() && tokens[cursor].text.as_str() == "::"_str &&
+            if (cursor + usize(1) < tokens.len() && tokens[cursor].text == "::"_str &&
                 tokens[cursor + usize(1)].kind == TokenKind::Identifier) {
                 name.push_str("::"_str);
-                name.push_str(embed_parameter_name(tokens[cursor + usize(1)].text.as_str()));
+                name.push_str(embed_parameter_name(tokens[cursor + usize(1)].text.utf8().unwrap()));
                 cursor += usize(2);
             }
             auto value = embed_parameter_tokens(tokens.as_slice(), cursor, parameter_location);
@@ -1580,19 +1594,23 @@ private:
 
     auto include_name(slice<Token> line, IncludeKind& kind, SourceLocation location)
         -> Result<String> {
+        for (const auto& token : line) {
+            if (token.text.utf8().is_err())
+                return Err(failure("header name requires UTF-8 text"_str, token.expansion));
+        }
         if (line.len() == usize(1) && line[usize {}].kind == TokenKind::StringLiteral) {
-            auto text = line[usize {}].text.as_str();
+            auto text = line[usize {}].text.utf8().unwrap();
             if (text.len() < usize(2)) return Err(failure("invalid #include header"_str, location));
             auto inner = text.get(usize(1), text.len() - usize(1));
             if (inner.is_none()) return Err(failure("invalid #include header"_str, location));
             return Ok(String::make(*inner));
         }
-        if (line.len() >= usize(2) && line[usize {}].text.as_str() == "<"_str &&
-            line[line.len() - usize(1)].text.as_str() == ">"_str) {
+        if (line.len() >= usize(2) && line[usize {}].text == "<"_str &&
+            line[line.len() - usize(1)].text == ">"_str) {
             kind = kind == IncludeKind::NextQuoted ? IncludeKind::NextAngled : IncludeKind::Angled;
             auto name = String::make();
             for (auto index = usize(1); index + usize(1) < line.len(); ++index) {
-                name.push_str(line[index].text.as_str());
+                name.push_str(line[index].text.utf8().unwrap());
             }
             return Ok(rstd::move(name));
         }
@@ -1613,7 +1631,9 @@ private:
             keyword.text() != "ifndef"_str || name.kind() != TokenKind::Identifier) {
             return None();
         }
-        auto guard = String::make(name.text());
+        auto guard_text = name.text().utf8();
+        if (guard_text.is_err()) return None();
+        auto guard = String::make(*guard_text);
         while (cursor < storage.tokens.len() &&
                storage.token(source, cursor).kind() != TokenKind::Newline) {
             ++cursor;
@@ -1653,8 +1673,8 @@ private:
         auto direct_header =
             line.len() == usize(1) && line[usize {}].kind == TokenKind::StringLiteral;
         direct_header =
-            direct_header || (line.len() >= usize(2) && line[usize {}].text.as_str() == "<"_str &&
-                              line[line.len() - usize(1)].text.as_str() == ">"_str);
+            direct_header || (line.len() >= usize(2) && line[usize {}].text == "<"_str &&
+                              line[line.len() - usize(1)].text == ">"_str);
         auto expanded = Result<ScratchTokenVec>(Ok(scratch_tokens()));
         if (! direct_header) {
             auto disabled = disabled_macros();
@@ -1716,10 +1736,14 @@ private:
                             failure("conditional directive requires one identifier"_str, location));
                     }
                     const auto& identifier = rest[usize {}].text;
-                    auto contains = contains_macro(identifier.as_str(), rest[usize {}].expansion);
+                    if (identifier.utf8().is_err())
+                        return Err(
+                            failure("invalid UTF-8 identifier"_str, rest[usize {}].expansion));
+                    auto contains =
+                        contains_macro(identifier.utf8().unwrap(), rest[usize {}].expansion);
                     if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
                     value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
-                                                                     identifier.as_str());
+                                                                     identifier.utf8().unwrap());
                     if (directive == "ifndef"_str) value = ! value;
                 }
             }
@@ -1750,10 +1774,14 @@ private:
                             failure("conditional directive requires one identifier"_str, location));
                     }
                     const auto& identifier = rest[usize {}].text;
-                    auto contains = contains_macro(identifier.as_str(), rest[usize {}].expansion);
+                    if (identifier.utf8().is_err())
+                        return Err(
+                            failure("invalid UTF-8 identifier"_str, rest[usize {}].expansion));
+                    auto contains =
+                        contains_macro(identifier.utf8().unwrap(), rest[usize {}].expansion);
                     if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
                     value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
-                                                                     identifier.as_str());
+                                                                     identifier.utf8().unwrap());
                     if (directive == "elifndef"_str) value = ! value;
                 }
             }
@@ -1780,6 +1808,10 @@ private:
 
     auto flush_normal(ScratchTokenVec& normal) -> Result<empty> {
         if (normal.is_empty()) return Ok(empty {});
+        for (const auto& token : normal) {
+            if (token.kind == TokenKind::Identifier && token.text.utf8().is_err())
+                return Err(failure("invalid UTF-8 identifier"_str, token.expansion));
+        }
         auto module_names = validate_module_name_macros(normal);
         if (module_names.is_err()) return Err(rstd::move(module_names).unwrap_err());
         auto disabled = disabled_macros();
@@ -1797,39 +1829,39 @@ private:
                 continue;
             }
             auto cursor = index;
-            if (tokens[cursor].text.as_str() == "export"_str) {
+            if (tokens[cursor].text == "export"_str) {
                 ++cursor;
                 while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
             }
-            if (cursor >= tokens.len() || (tokens[cursor].text.as_str() != "module"_str &&
-                                           tokens[cursor].text.as_str() != "import"_str)) {
+            if (cursor >= tokens.len() ||
+                (tokens[cursor].text != "module"_str && tokens[cursor].text != "import"_str)) {
                 continue;
             }
             ++cursor;
             while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
-            if (cursor >= tokens.len() || tokens[cursor].text.as_str() == ";"_str ||
-                tokens[cursor].text.as_str() == "<"_str ||
-                tokens[cursor].kind == TokenKind::StringLiteral ||
+            if (cursor >= tokens.len() || tokens[cursor].text == ";"_str ||
+                tokens[cursor].text == "<"_str || tokens[cursor].kind == TokenKind::StringLiteral ||
                 tokens[cursor].kind == TokenKind::HeaderName) {
                 continue;
             }
-            if (tokens[cursor].text.as_str() == ":"_str) ++cursor;
+            if (tokens[cursor].text == ":"_str) ++cursor;
             while (cursor < tokens.len()) {
                 while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
                 if (cursor >= tokens.len() || tokens[cursor].kind != TokenKind::Identifier) break;
-                auto macro = lookup_macro(tokens[cursor].text.as_str(), tokens[cursor].expansion);
+                auto macro =
+                    lookup_macro(tokens[cursor].text.utf8().unwrap(), tokens[cursor].expansion);
                 if (macro.is_err()) return Err(rstd::move(macro).unwrap_err());
                 if (macro->is_some() && (***macro).parameters.is_none()) {
                     return Err(failure(
                         rstd::format(
                             "module name identifier '{}' is defined as an object-like macro",
-                            tokens[cursor].text.as_str()),
+                            tokens[cursor].text.utf8().unwrap()),
                         tokens[cursor].expansion));
                 }
                 ++cursor;
                 while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
-                if (cursor >= tokens.len() || (tokens[cursor].text.as_str() != "."_str &&
-                                               tokens[cursor].text.as_str() != ":"_str)) {
+                if (cursor >= tokens.len() ||
+                    (tokens[cursor].text != "."_str && tokens[cursor].text != ":"_str)) {
                     break;
                 }
                 ++cursor;
@@ -1960,7 +1992,10 @@ private:
                 return Err(
                     failure("invalid preprocessing directive"_str, line[usize {}].expansion));
             }
-            auto keyword     = line[usize {}].text.as_str();
+            auto keyword_text = line[usize {}].text.utf8();
+            if (keyword_text.is_err())
+                return Err(failure("invalid UTF-8 directive"_str, line[usize {}].expansion));
+            auto keyword     = *keyword_text;
             auto location    = line[usize {}].expansion;
             auto rest        = move_range(line, usize(1), line.len());
             auto conditional = handle_conditional(keyword, rest, location, conditions);
@@ -1975,6 +2010,11 @@ private:
                 continue;
             }
 
+            for (const auto& token : rest) {
+                if (keyword != "error"_str && keyword != "warning"_str &&
+                    token.kind == TokenKind::Identifier && token.text.utf8().is_err())
+                    return Err(failure("invalid UTF-8 identifier"_str, token.expansion));
+            }
             if (keyword == "define"_str) {
                 auto result = define_macro(rest, true);
                 if (result.is_err()) return Err(rstd::move(result).unwrap_err());
@@ -1982,13 +2022,13 @@ private:
                 if (rest.len() != usize(1) || rest[usize {}].kind != TokenKind::Identifier) {
                     return Err(failure("#undef requires one identifier"_str, location));
                 }
-                auto external =
-                    prepare_external_macro(rest[usize {}].text.as_str(), rest[usize {}].expansion);
+                auto external = prepare_external_macro(rest[usize {}].text.utf8().unwrap(),
+                                                       rest[usize {}].expansion);
                 if (external.is_err()) return Err(rstd::move(external).unwrap_err());
-                auto removed = macros_.undefine(rest[usize {}].text.as_str());
+                auto removed = macros_.undefine(rest[usize {}].text.utf8().unwrap());
                 (void)removed;
-                auto event =
-                    emit_name(EventKind::MacroUndefined, rest[usize {}].text.as_str(), location);
+                auto event = emit_name(
+                    EventKind::MacroUndefined, rest[usize {}].text.utf8().unwrap(), location);
                 if (event.is_err()) return Err(rstd::move(event).unwrap_err());
             } else if (keyword == "include"_str || keyword == "include_next"_str ||
                        keyword == "import"_str) {
@@ -2030,7 +2070,10 @@ private:
                         return Err(
                             failure("#line file name must be a string literal"_str, location));
                     }
-                    auto text = (*expanded)[usize(1)].text.as_str();
+                    auto decoded = (*expanded)[usize(1)].text.utf8();
+                    if (decoded.is_err())
+                        return Err(failure("#line file name requires UTF-8 text"_str, location));
+                    auto text = *decoded;
                     if (text.len() < usize(2)) {
                         return Err(failure("invalid #line file name"_str, location));
                     }

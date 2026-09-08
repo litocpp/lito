@@ -45,7 +45,7 @@ class ScannerCursor {
 
 public:
     auto lookahead() const noexcept -> Option<u8> {
-        auto bytes = contents_.as_bytes();
+        auto bytes = contents_;
         if (current_.location.offset >= bytes.len()) return None();
         return Some(bytes[current_.location.offset]);
     }
@@ -83,22 +83,23 @@ public:
     auto begin() const noexcept -> SourceLocation { return begin_.location; }
     auto is_eof() const noexcept -> bool { return lookahead().is_none(); }
 
-    auto lexeme() const noexcept -> Option<ref<str>> {
+    auto lexeme() const noexcept -> slice<u8> {
         auto end = selected_end().location.offset;
-        return contents_.get(begin_.location.offset, end);
+        return slice<u8>::from_raw_parts(contents_.as_ptr() + begin_.location.offset.to_primitive(),
+                                         end - begin_.location.offset);
     }
 
 private:
-    ScannerCursor(ref<str> contents, Point start) noexcept
+    ScannerCursor(slice<u8> contents, Point start) noexcept
         : contents_(contents), begin_(start), current_(start), marked_(start) {}
 
     auto selected_end() const noexcept -> Point { return has_marked_ ? marked_ : current_; }
 
-    ref<str> contents_;
-    Point    begin_;
-    Point    current_;
-    Point    marked_;
-    bool     has_marked_ { false };
+    slice<u8> contents_;
+    Point     begin_;
+    Point     current_;
+    Point     marked_;
+    bool      has_marked_ { false };
 
     friend class ScannerSession;
 };

@@ -269,17 +269,22 @@ auto parse_macro_definition(const Vec<Token, Allocator>& line, MacroDefinition m
         return Err(
             lexical::Error::at(String::make("#define requires an identifier"_str), location));
     }
-    macro.set_name(line[usize {}].text.clone());
+    for (const auto& token : line) {
+        if (token.kind == TokenKind::Identifier && token.text.utf8().is_err())
+            return Err(
+                lexical::Error::at(String::make("invalid UTF-8 identifier"_str), token.expansion));
+    }
+    macro.set_name(String::make(line[usize {}].text.utf8().unwrap()));
     macro.location = line[usize {}].expansion;
     auto index     = usize(1);
-    if (index < line.len() && line[index].text.as_str() == "("_str && ! line[index].leading_space) {
+    if (index < line.len() && line[index].text == "("_str && ! line[index].leading_space) {
         auto parameters = Vec<String>::make();
         ++index;
-        if (index < line.len() && line[index].text.as_str() == ")"_str) {
+        if (index < line.len() && line[index].text == ")"_str) {
             ++index;
         } else {
             while (index < line.len()) {
-                if (line[index].text.as_str() == "..."_str) {
+                if (line[index].text == "..."_str) {
                     macro.variadic      = true;
                     macro.variadic_name = String::make("__VA_ARGS__"_str);
                     ++index;
@@ -289,22 +294,22 @@ auto parse_macro_definition(const Vec<Token, Allocator>& line, MacroDefinition m
                     return Err(lexical::Error::at(String::make("invalid macro parameter"_str),
                                                   line[index].expansion));
                 }
-                auto name = line[index].text.clone();
+                auto name = String::make(line[index].text.utf8().unwrap());
                 ++index;
-                if (index < line.len() && line[index].text.as_str() == "..."_str) {
+                if (index < line.len() && line[index].text == "..."_str) {
                     macro.variadic      = true;
                     macro.variadic_name = rstd::move(name);
                     ++index;
                     break;
                 }
                 parameters.push(rstd::move(name));
-                if (index < line.len() && line[index].text.as_str() == ","_str) {
+                if (index < line.len() && line[index].text == ","_str) {
                     ++index;
                     continue;
                 }
                 break;
             }
-            if (index >= line.len() || line[index].text.as_str() != ")"_str) {
+            if (index >= line.len() || line[index].text != ")"_str) {
                 auto location = index < line.len() ? line[index].expansion : macro.location;
                 return Err(lexical::Error::at(String::make("unterminated macro parameter list"_str),
                                               location));
@@ -338,8 +343,8 @@ auto parse_macro_source(SourceBuffer buffer) -> lexical::Result<ParsedMacroSourc
             cursor = end < tokens->len() ? end + usize(1) : end;
             continue;
         }
-        if (cursor + usize(2) > end || (*tokens)[cursor].text.as_str() != "#"_str ||
-            (*tokens)[cursor + usize(1)].text.as_str() != "define"_str) {
+        if (cursor + usize(2) > end || (*tokens)[cursor].text != "#"_str ||
+            (*tokens)[cursor + usize(1)].text != "define"_str) {
             return Err(
                 lexical::Error::at(String::make("macro source contains a non-define directive"_str),
                                    (*tokens)[cursor].expansion));
@@ -425,24 +430,24 @@ auto MacroDefinition::set_replacement(Vec<Token, Allocator> value) -> void {
 }
 
 auto MacroDefinition::paste_before(usize index, usize begin) const -> bool {
-    return index > begin && replacement[index - usize(1)].text.as_str() == "##"_str;
+    return index > begin && replacement[index - usize(1)].text == "##"_str;
 }
 
 auto MacroDefinition::paste_after(usize index, usize end) const -> bool {
-    return index + usize(1) < end && replacement[index + usize(1)].text.as_str() == "##"_str;
+    return index + usize(1) < end && replacement[index + usize(1)].text == "##"_str;
 }
 
 auto MacroDefinition::compile_range(usize token_begin, usize token_end) -> void {
     auto operation_begin = operations_.len();
     for (auto index = token_begin; index < token_end;) {
         const auto& token = replacement[index];
-        if (variadic && token.text.as_str() == "__VA_OPT__"_str && index + usize(1) < token_end &&
-            replacement[index + usize(1)].text.as_str() == "("_str) {
+        if (variadic && token.text == "__VA_OPT__"_str && index + usize(1) < token_end &&
+            replacement[index + usize(1)].text == "("_str) {
             contains_va_opt_ = true;
             auto closing     = Option<usize> {};
             auto depth       = usize {};
             for (auto cursor = index + usize(2); cursor < token_end; ++cursor) {
-                auto text = replacement[cursor].text.as_str();
+                const auto& text = replacement[cursor].text;
                 if (text == "("_str) {
                     ++depth;
                 } else if (text == ")"_str) {
@@ -469,12 +474,15 @@ auto MacroDefinition::compile_range(usize token_begin, usize token_end) -> void 
             operations_[operation_index].end = operations_.len();
             operations_[operation_index].paste_after =
                 *closing + usize(1) < token_end &&
-                replacement[*closing + usize(1)].text.as_str() == "##"_str;
+                replacement[*closing + usize(1)].text == "##"_str;
             index = *closing + usize(1);
             continue;
         }
-        if (token.text.as_str() == "#"_str && index + usize(1) < token_end) {
-            auto parameter = parameter_index(replacement[index + usize(1)].text.as_str());
+        if (token.text == "#"_str && index + usize(1) < token_end) {
+            auto parameter =
+                replacement[index + usize(1)].kind == TokenKind::Identifier
+                    ? parameter_index(replacement[index + usize(1)].text.utf8().unwrap())
+                    : Option<usize> {};
             if (parameter.is_some()) {
                 unexpanded_parameter_uses_[*parameter] = true;
                 operations_.push(MacroReplacementOperation {
@@ -483,17 +491,19 @@ auto MacroDefinition::compile_range(usize token_begin, usize token_end) -> void 
                     .parameter    = *parameter,
                     .paste_before = paste_before(index, token_begin),
                     .paste_after  = index + usize(2) < token_end &&
-                                    replacement[index + usize(2)].text.as_str() == "##"_str,
+                                    replacement[index + usize(2)].text == "##"_str,
                 });
                 index += usize(2);
                 continue;
             }
         }
-        if (token.text.as_str() == "##"_str) {
+        if (token.text == "##"_str) {
             ++index;
             continue;
         }
-        auto parameter = parameter_index(token.text.as_str());
+        auto parameter = token.kind == TokenKind::Identifier
+                             ? parameter_index(token.text.utf8().unwrap())
+                             : Option<usize> {};
         if (parameter.is_some()) {
             auto before = paste_before(index, token_begin);
             auto after  = paste_after(index, token_end);

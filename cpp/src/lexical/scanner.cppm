@@ -79,8 +79,8 @@ struct CppWordScanner {
         }
         cursor.mark_end();
 
-        auto spelling = cursor.lexeme();
-        if (spelling.is_none()) {
+        auto spelling = rstd::str_::from_utf8(cursor.lexeme());
+        if (spelling.is_err()) {
             return Err(frontend::lexical::Error::at(String::make("C++ word is not valid UTF-8"_str),
                                                     cursor.begin()));
         }

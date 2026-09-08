@@ -12,10 +12,10 @@ export namespace lito::frontend::lexical
 class SourceText {
     using DomainBytes = Vec<u8, ScanMemoryAllocator>;
 
-    String              owned_;
+    Vec<u8>             owned_;
     Option<DomainBytes> domain_bytes_;
 
-    explicit SourceText(String owned): owned_(rstd::move(owned)) {}
+    explicit SourceText(Vec<u8> owned): owned_(rstd::move(owned)) {}
 
     explicit SourceText(DomainBytes bytes): domain_bytes_(Some(rstd::move(bytes))) {}
 
@@ -25,7 +25,11 @@ public:
     SourceText(SourceText&&) noexcept                    = default;
     auto operator=(SourceText&&) noexcept -> SourceText& = default;
 
-    static auto from(String owned) -> SourceText { return SourceText(rstd::move(owned)); }
+    static auto from(String owned) -> SourceText {
+        return SourceText(rstd::move(owned).into_bytes());
+    }
+
+    static auto from_bytes(Vec<u8> bytes) -> SourceText { return SourceText(rstd::move(bytes)); }
 
     static auto read(ref<rstd::path::Path> path, ScanMemoryAllocator allocator)
         -> rstd::io::Result<SourceText> {
@@ -53,21 +57,14 @@ public:
             bytes.extend_from_slice(slice<u8>::from_raw_parts(chunk, count));
         }
 
-        if (rstd::str_::validate_utf8(bytes.as_slice()).is_err()) {
-            return Err(rstd::io::error::Error::from_kind(
-                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::InvalidData }));
-        }
         return Ok(SourceText(rstd::move(bytes)));
     }
 
-    auto as_str() const noexcept [[clang::lifetimebound]] -> ref<str> {
-        if (domain_bytes_.is_some()) {
-            return rstd::str_::from_utf8_unchecked(domain_bytes_->as_slice());
-        }
-        return owned_.as_str();
+    auto as_bytes() const noexcept [[clang::lifetimebound]] -> slice<u8> {
+        return domain_bytes_.is_some() ? domain_bytes_->as_slice() : owned_.as_slice();
     }
 
-    auto len() const noexcept -> usize { return as_str().len(); }
+    auto len() const noexcept -> usize { return as_bytes().len(); }
 
     auto capacity() const noexcept -> usize {
         return domain_bytes_.is_some() ? domain_bytes_->capacity() : owned_.capacity();
@@ -110,7 +107,7 @@ struct SourceFile {
 
     auto path() const -> ref<rstd::path::Path> { return snapshot->path.as_path(); }
 
-    auto contents() const -> ref<str> { return snapshot->contents.as_str(); }
+    auto contents() const -> slice<u8> { return snapshot->contents.as_bytes(); }
 };
 
 enum class CommentKind : uint8_t
@@ -178,9 +175,9 @@ struct CompactSourceComment {
 
 class SourcePositionIndex {
 public:
-    explicit SourcePositionIndex(ref<str> contents) {
+    explicit SourcePositionIndex(slice<u8> contents) {
         line_starts_.push(uint32_t {});
-        auto bytes = contents.as_bytes();
+        auto bytes = contents;
         for (auto index = usize {}; index < bytes.len(); ++index) {
             if (bytes[index] != u8('\r') && bytes[index] != u8('\n')) continue;
             if (bytes[index] == u8('\r') && index + usize(1) < bytes.len() &&
@@ -290,10 +287,12 @@ public:
     auto offset() const noexcept -> usize {
         return usize(static_cast<rstd::size_t>(token_->offset));
     }
-    auto text() const noexcept -> ref<str> {
+    auto text() const noexcept -> TokenText {
         auto begin = usize(static_cast<rstd::size_t>(token_->offset));
         auto end   = begin + usize(static_cast<rstd::size_t>(token_->length));
-        return contents_.get(begin, end).unwrap();
+        return TokenText::borrowed(
+            slice<u8>::from_raw_parts(contents_.as_ptr() + begin.to_primitive(), end - begin),
+            token_->comparable_hash);
     }
     auto location() const noexcept -> SourceLocation {
         return positions_->location(source_, token_->offset);
@@ -308,7 +307,7 @@ public:
         auto origin = location();
         return Token {
             .kind          = kind(),
-            .text          = TokenText::borrowed(text(), token_->comparable_hash),
+            .text          = text(),
             .spelling      = origin,
             .expansion     = origin,
             .start_of_line = start_of_line(),
@@ -318,13 +317,13 @@ public:
 
 private:
     SourceTokenView(const CompactSourceToken&  token,
-                    ref<str>                   contents,
+                    slice<u8>                  contents,
                     const SourcePositionIndex& positions,
                     SourceId                   source) noexcept
         : token_(&token), contents_(contents), positions_(&positions), source_(source) {}
 
     const CompactSourceToken*  token_;
-    ref<str>                   contents_;
+    slice<u8>                  contents_;
     const SourcePositionIndex* positions_;
     SourceId                   source_;
 
@@ -345,10 +344,10 @@ struct ScanFileStorage {
           arena(Box<Arena>::make(usize(16 * 1024), rstd::move(allocator))),
           tokens(),
           comments(),
-          positions(this->snapshot->contents.as_str()) {}
+          positions(this->snapshot->contents.as_bytes()) {}
 
     auto token(SourceId source, usize index) const noexcept -> SourceTokenView {
-        return SourceTokenView(tokens[index], snapshot->contents.as_str(), positions, source);
+        return SourceTokenView(tokens[index], snapshot->contents.as_bytes(), positions, source);
     }
 
     auto comment(SourceId source, usize index) const -> CommentTrivia {
@@ -356,11 +355,12 @@ struct ScanFileStorage {
         auto        begin = usize(static_cast<rstd::size_t>(value.begin));
         auto        end   = usize(static_cast<rstd::size_t>(value.end));
         return CommentTrivia {
-            .kind  = value.kind,
-            .style = value.style,
-            .text  = TokenText::borrowed(snapshot->contents.as_str().get(begin, end).unwrap()),
-            .begin = positions.location(source, value.begin),
-            .end   = positions.location(source, value.end),
+            .kind          = value.kind,
+            .style         = value.style,
+            .text          = TokenText::borrowed(slice<u8>::from_raw_parts(
+                snapshot->contents.as_bytes().as_ptr() + begin.to_primitive(), end - begin)),
+            .begin         = positions.location(source, value.begin),
+            .end           = positions.location(source, value.end),
             .start_of_line = value.start_of_line,
         };
     }
@@ -399,7 +399,8 @@ public:
 
     void
     push_token(TokenKind kind, usize offset, usize length, bool start_of_line, bool leading_space) {
-        auto text  = storage_.snapshot->contents.as_str().get(offset, offset + length).unwrap();
+        auto text  = TokenText::borrowed(slice<u8>::from_raw_parts(
+            storage_.snapshot->contents.as_bytes().as_ptr() + offset.to_primitive(), length));
         auto flags = uint8_t {};
         if (start_of_line) flags |= static_cast<uint8_t>(SourceTokenFlag::StartOfLine);
         if (leading_space) flags |= static_cast<uint8_t>(SourceTokenFlag::LeadingSpace);
@@ -407,7 +408,7 @@ public:
             CompactSourceToken {
                 .offset          = static_cast<uint32_t>(offset.to_primitive()),
                 .length          = static_cast<uint32_t>(length.to_primitive()),
-                .comparable_hash = comparable_name_hash(text),
+                .comparable_hash = text.comparable_hash(),
                 .kind            = kind,
                 .flags           = flags,
             },

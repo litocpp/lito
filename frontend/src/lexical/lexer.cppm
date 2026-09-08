@@ -280,11 +280,12 @@ public:
                     SourceLocation    location,
                     bool              start_of_line,
                     bool              leading_space) {
-        auto text = source.contents().get(offset, offset + length).unwrap();
+        auto text =
+            slice<u8>::from_raw_parts(source.contents().as_ptr() + offset.to_primitive(), length);
         append_token(tokens_,
                      kind,
                      borrow_spelling_ ? TokenText::borrowed(text)
-                                      : TokenText { String::make(text) },
+                                      : TokenText { Vec<u8>::from(text) },
                      location,
                      start_of_line,
                      leading_space);
@@ -298,11 +299,13 @@ public:
                       SourceLocation    begin_location,
                       SourceLocation    end_location,
                       bool              start_of_line) {
-        auto text = source.contents().get(begin, end).unwrap();
+        auto text = slice<u8>::from_raw_parts(source.contents().as_ptr() + begin.to_primitive(),
+                                              end - begin);
         comments_.push(CommentTrivia {
             .kind  = kind,
             .style = style,
-            .text = borrow_spelling_ ? TokenText::borrowed(text) : TokenText { String::make(text) },
+            .text =
+                borrow_spelling_ ? TokenText::borrowed(text) : TokenText { Vec<u8>::from(text) },
             .begin         = begin_location,
             .end           = end_location,
             .start_of_line = start_of_line,
@@ -353,7 +356,7 @@ private:
 
 template<typename Sink>
 auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
-    auto bytes         = source.contents().as_bytes();
+    auto bytes         = source.contents();
     auto index         = usize {};
     auto line          = usize(1);
     auto column        = usize(1);
@@ -507,8 +510,6 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
         line      = scanned->line;
         column    = scanned->column;
 
-        auto spelling = source.contents().get(token_start, index);
-        if (spelling.is_none()) return lex_failure("invalid UTF-8 token boundary"_str, location);
         sink.push_token(
             source, kind, token_start, index - token_start, location, line_start, pending_space);
         line_start    = false;
@@ -563,10 +564,9 @@ auto lex_preprocessing_fragment(String contents, SourceLocation origin) -> Resul
     return tokens;
 }
 
-auto classify_preprocessing_token(String spelling, SourceLocation origin = {})
+auto classify_preprocessing_token(Vec<u8> spelling, SourceLocation origin = {})
     -> Result<TokenKind> {
-    auto text      = spelling.as_str();
-    auto bytes     = text.as_bytes();
+    auto bytes     = spelling.as_slice();
     auto separator = bytes.is_empty() || bytes[usize {}] == u8(' ') ||
                      bytes[usize {}] == u8('\t') || bytes[usize {}] == u8('\f') ||
                      bytes[usize {}] == u8('\v') || bytes[usize {}] == u8('\r') ||
@@ -578,7 +578,14 @@ auto classify_preprocessing_token(String spelling, SourceLocation origin = {})
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         if (scanned->end == bytes.len()) return Ok(scanned->kind);
     }
-    return Err(Error::at(rstd::format("'{}' does not form one preprocessing token", text), origin));
+    return Err(Error::at(rstd::format("'{}' does not form one preprocessing token",
+                                      TokenText::borrowed(bytes).display().as_str()),
+                         origin));
+}
+
+auto classify_preprocessing_token(String spelling, SourceLocation origin = {})
+    -> Result<TokenKind> {
+    return classify_preprocessing_token(rstd::move(spelling).into_bytes(), origin);
 }
 
 auto is_identifier_spelling(ref<str> spelling) -> bool {

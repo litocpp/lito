@@ -21,7 +21,7 @@ using namespace rstd::literals;
 namespace lito
 {
 
-constexpr auto SCAN_CACHE_VERSION = u64(6);
+constexpr auto SCAN_CACHE_VERSION = u64(7);
 
 enum class ScanCacheMissReason
 {

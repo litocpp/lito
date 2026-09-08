@@ -241,6 +241,34 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(dynamic_warm->frontend.analyze_builds, usize(1));
 }
 
+TEST_F(ScanCache, ByteCommentsInvalidateRawSourceCache) {
+    auto tree = scan_cache_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("byte-source-cache"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("byte-source-cache"_str);
+    auto path   = project->root.join(PathBuf::from("src/lib.cppm"_str).as_path());
+    auto bytes  = rstd::fs::read(path.as_path());
+    ASSERT_TRUE(bytes.is_ok());
+    bytes->extend_from_slice("\n/* "_str.as_bytes());
+    bytes->push(u8(0xA9));
+    auto invalid_offset = bytes->len() - usize(1);
+    bytes->extend_from_slice(" */\n"_str.as_bytes());
+    ASSERT_TRUE(rstd::fs::write(path.as_path(), bytes->as_slice()).is_ok());
+    auto request = build_request(project->root.as_path(), output.as_path(), Vec<String>::make());
+    auto cold    = lito::build(request);
+    ASSERT_TRUE(cold.is_ok());
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->frontend.persistent_scan_hits, usize(1));
+    EXPECT_EQ(warm->frontend.analyze_builds, usize {});
+    (*bytes)[invalid_offset] = u8(0xAE);
+    ASSERT_TRUE(rstd::fs::write(path.as_path(), bytes->as_slice()).is_ok());
+    auto changed = lito::build(request);
+    ASSERT_TRUE(changed.is_ok());
+    EXPECT_EQ(changed->frontend.analyze_builds, usize(1));
+}
+
 TEST_F(ScanCache, IncludeLookupCachesNotDirectoryCandidatesAsMissing) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

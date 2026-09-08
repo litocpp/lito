@@ -13,7 +13,78 @@ using namespace lito::frontend::lexical;
 template<typename T>
 using LexicalResult = lito::frontend::lexical::Result<T>;
 
+TEST(Lexical, ByteSourcePreservesCommentsOffsetsAndStorage) {
+    auto bytes = Vec<u8>::from("/* "_str.as_bytes());
+    bytes.push(u8(0xA9));
+    bytes.extend_from_slice(" */\r\nint value;\n/// "_str.as_bytes());
+    bytes.push(u8(0xE2));
+    bytes.extend_from_slice("\n"_str.as_bytes());
+    auto directory = rstd::fs::TempDir::make("lito-byte-source"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto path = rstd::path::PathBuf::from(directory->path())
+                    .join(rstd::path::PathBuf::from("source.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(path.as_path(), bytes.as_slice()).is_ok());
+    auto domain = frontend::ScanMemoryDomain::make();
+    auto loaded = SourceText::read(path.as_path(), domain.allocator());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->len(), bytes.len());
+    auto source = SourceFile {
+        .snapshot = make_source_snapshot(path.clone(), rstd::move(loaded).unwrap()),
+    };
+    auto full    = lex_with_comments(source);
+    auto compact = lex_scan_file(source);
+    ASSERT_TRUE(full.is_ok() && compact.is_ok());
+    ASSERT_EQ(full->comments.len(), usize(2));
+    EXPECT_EQ(full->comments[usize {}].text.display().as_str(), "/* \\xA9 */"_str);
+    EXPECT_EQ(full->comments[usize(1)].text.display().as_str(), "/// \\xE2"_str);
+    EXPECT_EQ(full->comments[usize {}].text.as_bytes()[usize(3)], u8(0xA9));
+    EXPECT_TRUE(
+        full->comments[usize {}].text.same_bytes(compact->comment(usize {}, usize {}).text));
+    EXPECT_EQ(full->tokens.len(), compact->tokens.len());
+    for (auto i = usize {}; i < full->tokens.len(); ++i) {
+        auto token = compact->token(usize {}, i);
+        EXPECT_TRUE(full->tokens[i].text.same_bytes(token.text()));
+        EXPECT_EQ(full->tokens[i].spelling.offset, token.offset());
+        EXPECT_EQ(full->tokens[i].spelling.line, token.location().line);
+    }
+    auto text  = TokenText::borrowed(bytes.as_slice());
+    auto owned = TokenText(text.clone_bytes());
+    auto moved = rstd::move(owned);
+    EXPECT_TRUE(text.same_bytes(moved));
+    EXPECT_TRUE(moved.utf8().is_err());
+}
+
 struct FixtureLanguageA;
+
+TEST(Lexical, PreservesOrdinaryRawAndUnicodeLiteralBytes) {
+    struct Case {
+        ref<str> prefix;
+        ref<str> suffix;
+    };
+    const Case cases[] = {
+        { "\""_str, "\""_str },
+        { "R\"("_str, ")\""_str },
+        { "u8\""_str, "\""_str },
+        { "'"_str, "'"_str },
+    };
+    for (const auto& item : cases) {
+        auto bytes = Vec<u8>::from(item.prefix.as_bytes());
+        bytes.push(u8(0xA9));
+        bytes.extend_from_slice(item.suffix.as_bytes());
+        auto source = SourceFile {
+            .snapshot =
+                make_source_snapshot(rstd::path::PathBuf::make(),
+                                     SourceText::from_bytes(Vec<u8>::from(bytes.as_slice()))),
+        };
+        auto tokens = lex(source);
+        ASSERT_TRUE(tokens.is_ok());
+        ASSERT_EQ(tokens->len(), usize(1));
+        EXPECT_TRUE((*tokens)[usize {}].text.same_bytes(TokenText::borrowed(bytes.as_slice())));
+        EXPECT_TRUE((*tokens)[usize {}].text.utf8().is_err());
+        EXPECT_EQ((*tokens)[usize {}].spelling.offset, usize {});
+    }
+}
+
 struct FixtureLanguageB;
 
 inline constexpr auto FIXTURE_A_SHORT = SymbolId::of<FixtureLanguageA>(u32(0));

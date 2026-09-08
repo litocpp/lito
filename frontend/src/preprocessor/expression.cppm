@@ -27,9 +27,9 @@ public:
 private:
     auto failure(ref<str> message) -> Result<i64> {
         if (index_ < tokens_.len()) {
-            return Err(
-                Error::at(rstd::format("{} before '{}'", message, tokens_[index_].text.as_str()),
-                          tokens_[index_].expansion));
+            return Err(Error::at(
+                rstd::format("{} before '{}'", message, tokens_[index_].text.display().as_str()),
+                tokens_[index_].expansion));
         }
         if (! tokens_.is_empty()) {
             return Err(
@@ -39,7 +39,7 @@ private:
     }
 
     auto match(ref<str> value) -> bool {
-        if (index_ >= tokens_.len() || tokens_[index_].text.as_str() != value) return false;
+        if (index_ >= tokens_.len() || tokens_[index_].text != value) return false;
         ++index_;
         return true;
     }
@@ -218,7 +218,7 @@ private:
                 if (right.is_err()) return right;
                 left = Ok(left->wrapping_mul(*right));
             } else if (match("/"_str) || match("%"_str)) {
-                auto remainder = tokens_[index_ - usize(1)].text.as_str() == "%"_str;
+                auto remainder = tokens_[index_ - usize(1)].text == "%"_str;
                 auto right     = unary();
                 if (right.is_err()) return right;
                 if (evaluating_ && *right == i64 {}) {
@@ -263,15 +263,20 @@ private:
         }
         if (index_ >= tokens_.len()) return failure("expected preprocessor expression"_str);
         const auto& token = tokens_[index_++];
+        if ((token.kind == TokenKind::Identifier || token.kind == TokenKind::PpNumber) &&
+            token.text.utf8().is_err()) {
+            return Err(
+                Error::at(String::make("invalid UTF-8 preprocessing token"_str), token.expansion));
+        }
         if (token.kind == TokenKind::Identifier) return Ok(i64 {});
         if (token.kind == TokenKind::CharacterLiteral) {
-            auto bytes = token.text.as_str().as_bytes();
+            auto bytes = token.text.as_bytes();
             if (bytes.len() >= usize(3))
                 return Ok(i64(bytes[bytes.len() - usize(2)].to_primitive()));
             return failure("invalid character constant"_str);
         }
         if (token.kind != TokenKind::PpNumber) return failure("expected integer constant"_str);
-        auto bytes  = token.text.as_str().as_bytes();
+        auto bytes  = token.text.as_bytes();
         auto base   = uint32_t(10);
         auto cursor = usize {};
         auto value  = i64 {};
@@ -309,9 +314,10 @@ private:
             digits = true;
             ++cursor;
         }
-        if (! digits && token.text.as_str() != "0"_str) {
-            return Err(Error::at(rstd::format("invalid integer constant '{}'", token.text.as_str()),
-                                 token.expansion));
+        if (! digits && token.text != "0"_str) {
+            return Err(Error::at(
+                rstd::format("invalid integer constant '{}'", token.text.display().as_str()),
+                token.expansion));
         }
         return Ok(value);
     }

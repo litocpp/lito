@@ -46,74 +46,113 @@ private:
 class TokenText {
 public:
     TokenText() = default;
-    TokenText(String text)
-        : owned_(rstd::move(text)), hash_(comparable_name_hash(owned_.as_str())) {}
+    TokenText(String text): TokenText(rstd::move(text).into_bytes()) {}
+    explicit TokenText(Vec<u8> bytes)
+        : owned_(rstd::move(bytes)), hash_(comparable_name_hash(owned_.as_slice())) {}
 
-    static auto borrowed(ref<str> text) -> TokenText {
-        return borrowed(text, comparable_name_hash(text));
+    static auto borrowed(slice<u8> bytes) -> TokenText {
+        return borrowed(bytes, comparable_name_hash(bytes));
     }
-
+    static auto borrowed(ref<str> text) -> TokenText { return borrowed(text.as_bytes()); }
     static auto borrowed(ref<str> text, uint64_t hash) -> TokenText {
+        return borrowed(text.as_bytes(), hash);
+    }
+    static auto borrowed(slice<u8> bytes, uint64_t hash) -> TokenText {
         auto result         = TokenText {};
-        result.borrowed_    = text;
+        result.borrowed_    = bytes;
         result.hash_        = hash;
         result.is_borrowed_ = true;
         return result;
     }
-
-    auto as_str() const noexcept -> ref<str> { return is_borrowed_ ? borrowed_ : owned_.as_str(); }
-
-    auto len() const noexcept -> usize { return as_str().len(); }
-    auto is_empty() const noexcept -> bool { return as_str().is_empty(); }
-    auto clone() const -> String { return String::make(as_str()); }
-    auto comparable_hash() const noexcept -> uint64_t { return hash_; }
-
-    auto matches(uint64_t hash, ref<str> text) const noexcept -> bool {
-        return hash_ == hash && as_str() == text;
+    auto as_bytes() const noexcept -> slice<u8> {
+        return is_borrowed_ ? borrowed_ : owned_.as_slice();
     }
-
+    auto utf8() const noexcept { return rstd::str_::from_utf8(as_bytes()); }
+    auto len() const noexcept -> usize { return as_bytes().len(); }
+    auto is_empty() const noexcept -> bool { return as_bytes().is_empty(); }
+    auto clone_bytes() const -> Vec<u8> {
+        auto bytes = Vec<u8>::with_capacity(len());
+        bytes.extend_from_slice(as_bytes());
+        return bytes;
+    }
+    auto clone() const -> TokenText { return TokenText(clone_bytes()); }
+    auto comparable_hash() const noexcept -> uint64_t { return hash_; }
+    auto matches(ref<str> text) const noexcept -> bool {
+        return matches(comparable_name_hash(text), text);
+    }
+    auto matches(uint64_t hash, ref<str> text) const noexcept -> bool {
+        if (hash_ != hash || len() != text.len()) return false;
+        auto bytes = as_bytes();
+        for (auto i = usize {}; i < bytes.len(); ++i)
+            if (bytes[i] != text[i]) return false;
+        return true;
+    }
+    auto operator==(ref<str> text) const noexcept -> bool { return matches(text); }
+    auto operator==(const TokenText& other) const noexcept -> bool { return same_bytes(other); }
+    auto same_bytes(const TokenText& other) const noexcept -> bool {
+        if (hash_ != other.hash_ || len() != other.len()) return false;
+        for (auto i = usize {}; i < len(); ++i)
+            if (as_bytes()[i] != other.as_bytes()[i]) return false;
+        return true;
+    }
     template<typename Name>
     auto matches() const noexcept -> bool {
         return matches(Name::hash, Name::name);
     }
-
     auto borrowed_identity() const noexcept -> TokenTextIdentity {
-        return TokenTextIdentity(is_borrowed_ ? borrowed_.data() : nullptr);
+        return TokenTextIdentity(is_borrowed_ ? borrowed_.as_ptr() : nullptr);
     }
-
     auto matches(TokenTextIdentity identity) const noexcept -> bool {
-        return identity.is_valid() && is_borrowed_ && borrowed_.data() == identity.data_;
+        return identity.is_valid() && is_borrowed_ && borrowed_.as_ptr() == identity.data_;
     }
-
     auto shared_clone() const -> TokenText {
-        return is_borrowed_ ? borrowed(borrowed_) : TokenText { owned_.clone() };
+        return is_borrowed_ ? borrowed(borrowed_, hash_) : TokenText { clone_bytes() };
     }
-
-    auto operator=(String text) -> TokenText& {
-        borrowed_    = ref<str> {};
-        is_borrowed_ = false;
-        owned_       = rstd::move(text);
-        hash_        = comparable_name_hash(owned_.as_str());
-        return *this;
-    }
-
-    auto push_str(ref<str> text) -> void {
+    auto operator=(String text) -> TokenText& { return *this = TokenText(rstd::move(text)); }
+    auto push_bytes(slice<u8> bytes) -> void {
         if (is_borrowed_) {
-            owned_       = String::make(borrowed_);
-            borrowed_    = ref<str> {};
+            owned_       = clone_bytes();
+            borrowed_    = {};
             is_borrowed_ = false;
         }
-        owned_.push_str(text);
-        hash_ = comparable_name_hash(owned_.as_str());
+        owned_.extend_from_slice(bytes);
+        hash_ = comparable_name_hash(owned_.as_slice());
+    }
+    auto push_str(ref<str> text) -> void { push_bytes(text.as_bytes()); }
+
+    auto display() const -> String {
+        auto result = String::make();
+        auto bytes  = as_bytes();
+        auto offset = usize {};
+        while (offset < bytes.len()) {
+            auto remaining = slice<u8>::from_raw_parts(bytes.as_ptr() + offset.to_primitive(),
+                                                       bytes.len() - offset);
+            auto decoded   = rstd::str_::from_utf8(remaining);
+            if (decoded.is_ok()) {
+                result.push_str(*decoded);
+                break;
+            }
+            auto valid  = decoded.unwrap_err().valid_up_to();
+            auto prefix = slice<u8>::from_raw_parts(remaining.as_ptr(), valid);
+            result.push_str(rstd::str_::from_utf8(prefix).unwrap());
+            offset += valid;
+            constexpr char digits[] = "0123456789ABCDEF";
+            auto           value    = bytes[offset].to_primitive();
+            result.push_ascii('\\');
+            result.push_ascii('x');
+            result.push_ascii(digits[value >> 4]);
+            result.push_ascii(digits[value & 15]);
+            ++offset;
+        }
+        return result;
     }
 
 private:
-    ref<str> borrowed_;
-    String   owned_;
-    uint64_t hash_ { COMPARABLE_NAME_HASH_OFFSET };
-    bool     is_borrowed_ { false };
+    slice<u8> borrowed_;
+    Vec<u8>   owned_;
+    uint64_t  hash_ { COMPARABLE_NAME_HASH_OFFSET };
+    bool      is_borrowed_ { false };
 };
-
 struct Token {
     TokenKind                   kind { TokenKind::Punctuation };
     TokenText                   text;
