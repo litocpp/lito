@@ -896,7 +896,14 @@ private:
         using Handler = typename Query::Handler;
 
         auto value = String::make();
-        if constexpr (Handler::form == BuiltinQueryArgumentForm::StringLiteral) {
+        if constexpr (Handler::form == BuiltinQueryArgumentForm::Identifier) {
+            if (argument.len() != usize(1) || argument[usize {}].kind != TokenKind::Identifier) {
+                return Err(
+                    failure(rstd::format("builtin '{}' requires one identifier", Query::name),
+                            origin.expansion));
+            }
+            value = argument[usize {}].text.clone();
+        } else if constexpr (Handler::form == BuiltinQueryArgumentForm::StringLiteral) {
             if (argument.len() != usize(1)) {
                 return Err(
                     failure(rstd::format("builtin '{}' requires one string literal", Query::name),
@@ -972,20 +979,18 @@ private:
             if (preserve_defined && token.text.as_str() == "defined"_str) {
                 output.push(rstd::move(token));
                 ++index;
-                auto parenthesized = index < input.len() &&
-                                     input[index].text.as_str() == "("_str;
+                auto parenthesized = index < input.len() && input[index].text.as_str() == "("_str;
                 if (parenthesized) {
                     output.push(rstd::move(input[index]));
                     ++index;
                 }
                 if (index < input.len()) {
-                    auto operand = rstd::move(input[index]);
+                    auto operand           = rstd::move(input[index]);
                     operand.disable_expand = true;
                     output.push(rstd::move(operand));
                     ++index;
                 }
-                if (parenthesized && index < input.len() &&
-                    input[index].text.as_str() == ")"_str) {
+                if (parenthesized && index < input.len() && input[index].text.as_str() == ")"_str) {
                     output.push(rstd::move(input[index]));
                     ++index;
                 }
@@ -1285,9 +1290,9 @@ private:
     }
 
     auto condition_value(const ScratchTokenVec& line) -> Result<bool> {
-        auto disabled = disabled_macros();
-        auto current  = clone_tokens_counted(line, TokenCloneKind::Other);
-        auto seen     = scratch_token_vectors();
+        auto disabled     = disabled_macros();
+        auto current      = clone_tokens_counted(line, TokenCloneKind::Other);
+        auto seen         = scratch_token_vectors();
         auto tokens_equal = [](const ScratchTokenVec& left, const ScratchTokenVec& right) -> bool {
             if (left.len() != right.len()) return false;
             for (usize index = usize {}; index < left.len(); ++index) {
@@ -1321,8 +1326,8 @@ private:
             for (const auto& previous : seen) {
                 if (! tokens_equal(previous, next)) continue;
                 auto location = next.is_empty() ? SourceLocation {} : next[usize {}].expansion;
-                return Err(failure("cyclic macro expansion in conditional expression"_str,
-                                   location));
+                return Err(
+                    failure("cyclic macro expansion in conditional expression"_str, location));
             }
             seen.push(clone_tokens_counted(current, TokenCloneKind::Other));
             current = rstd::move(next);

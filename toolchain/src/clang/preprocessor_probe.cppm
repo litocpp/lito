@@ -142,7 +142,7 @@ auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchE
         if (! inside || line.is_empty()) return Ok(empty {});
         constexpr auto framework_marker = " (framework directory)"_str;
         auto           framework        = line.ends_with(framework_marker);
-        auto           directory_text  = line;
+        auto           directory_text   = line;
         if (framework) {
             auto prefix = line.get(usize {}, line.len() - framework_marker.len());
             if (prefix.is_none() || prefix->trim_ascii().is_empty()) {
@@ -159,7 +159,7 @@ auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchE
                                           rstd::move(canonical).unwrap_err()));
         }
         entries.push(IncludeSearchEntry { .directory = rstd::move(canonical).unwrap(),
-                                          .system = system,
+                                          .system    = system,
                                           .framework = framework });
         return Ok(empty {});
     });
@@ -175,36 +175,6 @@ auto capability_key(const preprocessor::BuiltinQueryKey& query) -> String {
     return rstd::format("{}:{}", query.name(), query.argument.as_str());
 }
 
-auto android_environment(ref<str> value) -> bool {
-    constexpr auto prefix = "android"_str;
-    if (! value.starts_with(prefix)) return false;
-    for (auto index = prefix.len(); index < value.len(); ++index) {
-        const auto byte = value[index];
-        if (byte < u8('0') || byte > u8('9')) return false;
-    }
-    return true;
-}
-
-auto target_os_matches(const TargetInfo& target, ref<str> value) -> bool {
-    switch (target.platform) {
-    case TargetPlatform::Android: return value == "linux"_str;
-    case TargetPlatform::Macos: return value == "macos"_str || value == "darwin"_str;
-    case TargetPlatform::Linux: return value == "linux"_str;
-    case TargetPlatform::Windows: return value == "windows"_str;
-    case TargetPlatform::Freebsd: return value == "freebsd"_str;
-    case TargetPlatform::Netbsd: return value == "netbsd"_str;
-    case TargetPlatform::Openbsd: return value == "openbsd"_str;
-    case TargetPlatform::Unknown: return value == target.operating_system.as_str();
-    }
-    return false;
-}
-
-auto target_environment_matches(const TargetInfo& target, ref<str> value) -> bool {
-    if (target.environment.is_none()) return value == "unknown"_str;
-    if (android_environment(target.environment->as_str())) return android_environment(value);
-    return value == target.environment->as_str();
-}
-
 auto native_capability(const preprocessor::BuiltinQueryKey& query,
                        const BuiltinSemanticContext&        context) -> Option<i64> {
     if ((query.is<preprocessor::HasFeatureQuery>() ||
@@ -217,27 +187,16 @@ auto native_capability(const preprocessor::BuiltinQueryKey& query,
         query.argument.as_str() == "cxx_rtti"_str) {
         return Some(i64(context.rtti));
     }
-    if (query.is<preprocessor::IsTargetArchQuery>()) {
-        const auto architecture = parse_target_architecture(query.argument.as_str());
-        return Some(i64(architecture != Architecture::Unknown &&
-                        architecture == context.target.architecture));
-    }
-    if (query.is<preprocessor::IsTargetVendorQuery>()) {
-        auto vendor = context.target.vendor.as_str();
-        if (vendor.is_empty()) vendor = "unknown"_str;
-        return Some(i64(query.argument.as_str() == vendor));
-    }
-    if (query.is<preprocessor::IsTargetOsQuery>()) {
-        return Some(i64(target_os_matches(context.target, query.argument.as_str())));
-    }
-    if (query.is<preprocessor::IsTargetEnvironmentQuery>()) {
-        return Some(i64(target_environment_matches(context.target, query.argument.as_str())));
-    }
-    if (query.is<preprocessor::IsTargetVariantOsQuery>() ||
-        query.is<preprocessor::IsTargetVariantEnvironmentQuery>()) {
-        return Some(i64 {});
-    }
     return None();
+}
+
+auto target_capability(const preprocessor::BuiltinQueryKey& query) -> bool {
+    return query.is<preprocessor::IsTargetArchQuery>() ||
+           query.is<preprocessor::IsTargetVendorQuery>() ||
+           query.is<preprocessor::IsTargetOsQuery>() ||
+           query.is<preprocessor::IsTargetEnvironmentQuery>() ||
+           query.is<preprocessor::IsTargetVariantOsQuery>() ||
+           query.is<preprocessor::IsTargetVariantEnvironmentQuery>();
 }
 
 auto native_predefined_macro(ref<str> name) -> bool {
@@ -582,15 +541,13 @@ auto parse_capability_value(ref<str> raw) -> ToolchainResult<i64> {
     return Ok(negative ? -result : result);
 }
 
-auto query_clang_capabilities(const Vec<String>&                base_command,
-                              const BuiltinSemanticContext&     semantic_context,
-                              PreprocessorLanguage              language,
-                              ref<rstd::path::Path>             working_directory,
-                              const ResolvedProcessEnvironment& environment)
+auto query_clang_capabilities(const Vec<String>&                        base_command,
+                              const Vec<preprocessor::BuiltinQueryKey>& catalog,
+                              const BuiltinSemanticContext&             semantic_context,
+                              PreprocessorLanguage                      language,
+                              ref<rstd::path::Path>                     working_directory,
+                              const ResolvedProcessEnvironment&         environment)
     -> ToolchainResult<QueriedCapabilities> {
-    auto catalog      = language == PreprocessorLanguage::Cpp
-                            ? standard_library_capabilities()
-                            : Vec<preprocessor::BuiltinQueryKey>::make();
     auto pending      = Vec<preprocessor::BuiltinQueryKey>::make();
     auto source       = String::make();
     auto native_count = usize {};
@@ -695,6 +652,19 @@ auto query_clang_capabilities(const Vec<String>&                base_command,
         .input_bytes  = source.len(),
         .output_bytes = output->standard_output.len(),
     });
+}
+
+auto query_clang_standard_library_capabilities(const Vec<String>&                base_command,
+                                               const BuiltinSemanticContext&     semantic_context,
+                                               PreprocessorLanguage              language,
+                                               ref<rstd::path::Path>             working_directory,
+                                               const ResolvedProcessEnvironment& environment)
+    -> ToolchainResult<QueriedCapabilities> {
+    auto catalog = language == PreprocessorLanguage::Cpp
+                       ? standard_library_capabilities()
+                       : Vec<preprocessor::BuiltinQueryKey>::make();
+    return query_clang_capabilities(
+        base_command, catalog, semantic_context, language, working_directory, environment);
 }
 
 } // namespace lito::toolchain

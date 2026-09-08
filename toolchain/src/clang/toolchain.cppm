@@ -962,6 +962,13 @@ public:
         result.target_queries                   = usize(1);
         result.preprocessor_environment_entries = preprocessor_environments_.len();
         result.builtin_snapshots                = builtin_environment_snapshots_.len();
+        for (const auto& environment : preprocessor_environments_) {
+            auto state = environment->queried_capabilities->state.lock().unwrap_unchecked();
+            result.builtin_capability_processes += state->processes;
+            result.clang_capabilities += state->values.len();
+            result.builtin_capability_input_bytes += state->input_bytes;
+            result.builtin_capability_output_bytes += state->output_bytes;
+        }
         return result;
     }
 
@@ -1108,7 +1115,7 @@ public:
         auto includes = toolchain::ClangIncludeResolver(*input.environment);
         auto embeds   = toolchain::ClangEmbedResolver(*input.environment);
         auto builtins = toolchain::ClangBuiltinProvider(
-            *input.environment, input.environment->key.working_directory.as_path());
+            *input.environment, input.environment->key.working_directory.as_path(), environment_);
         auto pragmas = toolchain::ClangPragmaHandler {};
         auto events  = toolchain::DependencyEvents {};
         if (input.language == toolchain::PreprocessorLanguage::C) {
@@ -2010,7 +2017,6 @@ private:
                     toolchain::BuiltinSemanticContext {
                         .language_standard =
                             String::make(lito::manifest::c_standard_name(c.standard)),
-                        .target = compile_target_.info.clone(),
                     },
                 .key             = rstd::move(key),
                 .language        = toolchain::PreprocessorLanguage::C,
@@ -2054,7 +2060,6 @@ private:
             .semantic =
                 toolchain::BuiltinSemanticContext {
                     .language_standard = cpp_options.language.standard.clone(),
-                    .target            = compile_target_.info.clone(),
                     .rtti              = cpp_options.language.rtti,
                     .exceptions        = cpp_options.language.exceptions,
                 },

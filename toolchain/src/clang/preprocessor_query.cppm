@@ -47,7 +47,7 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
     auto parsed =
         parse_macro_dump(rstd::move(macro_output->standard_output), "<built-in>"_str, key);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    auto capabilities = query_clang_capabilities(
+    auto capabilities = query_clang_standard_library_capabilities(
         base_command, semantic_context, language, working_directory, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     auto values            = rstd::move(parsed).unwrap();
@@ -66,6 +66,37 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
             .capability_input_bytes  = capability_values.input_bytes,
             .capability_output_bytes = capability_values.output_bytes,
         }));
+}
+
+struct QueriedBuiltinCapability {
+    i64   value {};
+    usize input_bytes {};
+    usize output_bytes {};
+};
+
+auto query_clang_builtin_capability(const Vec<String>&                   base_command,
+                                    const preprocessor::BuiltinQueryKey& query,
+                                    const BuiltinSemanticContext&        semantic_context,
+                                    PreprocessorLanguage                 language,
+                                    ref<rstd::path::Path>                working_directory,
+                                    const ResolvedProcessEnvironment&    environment)
+    -> ToolchainResult<QueriedBuiltinCapability> {
+    auto queries = Vec<preprocessor::BuiltinQueryKey>::make();
+    queries.push(query.clone());
+    auto queried = query_clang_capabilities(
+        base_command, queries, semantic_context, language, working_directory, environment);
+    if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+    auto key   = capability_key(query);
+    auto value = queried->values.get(key.as_str());
+    if (value.is_none()) {
+        return environment_failure<QueriedBuiltinCapability>(
+            "clang builtin query returned no value"_str);
+    }
+    return Ok(QueriedBuiltinCapability {
+        .value        = **value,
+        .input_bytes  = queried->input_bytes,
+        .output_bytes = queried->output_bytes,
+    });
 }
 
 struct TextBuiltinValues {
@@ -192,6 +223,7 @@ auto query_preprocessor_environment(const Vec<String>&                     base_
         .command_line_macros = rstd::move(command_line_values.operations),
         .semantic_context    = rstd::move(semantic_context),
         .include_search      = rstd::move(includes).unwrap(),
+        .language            = language,
         .query_command       = clone_command(base_command),
         .identity            = rstd::move(identity).unwrap(),
         .date                = rstd::move(text_builtins->date),

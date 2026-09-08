@@ -25,6 +25,7 @@ export namespace lito::frontend::preprocessor
 enum class BuiltinQueryArgumentForm
 {
     Tokens,
+    Identifier,
     StringLiteral,
 };
 
@@ -62,7 +63,7 @@ struct CppAttributeBuiltinQueryHandler {
 };
 
 struct TargetBuiltinQueryHandler {
-    static constexpr auto form = BuiltinQueryArgumentForm::Tokens;
+    static constexpr auto form = BuiltinQueryArgumentForm::Identifier;
 
     static auto normalize(ref<str> value) -> String {
         auto result = String::make();

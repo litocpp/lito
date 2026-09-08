@@ -240,9 +240,12 @@ private:
 
 class ClangBuiltinProvider {
 public:
-    ClangBuiltinProvider(const PreprocessorEnvironment& environment,
-                         ref<rstd::path::Path>          working_directory)
-        : environment_(environment), working_directory_(PathBuf::from(working_directory)) {}
+    ClangBuiltinProvider(const PreprocessorEnvironment&            environment,
+                         ref<rstd::path::Path>                     working_directory,
+                         const system::ResolvedProcessEnvironment& process_environment)
+        : environment_(environment),
+          working_directory_(PathBuf::from(working_directory)),
+          process_environment_(rstd::addressof(process_environment)) {}
 
     auto predefined_macros() -> preprocessor::Result<Vec<preprocessor::PredefinedMacroOperation>> {
         auto result = Vec<preprocessor::PredefinedMacroOperation>::with_capacity(
@@ -272,6 +275,29 @@ public:
         auto key    = capability_key(query);
         auto cached = environment_.builtin_environment->capabilities.get(key.as_str());
         if (cached.is_some()) return Ok(**cached);
+        if (target_capability(query)) {
+            auto state = environment_.queried_capabilities->state.lock().unwrap_unchecked();
+            auto value = state->values.get(key.as_str());
+            if (value.is_some()) return Ok(**value);
+            ++state->processes;
+            auto queried = query_clang_builtin_capability(environment_.query_command,
+                                                          query,
+                                                          environment_.semantic_context,
+                                                          environment_.language,
+                                                          working_directory_.as_path(),
+                                                          *process_environment_);
+            if (queried.is_err()) {
+                return Err(preprocessor::Error::make(
+                    rstd::format("cannot evaluate Clang builtin '{}({})': {}",
+                                 query.name(),
+                                 query.argument.as_str(),
+                                 rstd::move(queried).unwrap_err())));
+            }
+            state->input_bytes += queried->input_bytes;
+            state->output_bytes += queried->output_bytes;
+            state->values.insert(rstd::move(key), queried->value);
+            return Ok(queried->value);
+        }
         return Ok(i64 {});
     }
 
@@ -282,8 +308,9 @@ public:
     }
 
 private:
-    const PreprocessorEnvironment& environment_;
-    PathBuf                        working_directory_;
+    const PreprocessorEnvironment&            environment_;
+    PathBuf                                   working_directory_;
+    const system::ResolvedProcessEnvironment* process_environment_ {};
 };
 
 class ClangPragmaHandler {

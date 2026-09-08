@@ -83,6 +83,10 @@ public:
         if (query.is<HasBuiltinQuery>() && query.argument.as_str() == "__builtin_assume"_str) {
             ++typed_queries;
         }
+        if (query.is<IsTargetOsQuery>()) {
+            ++target_queries;
+            last_target_argument = Some(query.argument.clone());
+        }
         return Ok(i64(1));
     }
 
@@ -91,9 +95,11 @@ public:
         return Ok(String::make(kind == BuiltinTextKind::Date ? "Aug  1 2026"_str : "00:00:00"_str));
     }
 
-    usize text_queries {};
-    usize query_count {};
-    usize typed_queries {};
+    usize          text_queries {};
+    usize          query_count {};
+    usize          typed_queries {};
+    usize          target_queries {};
+    Option<String> last_target_argument;
 };
 
 auto external_object_macro(ref<str> name, TokenKind kind, ref<str> replacement)
@@ -599,6 +605,7 @@ TEST(BuiltinQuery, TypedDefinition) {
     static_assert(HasBuiltinQuery::name == "__has_builtin"_str);
     static_assert(HasBuiltinQuery::Handler::form == BuiltinQueryArgumentForm::Tokens);
     static_assert(HasWarningQuery::Handler::form == BuiltinQueryArgumentForm::StringLiteral);
+    static_assert(IsTargetOsQuery::Handler::form == BuiltinQueryArgumentForm::Identifier);
     static_assert(DynamicBuiltinSet::contains("__has_builtin"_str));
     static_assert(DynamicBuiltinSet::contains("__building_module"_str));
     static_assert(DynamicBuiltinSet::contains("__DATE__"_str));
@@ -611,4 +618,66 @@ TEST(BuiltinQuery, TypedDefinition) {
 
     auto warning = BuiltinQueryKey::make<HasWarningQuery>("-Winvalid-specialization"_str);
     EXPECT_EQ(warning.render_argument().as_str(), "\"-Winvalid-specialization\""_str);
+}
+
+TEST(BuiltinQuery, TargetQueriesRequireOneUnexpandedIdentifier) {
+    auto sources = MemorySources {};
+    sources.add("/target.cpp"_str,
+                "#define TARGET_OS linux\n"
+                "#if __is_target_os(MACOS)\n"
+                "TARGET_MATCH\n"
+                "#endif\n"
+                "TARGET_QUERY __is_target_os(TARGET_OS)\n"
+                "#if 0\n"
+                "#if __is_target_os(inactive)\n"
+                "#endif\n"
+                "#endif\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto result      = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/target.cpp"_str),
+            .environment_identity = String::make("target-builtin-v1"_str),
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(contains_token(result->tokens, "TARGET_MATCH"_str));
+    EXPECT_EQ(builtins.target_queries, usize(2));
+    ASSERT_TRUE(builtins.last_target_argument.is_some());
+    EXPECT_EQ(builtins.last_target_argument->as_str(), "target_os"_str);
+
+    const auto rejected = [](ref<str> invocation) {
+        auto rejected_sources = MemorySources {};
+        auto text             = rstd::format("#if {}\n#endif\n", invocation);
+        rejected_sources.add("/invalid-target.cpp"_str, text.as_str());
+        auto rejected_includes = MemoryIncludes(rejected_sources);
+        auto rejected_builtins = TestBuiltins {};
+        auto rejected_identifiers =
+            lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+        auto rejected_pragmas = IgnorePragmas {};
+        auto rejected_events  = TestEvents {};
+        return preprocess(
+            PreprocessRequest {
+                .source               = rstd::path::PathBuf::from("/invalid-target.cpp"_str),
+                .environment_identity = String::make("invalid-target-builtin-v1"_str),
+            },
+            rejected_sources,
+            rejected_includes,
+            rejected_builtins,
+            rejected_identifiers,
+            rejected_pragmas,
+            rejected_events);
+    };
+    EXPECT_TRUE(rejected("__is_target_os()"_str).is_err());
+    EXPECT_TRUE(rejected("__is_target_os(linux, macos)"_str).is_err());
+    EXPECT_TRUE(rejected("__is_target_os(\"linux\")"_str).is_err());
+    EXPECT_TRUE(rejected("__is_target_os(linux::gnu)"_str).is_err());
 }

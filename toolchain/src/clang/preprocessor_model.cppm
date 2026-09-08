@@ -28,10 +28,9 @@ struct IncludeSearchEntry {
 };
 
 struct BuiltinSemanticContext {
-    String     language_standard;
-    TargetInfo target;
-    bool       rtti { false };
-    bool       exceptions { false };
+    String language_standard;
+    bool   rtti { false };
+    bool   exceptions { false };
 };
 
 enum class PreprocessorLanguage
@@ -64,6 +63,23 @@ struct ClangBuiltinEnvironmentSnapshot {
 
 using SharedClangBuiltinEnvironmentSnapshot = rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>;
 
+struct QueriedBuiltinCapabilityState {
+    rstd::collections::HashMap<String, i64> values;
+    usize                                   processes {};
+    usize                                   input_bytes {};
+    usize                                   output_bytes {};
+
+    QueriedBuiltinCapabilityState(): values(rstd::collections::HashMap<String, i64>::make()) {}
+};
+
+struct QueriedBuiltinCapabilityCache {
+    rstd::sync::Mutex<QueriedBuiltinCapabilityState> state;
+
+    QueriedBuiltinCapabilityCache(): state(QueriedBuiltinCapabilityState {}) {}
+};
+
+using SharedQueriedBuiltinCapabilityCache = rstd::sync::Arc<QueriedBuiltinCapabilityCache>;
+
 struct PreprocessorEnvironmentKey {
     String  context_id;
     PathBuf working_directory;
@@ -88,10 +104,13 @@ struct PreprocessorEnvironment {
     Vec<preprocessor::PredefinedMacroOperation> command_line_macros;
     BuiltinSemanticContext                      semantic_context;
     Vec<IncludeSearchEntry>                     include_search;
+    PreprocessorLanguage                        language { PreprocessorLanguage::Cpp };
     Vec<String>                                 query_command;
-    String                                      identity;
-    String                                      date;
-    String                                      time;
+    SharedQueriedBuiltinCapabilityCache         queried_capabilities =
+        SharedQueriedBuiltinCapabilityCache::make();
+    String identity;
+    String date;
+    String time;
 };
 
 using SharedPreprocessorEnvironment = rstd::sync::Arc<PreprocessorEnvironment>;
