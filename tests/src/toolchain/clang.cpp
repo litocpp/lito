@@ -59,6 +59,136 @@ TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
     EXPECT_TRUE(result->as_ref()->system);
 }
 
+auto framework_environment(ref<rstd::path::Path> root) -> PreprocessorEnvironment {
+    return PreprocessorEnvironment {
+        .key                 = PreprocessorEnvironmentKey::make("subframework-test"_str, root),
+        .builtin_environment = rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(
+            ClangBuiltinEnvironmentSnapshot {}),
+    };
+}
+
+auto write_framework_header(ref<rstd::path::Path> path) -> bool {
+    auto parent = path.parent();
+    return parent.is_some() && rstd::fs::create_dir_all(*parent).is_ok() &&
+           rstd::fs::write(path, "#pragma once\n"_str.as_bytes()).is_ok();
+}
+
+TEST(ClangPreprocessor, SubframeworkSearchOrderAndCacheInvalidation) {
+    namespace pp   = lito::frontend::preprocessor;
+    auto directory = rstd::fs::TempDir::make("lito-subframework-test"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto root   = PathBuf::from(directory->path());
+    auto normal = root.join(PathBuf::from("include/AE/AE.h"_str).as_path());
+    auto near   = root.join(
+        PathBuf::from("Near.framework/Frameworks/AE.framework/Headers/AE.h"_str).as_path());
+    auto far = root.join(
+        PathBuf::from("Far.framework/Frameworks/AE.framework/PrivateHeaders/AE.h"_str).as_path());
+    ASSERT_TRUE(write_framework_header(far.as_path()));
+    auto environment = framework_environment(root.as_path());
+    environment.include_search.push(IncludeSearchEntry {
+        .directory = root.join(PathBuf::from("include"_str).as_path()),
+        .system    = false,
+    });
+    auto request = pp::IncludeRequest {
+        .name                  = String::make("AE/AE.h"_str),
+        .kind                  = pp::IncludeKind::Angled,
+        .including_path        = root.join(PathBuf::from("helper.h"_str).as_path()),
+        .previous_search_index = Some(usize(1)),
+    };
+    request.contexts.push(pp::IncludeContext { .path = request.including_path.clone() });
+    request.contexts.push(pp::IncludeContext {
+        .path = root.join(PathBuf::from("Near.framework/Versions/A/Headers/Near.h"_str).as_path()),
+    });
+    request.contexts.push(pp::IncludeContext {
+        .path   = root.join(PathBuf::from("Far.framework/Headers/Far.h"_str).as_path()),
+        .system = true,
+    });
+    auto resolver = ClangIncludeResolver(environment);
+    auto result   = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(), rstd::fs::canonicalize(far.as_path())->as_path());
+    EXPECT_TRUE((*result)->system);
+    EXPECT_EQ((*result)->search_index, usize {});
+    auto dependencies = resolver.take_dependencies();
+    ASSERT_EQ(dependencies.len(), usize(1));
+    auto valid = frontend::validate(dependencies[usize {}]);
+    ASSERT_TRUE(valid.is_ok() && *valid);
+    ASSERT_TRUE(write_framework_header(near.as_path()));
+    valid = frontend::validate(dependencies[usize {}]);
+    ASSERT_TRUE(valid.is_ok());
+    EXPECT_FALSE(*valid);
+    result = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(), rstd::fs::canonicalize(near.as_path())->as_path());
+    EXPECT_FALSE((*result)->system);
+    ASSERT_TRUE(write_framework_header(normal.as_path()));
+    result = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(), rstd::fs::canonicalize(normal.as_path())->as_path());
+    EXPECT_EQ((*result)->search_index, usize(1));
+    request.kind = pp::IncludeKind::NextAngled;
+    result       = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(), rstd::fs::canonicalize(near.as_path())->as_path());
+}
+
+TEST(ClangPreprocessor, FrameworkPrivateHeadersAndExactBoundary) {
+    namespace pp   = lito::frontend::preprocessor;
+    auto directory = rstd::fs::TempDir::make("lito-framework-private-test"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto root = PathBuf::from(directory->path());
+    auto private_header =
+        root.join(PathBuf::from("Foo.framework/PrivateHeaders/Foo.h"_str).as_path());
+    auto public_header = root.join(PathBuf::from("Foo.framework/Headers/Foo.h"_str).as_path());
+    ASSERT_TRUE(write_framework_header(private_header.as_path()));
+    auto environment = framework_environment(root.as_path());
+    environment.include_search.push(IncludeSearchEntry {
+        .directory = root.clone(),
+        .system    = true,
+        .framework = true,
+    });
+    auto resolver = ClangIncludeResolver(environment);
+    auto request  = pp::IncludeRequest {
+        .name           = String::make("Foo/Foo.h"_str),
+        .kind           = pp::IncludeKind::Angled,
+        .including_path = root.join(PathBuf::from("main.cpp"_str).as_path()),
+    };
+    auto result = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(),
+              rstd::fs::canonicalize(private_header.as_path())->as_path());
+    auto dependencies = resolver.take_dependencies();
+    ASSERT_TRUE(write_framework_header(public_header.as_path()));
+    auto valid = frontend::validate(dependencies[usize {}]);
+    ASSERT_TRUE(valid.is_ok());
+    EXPECT_FALSE(*valid);
+    result = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(),
+              rstd::fs::canonicalize(public_header.as_path())->as_path());
+    environment.include_search.clear();
+    auto child = root.join(
+        PathBuf::from("Parent.framework/Frameworks/Child.framework/Headers/Child.h"_str).as_path());
+    ASSERT_TRUE(write_framework_header(child.as_path()));
+    request.name = String::make("Child/Child.h"_str);
+    request.including_path =
+        root.join(PathBuf::from("Parent.framework/Versions/A/Headers/Parent.h"_str).as_path());
+    result = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok() && result->is_some());
+    EXPECT_EQ((*result)->path.as_path(), rstd::fs::canonicalize(child.as_path())->as_path());
+    request.including_path =
+        root.join(PathBuf::from("Parent.framework.extra/Headers/Parent.h"_str).as_path());
+    result = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(result->is_none());
+    request.including_path =
+        root.join(PathBuf::from("Parent.framework/Headers/Parent.h"_str).as_path());
+    request.name = String::make("Child.h"_str);
+    result       = resolver.resolve(request);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(result->is_none());
+}
+
 TEST(ClangPreprocessor, SupportsTargetBuiltinSourceForms) {
     const auto arch                = __is_target_arch(x86_64);
     const auto vendor              = __is_target_vendor(unknown);

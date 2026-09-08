@@ -165,6 +165,16 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
             .as_path());
     auto scan_record_text = rstd::fs::read_to_string(scan_record.as_path());
     ASSERT_TRUE(scan_record_text.is_ok());
+    auto old_record = rstd::json::from_str(scan_record_text->as_str());
+    ASSERT_TRUE(old_record.is_ok());
+    (*old_record)["version"_str] = rstd::json::from_str("5"_str).unwrap();
+    auto old_text                = rstd::json::to_string(*old_record);
+    ASSERT_TRUE(rstd::fs::write(scan_record.as_path(), old_text.as_str().as_bytes()).is_ok());
+    auto old_version =
+        lito::build(build_request(fixture.as_path(), output.as_path(), Vec<String>::make()));
+    ASSERT_TRUE(old_version.is_ok());
+    EXPECT_EQ(old_version->frontend.persistent_scan_version, usize(1));
+    EXPECT_EQ(old_version->frontend.analyze_builds, usize(1));
     auto scan_record_json = rstd::json::from_str(scan_record_text->as_str());
     ASSERT_TRUE(scan_record_json.is_ok());
     (*scan_record_json)["source-origin"_str] =

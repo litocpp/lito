@@ -210,6 +210,61 @@ auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second
     return false;
 }
 
+class ContextIncludes {
+public:
+    explicit ContextIncludes(const MemorySources& sources): includes_(sources) {}
+
+    auto resolve(const IncludeRequest& request) -> PpResult<Option<IncludeResolution>> {
+        auto trace = request.name.clone();
+        for (const auto& context : request.contexts) {
+            trace.push_str(
+                rstd::format("|{}:{}", context.path.as_path(), context.system ? 1 : 0).as_str());
+        }
+        traces.push(rstd::move(trace));
+        auto result = includes_.resolve(request);
+        if (result.is_ok() && result->is_some()) (*result)->system = true;
+        return result;
+    }
+
+    Vec<String> traces;
+
+private:
+    MemoryIncludes includes_;
+};
+
+TEST(Preprocessor, IncludeAndProbeShareOrderedContextsAndPopFrames) {
+    auto sources = MemorySources {};
+    sources.add("/main.cpp"_str,
+                "#include \"outer.h\"\n#if __has_include(\"leaf.h\")\n#endif\n"_str);
+    sources.add("/outer.h"_str, "#include \"helper.h\"\n"_str);
+    sources.add("/helper.h"_str,
+                "#if __has_include(\"leaf.h\")\n#include \"leaf.h\"\n#endif\n"_str);
+    sources.add("/leaf.h"_str, "LEAF\n"_str);
+    auto includes    = ContextIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto result      = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/main.cpp"_str),
+            .environment_identity = String::make("include-contexts"_str),
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_EQ(includes.traces.len(), usize(5));
+    EXPECT_EQ(includes.traces[usize(0)].as_str(), "outer.h|/main.cpp:0"_str);
+    EXPECT_EQ(includes.traces[usize(1)].as_str(), "helper.h|/outer.h:1|/main.cpp:0"_str);
+    EXPECT_EQ(includes.traces[usize(2)].as_str(), "leaf.h|/helper.h:1|/outer.h:1|/main.cpp:0"_str);
+    EXPECT_EQ(includes.traces[usize(3)].as_str(), includes.traces[usize(2)].as_str());
+    EXPECT_EQ(includes.traces[usize(4)].as_str(), "leaf.h|/main.cpp:0"_str);
+}
+
 TEST(Preprocessor, ImportIncludesEachHeaderOnceAcrossIncludeDirectives) {
     auto sources = MemorySources {};
     sources.add("/first.hpp"_str, "FIRST\n#import \"first.hpp\"\n"_str);

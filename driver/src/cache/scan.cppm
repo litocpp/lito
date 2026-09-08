@@ -21,6 +21,8 @@ using namespace rstd::literals;
 namespace lito
 {
 
+constexpr auto SCAN_CACHE_VERSION = u64(6);
+
 enum class ScanCacheMissReason
 {
     None,
@@ -521,7 +523,7 @@ private:
             document.external_macro_schema.is_empty()) {
             return miss(ScanCacheMissReason::Corrupt);
         }
-        if (document.version != CACHE_VERSION) return miss(ScanCacheMissReason::Version);
+        if (document.version != SCAN_CACHE_VERSION) return miss(ScanCacheMissReason::Version);
         if (document.recipe.as_str() != SCAN_RECIPE) return miss(ScanCacheMissReason::Recipe);
         if (document.environment.as_str() != state_->environment.as_str()) {
             return miss(ScanCacheMissReason::Environment);
@@ -687,7 +689,7 @@ private:
                     "path '{}' is not valid UTF-8", input.working_directory.as_path()));
             }
             auto document = scan_cache_wire::WriteReceipt<decltype(files)> {
-                .version               = CACHE_VERSION,
+                .version               = SCAN_CACHE_VERSION,
                 .state                 = "complete"_str,
                 .recipe                = SCAN_RECIPE,
                 .environment           = state_->environment.as_str(),

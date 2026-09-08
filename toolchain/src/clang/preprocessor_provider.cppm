@@ -13,8 +13,10 @@ using namespace rstd::literals;
 export namespace lito::toolchain
 {
 
-auto include_candidate_path(ref<rstd::path::Path> directory, ref<str> name, bool framework)
-    -> PathBuf {
+auto include_candidate_path(ref<rstd::path::Path> directory,
+                            ref<str>              name,
+                            bool                  framework,
+                            bool                  private_headers = false) -> PathBuf {
     if (! framework) return PathBuf::from(directory).join(PathBuf::from(name).as_path());
 
     auto parts = name.split_once("/"_str);
@@ -22,12 +24,13 @@ auto include_candidate_path(ref<rstd::path::Path> directory, ref<str> name, bool
         return PathBuf::from(directory).join(PathBuf::from(name).as_path());
     }
 
-    auto framework_name    = parts->get<0>();
-    auto framework_header  = parts->get<1>();
-    auto framework_bundle  = rstd::format("{}.framework", framework_name);
-    auto framework_headers = PathBuf::from(directory)
-                                 .join(PathBuf::from(framework_bundle.as_str()).as_path())
-                                 .join(PathBuf::from("Headers"_str).as_path());
+    auto framework_name   = parts->get<0>();
+    auto framework_header = parts->get<1>();
+    auto framework_bundle = rstd::format("{}.framework", framework_name);
+    auto framework_headers =
+        PathBuf::from(directory)
+            .join(PathBuf::from(framework_bundle.as_str()).as_path())
+            .join(PathBuf::from(private_headers ? "PrivateHeaders"_str : "Headers"_str).as_path());
     return framework_headers.join(PathBuf::from(framework_header).as_path());
 }
 
@@ -55,7 +58,12 @@ public:
             auto parent = request.including_path.as_path().parent();
             if (parent.is_some()) {
                 auto resolved =
-                    candidate(*parent, request.name.as_str(), usize {}, false, false, dependency);
+                    candidate(*parent,
+                              request.name.as_str(),
+                              usize {},
+                              ! request.contexts.is_empty() && request.contexts[usize {}].system,
+                              false,
+                              dependency);
                 if (resolved.is_err()) return resolved;
                 if (resolved->is_some()) {
                     dependencies_.push(rstd::move(dependency));
@@ -79,6 +87,25 @@ public:
                 return resolved;
             }
         }
+        if (request.contexts.is_empty()) {
+            auto resolved = subframework(
+                request.including_path.as_path(), request.name.as_str(), false, dependency);
+            if (resolved.is_err()) return resolved;
+            if (resolved->is_some()) {
+                dependencies_.push(rstd::move(dependency));
+                return resolved;
+            }
+        } else {
+            for (const auto& context : request.contexts) {
+                auto resolved = subframework(
+                    context.path.as_path(), request.name.as_str(), context.system, dependency);
+                if (resolved.is_err()) return resolved;
+                if (resolved->is_some()) {
+                    dependencies_.push(rstd::move(dependency));
+                    return resolved;
+                }
+            }
+        }
         dependencies_.push(rstd::move(dependency));
         return Ok(None());
     }
@@ -88,6 +115,26 @@ public:
     }
 
 private:
+    auto subframework(ref<rstd::path::Path>              context,
+                      ref<str>                           name,
+                      bool                               system,
+                      frontend::IncludeLookupDependency& dependency)
+        -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
+        auto parts = name.split_once("/"_str);
+        if (parts.is_none() || parts->get<0>().is_empty() || parts->get<1>().is_empty())
+            return Ok(None());
+        auto text = context.to_str();
+        if (text.is_none()) return Ok(None());
+        auto boundary = text->split_once(".framework"_str);
+        if (boundary.is_none()) return Ok(None());
+        auto rest = boundary->get<1>();
+        if (! rest.starts_with("/"_str) && ! rest.starts_with("\\"_str)) return Ok(None());
+        auto directory =
+            PathBuf::from(rstd::format("{}.framework/Frameworks", boundary->get<0>()).as_str());
+        // Clang leaves the normal search-directory cursor unset for subframeworks.
+        return candidate(directory.as_path(), name, usize {}, system, true, dependency);
+    }
+
     auto candidate(ref<rstd::path::Path>              directory,
                    ref<str>                           name,
                    usize                              search_index,
@@ -96,7 +143,20 @@ private:
                    frontend::IncludeLookupDependency& dependency)
         -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
         auto requested = include_candidate_path(directory, name, framework);
-        auto exists    = frontend::lookup_candidate_exists(requested.as_path());
+        auto result    = candidate_path(rstd::move(requested), search_index, system, dependency);
+        if (result.is_err() || result->is_some() || ! framework ||
+            name.split_once("/"_str).is_none())
+            return result;
+        return candidate_path(
+            include_candidate_path(directory, name, true, true), search_index, system, dependency);
+    }
+
+    auto candidate_path(PathBuf                            requested,
+                        usize                              search_index,
+                        bool                               system,
+                        frontend::IncludeLookupDependency& dependency)
+        -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
+        auto exists = frontend::lookup_candidate_exists(requested.as_path());
         if (exists.is_err()) {
             return Err(
                 preprocessor::Error::make(rstd::format("cannot inspect include candidate '{}': {}",

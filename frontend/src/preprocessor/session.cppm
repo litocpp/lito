@@ -62,6 +62,7 @@ class PreprocessorSession {
     struct IncludeFrame {
         SourceId      source {};
         Option<usize> search_index;
+        bool          system { false };
     };
 
     struct PresumedLineMapping {
@@ -953,6 +954,7 @@ private:
             .including_path        = rstd::path::PathBuf::from(sources_.path(frame.source)),
             .previous_search_index = frame.search_index,
             .location              = origin.expansion,
+            .contexts              = include_contexts(),
         };
         auto resolved = as<IncludeResolver>(include_resolver_).resolve(request);
         ++raw_statistics_.include_attempts;
@@ -1673,6 +1675,7 @@ private:
                     .including_path        = rstd::path::PathBuf::from(sources_.path(frame.source)),
                     .previous_search_index = frame.search_index,
                     .location              = location,
+                    .contexts              = include_contexts(),
                 });
         ++raw_statistics_.include_attempts;
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
@@ -1691,7 +1694,8 @@ private:
             .location = location,
         });
         if (event.is_err()) return Err(rstd::move(event).unwrap_err());
-        return process_file(value.path.as_path(), Some(value.search_index), import_once);
+        return process_file(
+            value.path.as_path(), Some(value.search_index), import_once, value.system);
     }
 
     auto handle_conditional(ref<str>               directive,
@@ -1850,9 +1854,22 @@ private:
         }
     }
 
+    auto include_contexts() const -> Vec<IncludeContext> {
+        auto contexts = Vec<IncludeContext>::with_capacity(include_stack_.len());
+        for (auto index = include_stack_.len(); index > usize {}; --index) {
+            const auto& frame = include_stack_[index - usize(1)];
+            contexts.push(IncludeContext {
+                .path   = rstd::path::PathBuf::from(sources_.path(frame.source)),
+                .system = frame.system,
+            });
+        }
+        return contexts;
+    }
+
     auto process_file(ref<rstd::path::Path> path,
                       Option<usize>         search_index,
-                      bool                  import_once = false) -> Result<empty> {
+                      bool                  import_once = false,
+                      bool                  system      = false) -> Result<empty> {
         if (include_stack_.len() >= request_.maximum_include_depth) {
             return Err(Error::make(rstd::format("maximum include depth exceeded at '{}'", path)));
         }
@@ -1890,7 +1907,8 @@ private:
                 include_guards_.insert(String::make(*path_value), rstd::move(guard).unwrap());
             }
         }
-        include_stack_.push(IncludeFrame { .source = source, .search_index = search_index });
+        include_stack_.push(
+            IncludeFrame { .source = source, .search_index = search_index, .system = system });
         auto entered = emit(Event {
             .kind     = EventKind::EnterFile,
             .path     = Some(rstd::path::PathBuf::from(sources_.path(source))),

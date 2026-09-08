@@ -34,12 +34,19 @@ using Result = lexical::Result<T>;
 
 using IncludeKind = frontend::IncludeLookupKind;
 
+struct IncludeContext {
+    rstd::path::PathBuf path;
+    bool                system { false };
+};
+
 struct IncludeRequest {
     String              name;
     IncludeKind         kind { IncludeKind::Quoted };
     rstd::path::PathBuf including_path;
     Option<usize>       previous_search_index;
     SourceLocation      location;
+    // Current file first, followed by its includers from nearest to outermost.
+    Vec<IncludeContext> contexts;
 };
 
 struct IncludeResolution {
