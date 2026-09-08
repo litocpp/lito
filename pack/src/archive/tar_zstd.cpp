@@ -91,12 +91,11 @@ auto TarZstdWriter::create(ref<rstd::path::Path> path) -> ArchiveResult<TarZstdW
     return Ok(TarZstdWriter(implementation));
 }
 
-auto TarZstdWriter::write_directory(slice<u8> path, u32 mode) -> ArchiveResult<empty> {
-    return static_cast<TarZstdWriterImplementation*>(implementation_)
-        ->tar.write_directory(path, mode);
+auto TarZstdWriter::write_directory(slice<u8> path) -> ArchiveResult<empty> {
+    return static_cast<TarZstdWriterImplementation*>(implementation_)->tar.write_directory(path);
 }
 
-auto TarZstdWriter::write_file(slice<u8> path, u32 mode, slice<u8> contents)
+auto TarZstdWriter::write_file(slice<u8> path, TarFileMode mode, slice<u8> contents)
     -> ArchiveResult<empty> {
     return static_cast<TarZstdWriterImplementation*>(implementation_)
         ->tar.write_file(path, mode, contents);

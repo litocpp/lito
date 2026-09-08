@@ -419,14 +419,14 @@ auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree
     }
     auto writer     = rstd::move(writer_result).unwrap();
     auto root       = rstd::format("{}-{}", package.name.as_str(), version.text());
-    auto wrote_root = writer.write_directory(root.as_str().as_bytes(), u32(0755));
+    auto wrote_root = writer.write_directory(root.as_str().as_bytes());
     if (wrote_root.is_err()) {
         return archive_library_failure<InspectedRegistryArchive>(
             package, rstd::move(wrote_root).unwrap_err());
     }
     for (const auto& directory : archive_directories(tree)) {
         auto path  = rstd::format("{}/{}", root, directory);
-        auto wrote = writer.write_directory(path.as_str().as_bytes(), u32(0755));
+        auto wrote = writer.write_directory(path.as_str().as_bytes());
         if (wrote.is_err()) {
             return archive_library_failure<InspectedRegistryArchive>(
                 package, rstd::move(wrote).unwrap_err());
@@ -435,10 +435,11 @@ auto lito::registry::PackageArchiveBuilder::build(const lito::source::SourceTree
     for (const auto& entry : tree.entries()) {
         if (entry.kind() != lito::source::SourceEntryKind::File) continue;
         auto path  = rstd::format("{}/{}", root, entry.path().as_str());
-        auto wrote = writer.write_file(
-            path.as_str().as_bytes(),
-            entry.mode() == lito::source::SourceFileMode::Executable ? u32(0755) : u32(0644),
-            entry.contents());
+        auto wrote = writer.write_file(path.as_str().as_bytes(),
+                                       entry.mode() == lito::source::SourceFileMode::Executable
+                                           ? lito::archive::TarFileMode::Executable
+                                           : lito::archive::TarFileMode::Regular,
+                                       entry.contents());
         if (wrote.is_err()) {
             return archive_library_failure<InspectedRegistryArchive>(
                 package, rstd::move(wrote).unwrap_err());

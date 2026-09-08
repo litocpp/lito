@@ -716,6 +716,79 @@ sources = ["src/lib.cppm"]
     EXPECT_EQ(packed->artifact->candidate.version.text(), "1.2.3"_str);
 }
 
+TEST_F(Manifest, PackPackageNormalizesFilesystemMetadata) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-reproducible-package"
+version = "1.2.3"
+
+[lib]
+name = "fixture-reproducible-package"
+module = "fixture.reproducible_package"
+archive = "fixture-reproducible-package"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.reproducible_package;\n"_str },
+        { "tools/generate"_str, "#!/bin/sh\n"_str, lito::source::SourceFileMode::Executable },
+    };
+    auto project = materialize("reproducible-package"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto source = project->root.join(PathBuf::from("src/lib.cppm"_str).as_path());
+    auto tool   = project->root.join(PathBuf::from("tools/generate"_str).as_path());
+#if RSTD_OS_UNIX
+    ASSERT_TRUE(
+        rstd::fs::set_permissions(source.as_path(), rstd::fs::Permissions::from_mode(u32(0644)))
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::set_permissions(tool.as_path(), rstd::fs::Permissions::from_mode(u32(0755)))
+            .is_ok());
+#endif
+    auto first_output =
+        build_root("reproducible-package"_str).join(PathBuf::from("first.tar.zst"_str).as_path());
+    auto first = lito::pack_package(lito::PackPackageRequest {
+        .root   = project->root.clone(),
+        .output = Some(first_output.clone()),
+        .registry =
+            lito::PackageRegistryContext {
+                .owner =
+                    lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            },
+    });
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_TRUE(first->artifact.is_some());
+
+    auto metadata = rstd::fs::metadata(source.as_path());
+    ASSERT_TRUE(metadata.is_ok());
+    auto modified = metadata->modified();
+    ASSERT_TRUE(modified.is_ok());
+    auto source_file = rstd::fs::OpenOptions::make().read(true).write(true).open(source.as_path());
+    ASSERT_TRUE(source_file.is_ok());
+    ASSERT_TRUE(
+        source_file->set_modified(*modified + rstd::time::Duration::from_secs(u64(60))).is_ok());
+#if RSTD_OS_UNIX
+    ASSERT_TRUE(
+        rstd::fs::set_permissions(source.as_path(), rstd::fs::Permissions::from_mode(u32(0600)))
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::set_permissions(tool.as_path(), rstd::fs::Permissions::from_mode(u32(0700)))
+            .is_ok());
+#endif
+    auto second_output =
+        build_root("reproducible-package"_str).join(PathBuf::from("second.tar.zst"_str).as_path());
+    auto second = lito::pack_package(lito::PackPackageRequest {
+        .root   = project->root.clone(),
+        .output = Some(second_output.clone()),
+        .registry =
+            lito::PackageRegistryContext {
+                .owner =
+                    lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            },
+    });
+    ASSERT_TRUE(second.is_ok());
+    ASSERT_TRUE(second->artifact.is_some());
+    EXPECT_EQ(first->artifact->archive.checksum, second->artifact->archive.checksum);
+}
+
 struct InvalidManifestCase {
     ref<str> name;
     ref<str> contents;

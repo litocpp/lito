@@ -42,9 +42,9 @@ public:
     ~TarZstdWriter();
 
     static auto create(ref<rstd::path::Path> path) -> ArchiveResult<TarZstdWriter>;
-    auto        write_directory(slice<u8> path, u32 mode) -> ArchiveResult<empty>;
-    auto        write_file(slice<u8> path, u32 mode, slice<u8> contents) -> ArchiveResult<empty>;
-    auto        finish() -> ArchiveResult<empty>;
+    auto        write_directory(slice<u8> path) -> ArchiveResult<empty>;
+    auto write_file(slice<u8> path, TarFileMode mode, slice<u8> contents) -> ArchiveResult<empty>;
+    auto finish() -> ArchiveResult<empty>;
 };
 
 } // namespace lito::archive

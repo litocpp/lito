@@ -13,6 +13,12 @@ enum class TarEntryKind : rstd::uint8_t
     Directory,
 };
 
+enum class TarFileMode : rstd::uint8_t
+{
+    Regular,
+    Executable,
+};
+
 struct TarEntryHeader {
     Vec<u8>      path;
     TarEntryKind kind {};

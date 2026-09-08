@@ -38,14 +38,14 @@ class TarWriter {
     ZstdWriter* sink_ {};
     bool        finished_ {};
 
-    auto write_entry(slice<u8> path, TarEntryKind kind, u32 mode, slice<u8> contents)
+    auto write_entry(slice<u8> path, TarEntryKind kind, TarFileMode mode, slice<u8> contents)
         -> ArchiveResult<empty>;
 
 public:
     explicit TarWriter(ZstdWriter& sink) noexcept: sink_(&sink) {}
 
-    auto write_directory(slice<u8> path, u32 mode) -> ArchiveResult<empty>;
-    auto write_file(slice<u8> path, u32 mode, slice<u8> contents) -> ArchiveResult<empty>;
+    auto write_directory(slice<u8> path) -> ArchiveResult<empty>;
+    auto write_file(slice<u8> path, TarFileMode mode, slice<u8> contents) -> ArchiveResult<empty>;
     auto finish() -> ArchiveResult<empty>;
 };
 

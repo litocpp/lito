@@ -39,9 +39,11 @@ auto make_large_contents() -> Vec<u8> {
 auto write_fixture(ref<rstd::path::Path> path, ref<str> long_path, slice<u8> contents)
     -> lito::archive::ArchiveResult<empty> {
     auto writer = rstd_try(lito::archive::TarZstdWriter::create(path));
-    rstd_try(writer.write_directory("package"_str.as_bytes(), u32(0755)));
-    rstd_try(writer.write_file("package/empty"_str.as_bytes(), u32(0644), {}));
-    rstd_try(writer.write_file(long_path.as_bytes(), u32(0755), contents));
+    rstd_try(writer.write_directory("package"_str.as_bytes()));
+    rstd_try(
+        writer.write_file("package/empty"_str.as_bytes(), lito::archive::TarFileMode::Regular, {}));
+    rstd_try(
+        writer.write_file(long_path.as_bytes(), lito::archive::TarFileMode::Executable, contents));
     return writer.finish();
 }
 
@@ -65,6 +67,10 @@ TEST(Archive, StreamsUstarPaxAndZstdRoundTrip) {
     ASSERT_TRUE(directory->is_some());
     EXPECT_EQ((**directory).kind, lito::archive::TarEntryKind::Directory);
     EXPECT_EQ((**directory).path.as_slice(), "package"_str.as_bytes());
+    EXPECT_EQ((**directory).mode, u32(0755));
+    EXPECT_EQ((**directory).uid, u64 {});
+    EXPECT_EQ((**directory).gid, u64 {});
+    EXPECT_EQ((**directory).mtime, u64 {});
     ASSERT_TRUE(reader.skip_entry_data().is_ok());
 
     auto empty = reader.next_entry();
@@ -72,6 +78,10 @@ TEST(Archive, StreamsUstarPaxAndZstdRoundTrip) {
     ASSERT_TRUE(empty->is_some());
     EXPECT_EQ((**empty).size, u64 {});
     EXPECT_EQ((**empty).path.as_slice(), "package/empty"_str.as_bytes());
+    EXPECT_EQ((**empty).mode, u32(0644));
+    EXPECT_EQ((**empty).uid, u64 {});
+    EXPECT_EQ((**empty).gid, u64 {});
+    EXPECT_EQ((**empty).mtime, u64 {});
     ASSERT_TRUE(reader.skip_entry_data().is_ok());
 
     auto file = reader.next_entry();
@@ -79,6 +89,9 @@ TEST(Archive, StreamsUstarPaxAndZstdRoundTrip) {
     ASSERT_TRUE(file->is_some());
     EXPECT_EQ((**file).path.as_slice(), long_path.as_str().as_bytes());
     EXPECT_EQ((**file).mode, u32(0755));
+    EXPECT_EQ((**file).uid, u64 {});
+    EXPECT_EQ((**file).gid, u64 {});
+    EXPECT_EQ((**file).mtime, u64 {});
     EXPECT_EQ((**file).size, u64(contents.len().to_primitive()));
     EXPECT_TRUE(reader.next_entry().is_err());
 

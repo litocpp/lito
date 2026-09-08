@@ -16,6 +16,12 @@ inline constexpr usize TAR_BLOCK_SIZE { 512 };
 inline constexpr usize TAR_NAME_SIZE { 100 };
 inline constexpr usize TAR_PREFIX_SIZE { 155 };
 inline constexpr usize TAR_PAX_SIZE_LIMIT { 4096 };
+inline constexpr u32   TAR_DIRECTORY_MODE { 0755 };
+inline constexpr u32   TAR_REGULAR_MODE { 0644 };
+inline constexpr u32   TAR_EXECUTABLE_MODE { 0755 };
+inline constexpr u64   TAR_USER_ID {};
+inline constexpr u64   TAR_GROUP_ID {};
+inline constexpr u64   TAR_MODIFIED_TIME {};
 
 auto tar_error(ref<str> message, ArchiveErrorKind kind = ArchiveErrorKind::Tar) -> ArchiveError {
     return ArchiveError {
@@ -477,16 +483,16 @@ auto write_tar_header(ZstdWriter&  sink,
                       u64(mode.to_primitive())) ||
         ! write_octal(mut_ref<u8[]>::from_raw_parts(
                           block.as_mut_ptr().as_raw_ptr() + usize(108).to_primitive(), usize(8)),
-                      u64 {}) ||
+                      TAR_USER_ID) ||
         ! write_octal(mut_ref<u8[]>::from_raw_parts(
                           block.as_mut_ptr().as_raw_ptr() + usize(116).to_primitive(), usize(8)),
-                      u64 {}) ||
+                      TAR_GROUP_ID) ||
         ! write_octal(mut_ref<u8[]>::from_raw_parts(
                           block.as_mut_ptr().as_raw_ptr() + usize(124).to_primitive(), usize(12)),
                       size) ||
         ! write_octal(mut_ref<u8[]>::from_raw_parts(
                           block.as_mut_ptr().as_raw_ptr() + usize(136).to_primitive(), usize(12)),
-                      u64 {})) {
+                      TAR_MODIFIED_TIME)) {
         return Err(tar_error("tar entry metadata cannot be represented by ustar"_str));
     }
     for (auto index = usize(148); index < usize(156); ++index) {
@@ -519,8 +525,10 @@ auto write_padding(ZstdWriter& sink, usize length) -> ArchiveResult<empty> {
     return sink.write(slice<u8>::from_raw_parts(zero.as_ptr().as_raw_ptr(), length));
 }
 
-auto TarWriter::write_entry(slice<u8> path, TarEntryKind kind, u32 mode, slice<u8> contents)
-    -> ArchiveResult<empty> {
+auto TarWriter::write_entry(slice<u8>    path,
+                            TarEntryKind kind,
+                            TarFileMode  file_mode,
+                            slice<u8>    contents) -> ArchiveResult<empty> {
     if (finished_) {
         return Err(tar_error("cannot write a finished tar archive"_str, ArchiveErrorKind::State));
     }
@@ -536,7 +544,7 @@ auto TarWriter::write_entry(slice<u8> path, TarEntryKind kind, u32 mode, slice<u
                                            pax_name,
                                            {},
                                            TarEntryKind::Regular,
-                                           u32(0644),
+                                           TAR_REGULAR_MODE,
                                            u64(record.len().to_primitive()),
                                            static_cast<u8>('x'));
         if (pax_header.is_err()) return Err(rstd::move(pax_header).unwrap_err());
@@ -549,6 +557,9 @@ auto TarWriter::write_entry(slice<u8> path, TarEntryKind kind, u32 mode, slice<u
             .name = Vec<u8>::from("PaxPath/lito"_str.as_bytes()),
         });
     }
+    auto mode   = kind == TarEntryKind::Directory        ? TAR_DIRECTORY_MODE
+                  : file_mode == TarFileMode::Executable ? TAR_EXECUTABLE_MODE
+                                                         : TAR_REGULAR_MODE;
     auto header = write_tar_header(
         *sink_,
         fields->name.as_slice(),
@@ -565,11 +576,12 @@ auto TarWriter::write_entry(slice<u8> path, TarEntryKind kind, u32 mode, slice<u
     return write_padding(*sink_, (usize(512) - size % usize(512)) % usize(512));
 }
 
-auto TarWriter::write_directory(slice<u8> path, u32 mode) -> ArchiveResult<empty> {
-    return write_entry(path, TarEntryKind::Directory, mode, {});
+auto TarWriter::write_directory(slice<u8> path) -> ArchiveResult<empty> {
+    return write_entry(path, TarEntryKind::Directory, TarFileMode::Regular, {});
 }
 
-auto TarWriter::write_file(slice<u8> path, u32 mode, slice<u8> contents) -> ArchiveResult<empty> {
+auto TarWriter::write_file(slice<u8> path, TarFileMode mode, slice<u8> contents)
+    -> ArchiveResult<empty> {
     return write_entry(path, TarEntryKind::Regular, mode, contents);
 }
 
