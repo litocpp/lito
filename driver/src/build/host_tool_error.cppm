@@ -6,6 +6,7 @@ export module lito.driver:build.host_tool_error;
 import rstd;
 import lito.core;
 import lito.system;
+import lito.tools;
 
 using namespace rstd::prelude;
 
@@ -19,6 +20,7 @@ class HostBuildToolError {
     RSTD_ENUM(HostBuildToolError,
               (Source, (lito::source::SourceError source;)),
               (System, (SystemError source;)),
+              (Tool, (lito::tools::ToolError source;)),
               (DuplicateAlias, (String alias;)),
               (UnsupportedHost, (String alias; String os; String architecture;)),
               (MissingExecutable, (String alias; PathBuf path;)),
@@ -32,6 +34,13 @@ using HostBuildToolResult = Result<T, HostBuildToolError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<lito::tools::ToolError>, lito::HostBuildToolError> {
+    static auto from(lito::tools::ToolError error) -> lito::HostBuildToolError {
+        return lito::HostBuildToolError::Tool(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::source::SourceError>, lito::HostBuildToolError> {
@@ -51,6 +60,7 @@ template<>
 struct Impl<fmt::Display, lito::HostBuildToolError> : ImplBase<lito::HostBuildToolError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Tool()) return formatter.write_str("host build-tool resolution failed"_str);
         if (error.is_Source())
             return formatter.write_str("host build-tool source acquisition failed"_str);
         if (error.is_System()) return formatter.write_str("host build-tool process failed"_str);
@@ -98,6 +108,7 @@ template<>
 struct Impl<error::Error, lito::HostBuildToolError> : ImplBase<lito::HostBuildToolError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Tool()) return Some(dyn<error::Error>::from_ref(error.as_Tool().source));
         if (error.is_Source()) return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));
         return None();

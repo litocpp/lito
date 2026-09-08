@@ -24,6 +24,7 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
         event.kind != lito::BuildEventKind::BuildToolFetch &&
+        event.kind != lito::BuildEventKind::BuildToolResolve &&
         event.kind != lito::BuildEventKind::BuildToolRun &&
         event.kind != lito::BuildEventKind::GeneratedResource &&
         event.kind != lito::BuildEventKind::CMakeConfigure &&

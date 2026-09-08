@@ -128,7 +128,8 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
     for (auto& package : graph.packages) {
         package.externals.clear();
         for (const auto& tool : package.manifest.build_tools) {
-            for (const auto& archive : tool.archives) {
+            if (! tool.source.is_Archive()) continue;
+            for (const auto& archive : tool.source.as_Archive().recipe.archives) {
                 auto architectures = Vec<Architecture>::make();
                 architectures.push(Architecture(archive.host.architecture));
                 package.externals.push(lito::dependency::ResolvedExternalSourceRecord {

@@ -1762,6 +1762,49 @@ frameworks = []
     EXPECT_TRUE(loaded.is_err());
 }
 
+TEST_F(Manifest, PathBuildToolsHaveExplicitSources) {
+    constexpr ref<str> paths[] = { "generator"_str,
+                                   "tools/generator"_str,
+                                   "/opt/tools/generator"_str };
+    auto               index   = usize {};
+    for (auto path : paths) {
+        auto text =
+            rstd::format("[package]\nname = \"path-tool\"\nversion = \"0.1.0\"\n"
+                         "[[bin]]\nname = \"tool\"\nsources = [\"main.cpp\"]\nlink-stdlib = false\n"
+                         "[build-tools.generator]\npath = \"{}\"\n",
+                         path);
+        auto project = manifest(rstd::format("path-tool-{}", index++).as_str(), text.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_ok());
+        ASSERT_EQ(loaded->build_tools.len(), usize(1));
+        const auto& tool = loaded->build_tools[usize {}];
+        ASSERT_TRUE(tool.source.is_Path());
+        EXPECT_EQ(tool.source.as_Path().requested.as_path(), PathBuf::from(path).as_path());
+    }
+}
+
+TEST_F(Manifest, RejectsAmbiguousOrEmptyBuildToolSources) {
+    constexpr ref<str> declarations[] = {
+        "path = \"\""_str,
+        "path = \"generator\"\nversion = \"\""_str,
+        "path = \"generator\"\nexecutable = \"\""_str,
+        "path = \"generator\"\narchives = {}"_str,
+        ""_str,
+    };
+    auto index = usize {};
+    for (auto declaration : declarations) {
+        auto text =
+            rstd::format("[package]\nname = \"invalid-tool\"\nversion = \"0.1.0\"\n"
+                         "[[bin]]\nname = \"tool\"\nsources = [\"main.cpp\"]\nlink-stdlib = false\n"
+                         "[build-tools.generator]\n{}\n",
+                         declaration);
+        auto project = manifest(rstd::format("invalid-tool-{}", index++).as_str(), text.as_str());
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
+    }
+}
+
 TEST_F(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
     auto project = manifest("build-tools"_str, R"toml([package]
 name = "build-tool-valid"
@@ -1793,12 +1836,13 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
     ASSERT_EQ(loaded->build_tools.len(), usize(1));
     const auto& tool = loaded->build_tools[usize {}];
     EXPECT_EQ(tool.alias.as_str(), "generator"_str);
-    EXPECT_EQ(tool.version.as_str(), "1.2.3"_str);
-    EXPECT_EQ(tool.executable.as_path(), PathBuf::from("bin/generator"_str).as_path());
-    ASSERT_EQ(tool.archives.len(), usize(2));
+    EXPECT_EQ(tool.source.as_Archive().recipe.version.as_str(), "1.2.3"_str);
+    EXPECT_EQ(tool.source.as_Archive().recipe.executable.as_path(),
+              PathBuf::from("bin/generator"_str).as_path());
+    ASSERT_EQ(tool.source.as_Archive().recipe.archives.len(), usize(2));
     auto has_x86_64  = false;
     auto has_aarch64 = false;
-    for (const auto& archive : tool.archives) {
+    for (const auto& archive : tool.source.as_Archive().recipe.archives) {
         EXPECT_EQ(archive.host.os.as_str(), "linux"_str);
         if (archive.host.architecture == lito::system::Architecture::X86_64) has_x86_64 = true;
         if (archive.host.architecture == lito::system::Architecture::Aarch64) has_aarch64 = true;
@@ -1832,6 +1876,32 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
                                              });
     ASSERT_TRUE(unsupported.is_err());
     EXPECT_TRUE(unsupported.unwrap_err().is_UnsupportedHost());
+    loaded->build_tools.push(lito::manifest::BuildToolRequirement {
+        .alias  = String::make("local"_str),
+        .source = lito::manifest::BuildToolSource::Path(PathBuf::from("missing-local-tool"_str)),
+    });
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(lito::package::ResolvedPackage {
+        .manifest = rstd::move(loaded).unwrap(),
+    });
+    auto host = lito::system::HostInfo {
+        .architecture = lito::system::Architecture::X86_64,
+        .os           = String::make("linux"_str),
+    };
+    auto requests =
+        lito::resolve_host_build_tool_archives(graph, strings("build-tool-valid"_str), host);
+    ASSERT_TRUE(requests.is_ok());
+    ASSERT_EQ(requests->len(), usize(1));
+    EXPECT_EQ((*requests)[usize {}].name.as_str(), "generator"_str);
+    graph.packages[usize {}].manifest.build_tools.clear();
+    graph.packages[usize {}].manifest.build_tools.push(lito::manifest::BuildToolRequirement {
+        .alias  = String::make("local"_str),
+        .source = lito::manifest::BuildToolSource::Path(PathBuf::from("missing-local-tool"_str)),
+    });
+    auto local_only =
+        lito::resolve_host_build_tool_archives(graph, strings("build-tool-valid"_str), host);
+    ASSERT_TRUE(local_only.is_ok());
+    EXPECT_TRUE(local_only->is_empty());
 }
 
 TEST_F(Manifest, ScriptPackageHasFixedEntryAndBuiltinDependencySource) {

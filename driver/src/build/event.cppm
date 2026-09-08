@@ -30,6 +30,7 @@ enum class BuildEventKind
     ConfigureReuse,
     BuildToolFetch,
     BuildToolReuse,
+    BuildToolResolve,
     BuildToolRun,
     BuildToolRunReuse,
     GeneratedResource,
@@ -93,6 +94,7 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::ConfigureReuse: name = "configure-reuse"_str; break;
         case lito::BuildEventKind::BuildToolFetch: name = "build-tool-fetch"_str; break;
         case lito::BuildEventKind::BuildToolReuse: name = "build-tool-reuse"_str; break;
+        case lito::BuildEventKind::BuildToolResolve: name = "build-tool"_str; break;
         case lito::BuildEventKind::BuildToolRun: name = "build-tool-run"_str; break;
         case lito::BuildEventKind::BuildToolRunReuse: name = "build-tool-run-reuse"_str; break;
         case lito::BuildEventKind::GeneratedResource: name = "generated-resource"_str; break;

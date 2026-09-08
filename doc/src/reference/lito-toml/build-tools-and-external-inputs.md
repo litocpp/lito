@@ -2,7 +2,25 @@
 
 ## `[build-tools.NAME]`
 
-Each host build tool requires:
+Each host build tool selects either a local executable or a downloaded archive:
+
+```toml
+[build-tools.glslang]
+path = "glslangValidator"
+```
+
+A single executable name is resolved from the effective host PATH. An absolute path selects that
+file; a relative path containing a directory is resolved against the declaring package root.
+Paths are not shell expressions and do not expand environment variables or `~`. Arguments belong
+in `lito.run`. `path` cannot be combined with `version`, `executable`, or `archives`.
+
+Local tools are checked for executability, including symlinks, but are not queried with
+`--version`. Their resolved path and executable content participate in build-action identity.
+Dynamic libraries and script interpreters are not pinned. Absolute paths are machine-specific;
+local tools are neither downloaded nor included in source bundles or download lock entries.
+Offline builds still require them to be installed on the host, including during cross-compilation.
+
+A downloaded host build tool requires:
 
 - `version`: a non-empty identity string;
 - `executable`: a relative path inside the acquired archive;

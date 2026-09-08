@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.core:manifest.build_tool;
 
 import rstd;
@@ -18,11 +21,19 @@ struct BuildToolArchiveManifest {
     licrypto::Sha256Digest sha256;
 };
 
-struct BuildToolRequirement {
-    String                        alias;
+struct ArchiveBuildTool {
     String                        version;
     PathBuf                       executable;
     Vec<BuildToolArchiveManifest> archives;
+};
+
+class BuildToolSource {
+    RSTD_ENUM(BuildToolSource, (Path, (PathBuf requested;)), (Archive, (ArchiveBuildTool recipe;)))
+};
+
+struct BuildToolRequirement {
+    String          alias;
+    BuildToolSource source;
 };
 
 } // namespace lito::manifest

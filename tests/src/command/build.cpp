@@ -93,6 +93,80 @@ void capture_cmake_override_events(void* context, const lito::BuildEvent& event)
     }
 }
 
+#if RSTD_OS_UNIX
+TEST_F(BuildCommand, PathToolActionsInvalidateOnInputsOutputsAndExecutableContent) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "path-tool-action"
+version = "0.1.0"
+[[bin]]
+name = "path-tool-action"
+sources = ["main.cpp"]
+link-stdlib = false
+[build-tools.generator]
+path = "tools/generate"
+)toml"_str },
+        { "build.lua"_str,
+          R"lua(local target = lito.target({kind = "bin", name = "path-tool-action"})
+lito.run({tool = lito.tool("generator"), cwd = ".",
+  args = {"@INPUT:1@", "@OUTPUT:1@"},
+  inputs = {"value.txt"}, outputs = {"include/value.h"}})
+lito.target_add_generated_include(target, "include")
+)lua"_str },
+        { "main.cpp"_str, "#include \"value.h\"\nint main() { return value; }\n"_str },
+        { "value.txt"_str, "constexpr int value = 0;\n"_str },
+        { "tools/generate"_str,
+          "#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' \"$line\"; done < \"$1\" > \"$2\"\n"_str,
+          lito::source::SourceFileMode::Executable },
+    };
+    auto project = materialize("path-tool-action"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output             = build_root("path-tool-action"_str);
+    auto request            = build_request(project->root.as_path(),
+                                            output.as_path(),
+                                            Vec<String>::make(),
+                                            build_profile("release"_str));
+    request.sources.network = lito::source::NetworkPolicy::Offline;
+    auto capture            = GeneratedScanOrderCapture {};
+    request.observer        = Some(lito::BuildEventSink {
+        .context = rstd::addressof(capture),
+        .notify  = capture_generated_scan_order,
+    });
+    auto check              = [&](lito::BuildEventKind expected) {
+        capture.events.clear();
+        auto built = lito::build(request);
+        if (built.is_err()) {
+            rstd::test::fail_current(
+                error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+            return false;
+        }
+        for (const auto& event : capture.events) {
+            if (event.kind == expected) return true;
+        }
+        return false;
+    };
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRunReuse));
+    auto input = project->root.join(PathBuf::from("value.txt"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(input.as_path(), "constexpr int value = 1;\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+    auto generated =
+        output.join(PathBuf::from("generated/path-tool-action/include/value.h"_str).as_path());
+    ASSERT_TRUE(rstd::fs::remove_file(generated.as_path()).is_ok());
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+    auto tool = project->root.join(PathBuf::from("tools/generate"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(tool.as_path(),
+                        "#!/bin/sh\nprintf 'constexpr int value = 2;\\n' > \"$2\"\n"_str.as_bytes())
+            .is_ok());
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+    auto text = rstd::fs::read_to_string(generated.as_path());
+    ASSERT_TRUE(text.is_ok());
+    EXPECT_TRUE(text->as_str().contains("value = 2"_str));
+}
+#endif
+
 auto build_command_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"build([workspace]

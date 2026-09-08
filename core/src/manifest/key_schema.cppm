@@ -56,7 +56,8 @@ auto binary_key(ref<str> key) -> bool {
 }
 
 auto build_tool_key(ref<str> key) -> bool {
-    return key == "version"_str || key == "executable"_str || key == "archives"_str;
+    return key == "path"_str || key == "version"_str || key == "executable"_str ||
+           key == "archives"_str;
 }
 
 auto build_tool_archive_key(ref<str> key) -> bool {

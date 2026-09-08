@@ -22,9 +22,10 @@ struct BuildToolArchive {
 };
 
 struct BuildTool {
-    String                                                version;
-    String                                                executable;
-    rstd::collections::BTreeMap<String, BuildToolArchive> archives;
+    Option<String>                                                path;
+    Option<String>                                                version;
+    Option<String>                                                executable;
+    Option<rstd::collections::BTreeMap<String, BuildToolArchive>> archives;
 };
 
 using BuildTools = rstd::collections::BTreeMap<String, BuildTool>;
@@ -118,17 +119,19 @@ struct Impl<serde::Deserialize, lito::manifest::wire::BuildTool> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
         -> Result<lito::manifest::wire::BuildTool, typename Deserializer::error_type> {
-        auto version    = serde::RequiredField<String>("version"_str);
-        auto executable = serde::RequiredField<String>("executable"_str);
-        auto archives   = serde::RequiredField<
+        auto path       = serde::OptionalField<String>("path"_str);
+        auto version    = serde::OptionalField<String>("version"_str);
+        auto executable = serde::OptionalField<String>("executable"_str);
+        auto archives   = serde::OptionalField<
             rstd::collections::BTreeMap<String, lito::manifest::wire::BuildToolArchive>>(
             "archives"_str);
         rstd_try(serde::deserialize_record(
-            deserializer, serde::UnknownFieldPolicy::Reject, version, executable, archives));
+            deserializer, serde::UnknownFieldPolicy::Reject, path, version, executable, archives));
         return Ok(lito::manifest::wire::BuildTool {
-            .version    = rstd_try(version.take(deserializer)),
-            .executable = rstd_try(executable.take(deserializer)),
-            .archives   = rstd_try(archives.take(deserializer)),
+            .path       = path.take(),
+            .version    = version.take(),
+            .executable = executable.take(),
+            .archives   = archives.take(),
         });
     }
 };

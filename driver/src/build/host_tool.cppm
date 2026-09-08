@@ -60,12 +60,12 @@ auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         
         rstd::format("host-build-tool-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                      owned.package.as_str(),
                      owned.requirement.alias.as_str(),
-                     owned.requirement.version.as_str(),
+                     owned.requirement.source.as_Archive().recipe.version.as_str(),
                      host.os.as_str(),
                      architecture_name(host.architecture),
                      archive.url.as_str(),
                      archive.sha256,
-                     owned.requirement.executable.as_path(),
+                     owned.requirement.source.as_Archive().recipe.executable.as_path(),
                      source_identity,
                      digest)
             .as_str());
@@ -98,13 +98,17 @@ auto host_tool_receipt_matches(ref<rstd::path::Path>                           r
               (**parsed->get("version"_str)).as_u64() == Some(u64(1)) &&
               matches("package"_str, owned.package.as_str()) &&
               matches("alias"_str, owned.requirement.alias.as_str()) &&
-              matches("declared_version"_str, owned.requirement.version.as_str()) &&
+              matches("declared_version"_str,
+                      owned.requirement.source.as_Archive().recipe.version.as_str()) &&
               matches("host_os"_str, host.os.as_str()) &&
               matches("host_architecture"_str, architecture_name(host.architecture)) &&
               matches("url"_str, archive.url.as_str()) &&
               matches("archive_sha256"_str, archive.sha256.to_hex().as_str()) &&
               matches("executable"_str,
-                      owned.requirement.executable.as_path().to_string_lossy().as_str()) &&
+                      owned.requirement.source.as_Archive()
+                          .recipe.executable.as_path()
+                          .to_string_lossy()
+                          .as_str()) &&
               matches("source_identity"_str, source_identity) &&
               matches("executable_digest"_str, executable_digest) &&
               matches("receipt_identity"_str, receipt_identity));
@@ -125,14 +129,16 @@ auto write_host_tool_receipt(ref<rstd::path::Path>                           rec
     document.insert(String::make("package"_str), Json::String(owned.package.clone()));
     document.insert(String::make("alias"_str), Json::String(owned.requirement.alias.clone()));
     document.insert(String::make("declared_version"_str),
-                    Json::String(owned.requirement.version.clone()));
+                    Json::String(owned.requirement.source.as_Archive().recipe.version.clone()));
     document.insert(String::make("host_os"_str), Json::String(host.os.clone()));
     document.insert(String::make("host_architecture"_str),
                     Json::String(String::make(architecture_name(host.architecture))));
     document.insert(String::make("url"_str), Json::String(String::make(archive.url.as_str())));
     document.insert(String::make("archive_sha256"_str), Json::String(archive.sha256.to_hex()));
-    document.insert(String::make("executable"_str),
-                    Json::String(owned.requirement.executable.as_path().to_string_lossy()));
+    document.insert(
+        String::make("executable"_str),
+        Json::String(
+            owned.requirement.source.as_Archive().recipe.executable.as_path().to_string_lossy()));
     document.insert(String::make("source_identity"_str),
                     Json::String(String::make(source_identity)));
     document.insert(String::make("executable_digest"_str),
@@ -167,7 +173,7 @@ export namespace lito
 auto select_host_build_tool_archive(const lito::manifest::BuildToolRequirement& requirement,
                                     const HostInfo&                             host)
     -> HostBuildToolResult<ref<lito::manifest::BuildToolArchiveManifest>> {
-    for (const auto& archive : requirement.archives) {
+    for (const auto& archive : requirement.source.as_Archive().recipe.archives) {
         if (archive.host.os == host.os.as_str() && archive.host.architecture == host.architecture) {
             return Ok(ref<lito::manifest::BuildToolArchiveManifest>::from_raw_parts(
                 rstd::addressof(archive)));
@@ -187,6 +193,7 @@ auto resolve_host_build_tool_archives(const lito::package::ResolvedPackageGraph&
     for (const auto& package : graph.packages) {
         if (! requested_package(packages, package.manifest.name.as_str())) continue;
         for (const auto& tool : package.manifest.build_tools) {
+            if (! tool.source.is_Archive()) continue;
             auto archive = rstd_try(select_host_build_tool_archive(tool, host));
             requests.push(lito::source::ArchiveSourceFetchRequest {
                 .owner  = package.manifest.name.clone(),
@@ -200,13 +207,10 @@ auto resolve_host_build_tool_archives(const lito::package::ResolvedPackageGraph&
 }
 
 struct ResolvedHostBuildTool {
-    String   package;
-    String   alias;
-    String   version;
-    HostInfo host;
-    PathBuf  executable;
-    String   source_identity;
-    String   receipt_identity;
+    String  package;
+    String  alias;
+    PathBuf executable;
+    String  identity;
 };
 
 class ResolvedHostBuildTools {
@@ -302,8 +306,49 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
     auto requirements = Vec<ref<cpp::PackageBuildToolRequirement>>::make();
     auto selected     = Vec<ref<lito::manifest::BuildToolArchiveManifest>>::make();
     auto archives     = Vec<lito::source::ArchiveSourceFetchRequest>::make();
+    auto result       = ResolvedHostBuildTools {};
     for (const auto& owned : metadata.build_tools) {
         if (! requested_package(packages, owned.package.as_str())) continue;
+        if (owned.requirement.source.is_Path()) {
+            const auto& declared  = owned.requirement.source.as_Path().requested;
+            auto        requested = declared.clone();
+            if (declared.as_path().is_relative() &&
+                ! is_searchable_executable_name(declared.as_path())) {
+                requested = owned.root.join(declared.as_path());
+            }
+            auto resolved =
+                rstd_try(resolver.resolve(requested.as_path(), owned.requirement.alias.as_str()));
+            auto canonical = rstd::fs::canonicalize(resolved.executable.as_path());
+            if (canonical.is_err()) {
+                return host_tool_io_failure<ResolvedHostBuildTools>(
+                    "resolve host build-tool path"_str,
+                    resolved.executable.as_path(),
+                    rstd::move(canonical).unwrap_err());
+            }
+            auto digest   = rstd_try(executable_digest(canonical->as_path()));
+            auto identity = licrypto::sha256_hex(
+                rstd::format("host-build-tool-path-v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                             owned.package.as_str(),
+                             owned.requirement.alias.as_str(),
+                             host.os.as_str(),
+                             architecture_name(host.architecture),
+                             declared.as_path(),
+                             resolved.executable.as_path(),
+                             canonical->as_path(),
+                             digest.as_str())
+                    .as_str());
+            emit_host_tool(observer,
+                           BuildEventKind::BuildToolResolve,
+                           owned.requirement.alias.as_str(),
+                           resolved.executable.as_path());
+            result.push(Box<ResolvedHostBuildTool>::make(ResolvedHostBuildTool {
+                .package    = owned.package.clone(),
+                .alias      = owned.requirement.alias.clone(),
+                .executable = rstd::move(resolved.executable),
+                .identity   = rstd::move(identity),
+            }));
+            continue;
+        }
         auto archive = rstd_try(select_host_build_tool_archive(owned.requirement, host));
         requirements.push(
             ref<cpp::PackageBuildToolRequirement>::from_raw_parts(rstd::addressof(owned)));
@@ -315,7 +360,6 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
         });
         selected.push(rstd::move(archive));
     }
-    auto result = ResolvedHostBuildTools {};
     if (requirements.is_empty()) return Ok(rstd::move(result));
     auto materialization_root = layout.source_materialization_root();
     auto acquired =
@@ -329,8 +373,9 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
     for (usize index {}; index < requirements.len(); ++index) {
         const auto& owned       = *requirements[index];
         const auto& requirement = owned.requirement;
-        auto        executable  = acquired[index].root.join(requirement.executable.as_path());
-        auto        inspected   = rstd::fs::symlink_metadata(executable.as_path());
+        auto        executable =
+            acquired[index].root.join(requirement.source.as_Archive().recipe.executable.as_path());
+        auto inspected = rstd::fs::symlink_metadata(executable.as_path());
         if (inspected.is_err() || inspected->is_symlink() || ! inspected->is_file()) {
             return Err(HostBuildToolError::MissingExecutable(requirement.alias.clone(),
                                                              rstd::move(executable)));
@@ -351,12 +396,12 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
             rstd::format("host-build-tool-store-v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                          owned.package.as_str(),
                          requirement.alias.as_str(),
-                         requirement.version.as_str(),
+                         requirement.source.as_Archive().recipe.version.as_str(),
                          host.os.as_str(),
                          architecture_name(host.architecture),
                          archive.url.as_str(),
                          archive.sha256,
-                         requirement.executable.as_path(),
+                         requirement.source.as_Archive().recipe.executable.as_path(),
                          acquired[index].identity.as_str())
                 .as_str());
         auto area    = layout.host_build_tool_root().join(PathBuf::from(key).as_path());
@@ -398,13 +443,10 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                            requirement.alias.as_str(),
                            canonical->as_path());
             result.push(Box<ResolvedHostBuildTool>::make(ResolvedHostBuildTool {
-                .package          = owned.package.clone(),
-                .alias            = requirement.alias.clone(),
-                .version          = requirement.version.clone(),
-                .host             = host.clone(),
-                .executable       = rstd::move(canonical).unwrap(),
-                .source_identity  = acquired[index].identity.clone(),
-                .receipt_identity = rstd::move(receipt_identity),
+                .package    = owned.package.clone(),
+                .alias      = requirement.alias.clone(),
+                .executable = rstd::move(canonical).unwrap(),
+                .identity   = rstd::move(receipt_identity),
             }));
             continue;
         }
@@ -413,11 +455,13 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
         arguments.push(String::make("--version"_str));
         auto probed = rstd_try(run_command(arguments, environment));
         auto actual = String::make(probed.standard_output.as_str().trim_ascii());
-        if (probed.exit_code != i32 {} || actual != requirement.version.as_str()) {
-            return Err(HostBuildToolError::Version(requirement.alias.clone(),
-                                                   requirement.version.clone(),
-                                                   rstd::move(actual),
-                                                   rstd::move(canonical).unwrap()));
+        if (probed.exit_code != i32 {} ||
+            actual != requirement.source.as_Archive().recipe.version.as_str()) {
+            return Err(
+                HostBuildToolError::Version(requirement.alias.clone(),
+                                            requirement.source.as_Archive().recipe.version.clone(),
+                                            rstd::move(actual),
+                                            rstd::move(canonical).unwrap()));
         }
         rstd_try(write_host_tool_receipt(receipt.as_path(),
                                          owned,
@@ -431,13 +475,10 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                        requirement.alias.as_str(),
                        canonical->as_path());
         result.push(Box<ResolvedHostBuildTool>::make(ResolvedHostBuildTool {
-            .package          = owned.package.clone(),
-            .alias            = requirement.alias.clone(),
-            .version          = requirement.version.clone(),
-            .host             = host.clone(),
-            .executable       = rstd::move(canonical).unwrap(),
-            .source_identity  = acquired[index].identity.clone(),
-            .receipt_identity = rstd::move(receipt_identity),
+            .package    = owned.package.clone(),
+            .alias      = requirement.alias.clone(),
+            .executable = rstd::move(canonical).unwrap(),
+            .identity   = rstd::move(receipt_identity),
         }));
     }
     return Ok(rstd::move(result));

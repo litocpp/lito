@@ -5,6 +5,8 @@ import lito.tools;
 import rstd.test;
 import lito.driver;
 import lito.core;
+import lito.cpp;
+import lito.system;
 import lito.test.support;
 
 using namespace rstd::prelude;
@@ -14,6 +16,99 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito_test;
 
 class BuildEnvironment : public ProjectFixture {};
+
+TEST_F(BuildEnvironment, PathBuildToolsUseOwnerAndEffectivePathIdentity) {
+    const ProjectFile files[] = {
+        { "first/lito-fixture-generator"_str,
+          "first\n"_str,
+          lito::source::SourceFileMode::Executable },
+        { "second/lito-fixture-generator"_str,
+          "second\n"_str,
+          lito::source::SourceFileMode::Executable },
+        { "owner/tools/generate"_str, "owned\n"_str, lito::source::SourceFileMode::Executable },
+        { "owner/tools/not-executable"_str, "data\n"_str },
+    };
+    auto project = materialize("path-tool-resolution"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto first    = project->root.join(PathBuf::from("first"_str).as_path());
+    auto second   = project->root.join(PathBuf::from("second"_str).as_path());
+    auto owner    = project->root.join(PathBuf::from("owner"_str).as_path());
+    auto metadata = lito::cpp::PackageMetadata {};
+    auto add      = [&](ref<str> package, ref<str> requested) {
+        metadata.build_tools.push(lito::cpp::PackageBuildToolRequirement {
+            .package = String::make(package),
+            .root    = owner.clone(),
+            .requirement =
+                lito::manifest::BuildToolRequirement {
+                    .alias  = String::make("generator"_str),
+                    .source = lito::manifest::BuildToolSource::Path(PathBuf::from(requested)),
+                },
+        });
+    };
+    add("first-owner"_str, "lito-fixture-generator"_str);
+    add("second-owner"_str, "tools/generate"_str);
+    auto host = lito::system::HostInfo {
+        .architecture = lito::system::Architecture::X86_64,
+        .os           = String::make("linux"_str),
+    };
+    auto layout = lito::BuildLayout::resolve(
+        project->root.as_path(), build_root("path-tool-resolution"_str).as_path(), "release"_str);
+    auto resolve =
+        [&](const PathBuf& directory) -> lito::HostBuildToolResult<lito::ResolvedHostBuildTools> {
+        auto environment = lito::system::ResolvedProcessEnvironment::resolve(
+            {}, Some(directory.as_path().as_os_str()), project->root.as_path());
+        if (environment.is_err())
+            return Err(lito::HostBuildToolError::System(rstd::move(environment).unwrap_err()));
+        auto resolver = lito::tools::ToolResolver(*environment);
+        return lito::resolve_host_build_tools(metadata,
+                                              strings("first-owner"_str, "second-owner"_str),
+                                              host,
+                                              layout,
+                                              resolver,
+                                              *environment,
+                                              {},
+                                              usize(1));
+    };
+    auto initial = resolve(first);
+    ASSERT_TRUE(initial.is_ok());
+    auto tool = initial->get("first-owner"_str, "generator"_str);
+    ASSERT_TRUE(tool.is_some());
+    EXPECT_TRUE(initial->get("generator"_str).is_none());
+    auto owned = initial->get("second-owner"_str, "generator"_str);
+    ASSERT_TRUE(owned.is_some());
+    auto expected =
+        rstd::fs::canonicalize(owner.join(PathBuf::from("tools/generate"_str).as_path()).as_path());
+    ASSERT_TRUE(expected.is_ok());
+    EXPECT_EQ((**owned).executable.as_path(), expected->as_path());
+    auto repeated = resolve(first);
+    ASSERT_TRUE(repeated.is_ok());
+    EXPECT_EQ((**repeated->get("first-owner"_str, "generator"_str)).identity.as_str(),
+              (**tool).identity.as_str());
+    auto switched = resolve(second);
+    ASSERT_TRUE(switched.is_ok());
+    EXPECT_NE((**switched->get("first-owner"_str, "generator"_str)).identity.as_str(),
+              (**tool).identity.as_str());
+    auto executable = first.join(PathBuf::from("lito-fixture-generator"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(executable.as_path(), "changed\n"_str.as_bytes()).is_ok());
+    auto updated = resolve(first);
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_NE((**updated->get("first-owner"_str, "generator"_str)).identity.as_str(),
+              (**tool).identity.as_str());
+    metadata.build_tools.clear();
+    add("first-owner"_str, executable.as_path().to_string_lossy().as_str());
+    auto absolute = resolve(second);
+    ASSERT_TRUE(absolute.is_ok());
+    EXPECT_EQ((**absolute->get("first-owner"_str, "generator"_str)).executable.as_path(),
+              executable.as_path());
+    metadata.build_tools.clear();
+    add("first-owner"_str, "tools/missing"_str);
+    EXPECT_TRUE(resolve(first).is_err());
+#if RSTD_OS_UNIX
+    metadata.build_tools.clear();
+    add("first-owner"_str, "tools/not-executable"_str);
+    EXPECT_TRUE(resolve(first).is_err());
+#endif
+}
 
 TEST_F(BuildEnvironment, EnvironmentIsSharedWithinBuild) {
     const ProjectFile files[] = {

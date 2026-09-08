@@ -3115,7 +3115,7 @@ private:
             return Ok(ResolvedActionTool {
                 .package    = (**resolved).package.clone(),
                 .alias      = (**resolved).alias.clone(),
-                .identity   = (**resolved).receipt_identity.clone(),
+                .identity   = (**resolved).identity.clone(),
                 .digest     = rstd::move(digest),
                 .executable = (**resolved).executable.clone(),
             });

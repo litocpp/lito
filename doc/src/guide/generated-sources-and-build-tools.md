@@ -30,7 +30,18 @@ compile actions, and resource publication therefore share one generation result.
 
 ## Host build tools
 
-`[build-tools.ALIAS]` declares an executable downloaded for the host, not the target. Each host
+`[build-tools.ALIAS]` declares an executable for the host, not the target. To use an installed tool:
+
+```toml
+[build-tools.glslang]
+path = "glslangValidator"
+```
+
+The build script consumes the same `lito.tool("glslang")` handle as a downloaded tool.
+Lito resolves the effective host PATH and includes the executable path and content in the action
+cache identity. A local tool is a host prerequisite, not part of a source bundle.
+
+Alternatively, declare a fixed downloaded tool. Each host
 platform/architecture archive has an HTTPS URL and SHA-256 digest:
 
 ```toml

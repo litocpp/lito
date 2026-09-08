@@ -86,25 +86,46 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
                                                                     "invalid tool alias"_str);
         }
         const auto tool = tools.get(alias.as_str()).unwrap_unchecked();
-        if (! exact_build_tool_version(tool->version.as_str())) {
+        if (tool->path.is_some()) {
+            if (tool->version.is_some() || tool->executable.is_some() || tool->archives.is_some()) {
+                return manifest_data_failure<Vec<BuildToolRequirement>>(
+                    alias_path.clone(),
+                    "path cannot be combined with version, executable, or archives"_str);
+            }
+            if (tool->path->is_empty() || tool->path->as_str().contains("\0"_str)) {
+                return manifest_data_failure<Vec<BuildToolRequirement>>(
+                    alias_path.with_field("path"_str),
+                    "must be a non-empty executable path without NUL"_str);
+            }
+            result.push(BuildToolRequirement {
+                .alias  = alias.clone(),
+                .source = BuildToolSource::Path(PathBuf::from(tool->path->as_str())),
+            });
+            continue;
+        }
+        if (tool->version.is_none() || tool->executable.is_none() || tool->archives.is_none()) {
+            return manifest_data_failure<Vec<BuildToolRequirement>>(
+                alias_path.clone(), "requires path or version, executable, and archives"_str);
+        }
+        if (! exact_build_tool_version(tool->version->as_str())) {
             return manifest_data_failure<Vec<BuildToolRequirement>>(
                 alias_path.with_field("version"_str), "must be an exact non-empty version"_str);
         }
-        auto executable = PathBuf::from(tool->executable.as_str());
+        auto executable = PathBuf::from(tool->executable->as_str());
         if (executable.is_empty() || ! executable.as_path().is_safe_relative()) {
             return manifest_data_failure<Vec<BuildToolRequirement>>(
                 alias_path.with_field("executable"_str),
                 "must be a safe non-empty relative path"_str);
         }
-        if (tool->archives.is_empty()) {
+        if (tool->archives->is_empty()) {
             return manifest_data_failure<Vec<BuildToolRequirement>>(
                 alias_path.with_field("archives"_str), "must not be empty"_str);
         }
-        auto archives = Vec<BuildToolArchiveManifest>::with_capacity(tool->archives.len());
-        for (auto host_ref : tool->archives.keys()) {
+        auto archives = Vec<BuildToolArchiveManifest>::with_capacity(tool->archives->len());
+        for (auto host_ref : tool->archives->keys()) {
             const auto& host   = *host_ref;
             auto archive_path  = alias_path.with_field("archives"_str).with_map_key(host.as_str());
-            const auto archive = tool->archives.get(host.as_str()).unwrap_unchecked();
+            const auto archive = tool->archives->get(host.as_str()).unwrap_unchecked();
             auto       url     = lito::parse::HttpsUrl::parse(archive->url.as_str());
             if (url.is_err()) {
                 return manifest_data_failure<Vec<BuildToolRequirement>>(
@@ -135,10 +156,12 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
             });
         }
         result.push(BuildToolRequirement {
-            .alias      = alias.clone(),
-            .version    = tool->version.clone(),
-            .executable = rstd::move(executable),
-            .archives   = rstd::move(archives),
+            .alias  = alias.clone(),
+            .source = BuildToolSource::Archive(ArchiveBuildTool {
+                .version    = tool->version->clone(),
+                .executable = rstd::move(executable),
+                .archives   = rstd::move(archives),
+            }),
         });
     }
     return Ok(rstd::move(result));
