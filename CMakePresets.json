@@ -5,7 +5,11 @@
       "name": "clang-base",
       "hidden": true,
       "generator": "Ninja",
-      "description": "Base preset for the Clang/LLVM 22+ toolchain required by Lito. The C/C++ compilers are auto-detected from PATH (prefer LLVM's bin dir, e.g. /opt/homebrew/opt/llvm/bin), so ensure an LLVM 22+ clang-clang++ is first on PATH, or set the CC/CXX env variables."
+      "description": "Base preset for the Clang/LLVM 22+ toolchain required by Lito. Resolves clang and clang++ from PATH, so ensure an LLVM 22+ bin directory is first.",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
     },
     {
       "name": "debug",
@@ -34,6 +38,14 @@
       "name": "release",
       "configurePreset": "release",
       "targets": ["lito"]
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configurations": ["Release"],
+      "packageDirectory": "${sourceDir}"
     }
   ]
 }
