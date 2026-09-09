@@ -197,6 +197,19 @@ local function scan_imports(request, prefix, qml_files)
   return scanned
 end
 
+local function stage_qml_files(request, prefix, qml_files)
+  local staged = {}
+  for _, path in ipairs(qml_files) do
+    local output = lito.copy({
+      input = path,
+      output = prefix .. "/" .. path,
+    }).output
+    lito.target_add_metadata(request.target, output)
+    append(staged, output)
+  end
+  return staged
+end
+
 local function generate_cache(request, prefix, resource_prefix, qml_files, qmldir,
                               module_qrc, raw_qrc)
   if request.cache == false then
@@ -253,8 +266,8 @@ local function generate_cache(request, prefix, resource_prefix, qml_files, qmldi
   return generated
 end
 
-local function generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
-                              information)
+local function generate_types(request, prefix, qml_files, staged_qml_files, module_qrc,
+                              raw_qrc, information)
   if request.type_compiler ~= true then
     return {}
   end
@@ -266,12 +279,8 @@ local function generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
   local directory = prefix .. "/qmltc"
   lito.target_add_generated_include(request.target, directory)
   local tool = lito.external_tool(request.qt, "qmltc")
-  for _, path in ipairs(qml_files) do
+  for index, path in ipairs(qml_files) do
     local base = qml_type(path):lower()
-    local lookup = lito.copy({
-      input = path,
-      output = prefix .. "/" .. path,
-    }).output
     local result = lito.run({
       tool = tool,
       cwd = request.cwd or ".",
@@ -285,7 +294,7 @@ local function generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
         "--resource", "@INPUT:3@",
         "@INPUT:1@",
       },
-      inputs = { path, module_qrc, raw_qrc, lookup },
+      inputs = { path, module_qrc, raw_qrc, staged_qml_files[index] },
       outputs = {
         directory .. "/" .. base .. ".h",
         directory .. "/" .. base .. ".cpp",
@@ -407,11 +416,13 @@ function qml.generate_module(request)
     error("qt.qml_module currently requires a Qt 6.11 CMake dependency")
   end
 
-  local prefix = request.output or ("lito-qml/" .. uri:gsub("%.", "_"))
+  local target_path = uri:gsub("%.", "/")
+  local prefix = request.output or ("lito-qml/" .. target_path)
   safe_path(prefix, "qt.qml_module.output")
   local resource_base = resource_prefix(request.resource_prefix or "/qt/qml")
   local resource_prefix = resource_base .. (resource_base == "/" and "" or "/") ..
-      uri:gsub("%.", "/") .. "/"
+      target_path .. "/"
+  local staged_qml_files = stage_qml_files(request, prefix, qml_files)
   local registration = generate_registration(request, prefix, major, minor)
   local qmldir = generate_qmldir(request, prefix, resource_prefix, version, qml_files,
                                  registration)
@@ -458,8 +469,8 @@ function qml.generate_module(request)
   if #qml_files ~= 0 then
     cache_sources = generate_cache(request, prefix, resource_prefix, qml_files, qmldir,
                                    module_qrc, raw_qrc)
-    type_sources = generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
-                                  information)
+    type_sources = generate_types(request, prefix, qml_files, staged_qml_files,
+                                  module_qrc, raw_qrc, information)
   end
   local plugin_artifact = nil
   if plugin == "static" then

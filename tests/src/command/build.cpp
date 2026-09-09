@@ -1379,7 +1379,7 @@ auto main() -> int {
     EXPECT_EQ(second->compiled, usize {});
 }
 
-TEST_F(BuildCommand, QtBuildScriptGeneratesCodeOnlyQmlAndTranslations) {
+TEST_F(BuildCommand, BuildScriptGeneratesQtQmlProtobufAndTranslations) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]
 name = "fixture-qt-protobuf"
@@ -1411,6 +1411,7 @@ host-tools = [
   { name = "moc", target = "Qt6::moc" },
   { name = "qmltyperegistrar", target = "Qt6::qmltyperegistrar" },
   { name = "rcc", target = "Qt6::rcc" },
+  { name = "qmlimportscanner", target = "Qt6::qmlimportscanner" },
   { name = "lrelease", target = "Qt6::lrelease" },
   { name = "protoc", target = "WrapProtoc::WrapProtoc" },
   { name = "qtprotobufgen", target = "Qt6::qtprotobufgen" },
@@ -1418,7 +1419,7 @@ host-tools = [
 )toml"_str },
         { "tools/adapter.cmake"_str, R"cmake(add_library(Qt6::Protobuf INTERFACE IMPORTED GLOBAL)
 add_library(Qt6::ProtobufQuick INTERFACE IMPORTED GLOBAL)
-foreach(_tool IN ITEMS moc qmltyperegistrar rcc lrelease qtprotobufgen)
+foreach(_tool IN ITEMS moc qmltyperegistrar rcc qmlimportscanner lrelease qtprotobufgen)
   add_executable(Qt6::${_tool} IMPORTED GLOBAL)
   set_property(TARGET Qt6::${_tool} PROPERTY IMPORTED_LOCATION
                "${CMAKE_CURRENT_LIST_DIR}/fixture-tool")
@@ -1481,7 +1482,7 @@ for argument in "$@"; do
   fi
   input="$argument"
   case "$argument" in
-    -o|--output|-qm) pending=output ;;
+    -o|--output|-qm|-output-file) pending=output ;;
     --dep-file-path) pending=depfile ;;
     --generate-qmltypes=*) qmltypes=${argument#*=} ;;
     --collect-json) collect=true ;;
@@ -1513,6 +1514,10 @@ message Status {
   string text = 1;
 }
 )proto"_str },
+        { "qml/Main.qml"_str, R"qml(import QtQuick
+
+Item {}
+)qml"_str },
         { "i18n/fixture_zh_CN.ts"_str, R"xml(<?xml version="1.0" encoding="utf-8"?>
 <TS version="2.1" language="zh_CN">
 <context>
@@ -1539,6 +1544,15 @@ qt.protobuf({
   output = "protobuf/control",
   qml_uri = "fixture.control",
 })
+qt.qml_module({
+  target = target,
+  qt = qt6,
+  uri = "Fixture.Ui",
+  version = "1.0",
+  qml_files = { "qml/Main.qml" },
+  cache = false,
+  plugin = "none",
+})
 qt.translations({
   target = target,
   qt = qt6,
@@ -1559,11 +1573,18 @@ auto main() -> int {
     };
     auto project = materialize("qt-protobuf-build-script"_str, files);
     ASSERT_TRUE(project.is_ok());
+    auto qt_package =
+        rstd::fs::canonicalize(PathBuf::from("../data/script-packages/qt"_str).as_path());
+    ASSERT_TRUE(qt_package.is_ok());
     auto output  = build_root("qt-protobuf-build-script"_str);
     auto request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-qt-protobuf"_str));
     request.cmake = fixture_cmake();
-    auto built    = lito::build(request);
+    request.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {
+        .id     = String::make("qt"_str),
+        .source = lito::source::BuiltinPackageSource::Path(rstd::move(qt_package).unwrap()),
+    });
+    auto built = lito::build(request);
     if (built.is_err()) {
         auto message = error_chain_text(built.unwrap_err());
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
@@ -1589,6 +1610,24 @@ auto main() -> int {
     EXPECT_TRUE(
         rstd::fs::exists(generated.join(PathBuf::from("module.qmltypes"_str).as_path()).as_path())
             .unwrap_or(false));
+    auto qml_module = output.join(
+        PathBuf::from("generated/fixture-qt-protobuf/lito-qml/Fixture/Ui"_str).as_path());
+    auto qmldir =
+        rstd::fs::read_to_string(qml_module.join(PathBuf::from("qmldir"_str).as_path()).as_path());
+    ASSERT_TRUE(qmldir.is_ok());
+    EXPECT_TRUE(qmldir->as_str().contains("module Fixture.Ui"_str));
+    EXPECT_TRUE(qmldir->as_str().contains("Main 1.0 qml/Main.qml"_str));
+    auto staged_qml = rstd::fs::read_to_string(
+        qml_module.join(PathBuf::from("qml/Main.qml"_str).as_path()).as_path());
+    ASSERT_TRUE(staged_qml.is_ok());
+    EXPECT_TRUE(staged_qml->as_str().contains("Item {}"_str));
+    EXPECT_FALSE(
+        rstd::fs::exists(
+            output
+                .join(PathBuf::from("generated/fixture-qt-protobuf/lito-qml/Fixture_Ui/qmldir"_str)
+                          .as_path())
+                .as_path())
+            .unwrap_or(true));
     auto translation_root = output.join(
         PathBuf::from("generated/fixture-qt-protobuf/lito-translations/fixture_ui"_str).as_path());
     EXPECT_TRUE(
