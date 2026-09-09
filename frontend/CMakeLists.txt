@@ -26,8 +26,10 @@ target_sources(
          src/preprocessor/directive.cppm
          src/preprocessor/mod.cppm
          src/parser/module_dependency.cppm
+         src/parser/module_name.cppm
          src/parser/header_dependency.cppm
          src/parser/mod.cppm
          src/service.cppm
          src/lib.cppm)
 target_link_libraries(lito.frontend PUBLIC rstd.std)
+target_link_libraries(lito.frontend PRIVATE rstd.parse)

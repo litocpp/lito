@@ -316,6 +316,10 @@ TEST(Preprocessor, PreservesByteCommentsLiteralsAndMacroSpelling) {
     }
     EXPECT_EQ(raw_literals, usize(2));
     EXPECT_TRUE(valid_identifier);
+    auto facts = lito::frontend::parser::parse_module_dependencies(*result);
+    ASSERT_TRUE(facts.is_ok());
+    EXPECT_TRUE(facts->imports.is_empty());
+    EXPECT_EQ(sources.primary_loads, usize(1));
 }
 
 TEST(Preprocessor, RejectsInvalidUtf8AtSemanticBoundaries) {
@@ -632,6 +636,142 @@ auto run_preprocessor_test() -> int {
 
 TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
+}
+
+auto module_translation(ref<str> contents) -> PreprocessedTranslationUnit {
+    auto result        = PreprocessedTranslationUnit {};
+    result.main_source = result.sources.add(SourceBuffer {
+        .path     = rstd::path::PathBuf::from("/modules.cppm"_str),
+        .contents = String::make(contents),
+    });
+    result.tokens      = lex(result.sources.file(result.main_source)).unwrap();
+    result.input_bytes = contents.len();
+    return result;
+}
+
+TEST(FrontendModules, KeepsDeclarationsAndImportsAcrossTokenChunks) {
+    auto translation = module_translation(
+        "module;\r\nexport module demo.core;\r\nimport dep;\r\nexport import dep;\r\n"
+        "import :part.inner;\r\nmodule :private;\r\nvoid f() { import ignored; }\r\n"_str);
+    const int chunks[] = { 1, 2, 7, 100 };
+    for (auto chunk : chunks) {
+        auto consumer = lito::frontend::parser::ModuleDependencyConsumer::make();
+        for (auto offset = usize(); offset < translation.tokens.len();) {
+            auto length = translation.tokens.len() - offset;
+            if (length > usize(chunk)) length = usize(chunk);
+            ASSERT_TRUE(consumer
+                            .consume(slice<Token>::from_raw_parts(
+                                translation.tokens.as_ptr() + offset.to_primitive(), length))
+                            .is_ok());
+            offset += length;
+        }
+        auto facts = consumer.finish(translation);
+        ASSERT_TRUE(facts.is_ok());
+        ASSERT_TRUE(facts->provided.is_some());
+        EXPECT_EQ(facts->provided->logical_name, "demo.core"_str);
+        EXPECT_TRUE(facts->provided->is_interface);
+        EXPECT_TRUE(facts->implementation_module.is_none());
+        ASSERT_EQ(facts->imports.len(), usize(2));
+        EXPECT_EQ(facts->imports[usize()].logical_name, "dep"_str);
+        EXPECT_TRUE(facts->imports[usize()].exported);
+        EXPECT_EQ(facts->imports[usize()].location.line, usize(3));
+        EXPECT_EQ(facts->imports[usize(1)].logical_name, "demo.core:part.inner"_str);
+        EXPECT_FALSE(facts->imports[usize(1)].exported);
+        EXPECT_EQ(facts->imports[usize(1)].location.line, usize(5));
+        EXPECT_EQ(facts->imports[usize(1)].location.path.as_path().to_str().unwrap(),
+                  "/modules.cppm"_str);
+    }
+}
+
+TEST(FrontendModules, PreservesImplementationAndMalformedCandidateBehavior) {
+    const ref<str> declarations[] = { "module demo;"_str,
+                                      "module demo:part;"_str,
+                                      "export module demo:part;"_str };
+    for (auto declaration : declarations) {
+        auto translation = module_translation(declaration);
+        auto facts       = lito::frontend::parser::parse_module_dependencies(translation).unwrap();
+        if (declaration == "module demo;"_str) {
+            EXPECT_TRUE(facts.provided.is_none());
+            EXPECT_EQ(facts.implementation_module.unwrap(), "demo"_str);
+        } else {
+            EXPECT_EQ(facts.provided->logical_name, "demo:part"_str);
+            EXPECT_EQ(facts.provided->is_interface, declaration == "export module demo:part;"_str);
+        }
+    }
+    auto translation = module_translation(
+        "export module demo; import bad.; import :; import 42; import a::b; import missing x; "
+        "import good; import legacy:part:inner; import unfinished"_str);
+    auto facts = lito::frontend::parser::parse_module_dependencies(translation).unwrap();
+    ASSERT_EQ(facts.imports.len(), usize(2));
+    EXPECT_EQ(facts.imports[usize()].logical_name, "good"_str);
+    EXPECT_EQ(facts.imports[usize(1)].logical_name, "legacy:part:inner"_str);
+}
+
+TEST(FrontendModules, PreservesCommittedSemanticErrors) {
+    struct Case {
+        ref<str> source;
+        ref<str> error;
+    };
+    const Case cases[] = {
+        { "export module a; module b;"_str, "multiple named module"_str },
+        { "import :part;"_str, "relative partition import"_str },
+        { "export import dep;"_str, "module interface unit"_str },
+        { "import <header>;"_str, "unsupported header unit"_str },
+        { "import \"header\";"_str, "unsupported header unit"_str },
+    };
+    for (const auto& item : cases) {
+        auto translation = module_translation(item.source);
+        auto facts       = lito::frontend::parser::parse_module_dependencies(translation);
+        ASSERT_TRUE(facts.is_err());
+        EXPECT_TRUE(facts.unwrap_err().message.as_str().contains(item.error));
+    }
+}
+
+TEST(FrontendModules, KeepsIncludeOriginsWithoutReloadingSources) {
+    auto sources = MemorySources {};
+    sources.add("/main.cppm"_str, "export module demo;\r\n#include \"part.hpp\"\r\n"_str);
+    sources.add("/part.hpp"_str, "#line 50 \"generated.cppm\"\nimport :dep;\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto translation = preprocess(
+        PreprocessRequest {
+            .source = rstd::path::PathBuf::from("/main.cppm"_str),
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(translation.is_ok());
+    auto facts = lito::frontend::parser::parse_module_dependencies(*translation);
+    ASSERT_TRUE(facts.is_ok());
+    ASSERT_EQ(facts->imports.len(), usize(1));
+    EXPECT_EQ(facts->imports[usize()].logical_name, "demo:dep"_str);
+    EXPECT_EQ(facts->imports[usize()].location.line, usize(50));
+    EXPECT_EQ(facts->imports[usize()].location.path.as_path().to_str().unwrap(),
+              "generated.cppm"_str);
+    EXPECT_EQ(sources.primary_loads, usize(1));
+    EXPECT_EQ(sources.include_loads, usize(1));
+    EXPECT_EQ(facts->input_bytes, translation->input_bytes);
+}
+
+TEST(FrontendModules, MapsHeaderUnitErrorsToExpansionLocations) {
+    auto translation = module_translation("\r\nimport \"header\";\r\n"_str);
+    for (auto& token : translation.tokens) {
+        token.presumed_path = Some(rstd::path::PathBuf::from("virtual.cppm"_str));
+    }
+    auto facts = lito::frontend::parser::parse_module_dependencies(translation);
+    ASSERT_TRUE(facts.is_err());
+    auto error = rstd::move(facts).unwrap_err();
+    ASSERT_TRUE(error.location.is_some());
+    EXPECT_EQ(error.location->line, usize(2));
+    EXPECT_EQ(error.location->column, usize(8));
+    ASSERT_TRUE(error.path.is_some());
+    EXPECT_EQ(error.path->as_path().to_str().unwrap(), "virtual.cppm"_str);
 }
 
 TEST(PreprocessorMacro, OwnsParsedSourceAndCompilesCommandLineReplacement) {

@@ -58,7 +58,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 7f1052a0d163a6d15694a6a87fcfd8777fc381e7)
+  GIT_TAG e9f1fbcc7a446a758cdee69dcbd8c063303217e6)
 
 FetchContent_MakeAvailable(rstd)
 

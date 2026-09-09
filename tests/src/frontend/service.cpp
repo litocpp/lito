@@ -92,7 +92,7 @@ TEST(FrontendSourceStore, RetainsLexedSourcesForTheScanSession) {
     EXPECT_GE(store.statistics().cache_hits, usize(2));
 }
 
-TEST(FrontendSourceStore, RejectsInvalidUtf8SourceAndReleasesItsStorage) {
+TEST(FrontendSourceStore, PreservesNonUtf8SourceAndReleasesItsStorage) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner    = rstd::move(temporary).unwrap();
@@ -103,8 +103,15 @@ TEST(FrontendSourceStore, RejectsInvalidUtf8SourceAndReleasesItsStorage) {
     auto store   = FrontendSourceStore::make();
     auto service = FrontendService::with_store(store);
 
-    EXPECT_TRUE(service.load(source.as_path(), SourceLoadRole::Include).is_err());
-    EXPECT_EQ(store.statistics().ready_entries, usize {});
+    {
+        auto loaded = service.load(source.as_path(), SourceLoadRole::Include);
+        ASSERT_TRUE(loaded.is_ok());
+        EXPECT_EQ((**loaded).snapshot->contents.as_bytes(), contents.as_slice());
+        EXPECT_EQ(service.statistics().source_reads, usize(1));
+        EXPECT_EQ(service.statistics().lex_builds, usize(1));
+    }
+    EXPECT_GT(store.statistics().ready_entries, usize {});
+    EXPECT_EQ(store.statistics().live_payloads, usize(1));
     EXPECT_EQ(store.statistics().in_flight_entries, usize {});
     EXPECT_GT(store.statistics().domain_mapped_bytes, usize {});
 

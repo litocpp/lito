@@ -1,6 +1,7 @@
 export module lito.frontend.parser:module_dependency;
 
 import rstd;
+import :module_name;
 import lito.frontend.result;
 import lito.frontend.preprocessor;
 
@@ -23,10 +24,6 @@ template<typename T>
 auto frontend_failure(ref<str> message) -> lexical::Result<T> {
     return Err(lexical::Error::make(message));
 }
-
-struct ParsedName {
-    String value;
-};
 
 struct PendingImport {
     String                      logical_name;
@@ -52,38 +49,6 @@ struct ScopedAttributeParseState {
     bool           separator {};
     bool           complete {};
 };
-
-auto parse_name(const Vec<lexical::Token>& tokens, usize start, ref<str> context)
-    -> lexical::Result<Option<ParsedName>> {
-    if (start >= tokens.len()) return Ok(None());
-    if (tokens[start].text == "<"_str || tokens[start].kind == lexical::TokenKind::StringLiteral ||
-        tokens[start].kind == lexical::TokenKind::HeaderName) {
-        return frontend_failure<Option<ParsedName>>(
-            rstd::format("{} uses an unsupported header unit at line {}",
-                         context,
-                         tokens[start].expansion.line));
-    }
-    auto index  = start;
-    auto result = String::make();
-    if (tokens[index].text == ":"_str) {
-        result.push_ascii(':');
-        ++index;
-    }
-    if (index >= tokens.len() || tokens[index].kind != lexical::TokenKind::Identifier) {
-        return Ok(None());
-    }
-    result.push_str(tokens[index].text.utf8().unwrap());
-    ++index;
-    while (index + usize(1) < tokens.len() &&
-           (tokens[index].text == "."_str || tokens[index].text == ":"_str) &&
-           tokens[index + usize(1)].kind == lexical::TokenKind::Identifier) {
-        result.push_str(tokens[index].text.utf8().unwrap());
-        result.push_str(tokens[index + usize(1)].text.utf8().unwrap());
-        index += usize(2);
-    }
-    if (index >= tokens.len() || tokens[index].text != ";"_str) return Ok(None());
-    return Ok(Some(ParsedName { .value = rstd::move(result) }));
-}
 
 auto primary_module(ref<str> declared) -> String {
     auto separator = declared.find(":"_str);
@@ -339,13 +304,14 @@ private:
                     "export import declaration can only be used within a module interface unit"_str),
                 candidate[usize {}].expansion));
         }
-        auto parsed = parse_name(candidate,
-                                 declaration + usize(1),
-                                 keyword == "module"_str ? "module declaration"_str
-                                                         : "import declaration"_str);
+        auto name_start = declaration + usize(1);
+        auto parsed     = parse_module_name(
+            slice<lexical::Token>::from_raw_parts(candidate.as_ptr() + name_start.to_primitive(),
+                                                  candidate.len() - name_start),
+            keyword == "module"_str ? "module declaration"_str : "import declaration"_str);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
         if (parsed->is_none()) return Ok(empty {});
-        auto name = rstd::move(*parsed).unwrap().value;
+        auto name = rstd::move(*parsed).unwrap();
         if (keyword == "module"_str) {
             if (name.as_str() == ":private"_str) return Ok(empty {});
             if (! declared_.is_empty()) {
@@ -396,9 +362,7 @@ private:
 auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& translation)
     -> lexical::Result<FrontendResult> {
     auto consumer = ModuleDependencyConsumer::make();
-    auto tokens   = Vec<lexical::Token>::with_capacity(translation.tokens.len());
-    for (const auto& token : translation.tokens) tokens.push(token.clone());
-    auto consumed = consumer.consume(tokens.as_slice());
+    auto consumed = consumer.consume(translation.tokens.as_slice());
     if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
     return consumer.finish(translation);
 }

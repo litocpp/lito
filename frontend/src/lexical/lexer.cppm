@@ -1,6 +1,7 @@
 export module lito.frontend.lexical:lexer;
 
 import rstd;
+import rstd.parse.core;
 import lito.frontend.memory;
 import :token;
 import :source;
@@ -8,6 +9,7 @@ import :error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+using rstd::parse::PositionedCursor;
 
 namespace lito::frontend::lexical
 {
@@ -111,157 +113,131 @@ auto ucn_length(slice<u8> bytes, usize index) -> usize {
     }
     auto length = bytes[index + usize(1)] == u8('u') ? usize(6) : usize(10);
     if (index + length > bytes.len()) return usize {};
-    for (auto cursor = index + usize(2); cursor < index + length; ++cursor) {
-        if (! hex_digit(bytes[cursor])) return usize {};
-    }
-    return length;
+    auto cursor = rstd::parse::TextCursor(rstd::parse::Input<u8>(slice<u8>::from_raw_parts(
+        bytes.as_raw_ptr() + (index + usize(2)).to_primitive(), length - usize(2))));
+    return rstd::parse::consume_n(cursor, length - usize(2), hex_digit).is_some() ? length
+                                                                                  : usize();
 }
 
-auto identifier_length(slice<u8> bytes, usize index) -> usize {
-    if (index >= bytes.len()) return usize {};
-    auto cursor  = index;
-    auto escaped = ucn_length(bytes, cursor);
-    if (escaped != usize {}) {
-        cursor += escaped;
-    } else if (is_identifier_start(bytes[cursor])) {
-        ++cursor;
-    } else {
-        return usize {};
+auto identifier_length(slice<u8> bytes) -> usize {
+    auto cursor = rstd::parse::TextCursor(rstd::parse::Input<u8>(bytes));
+    if (cursor.is_eof()) return usize();
+    auto escaped = ucn_length(bytes, cursor.position());
+    if (escaped != usize()) {
+        (void)cursor.advance(escaped);
+    } else if (rstd::parse::consume_if(cursor, is_identifier_start).is_none()) {
+        return usize();
     }
-    while (cursor < bytes.len()) {
-        escaped = ucn_length(bytes, cursor);
-        if (escaped != usize {}) {
-            cursor += escaped;
-            continue;
+    while (! cursor.is_eof()) {
+        escaped = ucn_length(bytes, cursor.position());
+        if (escaped != usize()) {
+            (void)cursor.advance(escaped);
+        } else if (rstd::parse::consume_if(cursor, is_identifier_continue).is_none()) {
+            break;
         }
-        if (! is_identifier_continue(bytes[cursor])) break;
-        ++cursor;
     }
-    return cursor - index;
+    return cursor.position();
 }
 
 struct ScannedPreprocessingToken {
-    TokenKind kind { TokenKind::Punctuation };
-    usize     end {};
-    usize     line {};
-    usize     column {};
+    TokenKind kind;
+    usize     length;
 };
 
-auto scan_preprocessing_token(slice<u8> bytes, usize start, SourceLocation location)
+auto scan_preprocessing_token(slice<u8> bytes, SourceLocation location)
     -> Result<ScannedPreprocessingToken> {
-    auto index      = start;
-    auto line       = location.line;
-    auto column     = location.column;
+    auto cursor     = rstd::parse::TextCursor(rstd::parse::Input<u8>(bytes));
+    auto start      = cursor.position();
     auto kind       = TokenKind::Punctuation;
-    auto raw_prefix = raw_prefix_length(bytes, index);
-    auto prefix     = literal_prefix_length(bytes, index);
+    auto raw_prefix = raw_prefix_length(bytes, cursor.position());
+    auto prefix     = literal_prefix_length(bytes, cursor.position());
     if (raw_prefix != usize {}) {
         kind = TokenKind::StringLiteral;
-        index += raw_prefix + usize(1);
-        column += raw_prefix + usize(1);
-        auto delimiter_begin = index;
-        while (index < bytes.len() && bytes[index] != u8('(') && bytes[index] != u8('\n') &&
-               bytes[index] != u8('\r') && index - delimiter_begin <= usize(16)) {
-            ++index;
-            ++column;
+        (void)cursor.advance(raw_prefix + usize(1));
+        auto delimiter_begin = cursor.position();
+        while (cursor.position() < bytes.len() && bytes[cursor.position()] != u8('(') &&
+               bytes[cursor.position()] != u8('\n') && bytes[cursor.position()] != u8('\r') &&
+               cursor.position() - delimiter_begin <= usize(16)) {
+            (void)cursor.advance(usize(1));
         }
-        if (index >= bytes.len() || bytes[index] != u8('(') ||
-            index - delimiter_begin > usize(16)) {
+        if (cursor.position() >= bytes.len() || bytes[cursor.position()] != u8('(') ||
+            cursor.position() - delimiter_begin > usize(16)) {
             return lex_failure("invalid raw string delimiter"_str, location);
         }
-        auto delimiter_end = index;
-        ++index;
-        ++column;
+        auto delimiter_end = cursor.position();
+        (void)cursor.advance(usize(1));
         auto closed = false;
-        while (index < bytes.len()) {
-            if (bytes[index] == u8(')')) {
+        while (cursor.position() < bytes.len()) {
+            if (bytes[cursor.position()] == u8(')')) {
                 auto matches = true;
                 auto length  = delimiter_end - delimiter_begin;
                 for (auto offset = usize {}; offset < length; ++offset) {
-                    if (index + usize(1) + offset >= bytes.len() ||
-                        bytes[index + usize(1) + offset] != bytes[delimiter_begin + offset]) {
+                    if (cursor.position() + usize(1) + offset >= bytes.len() ||
+                        bytes[cursor.position() + usize(1) + offset] !=
+                            bytes[delimiter_begin + offset]) {
                         matches = false;
                         break;
                     }
                 }
-                auto quote = index + usize(1) + length;
+                auto quote = cursor.position() + usize(1) + length;
                 if (matches && quote < bytes.len() && bytes[quote] == u8('"')) {
-                    column += quote + usize(1) - index;
-                    index  = quote + usize(1);
+                    (void)cursor.advance(quote + usize(1) - cursor.position());
                     closed = true;
                     break;
                 }
             }
-            if (bytes[index] == u8('\r') || bytes[index] == u8('\n')) {
-                if (bytes[index] == u8('\r') && index + usize(1) < bytes.len() &&
-                    bytes[index + usize(1)] == u8('\n')) {
-                    ++index;
-                }
-                ++index;
-                ++line;
-                column = usize(1);
-                continue;
-            }
-            ++index;
-            ++column;
+            (void)cursor.advance(usize(1));
         }
         if (! closed) return lex_failure("unterminated raw string literal"_str, location);
     } else if (bytes[start] == u8('"') || bytes[start] == u8('\'') || prefix != usize {}) {
-        index += prefix;
-        column += prefix;
-        auto quote = bytes[index];
+        (void)cursor.advance(prefix);
+        auto quote = bytes[cursor.position()];
         kind       = quote == u8('"') ? TokenKind::StringLiteral : TokenKind::CharacterLiteral;
-        ++index;
-        ++column;
+        (void)cursor.advance(usize(1));
         auto closed = false;
-        while (index < bytes.len()) {
-            if (bytes[index] == u8('\\') && index + usize(1) < bytes.len()) {
-                index += usize(2);
-                column += usize(2);
+        while (cursor.position() < bytes.len()) {
+            if (bytes[cursor.position()] == u8('\\') &&
+                cursor.position() + usize(1) < bytes.len()) {
+                (void)cursor.advance(usize(2));
                 continue;
             }
-            if (bytes[index] == quote) {
-                ++index;
-                ++column;
+            if (bytes[cursor.position()] == quote) {
+                (void)cursor.advance(usize(1));
                 closed = true;
                 break;
             }
-            if (bytes[index] == u8('\n') || bytes[index] == u8('\r')) break;
-            ++index;
-            ++column;
+            if (bytes[cursor.position()] == u8('\n') || bytes[cursor.position()] == u8('\r')) break;
+            (void)cursor.advance(usize(1));
         }
         if (! closed) return lex_failure("unterminated literal"_str, location);
-    } else if (auto length = identifier_length(bytes, start); length != usize {}) {
+    } else if (auto length = identifier_length(cursor.remaining_input()); length != usize()) {
         kind = TokenKind::Identifier;
-        index += length;
-        column += length;
+        (void)cursor.advance(length);
     } else if ((bytes[start] >= u8('0') && bytes[start] <= u8('9')) ||
                (bytes[start] == u8('.') && start + usize(1) < bytes.len() &&
                 bytes[start + usize(1)] >= u8('0') && bytes[start + usize(1)] <= u8('9'))) {
         kind = TokenKind::PpNumber;
-        while (index < bytes.len()) {
-            auto current = bytes[index];
+        while (cursor.position() < bytes.len()) {
+            auto current = bytes[cursor.position()];
             if (is_identifier_continue(current) || current == u8('.') || current == u8('\'')) {
-                ++index;
-                ++column;
+                (void)cursor.advance(usize(1));
                 continue;
             }
-            if ((current == u8('+') || current == u8('-')) && index != start &&
-                (bytes[index - usize(1)] == u8('e') || bytes[index - usize(1)] == u8('E') ||
-                 bytes[index - usize(1)] == u8('p') || bytes[index - usize(1)] == u8('P'))) {
-                ++index;
-                ++column;
+            if ((current == u8('+') || current == u8('-')) && cursor.position() != start &&
+                (bytes[cursor.position() - usize(1)] == u8('e') ||
+                 bytes[cursor.position() - usize(1)] == u8('E') ||
+                 bytes[cursor.position() - usize(1)] == u8('p') ||
+                 bytes[cursor.position() - usize(1)] == u8('P'))) {
+                (void)cursor.advance(usize(1));
                 continue;
             }
             break;
         }
     } else {
-        auto length = punctuation_length(bytes, index);
-        index += length;
-        column += length;
+        auto length = punctuation_length(bytes, cursor.position());
+        (void)cursor.advance(length);
     }
-    return Ok(
-        ScannedPreprocessingToken { .kind = kind, .end = index, .line = line, .column = column });
+    return Ok(ScannedPreprocessingToken { kind, cursor.position() });
 }
 
 } // namespace lito::frontend::lexical
@@ -357,61 +333,59 @@ private:
 template<typename Sink>
 auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
     auto bytes         = source.contents();
-    auto index         = usize {};
-    auto line          = usize(1);
-    auto column        = usize(1);
+    auto cursor        = PositionedCursor(rstd::parse::Input<u8>(bytes));
     auto line_start    = true;
     auto pending_space = false;
 
-    while (index < bytes.len()) {
-        auto value = bytes[index];
-        if (value == u8('\\') && index + usize(1) < bytes.len() &&
-            (bytes[index + usize(1)] == u8('\n') || bytes[index + usize(1)] == u8('\r'))) {
-            index += usize(2);
-            if (index < bytes.len() && bytes[index - usize(1)] == u8('\r') &&
-                bytes[index] == u8('\n')) {
-                ++index;
+    while (cursor.position() < bytes.len()) {
+        auto value = bytes[cursor.position()];
+        if (value == u8('\\') && cursor.position() + usize(1) < bytes.len() &&
+            (bytes[cursor.position() + usize(1)] == u8('\n') ||
+             bytes[cursor.position() + usize(1)] == u8('\r'))) {
+            (void)cursor.advance(usize(2));
+            if (cursor.position() < bytes.len() &&
+                bytes[cursor.position() - usize(1)] == u8('\r') &&
+                bytes[cursor.position()] == u8('\n')) {
+                (void)cursor.advance(usize(1));
             }
-            ++line;
-            column = usize(1);
+
             continue;
         }
         if (value == u8('\r') || value == u8('\n')) {
-            auto location = SourceLocation {
-                .source = source.id, .offset = index, .line = line, .column = column
-            };
-            if (value == u8('\r') && index + usize(1) < bytes.len() &&
-                bytes[index + usize(1)] == u8('\n')) {
-                ++index;
+            auto location = SourceLocation { .source = source.id,
+                                             .offset = cursor.position(),
+                                             .line   = cursor.source_position().line,
+                                             .column = cursor.source_position().column };
+            if (value == u8('\r') && cursor.position() + usize(1) < bytes.len() &&
+                bytes[cursor.position() + usize(1)] == u8('\n')) {
+                (void)cursor.advance(usize(1));
             }
             sink.push_token(
                 source, TokenKind::Newline, location.offset, usize(1), location, line_start, false);
-            ++index;
-            ++line;
-            column        = usize(1);
+            (void)cursor.advance(usize(1));
             line_start    = true;
             pending_space = false;
             continue;
         }
         if (value == u8(' ') || value == u8('\t') || value == u8('\f') || value == u8('\v')) {
-            ++index;
-            ++column;
+            (void)cursor.advance_single_line_unchecked(usize(1));
             pending_space = true;
             continue;
         }
-        if (value == u8('/') && index + usize(1) < bytes.len() &&
-            bytes[index + usize(1)] == u8('/')) {
-            auto start = SourceLocation {
-                .source = source.id, .offset = index, .line = line, .column = column
-            };
+        if (value == u8('/') && cursor.position() + usize(1) < bytes.len() &&
+            bytes[cursor.position() + usize(1)] == u8('/')) {
+            auto start              = SourceLocation { .source = source.id,
+                                                       .offset = cursor.position(),
+                                                       .line   = cursor.source_position().line,
+                                                       .column = cursor.source_position().column };
             auto comment_line_start = line_start;
             pending_space           = true;
-            index += usize(2);
-            column += usize(2);
-            while (index < bytes.len() && bytes[index] != u8('\n') && bytes[index] != u8('\r')) {
-                ++index;
-                ++column;
-            }
+            (void)cursor.advance_single_line_unchecked(usize(2));
+            auto body = rstd::parse::TextCursor(rstd::parse::Input<u8>(cursor.remaining_input()));
+            auto span = rstd::parse::consume_until(body, [](u8 value) {
+                return value == u8('\n') || value == u8('\r');
+            });
+            (void)cursor.advance_single_line_unchecked(span.len());
             auto kind = CommentKind::Ordinary;
             if (start.offset + usize(2) < bytes.len() &&
                 bytes[start.offset + usize(2)] == u8('!')) {
@@ -422,43 +396,46 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
                         bytes[start.offset + usize(3)] != u8('/'))) {
                 kind = CommentKind::OuterDocumentation;
             }
-            sink.push_comment(
-                source,
-                kind,
-                CommentStyle::Line,
-                start.offset,
-                index,
-                start,
-                SourceLocation {
-                    .source = source.id, .offset = index, .line = line, .column = column },
-                comment_line_start);
+            sink.push_comment(source,
+                              kind,
+                              CommentStyle::Line,
+                              start.offset,
+                              cursor.position(),
+                              start,
+                              SourceLocation { .source = source.id,
+                                               .offset = cursor.position(),
+                                               .line   = cursor.source_position().line,
+                                               .column = cursor.source_position().column },
+                              comment_line_start);
             continue;
         }
-        if (value == u8('/') && index + usize(1) < bytes.len() &&
-            bytes[index + usize(1)] == u8('*')) {
-            auto start = SourceLocation {
-                .source = source.id, .offset = index, .line = line, .column = column
-            };
+        if (value == u8('/') && cursor.position() + usize(1) < bytes.len() &&
+            bytes[cursor.position() + usize(1)] == u8('*')) {
+            auto start              = SourceLocation { .source = source.id,
+                                                       .offset = cursor.position(),
+                                                       .line   = cursor.source_position().line,
+                                                       .column = cursor.source_position().column };
             auto comment_line_start = line_start;
             pending_space           = true;
-            index += usize(2);
-            column += usize(2);
+            (void)cursor.advance_single_line_unchecked(usize(2));
             auto closed = false;
-            while (index < bytes.len()) {
-                if (bytes[index] == u8('*') && index + usize(1) < bytes.len() &&
-                    bytes[index + usize(1)] == u8('/')) {
-                    index += usize(2);
-                    column += usize(2);
+            while (cursor.position() < bytes.len()) {
+                if (bytes[cursor.position()] == u8('*') &&
+                    cursor.position() + usize(1) < bytes.len() &&
+                    bytes[cursor.position() + usize(1)] == u8('/')) {
+                    (void)cursor.advance_single_line_unchecked(usize(2));
                     closed = true;
                     break;
                 }
-                if (bytes[index] == u8('\r') || bytes[index] == u8('\n')) {
-                    auto location = SourceLocation {
-                        .source = source.id, .offset = index, .line = line, .column = column
-                    };
-                    if (bytes[index] == u8('\r') && index + usize(1) < bytes.len() &&
-                        bytes[index + usize(1)] == u8('\n')) {
-                        ++index;
+                if (bytes[cursor.position()] == u8('\r') || bytes[cursor.position()] == u8('\n')) {
+                    auto location = SourceLocation { .source = source.id,
+                                                     .offset = cursor.position(),
+                                                     .line   = cursor.source_position().line,
+                                                     .column = cursor.source_position().column };
+                    if (bytes[cursor.position()] == u8('\r') &&
+                        cursor.position() + usize(1) < bytes.len() &&
+                        bytes[cursor.position() + usize(1)] == u8('\n')) {
+                        (void)cursor.advance(usize(1));
                     }
                     sink.push_token(source,
                                     TokenKind::Newline,
@@ -467,14 +444,11 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
                                     location,
                                     line_start,
                                     false);
-                    ++index;
-                    ++line;
-                    column     = usize(1);
+                    (void)cursor.advance(usize(1));
                     line_start = true;
                     continue;
                 }
-                ++index;
-                ++column;
+                (void)cursor.advance_single_line_unchecked(usize(1));
             }
             if (! closed) return lex_failure("unterminated block comment"_str, start);
             auto kind = CommentKind::Ordinary;
@@ -487,31 +461,42 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
                         bytes[start.offset + usize(3)] != u8('*'))) {
                 kind = CommentKind::OuterDocumentation;
             }
-            sink.push_comment(
-                source,
-                kind,
-                CommentStyle::Block,
-                start.offset,
-                index,
-                start,
-                SourceLocation {
-                    .source = source.id, .offset = index, .line = line, .column = column },
-                comment_line_start);
+            sink.push_comment(source,
+                              kind,
+                              CommentStyle::Block,
+                              start.offset,
+                              cursor.position(),
+                              start,
+                              SourceLocation { .source = source.id,
+                                               .offset = cursor.position(),
+                                               .line   = cursor.source_position().line,
+                                               .column = cursor.source_position().column },
+                              comment_line_start);
             continue;
         }
 
-        auto location =
-            SourceLocation { .source = source.id, .offset = index, .line = line, .column = column };
-        auto token_start = index;
-        auto scanned     = scan_preprocessing_token(bytes, token_start, location);
+        auto location    = SourceLocation { .source = source.id,
+                                            .offset = cursor.position(),
+                                            .line   = cursor.source_position().line,
+                                            .column = cursor.source_position().column };
+        auto token_start = cursor.position();
+        auto scanned     = scan_preprocessing_token(cursor.remaining_input(), location);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto kind = scanned->kind;
-        index     = scanned->end;
-        line      = scanned->line;
-        column    = scanned->column;
+        if (kind == TokenKind::Identifier || kind == TokenKind::PpNumber ||
+            kind == TokenKind::Punctuation) {
+            (void)cursor.advance_single_line_unchecked(scanned->length);
+        } else {
+            (void)cursor.advance(scanned->length);
+        }
 
-        sink.push_token(
-            source, kind, token_start, index - token_start, location, line_start, pending_space);
+        sink.push_token(source,
+                        kind,
+                        token_start,
+                        cursor.position() - token_start,
+                        location,
+                        line_start,
+                        pending_space);
         line_start    = false;
         pending_space = false;
     }
@@ -574,9 +559,9 @@ auto classify_preprocessing_token(Vec<u8> spelling, SourceLocation origin = {})
                      (bytes.len() > usize(1) && bytes[usize {}] == u8('/') &&
                       (bytes[usize(1)] == u8('/') || bytes[usize(1)] == u8('*')));
     if (! separator) {
-        auto scanned = scan_preprocessing_token(bytes, usize {}, origin);
+        auto scanned = scan_preprocessing_token(bytes, origin);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
-        if (scanned->end == bytes.len()) return Ok(scanned->kind);
+        if (scanned->length == bytes.len()) return Ok(scanned->kind);
     }
     return Err(Error::at(rstd::format("'{}' does not form one preprocessing token",
                                       TokenText::borrowed(bytes).display().as_str()),
@@ -591,7 +576,7 @@ auto classify_preprocessing_token(String spelling, SourceLocation origin = {})
 auto is_identifier_spelling(ref<str> spelling) -> bool {
     auto bytes = spelling.as_bytes();
     if (bytes.is_empty()) return false;
-    return identifier_length(bytes, usize {}) == bytes.len();
+    return identifier_length(bytes) == bytes.len();
 }
 
 } // namespace lito::frontend::lexical

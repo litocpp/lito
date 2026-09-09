@@ -231,7 +231,11 @@ TEST(LexicalScanner, RollsBackAndRejectsInvalidResults) {
     auto invalid_session = ScannerSession::make<FixtureLanguageA>(fixture_source("abc"_str));
     auto invalid_scanner = InvalidSymbolScanner {};
     auto invalid         = invalid_session.scan(invalid_scanner, valid.as_slice());
-    EXPECT_TRUE(invalid.is_err());
+    ASSERT_TRUE(invalid.is_err());
+    auto invalid_error = rstd::move(invalid).unwrap_err();
+    ASSERT_TRUE(invalid_error.location.is_some());
+    EXPECT_EQ(invalid_error.location->offset, usize());
+    EXPECT_EQ(invalid_error.location->column, usize(1));
     EXPECT_EQ(invalid_session.position().offset, usize {});
 
     auto foreign_session   = ScannerSession::make<FixtureLanguageA>(fixture_source("abc"_str));
@@ -381,4 +385,90 @@ TEST(LexicalSourceStorage, PreservesTokensAcrossBlocks) {
     EXPECT_GE(statistics.arena_used_bytes, statistics.token_bytes);
     EXPECT_GE(statistics.arena_reserved_bytes, statistics.arena_used_bytes);
     EXPECT_GE(statistics.retained_bytes, statistics.source_reserved_bytes);
+}
+
+TEST(LexicalScanner, MarkedEndAndFailuresRestoreCarriageReturnState) {
+    struct Scanner {
+        int  mode {};
+        auto scan(ScannerCursor& cursor, ValidSymbols) -> LexicalResult<Option<SymbolId>> {
+            cursor.advance();
+            cursor.mark_end();
+            if (mode == 0) {
+                cursor.advance();
+                return Ok(Some<SymbolId>(FIXTURE_A_SHORT));
+            }
+            cursor.advance(true);
+            if (mode == 1) return Ok(None());
+            return Err(Error::at(String::make("fixture failure"_str), cursor.location()));
+        }
+    };
+    auto session = ScannerSession::make<FixtureLanguageA>(fixture_source("\r\na"_str));
+    auto scanner = Scanner {};
+    auto valid   = array<SymbolId, 1> { FIXTURE_A_SHORT };
+    ASSERT_TRUE(session.scan(scanner, valid.as_slice()).is_ok());
+    EXPECT_EQ(session.position().offset, usize(1));
+    EXPECT_EQ(session.position().line, usize(2));
+    const int modes[] { 1, 2 };
+    for (int mode : modes) {
+        scanner.mode = mode;
+        auto result  = session.scan(scanner, valid.as_slice());
+        EXPECT_EQ(result.is_err(), mode == 2);
+        EXPECT_EQ(session.position().offset, usize(1));
+        EXPECT_EQ(session.position().line, usize(2));
+        EXPECT_EQ(session.position().column, usize(1));
+    }
+    scanner.mode = 0;
+    ASSERT_TRUE(session.scan(scanner, valid.as_slice()).is_ok());
+    EXPECT_EQ(session.position().offset, usize(2));
+    EXPECT_EQ(session.position().line, usize(2));
+    EXPECT_EQ(session.position().column, usize(1));
+}
+
+TEST(LexicalScanner, CallbacksObserveOnlyCommittedSessionPosition) {
+    auto session = ScannerSession::make<FixtureLanguageA>(fixture_source("a"_str));
+    struct Scanner {
+        ScannerSession* session;
+        bool            stayed_committed {};
+        auto scan(ScannerCursor& cursor, ValidSymbols) -> LexicalResult<Option<SymbolId>> {
+            cursor.advance();
+            stayed_committed = session->position().offset == usize() && ! session->is_eof();
+            return Ok(Some<SymbolId>(FIXTURE_A_SHORT));
+        }
+    };
+    auto scanner = Scanner { &session };
+    auto valid   = array<SymbolId, 1> { FIXTURE_A_SHORT };
+    auto result  = session.scan(scanner, valid.as_slice());
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(scanner.stayed_committed);
+    EXPECT_EQ(session.position().offset, usize(1));
+    EXPECT_TRUE(session.is_eof());
+}
+
+TEST(Lexical, FullAndCompactSinksAgreeOnPhysicalLocations) {
+    auto source  = fixture_source("// comment\r\n/* multi\rline\ncomment */\r"
+                                  "name\\u0061 12e+3 >>= u8\"text\" R\"tag(raw\r\nline)tag\"\n"
+                                  "\\\r\nnext \"escaped\\\nline\" end\n"_str);
+    auto full    = lex_with_comments(source, true);
+    auto compact = lex_scan_file(source);
+    ASSERT_TRUE(full.is_ok());
+    ASSERT_TRUE(compact.is_ok());
+    ASSERT_EQ(full->tokens.len(), compact->tokens.len());
+    SourcePositionIndex positions(source.contents());
+    for (auto index = usize(); index < full->tokens.len(); ++index) {
+        auto& token  = full->tokens[index];
+        auto  stored = compact->token(source.id, index);
+        EXPECT_EQ(token.kind, stored.kind());
+        EXPECT_TRUE(token.text.same_bytes(stored.text()));
+        EXPECT_EQ(token.spelling.offset, stored.location().offset);
+        EXPECT_EQ(token.spelling.line, stored.location().line);
+        EXPECT_EQ(token.spelling.column, stored.location().column);
+        EXPECT_EQ(token.start_of_line, stored.start_of_line());
+        EXPECT_EQ(token.leading_space, stored.leading_space());
+    }
+    for (const auto& comment : full->comments) {
+        auto end =
+            positions.location(source.id, static_cast<uint32_t>(comment.end.offset.to_primitive()));
+        EXPECT_EQ(comment.end.line, end.line);
+        EXPECT_EQ(comment.end.column, end.column);
+    }
 }

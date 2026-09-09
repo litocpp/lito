@@ -24,6 +24,7 @@ rstd-serde = "0.1.1"
 rstd-bench = "0.1.1"
 rstd-toml = "0.1.1"
 rstd-argparse = "0.1.1"
+rstd-parse = "0.1.1"
 rstd-test = "0.1.1"
 luato = { git = "https://github.com/litocpp/luato.git" }
 
