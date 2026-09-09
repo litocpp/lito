@@ -934,6 +934,69 @@ archive = "sample"
     EXPECT_EQ(blob.calls, usize(1));
 }
 
+TEST(RegistryGraphClient, LockedResolutionAcceptsProvidedPackageOutsideLock) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto tree  = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str,
+                              R"toml([package]
+name = "sample"
+version = "1.2.3"
+authors = ["Lito Authors"]
+license = "MIT"
+description = "Registry metadata fixture"
+readme = "README.md"
+repository = "https://example.invalid/sample"
+documentation = "https://docs.example.invalid/sample"
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("README.md"_str, "# Sample\n\nRegistry README.\n"_str).is_ok());
+    ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3"_str);
+    auto archive = PathBuf::from(owner.path()).join(PathBuf::from("source.tar.zstd"_str).as_path());
+    auto built =
+        lito::registry::PackageArchiveBuilder::build(tree, package, version, archive.clone());
+    ASSERT_TRUE(built.is_ok());
+
+    auto registries = Vec<lito::config::NamedRegistryConfig>::make();
+    registries.push(registry_test_config());
+    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries),
+                                                       Some(String::make("fixture"_str)));
+    auto http      = IndexHttpFixture { .body = String::make("must not be read"_str) };
+    auto blob      = CopyBlobTransportFixture { .source = archive.clone() };
+    auto client    = lito::registry::RegistryGraphClient(
+        PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path()),
+        bootstrap,
+        lito::registry::RegistryNetworkPolicy::Online,
+        lito::registry::RegistryGraphPolicy {},
+        http.transport(),
+        blob.transport(),
+        true);
+    auto index = lito::registry::RegistryPackageIndex::single(
+        package.clone(), version.clone(), built->archive.checksum.clone(), {});
+    ASSERT_TRUE(index.is_ok());
+    client.add_index(rstd::move(index).unwrap());
+    auto requirements = Vec<lito::registry::RegistryGraphRequirement>::make();
+    requirements.push(lito::registry::RegistryGraphRequirement {
+        .package     = package.name.clone(),
+        .requirement = lito::registry::VersionRequirement::parse("^1.0.0"_str).unwrap(),
+        .source      = String::make("builtin dependency 'sample'"_str),
+    });
+    auto resolved = client.resolve(requirements.as_slice());
+    ASSERT_TRUE(resolved.is_ok());
+    ASSERT_EQ(resolved->len(), usize(1));
+    EXPECT_EQ((*resolved)[usize {}].version.text().as_str(), "1.2.3"_str);
+    EXPECT_EQ(http.calls, usize {});
+    EXPECT_EQ(blob.calls, usize(1));
+}
+
 TEST(RegistryGraphClient, RefreshesOnceAfterCachedIndexIncompatibility) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());

@@ -31,26 +31,22 @@ auto write_cargo_fixture(ref<rstd::path::Path> path, ref<str> contents) -> bool 
 struct RegistryFlatpakFixture {
     usize calls {};
 
-    static auto resolve(void*                                    context,
-                        const lito::registry::RegistryPackageId& package,
-                        const lito::registry::SemanticVersion&   version,
-                        const lito::registry::PackageChecksum&   checksum) noexcept
-        -> lito::lock::LockResult<lito::lock::RegistryFlatpakSource> {
+    static auto download_url(void*                                    context,
+                             const lito::registry::RegistryPackageId& package,
+                             const lito::registry::SemanticVersion&   version) noexcept
+        -> lito::lock::LockResult<String> {
         auto& self = *static_cast<RegistryFlatpakFixture*>(context);
         ++self.calls;
-        return Ok(lito::lock::RegistryFlatpakSource {
-            .download_url = rstd::format("https://registry.example/packages/{}/{}-{}.tar.zst",
-                                         package.name.as_str(),
-                                         package.name.as_str(),
-                                         version.text().as_str()),
-            .index_record = rstd::format("{{\"checksum\":\"{}\"}}", checksum.text().as_str()),
-        });
+        return Ok(rstd::format("https://registry.example/packages/{}/{}-{}.tar.zst",
+                               package.name.as_str(),
+                               package.name.as_str(),
+                               version.text().as_str()));
     }
 
-    auto provider() noexcept -> lito::lock::RegistryFlatpakSourceProvider {
-        return lito::lock::RegistryFlatpakSourceProvider {
-            .context = this,
-            .resolve = resolve,
+    auto provider() noexcept -> lito::lock::RegistryFlatpakArchiveProvider {
+        return lito::lock::RegistryFlatpakArchiveProvider {
+            .context      = this,
+            .download_url = download_url,
         };
     }
 };
@@ -136,7 +132,7 @@ TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {
     EXPECT_TRUE(exported->as_str().contains("https://example.invalid/wavsen.git"_str));
 }
 
-TEST(Lock, RegistryPackageExportsIndexAndArchiveForOfflineResolution) {
+TEST(Lock, RegistryPackageExportsArchiveWithoutIndex) {
     auto registry = lito::registry::RegistryPackageId {
         .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .name     = lito::registry::RegistryPackageName::parse("sample"_str).unwrap(),
@@ -157,10 +153,8 @@ TEST(Lock, RegistryPackageExportsIndexAndArchiveForOfflineResolution) {
     auto exported = lito::lock::flatpak_sources_json(project, fixture.provider());
     ASSERT_TRUE(exported.is_ok());
     EXPECT_EQ(fixture.calls, usize(1));
-    EXPECT_TRUE(exported->as_str().contains("\"type\": \"inline\""_str));
-    EXPECT_TRUE(exported->as_str().contains("v1/registry/indices/"_str));
-    EXPECT_TRUE(exported->as_str().contains("/sample"_str));
-    EXPECT_TRUE(exported->as_str().contains("\"dest-filename\": \"record.json\""_str));
+    EXPECT_FALSE(exported->as_str().contains("\"type\": \"inline\""_str));
+    EXPECT_FALSE(exported->as_str().contains("v1/registry/indices/"_str));
     EXPECT_TRUE(exported->as_str().contains("https://registry.example/packages/sample/"
                                             "sample-1.2.3.tar.zst"_str));
     EXPECT_TRUE(exported->as_str().contains(

@@ -26,18 +26,11 @@ enum class LockExportFormat
     FlatpakSources,
 };
 
-struct RegistryFlatpakSource {
-    String download_url;
-    String index_record;
-};
-
-struct RegistryFlatpakSourceProvider {
+struct RegistryFlatpakArchiveProvider {
     void* context {};
-    LockResult<RegistryFlatpakSource> (*resolve)(
-        void*,
-        const lito::registry::RegistryPackageId&,
-        const lito::registry::SemanticVersion&,
-        const lito::registry::PackageChecksum&) noexcept {};
+    LockResult<String> (*download_url)(void*,
+                                       const lito::registry::RegistryPackageId&,
+                                       const lito::registry::SemanticVersion&) noexcept {};
 };
 
 constexpr auto lock_export_format_name(LockExportFormat format) noexcept -> ref<str> {
@@ -191,8 +184,8 @@ auto flatpak_architectures(const FlatpakCandidate& candidate) -> Vec<String> {
 export namespace lito::lock
 {
 
-auto project_flatpak_sources(const LockedProject&          project,
-                             RegistryFlatpakSourceProvider registry = {})
+auto project_flatpak_sources(const LockedProject&           project,
+                             RegistryFlatpakArchiveProvider registry = {})
     -> LockResult<lito::flatpak::SourceSet> {
     auto candidates = rstd::collections::BTreeMap<String, FlatpakCandidate>::make();
     auto registry_candidates =
@@ -264,29 +257,22 @@ auto project_flatpak_sources(const LockedProject&          project,
     auto registry_values = registry_candidates.values();
     for (auto value : registry_values) {
         auto& candidate = *value;
-        if (registry.resolve == nullptr) {
+        if (registry.download_url == nullptr) {
             return lock_flatpak_failure<lito::flatpak::SourceSet>(
                 rstd::format("Flatpak source export has no Registry provider for '{}@{}'",
                              lito::registry::registry_package_id_text(candidate.package).as_str(),
                              candidate.version.text().as_str()));
         }
-        auto resolved = registry.resolve(
-            registry.context, candidate.package, candidate.version, candidate.checksum);
-        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-        auto source = rstd::move(resolved).unwrap();
+        auto download =
+            registry.download_url(registry.context, candidate.package, candidate.version);
+        if (download.is_err()) return Err(rstd::move(download).unwrap_err());
         auto owners = candidate_owners(candidate);
-
-        auto index = layout.registry_index(candidate.package);
-        result.push(rstd::format("Lito lock Registry index {}", owners.as_str()),
-                    lito::flatpak::Source::Inline(rstd::move(source.index_record),
-                                                  PathBuf::from(index.as_path().parent().unwrap()),
-                                                  String::make("record.json"_str)));
 
         auto archive     = layout.registry_package(candidate.checksum);
         auto archive_key = archive.as_path().to_string_lossy();
         if (registry_blobs.contains_key(archive_key.as_str())) continue;
         result.push(rstd::format("Lito lock Registry package {}", owners.as_str()),
-                    lito::flatpak::Source::File(rstd::move(source.download_url),
+                    lito::flatpak::Source::File(rstd::move(download).unwrap(),
                                                 candidate.checksum.digest().clone(),
                                                 PathBuf::from(archive.as_path().parent().unwrap()),
                                                 String::make("source.archive"_str),
@@ -296,18 +282,18 @@ auto project_flatpak_sources(const LockedProject&          project,
     return Ok(rstd::move(result));
 }
 
-auto flatpak_sources_json(const LockedProject& project, RegistryFlatpakSourceProvider registry = {})
-    -> LockResult<String> {
+auto flatpak_sources_json(const LockedProject&           project,
+                          RegistryFlatpakArchiveProvider registry = {}) -> LockResult<String> {
     auto sources = rstd_try(project_flatpak_sources(project, registry));
     auto json    = lito::flatpak::sources_json(sources);
     if (json.is_err()) return Err(lock_flatpak_failure(rstd::move(json).unwrap_err()));
     return Ok(rstd::move(json).unwrap());
 }
 
-auto export_flatpak_sources(ref<rstd::path::Path>         root,
-                            const LockConfig&             lock,
-                            ref<rstd::path::Path>         output,
-                            RegistryFlatpakSourceProvider registry = {}) -> LockResult<empty> {
+auto export_flatpak_sources(ref<rstd::path::Path>          root,
+                            const LockConfig&              lock,
+                            ref<rstd::path::Path>          output,
+                            RegistryFlatpakArchiveProvider registry = {}) -> LockResult<empty> {
     auto project = rstd_try(load_locked_project(root, lock));
     auto sources = rstd_try(project_flatpak_sources(project, registry));
     auto written = lito::flatpak::write_sources(root, output, sources);

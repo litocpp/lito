@@ -246,12 +246,37 @@ auto lito::registry::RegistryGraphClient::resolve_callback(
 
 auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequirement> roots)
     -> RegistryGraphResult<Vec<lito::source::RegistrySourcePin>> {
+    auto result = Vec<lito::source::RegistrySourcePin>::with_capacity(locked_.len() +
+                                                                      provided_indices_.len());
+    for (const auto& pin : locked_) result.push(pin.clone());
     for (const auto& root : roots) {
-        auto pin = locked_pin(locked_, root.package);
+        auto pin = locked_pin(result, root.package);
         if (pin.is_none()) {
-            return graph_failure<Vec<lito::source::RegistrySourcePin>>(
-                rstd::format("--locked has no exact Registry release for package '{}'",
-                             root.package.name.as_str()));
+            auto provided = Option<lito::source::RegistrySourcePin> {};
+            for (const auto& index : provided_indices_) {
+                if (! (index.package() == root.package)) continue;
+                for (const auto& release : index.releases()) {
+                    if (! root.requirement.matches(release.version)) continue;
+                    if (provided.is_some()) {
+                        return graph_failure<Vec<lito::source::RegistrySourcePin>>(rstd::format(
+                            "provided Registry package '{}' has more than one matching release",
+                            root.package.name.as_str()));
+                    }
+                    provided = Some(lito::source::RegistrySourcePin {
+                        .package  = root.package.clone(),
+                        .version  = release.version.clone(),
+                        .checksum = release.checksum.clone(),
+                    });
+                }
+            }
+            if (provided.is_some()) {
+                result.push(rstd::move(provided).unwrap());
+                continue;
+            }
+        }
+        if (pin.is_none()) {
+            return graph_failure<Vec<lito::source::RegistrySourcePin>>(rstd::format(
+                "lock has no exact Registry release for package '{}'", root.package.name.as_str()));
         }
         if (! root.requirement.matches((*pin)->version)) {
             return graph_failure<Vec<lito::source::RegistrySourcePin>>(
@@ -262,8 +287,6 @@ auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequi
                              root.source.as_str()));
         }
     }
-    auto result = Vec<lito::source::RegistrySourcePin>::with_capacity(locked_.len());
-    for (const auto& pin : locked_) result.push(pin.clone());
     return Ok(rstd::move(result));
 }
 

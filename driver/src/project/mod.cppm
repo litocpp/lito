@@ -221,14 +221,17 @@ auto start_project_resolution(
             embedded = Some(lito::package::EmbeddedRegistryPackages(
                 PathBuf::from(data->root()), *registries, embedded_provider));
         }
+        auto registry_offline =
+            materialization == lito::source::SourceMaterializationPolicy::ExistingOnly ||
+            sources.network == lito::source::NetworkPolicy::Offline;
         registry_resolver = Some(ProjectRegistryResolver {
-            .config  = registries,
-            .network = materialization == lito::source::SourceMaterializationPolicy::ExistingOnly ||
-                               sources.network == lito::source::NetworkPolicy::Offline
-                           ? lito::registry::RegistryNetworkPolicy::Offline
-                           : lito::registry::RegistryNetworkPolicy::Online,
-            .policy  = graph_policy,
-            .locked_mode    = resolution.locked,
+            .config         = registries,
+            .network        = registry_offline ? lito::registry::RegistryNetworkPolicy::Offline
+                                               : lito::registry::RegistryNetworkPolicy::Online,
+            .policy         = graph_policy,
+            .locked_mode    = resolution.locked ||
+                              (registry_offline && has_resolution_lock &&
+                               registry_policy.lock == lito::lock::RegistryLockPolicy::Reuse),
             .locked         = rstd::move(pins),
             .source_bundles = rstd::addressof(sources.source_bundles),
             .tools          = tool_resolver,
