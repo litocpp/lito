@@ -4,7 +4,7 @@ set(CMAKE_LINKER_TYPE LLD)
 
 project(
   lito
-  VERSION 0.8.0
+  VERSION 0.8.1
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
@@ -58,7 +58,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG e9f1fbcc7a446a758cdee69dcbd8c063303217e6)
+  GIT_TAG 7b45034d8e833398da6bff834b652a1dc40a6a4f)
 
 FetchContent_MakeAvailable(rstd)
 

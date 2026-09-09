@@ -1,3 +1,14 @@
+<release version="0.8.1" date="2026-09-09">
+  <description>
+    <ul>
+      <li>Support Registry source bundles.</li>
+      <li>Fix non-ASCII CMake paths.</li>
+      <li>Stage qml modules.</li>
+      <li>Add macOS arm64 publish.</li>
+      <li>Update rstd to 0.1.2.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.0" date="2026-09-08">
   <description>
     <ul>
