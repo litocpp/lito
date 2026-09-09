@@ -28,6 +28,33 @@ auto write_cargo_fixture(ref<rstd::path::Path> path, ref<str> contents) -> bool 
     return rstd::fs::write(path, contents.as_bytes()).is_ok();
 }
 
+struct RegistryFlatpakFixture {
+    usize calls {};
+
+    static auto resolve(void*                                    context,
+                        const lito::registry::RegistryPackageId& package,
+                        const lito::registry::SemanticVersion&   version,
+                        const lito::registry::PackageChecksum&   checksum) noexcept
+        -> lito::lock::LockResult<lito::lock::RegistryFlatpakSource> {
+        auto& self = *static_cast<RegistryFlatpakFixture*>(context);
+        ++self.calls;
+        return Ok(lito::lock::RegistryFlatpakSource {
+            .download_url = rstd::format("https://registry.example/packages/{}/{}-{}.tar.zst",
+                                         package.name.as_str(),
+                                         package.name.as_str(),
+                                         version.text().as_str()),
+            .index_record = rstd::format("{{\"checksum\":\"{}\"}}", checksum.text().as_str()),
+        });
+    }
+
+    auto provider() noexcept -> lito::lock::RegistryFlatpakSourceProvider {
+        return lito::lock::RegistryFlatpakSourceProvider {
+            .context = this,
+            .resolve = resolve,
+        };
+    }
+};
+
 } // namespace
 
 TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
@@ -107,6 +134,38 @@ TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {
     ASSERT_TRUE(git_source.is_some());
     EXPECT_FALSE(git_source->get<1>().contains("\"type\": \"git\""_str));
     EXPECT_TRUE(exported->as_str().contains("https://example.invalid/wavsen.git"_str));
+}
+
+TEST(Lock, RegistryPackageExportsIndexAndArchiveForOfflineResolution) {
+    auto registry = lito::registry::RegistryPackageId {
+        .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        .name     = lito::registry::RegistryPackageName::parse("sample"_str).unwrap(),
+    };
+    auto checksum = lito::registry::PackageChecksum::parse(
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
+                        .unwrap();
+    auto project  = lito::lock::LockedProject {};
+    project.packages.push(lito::lock::LockedPackage {
+        .name    = String::make("sample"_str),
+        .version = Some(String::make("1.2.3"_str)),
+        .source  = Some(lito::lock::LockedSource::Registry(
+            registry.clone(),
+            lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap(),
+            checksum.clone())),
+    });
+    auto fixture  = RegistryFlatpakFixture {};
+    auto exported = lito::lock::flatpak_sources_json(project, fixture.provider());
+    ASSERT_TRUE(exported.is_ok());
+    EXPECT_EQ(fixture.calls, usize(1));
+    EXPECT_TRUE(exported->as_str().contains("\"type\": \"inline\""_str));
+    EXPECT_TRUE(exported->as_str().contains("v1/registry/indices/"_str));
+    EXPECT_TRUE(exported->as_str().contains("/sample"_str));
+    EXPECT_TRUE(exported->as_str().contains("\"dest-filename\": \"record.json\""_str));
+    EXPECT_TRUE(exported->as_str().contains("https://registry.example/packages/sample/"
+                                            "sample-1.2.3.tar.zst"_str));
+    EXPECT_TRUE(exported->as_str().contains(
+        "v1/registry/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str));
+    EXPECT_TRUE(exported->as_str().contains("\"dest-filename\": \"source.archive\""_str));
 }
 
 TEST(Lock, CargoAttachmentProjectsRegistrySourcesAndSkipsPathPackages) {

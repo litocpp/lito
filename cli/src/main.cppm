@@ -1251,7 +1251,8 @@ extern "C++" int main() {
             project.toolchain.sdk = active_android->project_defaults().toolchain.sdk;
         }
     }
-    if ((build_command || invocation.command.is_Update() || invocation.command.is_Install()) &&
+    if ((build_command || invocation.command.is_Update() || invocation.command.is_Install() ||
+         invocation.command.is_Lock()) &&
         registry_bootstrap.is_none()) {
         auto loaded = lito::config::load_registry_bootstrap_config();
         if (loaded.is_err()) {
@@ -1279,6 +1280,7 @@ extern "C++" int main() {
                 .environment   = rstd::move(project.environment),
                 .tools         = rstd::move(project.tools),
                 .sources       = rstd::move(project.sources),
+                .registries    = rstd::move(registry_bootstrap),
                 .tool_reporter = Some(lito::tools::HostToolResolutionSink {
                     .context = rstd::addressof(event_context),
                     .notify  = report_host_tool_resolution,

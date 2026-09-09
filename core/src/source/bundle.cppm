@@ -53,6 +53,16 @@ public:
             .join(PathBuf::from("source.archive"_str).as_path());
     }
 
+    auto registry_index(const lito::registry::RegistryPackageId& package) const -> PathBuf {
+        auto registry_key = licrypto::sha256_hex(package.registry.as_str());
+        return version_root()
+            .join(PathBuf::from("registry"_str).as_path())
+            .join(PathBuf::from("indices"_str).as_path())
+            .join(PathBuf::from(registry_key.as_str()).as_path())
+            .join(PathBuf::from(package.name.as_str()).as_path())
+            .join(PathBuf::from("record.json"_str).as_path());
+    }
+
     auto cargo(ref<str> source_identity, ref<rstd::path::Path> manifest, ref<str> target) const
         -> PathBuf {
         auto identity = rstd::format(

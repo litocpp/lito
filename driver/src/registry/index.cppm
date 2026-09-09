@@ -55,6 +55,7 @@ class RegistryIndexClient {
     RegistryNetworkPolicy         network_ { RegistryNetworkPolicy::Online };
     RegistryIndexUpdatePolicy     update_ { RegistryIndexUpdatePolicy::Reuse };
     RegistryHttpTransport         transport_;
+    const Vec<PathBuf>*           source_bundles_ {};
 
     static auto load_provider(void* context, const RegistryPackageId& package) noexcept
         -> RegistryIndexLoadResult;
@@ -64,15 +65,21 @@ public:
                         const lito::config::NamedRegistryConfig& config,
                         RegistryNetworkPolicy                    network,
                         RegistryIndexUpdatePolicy                update,
-                        RegistryHttpTransport                    transport)
+                        RegistryHttpTransport                    transport,
+                        const Vec<PathBuf>*                      source_bundles = nullptr)
         : cache_root_(rstd::move(cache_root)),
           registry_(config.identity.clone()),
           endpoint_(config.effective_endpoints()->index.clone()),
           network_(network),
           update_(update),
-          transport_(transport) {}
+          transport_(transport),
+          source_bundles_(source_bundles) {}
 
     auto load(const RegistryPackageId& package) -> RegistryIndexLoadResult;
+    auto source_bundle_record(const RegistryPackageId& package,
+                              const SemanticVersion&   version,
+                              const PackageChecksum&   checksum)
+        -> Result<String, RegistryIndexError>;
     auto provider() noexcept -> RegistryIndexProvider {
         return RegistryIndexProvider {
             .context = this,
@@ -218,6 +225,39 @@ auto read_cached_index(ref<rstd::path::Path> record, const RegistryPackageId& pa
         .endpoint = String::make(*endpoint),
         .etag     = rstd::move(etag),
     }));
+}
+
+auto read_source_bundle_index(const Vec<PathBuf>* roots, const RegistryPackageId& package)
+    -> Result<Option<CachedPackageIndex>, RegistryIndexError> {
+    if (roots == nullptr) return Ok(Option<CachedPackageIndex> {});
+    for (const auto& root : *roots) {
+        auto record   = lito::source::SourceBundleLayout(root.clone()).registry_index(package);
+        auto metadata = rstd::fs::symlink_metadata(record.as_path());
+        if (metadata.is_err()) {
+            auto error = rstd::move(metadata).unwrap_err();
+            if (error.kind() ==
+                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+                continue;
+            }
+            return index_failure<Option<CachedPackageIndex>>(
+                RegistryIndexErrorKind::CorruptCache,
+                package,
+                rstd::format("cannot inspect Registry source bundle index '{}': {}",
+                             record.as_path(),
+                             error));
+        }
+        if (! metadata->is_file() || metadata->is_symlink()) {
+            return index_failure<Option<CachedPackageIndex>>(
+                RegistryIndexErrorKind::CorruptCache,
+                package,
+                rstd::format("Registry source bundle index '{}' is not an ordinary file",
+                             record.as_path()));
+        }
+        auto loaded = read_cached_index(record.as_path(), package);
+        if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
+        if (loaded->is_some()) return loaded;
+    }
+    return Ok(Option<CachedPackageIndex> {});
 }
 
 auto write_cached_index(ref<rstd::path::Path>    record,
@@ -368,6 +408,12 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     if (update_ == RegistryIndexUpdatePolicy::Reuse && cached.is_ok() && cached->is_some()) {
         return Ok(cached->as_ref().unwrap().index.clone());
     }
+    auto bundled = read_source_bundle_index(source_bundles_, package);
+    if (bundled.is_err()) return Err(rstd::move(bundled).unwrap_err());
+    if (bundled->is_some() && (update_ == RegistryIndexUpdatePolicy::Reuse ||
+                               network_ == RegistryNetworkPolicy::Offline)) {
+        return Ok(bundled->as_ref().unwrap().index.clone());
+    }
     if (network_ == RegistryNetworkPolicy::Offline) {
         if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
         if (cached->is_none()) {
@@ -444,4 +490,50 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
                                  received.body.as_str(),
                                  received.etag));
     return Ok(rstd::move(index).unwrap());
+}
+
+auto lito::registry::RegistryIndexClient::source_bundle_record(const RegistryPackageId& package,
+                                                               const SemanticVersion&   version,
+                                                               const PackageChecksum&   checksum)
+    -> Result<String, RegistryIndexError> {
+    auto index   = rstd_try(load(package));
+    auto matched = false;
+    for (const auto& release : index.releases()) {
+        if (! (release.version == version)) continue;
+        if (! (release.checksum == checksum)) {
+            return index_failure<String>(
+                RegistryIndexErrorKind::Integrity,
+                package,
+                rstd::format("Registry package '{}@{}' is bound to another checksum",
+                             package.name.as_str(),
+                             version.text().as_str()));
+        }
+        matched = true;
+        break;
+    }
+    if (! matched) {
+        return index_failure<String>(RegistryIndexErrorKind::NotFound,
+                                     package,
+                                     rstd::format("Registry package index has no release '{}@{}'",
+                                                  package.name.as_str(),
+                                                  version.text().as_str()));
+    }
+    auto record   = cache_record_path(cache_root_.as_path(), package);
+    auto contents = rstd::fs::read_to_string(record.as_path());
+    if (contents.is_err()) {
+        return index_failure<String>(
+            RegistryIndexErrorKind::CorruptCache,
+            package,
+            rstd::format("cannot read Registry index cache record '{}': {}",
+                         record.as_path(),
+                         rstd::move(contents).unwrap_err()));
+    }
+    auto validated = read_cached_index(record.as_path(), package);
+    if (validated.is_err()) return Err(rstd::move(validated).unwrap_err());
+    if (validated->is_none()) {
+        return index_failure<String>(RegistryIndexErrorKind::CorruptCache,
+                                     package,
+                                     "Registry index cache record disappeared"_str);
+    }
+    return Ok(rstd::move(contents).unwrap());
 }

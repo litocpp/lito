@@ -211,8 +211,12 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
             .message = rstd::format("Registry '{}' is not configured", package.registry.as_str()),
         });
     }
-    auto client = RegistryIndexClient(
-        self.cache_root_.clone(), **config, self.network_, self.policy_.index, self.http_);
+    auto client = RegistryIndexClient(self.cache_root_.clone(),
+                                      **config,
+                                      self.network_,
+                                      self.policy_.index,
+                                      self.http_,
+                                      self.source_bundles_);
     auto loaded = client.load(package);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     self.indices_.push(loaded->clone());

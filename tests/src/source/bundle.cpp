@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import licrypto;
 import lito.tools;
 import rstd.test;
 import lito.core;
@@ -48,6 +49,17 @@ TEST_F(SourceBundle, LayoutOwnsVersionedReadOnlyLookup) {
                                 "x86_64-unknown-linux-gnu"_str)
                   .as_path(),
               cargo.join(PathBuf::from("config.toml"_str).as_path()).as_path());
+
+    auto registry = lito::registry::RegistryPackageId {
+        .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        .name     = lito::registry::RegistryPackageName::parse("sample"_str).unwrap(),
+    };
+    auto registry_key = licrypto::sha256_hex(registry.registry.as_str());
+    EXPECT_EQ(layout.registry_index(registry).as_path(),
+              directory.join(PathBuf::from("v1/registry/indices"_str).as_path())
+                  .join(PathBuf::from(registry_key.as_str()).as_path())
+                  .join(PathBuf::from("sample/record.json"_str).as_path())
+                  .as_path());
 
     auto patched = lito::source::acquired_git_fetch_identity(
         lito::source::AcquiredSource {

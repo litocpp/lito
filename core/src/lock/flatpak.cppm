@@ -26,6 +26,20 @@ enum class LockExportFormat
     FlatpakSources,
 };
 
+struct RegistryFlatpakSource {
+    String download_url;
+    String index_record;
+};
+
+struct RegistryFlatpakSourceProvider {
+    void* context {};
+    LockResult<RegistryFlatpakSource> (*resolve)(
+        void*,
+        const lito::registry::RegistryPackageId&,
+        const lito::registry::SemanticVersion&,
+        const lito::registry::PackageChecksum&) noexcept {};
+};
+
 constexpr auto lock_export_format_name(LockExportFormat format) noexcept -> ref<str> {
     switch (format) {
     case LockExportFormat::FlatpakSources: return "flatpak-sources"_str;
@@ -64,7 +78,23 @@ struct FlatpakCandidate {
     bool                        all_architectures { false };
 };
 
+struct RegistryFlatpakCandidate {
+    lito::registry::RegistryPackageId package;
+    lito::registry::SemanticVersion   version;
+    lito::registry::PackageChecksum   checksum;
+    Vec<String>                       owners;
+};
+
 auto candidate_owners(const FlatpakCandidate& candidate) -> String {
+    auto result = String::make();
+    for (const auto& owner : candidate.owners) {
+        if (! result.is_empty()) result.push_str(", "_str);
+        result.push_str(owner.as_str());
+    }
+    return result;
+}
+
+auto candidate_owners(const RegistryFlatpakCandidate& candidate) -> String {
     auto result = String::make();
     for (const auto& owner : candidate.owners) {
         if (! result.is_empty()) result.push_str(", "_str);
@@ -123,6 +153,32 @@ auto add_candidate(rstd::collections::BTreeMap<String, FlatpakCandidate>& candid
     return Ok(empty {});
 }
 
+auto add_registry_candidate(
+    rstd::collections::BTreeMap<String, RegistryFlatpakCandidate>& candidates,
+    const lito::lock::LockedSource&                                source,
+    String                                                         owner) -> void {
+    const auto& registry = source.as_Registry();
+    auto key = rstd::format("{}@{}",
+                            lito::registry::registry_package_id_text(registry.package).as_str(),
+                            registry.version.text().as_str());
+    auto existing = candidates.get_mut(key.as_str());
+    if (existing.is_some()) {
+        for (const auto& current : (**existing).owners) {
+            if (current == owner) return;
+        }
+        (**existing).owners.push(rstd::move(owner));
+        rstd::slice_::sort_unstable((**existing).owners.as_mut_slice().as_mut_ref());
+        return;
+    }
+    auto candidate = RegistryFlatpakCandidate {
+        .package  = registry.package.clone(),
+        .version  = registry.version.clone(),
+        .checksum = registry.checksum.clone(),
+    };
+    candidate.owners.push(rstd::move(owner));
+    candidates.insert(rstd::move(key), rstd::move(candidate));
+}
+
 auto flatpak_architectures(const FlatpakCandidate& candidate) -> Vec<String> {
     auto result = Vec<String>::with_capacity(candidate.architectures.len());
     if (candidate.all_architectures) return result;
@@ -135,8 +191,12 @@ auto flatpak_architectures(const FlatpakCandidate& candidate) -> Vec<String> {
 export namespace lito::lock
 {
 
-auto project_flatpak_sources(const LockedProject& project) -> LockResult<lito::flatpak::SourceSet> {
+auto project_flatpak_sources(const LockedProject&          project,
+                             RegistryFlatpakSourceProvider registry = {})
+    -> LockResult<lito::flatpak::SourceSet> {
     auto candidates = rstd::collections::BTreeMap<String, FlatpakCandidate>::make();
+    auto registry_candidates =
+        rstd::collections::BTreeMap<String, RegistryFlatpakCandidate>::make();
     for (usize index {}; index < project.packages.len(); ++index) {
         const auto& package = project.packages[index];
         if (package.source.is_some() && package.source->is_Git()) {
@@ -147,6 +207,11 @@ auto project_flatpak_sources(const LockedProject& project) -> LockResult<lito::f
                 lito::source::git_fetch_identity(source.url.as_str(), source.commit.as_str()),
                 architectures,
                 rstd::format("package '{}'", package.name.as_str())));
+        }
+        if (package.source.is_some() && package.source->is_Registry()) {
+            add_registry_candidate(registry_candidates,
+                                   *package.source,
+                                   rstd::format("package '{}'", package.name.as_str()));
         }
         for (const auto& external : package.externals) {
             auto owner = rstd::format("{}:{}", package.name.as_str(), external.name.as_str());
@@ -195,21 +260,56 @@ auto project_flatpak_sources(const LockedProject& project) -> LockResult<lito::f
                                         String::make("source.archive"_str),
                                         rstd::move(architectures)));
     }
+    auto registry_blobs  = rstd::collections::BTreeMap<String, empty>::make();
+    auto registry_values = registry_candidates.values();
+    for (auto value : registry_values) {
+        auto& candidate = *value;
+        if (registry.resolve == nullptr) {
+            return lock_flatpak_failure<lito::flatpak::SourceSet>(
+                rstd::format("Flatpak source export has no Registry provider for '{}@{}'",
+                             lito::registry::registry_package_id_text(candidate.package).as_str(),
+                             candidate.version.text().as_str()));
+        }
+        auto resolved = registry.resolve(
+            registry.context, candidate.package, candidate.version, candidate.checksum);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        auto source = rstd::move(resolved).unwrap();
+        auto owners = candidate_owners(candidate);
+
+        auto index = layout.registry_index(candidate.package);
+        result.push(rstd::format("Lito lock Registry index {}", owners.as_str()),
+                    lito::flatpak::Source::Inline(rstd::move(source.index_record),
+                                                  PathBuf::from(index.as_path().parent().unwrap()),
+                                                  String::make("record.json"_str)));
+
+        auto archive     = layout.registry_package(candidate.checksum);
+        auto archive_key = archive.as_path().to_string_lossy();
+        if (registry_blobs.contains_key(archive_key.as_str())) continue;
+        result.push(rstd::format("Lito lock Registry package {}", owners.as_str()),
+                    lito::flatpak::Source::File(rstd::move(source.download_url),
+                                                candidate.checksum.digest().clone(),
+                                                PathBuf::from(archive.as_path().parent().unwrap()),
+                                                String::make("source.archive"_str),
+                                                Vec<String>::make()));
+        registry_blobs.insert(rstd::move(archive_key), empty {});
+    }
     return Ok(rstd::move(result));
 }
 
-auto flatpak_sources_json(const LockedProject& project) -> LockResult<String> {
-    auto sources = rstd_try(project_flatpak_sources(project));
+auto flatpak_sources_json(const LockedProject& project, RegistryFlatpakSourceProvider registry = {})
+    -> LockResult<String> {
+    auto sources = rstd_try(project_flatpak_sources(project, registry));
     auto json    = lito::flatpak::sources_json(sources);
     if (json.is_err()) return Err(lock_flatpak_failure(rstd::move(json).unwrap_err()));
     return Ok(rstd::move(json).unwrap());
 }
 
-auto export_flatpak_sources(ref<rstd::path::Path> root,
-                            const LockConfig&     lock,
-                            ref<rstd::path::Path> output) -> LockResult<empty> {
+auto export_flatpak_sources(ref<rstd::path::Path>         root,
+                            const LockConfig&             lock,
+                            ref<rstd::path::Path>         output,
+                            RegistryFlatpakSourceProvider registry = {}) -> LockResult<empty> {
     auto project = rstd_try(load_locked_project(root, lock));
-    auto sources = rstd_try(project_flatpak_sources(project));
+    auto sources = rstd_try(project_flatpak_sources(project, registry));
     auto written = lito::flatpak::write_sources(root, output, sources);
     if (written.is_err()) return Err(lock_flatpak_failure(rstd::move(written).unwrap_err()));
     return Ok(empty {});

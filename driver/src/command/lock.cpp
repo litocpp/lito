@@ -10,6 +10,8 @@ import lito.tools.cargo;
 import lito.system;
 import :command.lock;
 import :source;
+import :registry.http;
+import :registry.index;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -18,6 +20,59 @@ using namespace lito::system;
 
 namespace lito
 {
+
+struct RegistryFlatpakResolver {
+    const lito::config::LitoBootstrapConfig* config {};
+    PathBuf                                  cache;
+    lito::registry::RegistryHttpTransport    http;
+
+    static auto resolve(void*                                    raw,
+                        const lito::registry::RegistryPackageId& package,
+                        const lito::registry::SemanticVersion&   version,
+                        const lito::registry::PackageChecksum&   checksum) noexcept
+        -> lito::lock::LockResult<lito::lock::RegistryFlatpakSource> {
+        auto& self       = *static_cast<RegistryFlatpakResolver*>(raw);
+        auto  configured = self.config == nullptr
+                               ? Option<ref<lito::config::NamedRegistryConfig>> {}
+                               : self.config->resolve_registry(package.registry.as_str());
+        if (configured.is_none()) {
+            return Err(lito::lock::LockError::Schema(
+                rstd::format("Registry '{}' is not configured", package.registry.as_str())));
+        }
+        auto indices =
+            lito::registry::RegistryIndexClient(self.cache.clone(),
+                                                **configured,
+                                                lito::registry::RegistryNetworkPolicy::Online,
+                                                lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                                self.http);
+        auto record = indices.source_bundle_record(package, version, checksum);
+        if (record.is_err()) {
+            return Err(lito::lock::LockError::Schema(
+                rstd::format("cannot export Registry index for '{}': {}",
+                             lito::registry::registry_package_id_text(package).as_str(),
+                             rstd::move(record).unwrap_err().message)));
+        }
+        return Ok(lito::lock::RegistryFlatpakSource {
+            .download_url =
+                (**configured).effective_endpoints()->download.render(package.name, version),
+            .index_record = rstd::move(record).unwrap(),
+        });
+    }
+
+    auto provider() noexcept -> lito::lock::RegistryFlatpakSourceProvider {
+        return lito::lock::RegistryFlatpakSourceProvider {
+            .context = this,
+            .resolve = resolve,
+        };
+    }
+};
+
+auto has_registry_sources(const lito::lock::LockedProject& project) -> bool {
+    for (const auto& package : project.packages) {
+        if (package.source.is_some() && package.source->is_Registry()) return true;
+    }
+    return false;
+}
 
 auto attachment_path(ref<rstd::path::Path> root, ref<rstd::path::Path> requested)
     -> CommandResult<PathBuf> {
@@ -105,7 +160,43 @@ auto export_lock_sources(const LockExportRequest& request) -> CommandResult<Lock
     if (locked.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(locked).unwrap_err()));
     }
-    auto sources = lito::lock::project_flatpak_sources(*locked);
+    auto registry_provider    = lito::lock::RegistryFlatpakSourceProvider {};
+    auto registry_environment = Option<ResolvedProcessEnvironment> {};
+    auto registry_http        = Option<lito::registry::CurlRegistryHttpTransport> {};
+    auto registry_resolver    = Option<RegistryFlatpakResolver> {};
+    if (has_registry_sources(*locked)) {
+        if (request.registries.is_none()) {
+            return Err(CommandError::Message(
+                String::make("Flatpak Registry source export has no Registry configuration"_str)));
+        }
+        auto environment = ResolvedProcessEnvironment::resolve(request.environment);
+        if (environment.is_err()) {
+            return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
+        }
+        registry_environment = Some(rstd::move(environment).unwrap());
+        auto tools           = lito::tools::ToolResolver(
+            *registry_environment, request.tools.clone(), request.tool_reporter);
+        auto curl = tools.require(
+            lito::tools::Tool::Curl,
+            lito::tools::command_tool_requirement(lito::tools::HostToolCapability::HttpDownload,
+                                                  "Flatpak Registry source export"_str));
+        if (curl.is_err()) {
+            return Err(rstd::into<CommandError>(rstd::move(curl).unwrap_err()));
+        }
+        registry_http = Some(lito::registry::CurlRegistryHttpTransport(curl->executable.clone(),
+                                                                       *registry_environment));
+        auto data     = lito::system::LitoDataRoot::resolve();
+        if (data.is_err()) {
+            return Err(rstd::into<CommandError>(rstd::move(data).unwrap_err()));
+        }
+        registry_resolver = Some(RegistryFlatpakResolver {
+            .config = rstd::addressof(*request.registries),
+            .cache  = PathBuf::from(data->root()),
+            .http   = registry_http->transport(),
+        });
+        registry_provider = registry_resolver->provider();
+    }
+    auto sources = lito::lock::project_flatpak_sources(*locked, registry_provider);
     if (sources.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(sources).unwrap_err()));
     }

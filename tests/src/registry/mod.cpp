@@ -619,6 +619,50 @@ TEST(RegistryIndexCache, RefreshRevalidatesWhileReuseStaysLocal) {
               "1111111111111111111111111111111111111111111111111111111111111111"_str);
 }
 
+TEST(RegistryIndexCache, SourceBundleRecordSupportsOfflineResolution) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto config  = registry_test_config();
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3"_str);
+    auto checksum =
+        package_checksum("1111111111111111111111111111111111111111111111111111111111111111"_str);
+    auto fixture      = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto online_cache = PathBuf::from(owner.path()).join(PathBuf::from("online"_str).as_path());
+    auto online =
+        lito::registry::RegistryIndexClient(rstd::move(online_cache),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                            fixture.transport());
+    auto record = online.source_bundle_record(package, version, checksum);
+    ASSERT_TRUE(record.is_ok());
+    EXPECT_EQ(fixture.calls, usize(1));
+
+    auto bundle_root = PathBuf::from(owner.path()).join(PathBuf::from("bundle"_str).as_path());
+    auto bundle_record =
+        lito::source::SourceBundleLayout(bundle_root.clone()).registry_index(package);
+    ASSERT_TRUE(rstd::fs::create_dir_all(bundle_record.as_path().parent().unwrap()).is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(bundle_record.as_path(), record->as_str().as_bytes()).is_ok());
+
+    auto bundles = Vec<PathBuf>::make();
+    bundles.push(rstd::move(bundle_root));
+    auto offline = lito::registry::RegistryIndexClient(
+        PathBuf::from(owner.path()).join(PathBuf::from("offline"_str).as_path()),
+        config,
+        lito::registry::RegistryNetworkPolicy::Offline,
+        lito::registry::RegistryIndexUpdatePolicy::Reuse,
+        lito::registry::RegistryHttpTransport {},
+        rstd::addressof(bundles));
+    auto loaded = offline.load(package);
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->releases().len(), usize(1));
+    EXPECT_EQ(loaded->releases()[usize {}].version.text().as_str(), "1.2.3"_str);
+    EXPECT_EQ(fixture.calls, usize(1));
+}
+
 TEST(RegistryIndexCache, DoesNotSendAnEtagToAnotherEndpoint) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());

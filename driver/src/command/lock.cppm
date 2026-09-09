@@ -5,6 +5,7 @@ import lito.core;
 import lito.tools;
 import lito.system;
 import :command.error;
+import :config.registry;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -22,6 +23,7 @@ struct LockExportRequest {
     ProcessEnvironmentSpec            environment;
     lito::tools::ToolSpec             tools;
     lito::source::PackageSourceConfig sources;
+    Option<lito::config::LitoBootstrapConfig>   registries;
     Option<lito::tools::HostToolResolutionSink> tool_reporter;
 };
 
