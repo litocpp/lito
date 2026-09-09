@@ -1,4 +1,5 @@
 #include <rstd/test/gtest.hpp>
+#include <rstd/macro.hpp>
 
 import rstd;
 import rstd.json;
@@ -19,6 +20,30 @@ using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
 class CMakeProvider : public ProjectFixture {};
+
+TEST(CMakePath, PreservesUnicodeAndRejectsUnsupportedSyntax) {
+    using lito::tools::cmake::cmake_path_literal;
+    auto path   = PathBuf::from("root/кир-路径/adapter.cmake"_str);
+    auto result = cmake_path_literal(path.as_path(), "source"_str);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_EQ(result.unwrap(), "\"root/кир-路径/adapter.cmake\""_str);
+    const ref<str> invalid[] = { "a\"b"_str, "a;b"_str, "a\nb"_str, "a\rb"_str };
+    for (auto text : invalid) {
+        auto rejected = PathBuf::from(text);
+        EXPECT_TRUE(cmake_path_literal(rejected.as_path(), "source"_str).is_err());
+    }
+#if RSTD_OS_UNIX
+    auto backslash = PathBuf::from("a\\b"_str);
+    EXPECT_TRUE(cmake_path_literal(backslash.as_path(), "source"_str).is_err());
+    auto native      = rstd::os::unix::ffi::OsStrExt::from_bytes("a\xff"_bytes);
+    auto non_unicode = PathBuf::from(native.to_os_string());
+    EXPECT_TRUE(cmake_path_literal(non_unicode.as_path(), "source"_str).is_err());
+#else
+    auto backslash = PathBuf::from("root\\路径\\adapter.cmake"_str);
+    EXPECT_EQ(cmake_path_literal(backslash.as_path(), "source"_str).unwrap(),
+              "\"root/路径/adapter.cmake\""_str);
+#endif
+}
 
 struct CMakeEventCounts {
     usize queries;
@@ -322,7 +347,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
     ASSERT_TRUE(parser.is_ok());
     auto tree = cmake_source_adapter_project_tree();
     ASSERT_TRUE(tree.is_ok());
-    auto project = materialize("cmake-source-adapter"_str, *tree);
+    auto project = materialize("cmake-кир-路径-source-adapter"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
@@ -338,10 +363,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
         .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets = rstd::move(targets),
     });
-    auto resolved = resolve_cmake_fixtures(declarations,
-                                           default_profile(*parser),
-                                           native_platform(),
-                                           build_root("cmake-source-adapter-work"_str).as_path());
+    auto resolved =
+        resolve_cmake_fixtures(declarations,
+                               default_profile(*parser),
+                               native_platform(),
+                               build_root("cmake-кир-路径-source-adapter-work"_str).as_path());
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error_chain_text(error));

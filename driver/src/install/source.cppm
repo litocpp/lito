@@ -79,7 +79,7 @@ auto absolute_root(ref<rstd::path::Path> base, PathBuf root) -> PathBuf {
 }
 
 auto environment_root(ref<str> variable) -> InstallSourceResult<Option<PathBuf>> {
-    auto value = rstd::env::var(variable);
+    auto value = rstd::env::var_os(variable);
     if (value.is_none() || value->is_empty()) return Ok(Option<PathBuf> {});
     auto path = PathBuf::from(rstd::move(value).unwrap());
     if (! path.as_path().is_absolute()) {

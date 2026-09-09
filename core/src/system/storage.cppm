@@ -180,7 +180,7 @@ class LitoConfigRoot {
 public:
     static auto resolve() -> SystemResult<LitoConfigRoot> {
         auto root       = PathBuf::make();
-        auto configured = rstd::env::var("XDG_CONFIG_HOME"_str);
+        auto configured = rstd::env::var_os("XDG_CONFIG_HOME"_str);
         if (configured.is_some() && ! configured->is_empty()) {
             auto candidate = PathBuf::from(rstd::move(configured).unwrap());
             if (! candidate.as_path().is_absolute()) {
@@ -191,7 +191,7 @@ public:
         }
         if (root.is_empty()) {
 #if defined(_WIN32)
-            auto local_app_data = rstd::env::var("LOCALAPPDATA"_str);
+            auto local_app_data = rstd::env::var_os("LOCALAPPDATA"_str);
             if (local_app_data.is_none() || local_app_data->is_empty()) {
                 return Err(SystemError::Storage(
                     String::make("Lito config root requires XDG_CONFIG_HOME or LOCALAPPDATA"_str)));
@@ -202,7 +202,7 @@ public:
                     String::make("LOCALAPPDATA must be an absolute path"_str)));
             }
 #else
-            auto home = rstd::env::var("HOME"_str);
+            auto home = rstd::env::var_os("HOME"_str);
             if (home.is_none() || home->is_empty()) {
                 return Err(SystemError::Storage(
                     String::make("Lito config root requires XDG_CONFIG_HOME or HOME"_str)));
@@ -230,14 +230,14 @@ class LitoDataRoot {
 public:
     static auto resolve() -> SystemResult<LitoDataRoot> {
         auto root       = PathBuf::make();
-        auto configured = rstd::env::var("XDG_DATA_HOME"_str);
+        auto configured = rstd::env::var_os("XDG_DATA_HOME"_str);
         if (configured.is_some() && ! configured->is_empty()) {
             auto candidate = PathBuf::from(rstd::move(configured).unwrap());
             if (candidate.as_path().is_absolute()) root = rstd::move(candidate);
         }
         if (root.is_empty()) {
 #if defined(_WIN32)
-            auto local_app_data = rstd::env::var("LOCALAPPDATA"_str);
+            auto local_app_data = rstd::env::var_os("LOCALAPPDATA"_str);
             if (local_app_data.is_none() || local_app_data->is_empty()) {
                 return Err(SystemError::Storage(
                     String::make("Lito data root requires XDG_DATA_HOME or LOCALAPPDATA"_str)));
@@ -248,7 +248,7 @@ public:
                     String::make("LOCALAPPDATA must be an absolute path"_str)));
             }
 #else
-            auto home = rstd::env::var("HOME"_str);
+            auto home = rstd::env::var_os("HOME"_str);
             if (home.is_none() || home->is_empty()) {
                 return Err(SystemError::Storage(
                     String::make("Lito data root requires XDG_DATA_HOME or HOME"_str)));

@@ -93,22 +93,20 @@ auto source_identity(const Request& requirement) -> String {
     return String::make("find"_str);
 }
 
-auto cmake_quoted(ref<str> value, ref<str> context) -> lito::tools::ToolResult<String> {
+auto cmake_path_literal(ref<rstd::path::Path> path, ref<str> context)
+    -> lito::tools::ToolResult<String> {
+    auto text = path_text(path, context);
+    if (text.is_err()) return Err(rstd::move(text).unwrap_err());
+    auto value = text->as_str();
     if (value.contains("\""_str) || value.contains(";"_str) || value.contains("\n"_str) ||
-        value.contains("\r"_str)
-#if ! defined(_WIN32)
-        || value.contains("\\"_str)
-#endif
-    ) {
+        value.contains("\r"_str) ||
+        (! rstd::path::is_separator(U'\\') && value.contains("\\"_str))) {
         return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
     }
     auto quoted = String::make("\""_str);
-    for (auto byte : value.as_bytes()) {
-#if defined(_WIN32)
-        quoted.push_ascii(byte == u8('\\') ? u8('/') : byte);
-#else
-        quoted.push_ascii(byte);
-#endif
+    for (auto character : value.chars()) {
+        auto codepoint = static_cast<char32_t>(character.to_primitive());
+        quoted.push(rstd::path::is_separator(codepoint) ? U'/' : codepoint);
     }
     quoted.push_ascii(u8('\"'));
     return Ok(rstd::move(quoted));

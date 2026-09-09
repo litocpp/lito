@@ -320,17 +320,15 @@ endfunction()
         }
         result.push_str(")\n"_str);
         if (requirement.source.is_Directory()) {
-            auto source = path_text(area.source.as_path(), "CMake dependency source"_str);
-            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-            auto quoted_source = cmake_quoted(source->as_str(), "CMake dependency source"_str);
+            auto quoted_source =
+                cmake_path_literal(area.source.as_path(), "CMake dependency source"_str);
             if (quoted_source.is_err()) return Err(rstd::move(quoted_source).unwrap_err());
             result.push_str("set(LITO_CMAKE_DEPENDENCY_SOURCE_DIR "_str);
             result.push_str(quoted_source->as_str());
             result.push_str(")\n"_str);
         }
-        auto adapter = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
-        if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
-        auto quoted_adapter = cmake_quoted(adapter->as_str(), "CMake adapter"_str);
+        auto quoted_adapter =
+            cmake_path_literal(requirement.adapter->as_path(), "CMake adapter"_str);
         if (quoted_adapter.is_err()) return Err(rstd::move(quoted_adapter).unwrap_err());
         result.push_str("include("_str);
         result.push_str(quoted_adapter->as_str());
