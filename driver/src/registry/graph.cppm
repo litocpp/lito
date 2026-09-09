@@ -38,8 +38,7 @@ template<typename T>
 using RegistryGraphResult = Result<T, RegistryGraphError>;
 
 struct BuiltinRegistryPackage {
-    RegistryPackageId package;
-    SemanticVersion   version;
+    RegistryReleaseId release;
 };
 
 struct RegistryGraphPolicy {
@@ -65,7 +64,7 @@ class RegistryGraphClient {
     RegistryHttpTransport                    http_;
     RegistryBlobTransport                    blobs_;
     bool                                     locked_mode_ {};
-    Vec<lito::source::RegistrySourcePin>     locked_;
+    Vec<RegistryReleasePin>                  locked_;
     Vec<RegistryPackageIndex>                provided_indices_;
     Vec<RegistryPackageIndex>                indices_;
     Vec<RegistryPackageId>                   development_packages_;
@@ -77,8 +76,8 @@ class RegistryGraphClient {
     static auto resolve_registry_callback(void*, Option<ref<str>>) noexcept
         -> RegistryGraphResult<Option<RegistryId>>;
     auto resolve_locked(Vec<RegistrySolverRequirement> roots)
-        -> RegistryGraphResult<Vec<lito::source::RegistrySourcePin>>;
-    auto materialize(Vec<lito::source::RegistrySourcePin> packages)
+        -> RegistryGraphResult<Vec<RegistryReleasePin>>;
+    auto materialize(Vec<RegistryReleasePin> packages)
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
 
 public:
@@ -89,7 +88,7 @@ public:
                         RegistryHttpTransport                    http,
                         RegistryBlobTransport                    blobs,
                         bool                                     locked_mode,
-                        Vec<lito::source::RegistrySourcePin>     locked         = {},
+                        Vec<RegistryReleasePin>                  locked         = {},
                         const Vec<PathBuf>*                      source_bundles = nullptr)
         : cache_root_(rstd::move(cache_root)),
           config_(rstd::addressof(config)),
@@ -174,11 +173,11 @@ auto graph_artifact_error(RegistryArtifactError error) -> RegistryGraphError {
     return RegistryGraphError { .message = rstd::move(error.message) };
 }
 
-auto locked_pin(const Vec<lito::source::RegistrySourcePin>& pins, const RegistryPackageId& package)
-    -> Option<ref<lito::source::RegistrySourcePin>> {
+auto locked_pin(const Vec<RegistryReleasePin>& pins, const RegistryPackageId& package)
+    -> Option<ref<RegistryReleasePin>> {
     for (const auto& pin : pins) {
-        if (pin.package == package) {
-            return Some(ref<lito::source::RegistrySourcePin>::from_raw_parts(rstd::addressof(pin)));
+        if (pin.release.package == package) {
+            return Some(ref<RegistryReleasePin>::from_raw_parts(rstd::addressof(pin)));
         }
     }
     return None();
@@ -245,26 +244,28 @@ auto lito::registry::RegistryGraphClient::resolve_callback(
 }
 
 auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequirement> roots)
-    -> RegistryGraphResult<Vec<lito::source::RegistrySourcePin>> {
-    auto result = Vec<lito::source::RegistrySourcePin>::with_capacity(locked_.len() +
-                                                                      provided_indices_.len());
+    -> RegistryGraphResult<Vec<RegistryReleasePin>> {
+    auto result = Vec<RegistryReleasePin>::with_capacity(locked_.len() + provided_indices_.len());
     for (const auto& pin : locked_) result.push(pin.clone());
     for (const auto& root : roots) {
         auto pin = locked_pin(result, root.package);
         if (pin.is_none()) {
-            auto provided = Option<lito::source::RegistrySourcePin> {};
+            auto provided = Option<RegistryReleasePin> {};
             for (const auto& index : provided_indices_) {
                 if (! (index.package() == root.package)) continue;
                 for (const auto& release : index.releases()) {
                     if (! root.requirement.matches(release.version)) continue;
                     if (provided.is_some()) {
-                        return graph_failure<Vec<lito::source::RegistrySourcePin>>(rstd::format(
+                        return graph_failure<Vec<RegistryReleasePin>>(rstd::format(
                             "provided Registry package '{}' has more than one matching release",
                             root.package.name.as_str()));
                     }
-                    provided = Some(lito::source::RegistrySourcePin {
-                        .package  = root.package.clone(),
-                        .version  = release.version.clone(),
+                    provided = Some(RegistryReleasePin {
+                        .release =
+                            RegistryReleaseId {
+                                .package = root.package.clone(),
+                                .version = release.version.clone(),
+                            },
                         .checksum = release.checksum.clone(),
                     });
                 }
@@ -275,14 +276,14 @@ auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequi
             }
         }
         if (pin.is_none()) {
-            return graph_failure<Vec<lito::source::RegistrySourcePin>>(rstd::format(
+            return graph_failure<Vec<RegistryReleasePin>>(rstd::format(
                 "lock has no exact Registry release for package '{}'", root.package.name.as_str()));
         }
-        if (! root.requirement.matches((*pin)->version)) {
-            return graph_failure<Vec<lito::source::RegistrySourcePin>>(
+        if (! root.requirement.matches((*pin)->release.version)) {
+            return graph_failure<Vec<RegistryReleasePin>>(
                 rstd::format("locked Registry package '{}@{}' does not satisfy '{}' from {}",
                              root.package.name.as_str(),
-                             (*pin)->version.text().as_str(),
+                             (*pin)->release.version.text().as_str(),
                              root.requirement.text(),
                              root.source.as_str()));
         }
@@ -290,29 +291,28 @@ auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequi
     return Ok(rstd::move(result));
 }
 
-auto lito::registry::RegistryGraphClient::materialize(Vec<lito::source::RegistrySourcePin> packages)
+auto lito::registry::RegistryGraphClient::materialize(Vec<RegistryReleasePin> packages)
     -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>> {
     auto result = Vec<ResolvedRegistryGraphSource>::with_capacity(packages.len());
     for (auto& selected : packages) {
-        auto config = configured_registry(*config_, selected.package.registry);
+        auto config = configured_registry(*config_, selected.release.package.registry);
         if (config.is_none()) {
             return graph_failure<Vec<ResolvedRegistryGraphSource>>(rstd::format(
-                "Registry '{}' is not configured", selected.package.registry.as_str()));
+                "Registry '{}' is not configured", selected.release.package.registry.as_str()));
         }
         auto sources = RegistrySourceResolver(cache_root_.clone(),
                                               (**config).effective_endpoints()->download.clone(),
                                               network_,
                                               blobs_,
                                               source_bundles_);
-        auto materialized =
-            sources.materialize(selected.package, selected.version, selected.checksum);
+        auto materialized = sources.materialize(selected);
         if (materialized.is_err()) {
             return Err(graph_artifact_error(rstd::move(materialized).unwrap_err()));
         }
         auto source = rstd::move(materialized).unwrap();
         result.push(ResolvedRegistryGraphSource {
-            .package = selected.package.clone(),
-            .version = selected.version.clone(),
+            .package = selected.release.package.clone(),
+            .version = selected.release.version.clone(),
             .source  = rstd::move(source.source),
             .catalog = rstd::move(source.catalog),
         });
@@ -348,8 +348,8 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
     auto locked = Vec<RegistryLockedPreference>::with_capacity(locked_.len());
     for (const auto& pin : locked_) {
         locked.push(RegistryLockedPreference {
-            .package  = pin.package.clone(),
-            .version  = pin.version.clone(),
+            .package  = pin.release.package.clone(),
+            .version  = pin.release.version.clone(),
             .checksum = pin.checksum.clone(),
         });
     }
@@ -382,11 +382,14 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
     }
 
     auto graph    = rstd::move(solved).unwrap();
-    auto selected = Vec<lito::source::RegistrySourcePin>::with_capacity(graph.packages.len());
+    auto selected = Vec<RegistryReleasePin>::with_capacity(graph.packages.len());
     for (auto& package : graph.packages) {
-        selected.push(lito::source::RegistrySourcePin {
-            .package  = rstd::move(package.package),
-            .version  = rstd::move(package.release.version),
+        selected.push(RegistryReleasePin {
+            .release =
+                RegistryReleaseId {
+                    .package = rstd::move(package.package),
+                    .version = rstd::move(package.release.version),
+                },
             .checksum = rstd::move(package.release.checksum),
         });
     }

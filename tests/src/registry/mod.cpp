@@ -46,6 +46,20 @@ auto package_checksum(ref<str> value) -> lito::registry::PackageChecksum {
     return rstd::move(lito::registry::PackageChecksum::parse(value)).unwrap();
 }
 
+auto registry_pin(const lito::registry::RegistryPackageId& package,
+                  const lito::registry::SemanticVersion&   version,
+                  const lito::registry::PackageChecksum&   checksum)
+    -> lito::registry::RegistryReleasePin {
+    return lito::registry::RegistryReleasePin {
+        .release =
+            lito::registry::RegistryReleaseId {
+                .package = package.clone(),
+                .version = version.clone(),
+            },
+        .checksum = checksum.clone(),
+    };
+}
+
 auto registry_fixed_endpoint(ref<str> value) -> lito::registry::RegistryFixedEndpoint {
     return lito::registry::RegistryFixedEndpoint::parse(value).unwrap();
 }
@@ -313,6 +327,87 @@ TEST(RegistryIdentity, AcceptsOnlyCanonicalCoordinates) {
     EXPECT_TRUE(lito::registry::RegistryPackageName::parse("Lito"_str).is_err());
     EXPECT_TRUE(lito::registry::RegistryPackageName::parse("-lito"_str).is_err());
     EXPECT_TRUE(lito::registry::RegistryPackageName::parse("lito/codec"_str).is_err());
+}
+
+TEST(RegistryCacheLayout, UsesStableFlatReleasePaths) {
+    auto root    = PathBuf::from("cache"_str);
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3-rc.1"_str);
+    auto checksum =
+        package_checksum("1111111111111111222222222222222233333333333333334444444444444444"_str);
+    auto pin    = registry_pin(package, version, checksum);
+    auto layout = lito::registry::RegistryCacheLayout(root.clone());
+
+    EXPECT_EQ(lito::registry::registry_key(package.registry).as_str(),
+              "d318d75386e2bf8d0394a1d3126aabbc96d550ef8d4049c90cadb92b2f32b625"_str);
+    EXPECT_EQ(lito::registry::registry_archive_filename(pin).as_str(),
+              "sample-1.2.3-rc.1-1111111111111111.tar.zst"_str);
+    EXPECT_EQ(
+        layout.index(package).as_path(),
+        root.join(PathBuf::from("registry/index/"
+                                "d318d75386e2bf8d0394a1d3126aabbc96d550ef8d4049c90cadb92b2f32b625/"
+                                "sample.json"_str)
+                      .as_path())
+            .as_path());
+    EXPECT_EQ(
+        layout.index_lock(package).as_path(),
+        root.join(PathBuf::from("registry/index/"
+                                "d318d75386e2bf8d0394a1d3126aabbc96d550ef8d4049c90cadb92b2f32b625/"
+                                "sample.lock"_str)
+                      .as_path())
+            .as_path());
+    EXPECT_EQ(layout.archive(pin).as_path(),
+              root.join(PathBuf::from("registry/source/"
+                                      "sample-1.2.3-rc.1-1111111111111111.tar.zst"_str)
+                            .as_path())
+                  .as_path());
+    EXPECT_EQ(
+        layout.tree(pin).as_path(),
+        root.join(PathBuf::from("registry/tree/sample-1.2.3-rc.1-1111111111111111"_str).as_path())
+            .as_path());
+    EXPECT_EQ(
+        layout.tree_marker(pin).as_path(),
+        root.join(
+                PathBuf::from("registry/tree/sample-1.2.3-rc.1-1111111111111111.ok"_str).as_path())
+            .as_path());
+    EXPECT_EQ(layout.release_lock(pin).as_path(),
+              root.join(PathBuf::from("registry/lock/sample-1.2.3-rc.1-1111111111111111.lock"_str)
+                            .as_path())
+                  .as_path());
+
+    auto mirror     = registry_package_from("https://mirror.example/"_str, "sample"_str);
+    auto mirror_pin = registry_pin(mirror, version, checksum);
+    EXPECT_FALSE(pin.release == mirror_pin.release);
+    EXPECT_EQ(layout.archive(pin).as_path(), layout.archive(mirror_pin).as_path());
+    EXPECT_EQ(layout.tree(pin).as_path(), layout.tree(mirror_pin).as_path());
+    EXPECT_NE(lito::source::registry_source_identity(pin),
+              lito::source::registry_source_identity(mirror_pin));
+    EXPECT_NE(lito::source::fetch_identity_text(
+                  lito::source::registry_package_fetch_identity(pin.clone())),
+              lito::source::fetch_identity_text(
+                  lito::source::registry_package_fetch_identity(mirror_pin.clone())));
+
+    auto other_checksum = registry_pin(
+        package,
+        version,
+        package_checksum("1111111111111111555555555555555566666666666666667777777777777777"_str));
+    EXPECT_NE(lito::source::registry_source_identity(pin),
+              lito::source::registry_source_identity(other_checksum));
+}
+
+TEST(RegistryCacheLayout, TruncatesOnlyLongVersionSpelling) {
+    auto version = registry_version(
+        "1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str);
+    auto pin = registry_pin(
+        registry_package("sample"_str),
+        version,
+        package_checksum("1111111111111111222222222222222233333333333333334444444444444444"_str));
+    auto filename = lito::registry::registry_archive_filename(pin);
+    EXPECT_TRUE(filename.len() <= lito::registry::REGISTRY_CACHE_COMPONENT_MAX_BYTES);
+    EXPECT_TRUE(filename.as_str().starts_with("sample-1.2.3-"_str));
+    EXPECT_TRUE(filename.as_str().ends_with("-1111111111111111.tar.zst"_str));
 }
 
 TEST(RegistryConfig, AllowsHttpOnlyForLoopbackApiEndpoints) {
@@ -591,6 +686,10 @@ TEST(RegistryIndexCache, RefreshRevalidatesWhileReuseStaysLocal) {
     auto first = online.load(registry_package("sample"_str));
     ASSERT_TRUE(first.is_ok());
     EXPECT_EQ(fixture.calls, usize(1));
+    auto layout = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()));
+    EXPECT_TRUE(rstd::fs::exists(layout.index(registry_package("sample"_str)).as_path()).unwrap());
+    EXPECT_TRUE(
+        rstd::fs::exists(layout.index_lock(registry_package("sample"_str)).as_path()).unwrap());
     EXPECT_FALSE(fixture.saw_condition);
 
     fixture.not_modified = true;
@@ -636,7 +735,8 @@ TEST(RegistryIndexCache, SourceBundleRecordSupportsOfflineResolution) {
                                             lito::registry::RegistryNetworkPolicy::Online,
                                             lito::registry::RegistryIndexUpdatePolicy::Reuse,
                                             fixture.transport());
-    auto record = online.source_bundle_record(package, version, checksum);
+    auto pin    = registry_pin(package, version, checksum);
+    auto record = online.source_bundle_record(pin);
     ASSERT_TRUE(record.is_ok());
     EXPECT_EQ(fixture.calls, usize(1));
 
@@ -718,12 +818,8 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
     ASSERT_TRUE(changed.is_err());
     EXPECT_EQ(changed.unwrap_err().kind, lito::registry::RegistryIndexErrorKind::Integrity);
 
-    auto registry_key = licrypto::sha256_hex("https://registry.example/"_str);
-    auto record       = PathBuf::from(owner.path())
-                            .join(PathBuf::from("indices"_str).as_path())
-                            .join(PathBuf::from(registry_key).as_path())
-                            .join(PathBuf::from("sample"_str).as_path())
-                            .join(PathBuf::from("record.json"_str).as_path());
+    auto record = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()))
+                      .index(registry_package("sample"_str));
     ASSERT_TRUE(rstd::fs::write_atomic(record.as_path(), "broken"_str.as_bytes()).is_ok());
     auto offline =
         lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
@@ -750,13 +846,24 @@ TEST(RegistryBlobCache, VerifiesNewBytesAndSharesCompletedContent) {
             "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Online,
         fixture.transport());
-    auto first =
-        primary.acquire(registry_package("sample"_str), registry_version("1.2.3"_str), checksum);
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3"_str);
+    auto pin     = registry_pin(package, version, checksum);
+    auto first   = primary.acquire(pin);
     ASSERT_TRUE(first.is_ok());
     EXPECT_EQ(first->size, as_cast<u64>(bytes.len()));
     EXPECT_EQ(fixture.calls, usize(1));
     EXPECT_EQ(fixture.last_url.as_str(),
               "https://primary.example/packages/sample/sample-1.2.3.tar.zst"_str);
+    auto layout = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()));
+    EXPECT_EQ(first->path.as_path(), layout.archive(pin).as_path());
+    auto metadata = rstd::fs::metadata(first->path.as_path());
+    ASSERT_TRUE(metadata.is_ok());
+    EXPECT_TRUE(metadata->permissions().readonly());
+    EXPECT_FALSE(
+        rstd::fs::exists(
+            PathBuf::from(owner.path()).join(PathBuf::from("files"_str).as_path()).as_path())
+            .unwrap());
 
     auto mirror = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),
@@ -764,8 +871,7 @@ TEST(RegistryBlobCache, VerifiesNewBytesAndSharesCompletedContent) {
             "https://mirror.example/packages/{package}/{version}/{package}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Offline,
         lito::registry::RegistryBlobTransport {});
-    auto reused =
-        mirror.acquire(registry_package("sample"_str), registry_version("1.2.3"_str), checksum);
+    auto reused = mirror.acquire(pin);
     ASSERT_TRUE(reused.is_ok());
     EXPECT_EQ(reused->path.as_path(), first->path.as_path());
     EXPECT_EQ(fixture.calls, usize(1));
@@ -782,12 +888,80 @@ TEST(RegistryBlobCache, RejectsDownloadedBytesWithTheWrongChecksum) {
             "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Online,
         fixture.transport());
-    auto acquired = cache.acquire(
-        registry_package("sample"_str),
-        registry_version("1.2.3"_str),
-        package_checksum("1111111111111111111111111111111111111111111111111111111111111111"_str));
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3"_str);
+    auto checksum =
+        package_checksum("1111111111111111111111111111111111111111111111111111111111111111"_str);
+    auto acquired = cache.acquire(registry_pin(package, version, checksum));
     ASSERT_TRUE(acquired.is_err());
     EXPECT_EQ(acquired.unwrap_err().kind, lito::registry::RegistryArtifactErrorKind::Digest);
+}
+
+TEST(RegistryBlobCache, RehashesCachedBytesAndRefetchesCorruption) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto bytes = String::make("verified bytes"_str);
+    auto pin   = registry_pin(
+        registry_package("sample"_str),
+        registry_version("1.2.3"_str),
+        lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes())));
+    auto layout = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(layout.archive(pin).as_path().parent().unwrap()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(layout.archive(pin).as_path(), "corrupt"_str.as_bytes()).is_ok());
+
+    auto offline = lito::registry::RegistryBlobCache(
+        PathBuf::from(owner.path()),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
+        lito::registry::RegistryNetworkPolicy::Offline,
+        lito::registry::RegistryBlobTransport {});
+    auto rejected = offline.acquire(pin);
+    ASSERT_TRUE(rejected.is_err());
+    EXPECT_EQ(rejected.unwrap_err().kind, lito::registry::RegistryArtifactErrorKind::Digest);
+
+    auto fixture = BlobTransportFixture { .bytes = bytes.clone() };
+    auto online  = lito::registry::RegistryBlobCache(
+        PathBuf::from(owner.path()),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
+        lito::registry::RegistryNetworkPolicy::Online,
+        fixture.transport());
+    auto repaired = online.acquire(pin);
+    ASSERT_TRUE(repaired.is_ok());
+    EXPECT_EQ(fixture.calls, usize(1));
+    EXPECT_EQ(rstd::fs::read_to_string(repaired->path.as_path()).unwrap().as_str(), bytes.as_str());
+    auto metadata = rstd::fs::metadata(repaired->path.as_path());
+    ASSERT_TRUE(metadata.is_ok());
+    EXPECT_TRUE(metadata->permissions().readonly());
+}
+
+TEST(RegistryBlobCache, RejectsShortChecksumCollisionWithoutOverwriting) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto bytes = String::make("collision bytes"_str);
+    auto pin   = registry_pin(
+        registry_package("sample"_str),
+        registry_version("1.2.3"_str),
+        package_checksum("1675e5a28f36bb11000000000000000000000000000000000000000000000000"_str));
+    auto layout = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(layout.archive(pin).as_path().parent().unwrap()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(layout.archive(pin).as_path(), bytes.as_str().as_bytes()).is_ok());
+
+    auto offline = lito::registry::RegistryBlobCache(
+        PathBuf::from(owner.path()),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
+        lito::registry::RegistryNetworkPolicy::Offline,
+        lito::registry::RegistryBlobTransport {});
+    auto rejected = offline.acquire(pin);
+    ASSERT_TRUE(rejected.is_err());
+    auto error = rstd::move(rejected).unwrap_err();
+    EXPECT_EQ(error.kind, lito::registry::RegistryArtifactErrorKind::Digest);
+    EXPECT_TRUE(error.message.as_str().contains("short checksum collision"_str));
+    EXPECT_EQ(rstd::fs::read_to_string(layout.archive(pin).as_path()).unwrap().as_str(),
+              bytes.as_str());
 }
 
 TEST(RegistryBlobCache, VerifiesExternalSourceBundleBytes) {
@@ -796,8 +970,11 @@ TEST(RegistryBlobCache, VerifiesExternalSourceBundleBytes) {
     auto owner = rstd::move(temporary).unwrap();
     auto checksum =
         package_checksum("1111111111111111111111111111111111111111111111111111111111111111"_str);
+    auto package     = registry_package("sample"_str);
+    auto version     = registry_version("1.2.3"_str);
+    auto pin         = registry_pin(package, version, checksum);
     auto bundle_root = PathBuf::from(owner.path()).join(PathBuf::from("bundle"_str).as_path());
-    auto bundled = lito::source::SourceBundleLayout(bundle_root.clone()).registry_package(checksum);
+    auto bundled     = lito::source::SourceBundleLayout(bundle_root.clone()).registry_package(pin);
     ASSERT_TRUE(rstd::fs::create_dir_all(bundled.as_path().parent().unwrap()).is_ok());
     ASSERT_TRUE(rstd::fs::write(bundled.as_path(), "wrong bytes"_str.as_bytes()).is_ok());
     auto bundles = Vec<PathBuf>::make();
@@ -809,10 +986,42 @@ TEST(RegistryBlobCache, VerifiesExternalSourceBundleBytes) {
         lito::registry::RegistryNetworkPolicy::Offline,
         lito::registry::RegistryBlobTransport {},
         rstd::addressof(bundles));
-    auto acquired =
-        cache.acquire(registry_package("sample"_str), registry_version("1.2.3"_str), checksum);
+    auto acquired = cache.acquire(pin);
     ASSERT_TRUE(acquired.is_err());
     EXPECT_EQ(acquired.unwrap_err().kind, lito::registry::RegistryArtifactErrorKind::Digest);
+}
+
+TEST(RegistryBlobCache, ImportsVerifiedSourceBundleBytesIntoTheGlobalCache) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto bytes = String::make("source bundle bytes"_str);
+    auto pin   = registry_pin(
+        registry_package("sample"_str),
+        registry_version("1.2.3"_str),
+        lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes())));
+    auto bundle_root = PathBuf::from(owner.path()).join(PathBuf::from("bundle"_str).as_path());
+    auto bundled     = lito::source::SourceBundleLayout(bundle_root.clone()).registry_package(pin);
+    ASSERT_TRUE(rstd::fs::create_dir_all(bundled.as_path().parent().unwrap()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(bundled.as_path(), bytes.as_str().as_bytes()).is_ok());
+    auto bundles = Vec<PathBuf>::make();
+    bundles.push(rstd::move(bundle_root));
+    auto cache_root = PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path());
+    auto cache      = lito::registry::RegistryBlobCache(
+        cache_root.clone(),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
+        lito::registry::RegistryNetworkPolicy::Offline,
+        lito::registry::RegistryBlobTransport {},
+        rstd::addressof(bundles));
+    auto acquired = cache.acquire(pin);
+    ASSERT_TRUE(acquired.is_ok());
+    EXPECT_EQ(acquired->path.as_path(),
+              lito::registry::RegistryCacheLayout(cache_root.clone()).archive(pin).as_path());
+    EXPECT_NE(acquired->path.as_path(), bundled.as_path());
+    auto metadata = rstd::fs::metadata(acquired->path.as_path());
+    ASSERT_TRUE(metadata.is_ok());
+    EXPECT_TRUE(metadata->permissions().readonly());
 }
 
 TEST(RegistrySourceResolver, MaterializesAReadOnlyCatalogAndReusesCaches) {
@@ -838,6 +1047,7 @@ archive = "sample"
     auto built =
         lito::registry::PackageArchiveBuilder::build(tree, package, version, archive.clone());
     ASSERT_TRUE(built.is_ok());
+    auto pin     = registry_pin(package, version, built->archive.checksum);
     auto cache   = PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path());
     auto fixture = CopyBlobTransportFixture { .source = archive.clone() };
     auto online  = lito::registry::RegistrySourceResolver(
@@ -846,7 +1056,7 @@ archive = "sample"
             "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Online,
         fixture.transport());
-    auto first = online.materialize(package, version, built->archive.checksum);
+    auto first = online.materialize(pin);
     ASSERT_TRUE(first.is_ok());
     EXPECT_EQ(first->catalog.names()[usize {}].as_str(), "sample"_str);
     auto source_file =
@@ -855,17 +1065,86 @@ archive = "sample"
     ASSERT_TRUE(metadata.is_ok());
     EXPECT_TRUE(metadata->permissions().readonly());
     EXPECT_EQ(fixture.calls, usize(1));
+    auto layout          = lito::registry::RegistryCacheLayout(cache.clone());
+    auto marker          = layout.tree_marker(pin);
+    auto expected_marker = built->archive.checksum.text();
+    expected_marker.push_ascii('\n');
+    EXPECT_EQ(rstd::fs::read_to_string(marker.as_path()).unwrap().as_str(),
+              expected_marker.as_str());
+    EXPECT_FALSE(rstd::fs::exists(
+                     first->source.root_directory.join(PathBuf::from("receipt.json"_str).as_path())
+                         .as_path())
+                     .unwrap());
 
     auto offline = lito::registry::RegistrySourceResolver(
-        rstd::move(cache),
+        cache.clone(),
         registry_download_endpoint(
             "https://mirror.example/packages/{package}/{version}/{package}.tar.zst"_str),
         lito::registry::RegistryNetworkPolicy::Offline,
         lito::registry::RegistryBlobTransport {});
-    auto reused = offline.materialize(package, version, built->archive.checksum);
+    auto reused = offline.materialize(pin);
     ASSERT_TRUE(reused.is_ok());
     EXPECT_EQ(reused->source.root_directory.as_path(), first->source.root_directory.as_path());
     EXPECT_EQ(fixture.calls, usize(1));
+
+    auto permissions = metadata->permissions();
+    permissions.set_readonly(false);
+    ASSERT_TRUE(rstd::fs::set_permissions(source_file.as_path(), permissions).is_ok());
+    ASSERT_TRUE(rstd::fs::write(source_file.as_path(), "corrupt\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(rstd::fs::remove_file(marker.as_path()).is_ok());
+    auto rebuilt = offline.materialize(pin);
+    ASSERT_TRUE(rebuilt.is_ok());
+    EXPECT_EQ(rstd::fs::read_to_string(source_file.as_path()).unwrap().as_str(),
+              "export module sample;\n"_str);
+    EXPECT_EQ(rstd::fs::read_to_string(marker.as_path()).unwrap().as_str(),
+              expected_marker.as_str());
+    EXPECT_EQ(fixture.calls, usize(1));
+}
+
+TEST(RegistrySourceResolver, MaterializesOfflineFromAVersionOneSourceBundle) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto tree  = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str,
+                              R"toml([package]
+name = "sample"
+version = "1.2.3"
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("1.2.3"_str);
+    auto archive = PathBuf::from(owner.path()).join(PathBuf::from("source.tar.zstd"_str).as_path());
+    auto built =
+        lito::registry::PackageArchiveBuilder::build(tree, package, version, archive.clone());
+    ASSERT_TRUE(built.is_ok());
+    auto pin         = registry_pin(package, version, built->archive.checksum);
+    auto bundle_root = PathBuf::from(owner.path()).join(PathBuf::from("bundle"_str).as_path());
+    auto bundled     = lito::source::SourceBundleLayout(bundle_root.clone()).registry_package(pin);
+    ASSERT_TRUE(rstd::fs::create_dir_all(bundled.as_path().parent().unwrap()).is_ok());
+    ASSERT_TRUE(rstd::fs::copy(archive.as_path(), bundled.as_path()).is_ok());
+    auto bundles = Vec<PathBuf>::make();
+    bundles.push(rstd::move(bundle_root));
+    auto cache_root = PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path());
+    auto resolver   = lito::registry::RegistrySourceResolver(
+        cache_root.clone(),
+        registry_download_endpoint(
+            "https://primary.example/packages/{package}/{package}-{version}.tar.zst"_str),
+        lito::registry::RegistryNetworkPolicy::Offline,
+        lito::registry::RegistryBlobTransport {},
+        rstd::addressof(bundles));
+    auto materialized = resolver.materialize(pin);
+    ASSERT_TRUE(materialized.is_ok());
+    auto layout = lito::registry::RegistryCacheLayout(cache_root.clone());
+    EXPECT_EQ(materialized->source.root_directory.as_path(), layout.tree(pin).as_path());
+    EXPECT_TRUE(rstd::fs::exists(layout.archive(pin).as_path()).unwrap());
+    EXPECT_TRUE(rstd::fs::exists(layout.tree_marker(pin).as_path()).unwrap());
 }
 
 TEST(RegistryGraphClient, LockedResolutionUsesOnlyLockAndBlob) {
@@ -903,12 +1182,8 @@ archive = "sample"
     registries.push(registry_test_config());
     auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries),
                                                        Some(String::make("fixture"_str)));
-    auto pins      = Vec<lito::source::RegistrySourcePin>::make();
-    pins.push(lito::source::RegistrySourcePin {
-        .package  = package.clone(),
-        .version  = version.clone(),
-        .checksum = built->archive.checksum.clone(),
-    });
+    auto pins      = Vec<lito::registry::RegistryReleasePin>::make();
+    pins.push(registry_pin(package, version, built->archive.checksum));
     auto http   = IndexHttpFixture { .body = String::make("must not be read"_str) };
     auto blob   = CopyBlobTransportFixture { .source = archive.clone() };
     auto client = lito::registry::RegistryGraphClient(

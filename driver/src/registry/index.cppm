@@ -6,7 +6,6 @@ export module lito.driver:registry.index;
 import rstd;
 import rstd.json;
 import lito.core;
-import licrypto;
 import lito.system;
 import :config.registry;
 
@@ -76,10 +75,7 @@ public:
           source_bundles_(source_bundles) {}
 
     auto load(const RegistryPackageId& package) -> RegistryIndexLoadResult;
-    auto source_bundle_record(const RegistryPackageId& package,
-                              const SemanticVersion&   version,
-                              const PackageChecksum&   checksum)
-        -> Result<String, RegistryIndexError>;
+    auto source_bundle_record(const RegistryReleasePin& pin) -> Result<String, RegistryIndexError>;
     auto provider() noexcept -> RegistryIndexProvider {
         return RegistryIndexProvider {
             .context = this,
@@ -117,16 +113,11 @@ auto index_failure(RegistryIndexErrorKind kind, const RegistryPackageId& package
 }
 
 auto cache_record_path(ref<rstd::path::Path> root, const RegistryPackageId& package) -> PathBuf {
-    auto registry_key = licrypto::sha256_hex(package.registry.as_str());
-    return PathBuf::from(root)
-        .join(PathBuf::from("indices"_str).as_path())
-        .join(PathBuf::from(registry_key).as_path())
-        .join(PathBuf::from(package.name.as_str()).as_path())
-        .join(PathBuf::from("record.json"_str).as_path());
+    return RegistryCacheLayout(PathBuf::from(root)).index(package);
 }
 
-auto cache_lock_path(ref<rstd::path::Path> record) -> PathBuf {
-    return PathBuf::from(record.parent().unwrap()).join(PathBuf::from("lock"_str).as_path());
+auto cache_lock_path(ref<rstd::path::Path> root, const RegistryPackageId& package) -> PathBuf {
+    return RegistryCacheLayout(PathBuf::from(root)).index_lock(package);
 }
 
 auto valid_etag(ref<str> value) -> bool {
@@ -302,24 +293,19 @@ auto write_cached_index(ref<rstd::path::Path>    record,
     return Ok(empty {});
 }
 
-auto acquire_cache_lock(ref<rstd::path::Path> record, const RegistryPackageId& package)
+auto acquire_cache_lock(ref<rstd::path::Path> root, const RegistryPackageId& package)
     -> Result<rstd::fs::FileLock, RegistryIndexError> {
-    auto parent = record.parent();
-    if (parent.is_none()) {
-        return index_failure<rstd::fs::FileLock>(RegistryIndexErrorKind::CorruptCache,
-                                                 package,
-                                                 "Registry index cache path has no parent"_str);
-    }
-    auto created = rstd::fs::create_dir_all(*parent);
+    auto lock    = cache_lock_path(root, package);
+    auto parent  = lock.as_path().parent().unwrap();
+    auto created = rstd::fs::create_dir_all(parent);
     if (created.is_err()) {
         return index_failure<rstd::fs::FileLock>(
             RegistryIndexErrorKind::CorruptCache,
             package,
             rstd::format("cannot create Registry index cache directory '{}': {}",
-                         *parent,
+                         parent,
                          rstd::move(created).unwrap_err()));
     }
-    auto lock = cache_lock_path(record);
     auto opened =
         rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(lock.as_path());
     if (opened.is_err()) {
@@ -363,13 +349,14 @@ auto reject_checksum_changes(const RegistryPackageIndex& incoming,
     return Ok(empty {});
 }
 
-auto commit_cached_index(ref<rstd::path::Path>       record,
+auto commit_cached_index(ref<rstd::path::Path>       root,
+                         ref<rstd::path::Path>       record,
                          const RegistryPackageId&    package,
                          const RegistryPackageIndex& incoming,
                          ref<str>                    endpoint,
                          ref<str>                    body,
                          const Option<String>&       etag) -> Result<empty, RegistryIndexError> {
-    auto lock    = rstd_try(acquire_cache_lock(record, package));
+    auto lock    = rstd_try(acquire_cache_lock(root, package));
     auto current = read_cached_index(record, package);
     if (current.is_ok() && current->is_some()) {
         rstd_try(reject_checksum_changes(incoming, current->as_ref().unwrap().index));
@@ -460,7 +447,8 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
         }
         auto& current = cached->as_ref().unwrap();
         auto  etag    = received.etag.is_some() ? received.etag.clone() : current.etag.clone();
-        rstd_try(commit_cached_index(record.as_path(),
+        rstd_try(commit_cached_index(cache_root_.as_path(),
+                                     record.as_path(),
                                      package,
                                      current.index,
                                      endpoint.as_str(),
@@ -483,7 +471,8 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     if (cached.is_ok() && cached->is_some()) {
         rstd_try(reject_checksum_changes(*index, cached->as_ref().unwrap().index));
     }
-    rstd_try(commit_cached_index(record.as_path(),
+    rstd_try(commit_cached_index(cache_root_.as_path(),
+                                 record.as_path(),
                                  package,
                                  *index,
                                  endpoint.as_str(),
@@ -492,12 +481,13 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     return Ok(rstd::move(index).unwrap());
 }
 
-auto lito::registry::RegistryIndexClient::source_bundle_record(const RegistryPackageId& package,
-                                                               const SemanticVersion&   version,
-                                                               const PackageChecksum&   checksum)
+auto lito::registry::RegistryIndexClient::source_bundle_record(const RegistryReleasePin& pin)
     -> Result<String, RegistryIndexError> {
-    auto index   = rstd_try(load(package));
-    auto matched = false;
+    const auto& package  = pin.release.package;
+    const auto& version  = pin.release.version;
+    const auto& checksum = pin.checksum;
+    auto        index    = rstd_try(load(package));
+    auto        matched  = false;
     for (const auto& release : index.releases()) {
         if (! (release.version == version)) continue;
         if (! (release.checksum == checksum)) {

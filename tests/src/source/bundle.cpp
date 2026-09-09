@@ -54,12 +54,29 @@ TEST_F(SourceBundle, LayoutOwnsVersionedReadOnlyLookup) {
         .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .name     = lito::registry::RegistryPackageName::parse("sample"_str).unwrap(),
     };
-    auto registry_key = licrypto::sha256_hex(registry.registry.as_str());
+    auto registry_key = lito::registry::registry_key(registry.registry);
     EXPECT_EQ(layout.registry_index(registry).as_path(),
-              directory.join(PathBuf::from("v1/registry/indices"_str).as_path())
+              directory.join(PathBuf::from("v1/registry/index"_str).as_path())
                   .join(PathBuf::from(registry_key.as_str()).as_path())
-                  .join(PathBuf::from("sample/record.json"_str).as_path())
+                  .join(PathBuf::from("sample.json"_str).as_path())
                   .as_path());
+
+    auto pin = lito::registry::RegistryReleasePin {
+        .release =
+            lito::registry::RegistryReleaseId {
+                .package = registry.clone(),
+                .version = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap(),
+            },
+        .checksum = lito::registry::PackageChecksum::parse(
+                        "1111111111111111222222222222222233333333333333334444444444444444"_str)
+                        .unwrap(),
+    };
+    EXPECT_EQ(
+        layout.registry_package(pin).as_path(),
+        directory
+            .join(PathBuf::from("v1/registry/source/sample-1.2.3-1111111111111111.tar.zst"_str)
+                      .as_path())
+            .as_path());
 
     auto patched = lito::source::acquired_git_fetch_identity(
         lito::source::AcquiredSource {

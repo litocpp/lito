@@ -20,8 +20,18 @@ struct VerifiedRegistryBlob {
     PackageChecksum checksum;
     PathBuf         path;
     u64             size {};
+
+    auto clone() const -> VerifiedRegistryBlob {
+        return VerifiedRegistryBlob {
+            .checksum = checksum.clone(),
+            .path     = path.clone(),
+            .size     = size,
+        };
+    }
 };
 
+auto registry_blob_from_file(PathBuf path, const RegistryPackageId& package)
+    -> RegistryArtifactResult<VerifiedRegistryBlob>;
 auto verify_registry_blob_file(PathBuf                  path,
                                const RegistryPackageId& package,
                                const PackageChecksum&   checksum)
@@ -107,7 +117,7 @@ auto checksum(ref<rstd::path::Path> path, const RegistryPackageId& package)
 
 } // namespace
 
-auto registry_blob_from_file(PathBuf path, const RegistryPackageId& package)
+auto lito::registry::registry_blob_from_file(PathBuf path, const RegistryPackageId& package)
     -> RegistryArtifactResult<VerifiedRegistryBlob> {
     auto metadata = rstd_try(ordinary_file(path.as_path(), package));
     if (metadata.is_none()) {
@@ -127,7 +137,7 @@ auto lito::registry::verify_registry_blob_file(PathBuf                  path,
                                                const RegistryPackageId& package,
                                                const PackageChecksum&   expected)
     -> RegistryArtifactResult<VerifiedRegistryBlob> {
-    auto verified = rstd_try(::registry_blob_from_file(rstd::move(path), package));
+    auto verified = rstd_try(registry_blob_from_file(rstd::move(path), package));
     if (verified.checksum == expected) return Ok(rstd::move(verified));
     return artifact_failure<VerifiedRegistryBlob>(
         RegistryArtifactErrorKind::Digest,
@@ -138,7 +148,7 @@ auto lito::registry::verify_registry_blob_file(PathBuf                  path,
 auto lito::registry::registry_package_archive_from_file(ref<rstd::path::Path>    path,
                                                         const RegistryPackageId& package)
     -> RegistryArtifactResult<RegistryPackageArchive> {
-    auto verified = rstd_try(::registry_blob_from_file(PathBuf::from(path), package));
+    auto verified = rstd_try(registry_blob_from_file(PathBuf::from(path), package));
     return Ok(RegistryPackageArchive {
         .checksum = rstd::move(verified.checksum),
         .size     = RegistryBlobSize(verified.size),

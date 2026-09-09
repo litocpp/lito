@@ -28,9 +28,7 @@ enum class LockExportFormat
 
 struct RegistryFlatpakArchiveProvider {
     void* context {};
-    LockResult<String> (*download_url)(void*,
-                                       const lito::registry::RegistryPackageId&,
-                                       const lito::registry::SemanticVersion&) noexcept {};
+    LockResult<String> (*download_url)(void*, const lito::registry::RegistryReleaseId&) noexcept {};
 };
 
 constexpr auto lock_export_format_name(LockExportFormat format) noexcept -> ref<str> {
@@ -72,10 +70,8 @@ struct FlatpakCandidate {
 };
 
 struct RegistryFlatpakCandidate {
-    lito::registry::RegistryPackageId package;
-    lito::registry::SemanticVersion   version;
-    lito::registry::PackageChecksum   checksum;
-    Vec<String>                       owners;
+    lito::registry::RegistryReleasePin pin;
+    Vec<String>                        owners;
 };
 
 auto candidate_owners(const FlatpakCandidate& candidate) -> String {
@@ -151,9 +147,10 @@ auto add_registry_candidate(
     const lito::lock::LockedSource&                                source,
     String                                                         owner) -> void {
     const auto& registry = source.as_Registry();
-    auto key = rstd::format("{}@{}",
-                            lito::registry::registry_package_id_text(registry.package).as_str(),
-                            registry.version.text().as_str());
+    auto        key      = rstd::format(
+        "{}@{}",
+        lito::registry::registry_package_id_text(registry.pin.release.package).as_str(),
+        registry.pin.release.version.text().as_str());
     auto existing = candidates.get_mut(key.as_str());
     if (existing.is_some()) {
         for (const auto& current : (**existing).owners) {
@@ -164,9 +161,7 @@ auto add_registry_candidate(
         return;
     }
     auto candidate = RegistryFlatpakCandidate {
-        .package  = registry.package.clone(),
-        .version  = registry.version.clone(),
-        .checksum = registry.checksum.clone(),
+        .pin = registry.pin.clone(),
     };
     candidate.owners.push(rstd::move(owner));
     candidates.insert(rstd::move(key), rstd::move(candidate));
@@ -258,25 +253,25 @@ auto project_flatpak_sources(const LockedProject&           project,
     for (auto value : registry_values) {
         auto& candidate = *value;
         if (registry.download_url == nullptr) {
-            return lock_flatpak_failure<lito::flatpak::SourceSet>(
-                rstd::format("Flatpak source export has no Registry provider for '{}@{}'",
-                             lito::registry::registry_package_id_text(candidate.package).as_str(),
-                             candidate.version.text().as_str()));
+            return lock_flatpak_failure<lito::flatpak::SourceSet>(rstd::format(
+                "Flatpak source export has no Registry provider for '{}@{}'",
+                lito::registry::registry_package_id_text(candidate.pin.release.package).as_str(),
+                candidate.pin.release.version.text().as_str()));
         }
-        auto download =
-            registry.download_url(registry.context, candidate.package, candidate.version);
+        auto download = registry.download_url(registry.context, candidate.pin.release);
         if (download.is_err()) return Err(rstd::move(download).unwrap_err());
         auto owners = candidate_owners(candidate);
 
-        auto archive     = layout.registry_package(candidate.checksum);
+        auto archive     = layout.registry_package(candidate.pin);
         auto archive_key = archive.as_path().to_string_lossy();
         if (registry_blobs.contains_key(archive_key.as_str())) continue;
-        result.push(rstd::format("Lito lock Registry package {}", owners.as_str()),
-                    lito::flatpak::Source::File(rstd::move(download).unwrap(),
-                                                candidate.checksum.digest().clone(),
-                                                PathBuf::from(archive.as_path().parent().unwrap()),
-                                                String::make("source.archive"_str),
-                                                Vec<String>::make()));
+        result.push(
+            rstd::format("Lito lock Registry package {}", owners.as_str()),
+            lito::flatpak::Source::File(rstd::move(download).unwrap(),
+                                        candidate.pin.checksum.digest().clone(),
+                                        PathBuf::from(archive.as_path().parent().unwrap()),
+                                        lito::registry::registry_archive_filename(candidate.pin),
+                                        Vec<String>::make()));
         registry_blobs.insert(rstd::move(archive_key), empty {});
     }
     return Ok(rstd::move(result));

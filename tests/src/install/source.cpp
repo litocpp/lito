@@ -99,12 +99,18 @@ TEST_F(InstallSource, RegistryProvenanceRoundTripsExactContentIdentity) {
     auto checksum = lito::registry::PackageChecksum::parse(
                         "1111111111111111111111111111111111111111111111111111111111111111"_str)
                         .unwrap();
-    auto source   = lito::source::ResolvedPackageSource {
-        .identity         = lito::source::registry_source_identity(package, version),
-        .kind             = lito::source::PackageSourceKind::Registry,
-        .registry_package = Some(package.clone()),
-        .registry_version = Some(version.clone()),
-        .package_checksum = Some(checksum.clone()),
+    auto pin      = lito::registry::RegistryReleasePin {
+        .release =
+            lito::registry::RegistryReleaseId {
+                .package = package.clone(),
+                .version = version.clone(),
+            },
+        .checksum = checksum.clone(),
+    };
+    auto source = lito::source::ResolvedPackageSource {
+        .identity = lito::source::registry_source_identity(pin),
+        .kind     = lito::source::PackageSourceKind::Registry,
+        .registry = Some(pin.clone()),
     };
     auto provenance = lito::install_source_provenance(source);
     ASSERT_TRUE(provenance.is_ok());
@@ -114,9 +120,10 @@ TEST_F(InstallSource, RegistryProvenanceRoundTripsExactContentIdentity) {
     auto parsed = lito::parse_install_source_provenance(*serialized);
     ASSERT_TRUE(parsed.is_ok());
     ASSERT_TRUE(parsed->is_Registry());
-    EXPECT_EQ(parsed->as_Registry().package, package);
-    EXPECT_EQ(parsed->as_Registry().version, version);
-    EXPECT_EQ(parsed->as_Registry().checksum.text(), provenance->as_Registry().checksum.text());
+    EXPECT_EQ(parsed->as_Registry().pin.release.package, package);
+    EXPECT_EQ(parsed->as_Registry().pin.release.version, version);
+    EXPECT_EQ(parsed->as_Registry().pin.checksum.text(),
+              provenance->as_Registry().pin.checksum.text());
     EXPECT_EQ(lito::install_source_identity(*parsed).unwrap().as_str(), source.identity.as_str());
 }
 
@@ -146,23 +153,29 @@ sources = ["main.cpp"]
         .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .name = lito::registry::RegistryPackageName::parse("fixture-registry-tool"_str).unwrap(),
     };
-    auto version       = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
-    auto checksum      = lito::registry::PackageChecksum::parse(
-                             "4444444444444444444444444444444444444444444444444444444444444444"_str)
-                             .unwrap();
-    auto identity      = lito::source::registry_source_identity(package, version);
+    auto version  = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap();
+    auto checksum = lito::registry::PackageChecksum::parse(
+                        "4444444444444444444444444444444444444444444444444444444444444444"_str)
+                        .unwrap();
+    auto pin      = lito::registry::RegistryReleasePin {
+        .release =
+            lito::registry::RegistryReleaseId {
+                .package = package.clone(),
+                .version = version.clone(),
+            },
+        .checksum = checksum.clone(),
+    };
+    auto identity      = lito::source::registry_source_identity(pin);
     auto graph_sources = Vec<lito::registry::ResolvedRegistryGraphSource>::make();
     graph_sources.push(lito::registry::ResolvedRegistryGraphSource {
         .package = package.clone(),
         .version = version.clone(),
         .source =
             lito::source::ResolvedPackageSource {
-                .identity         = identity.clone(),
-                .kind             = lito::source::PackageSourceKind::Registry,
-                .root_directory   = materialized->root.clone(),
-                .registry_package = Some(package.clone()),
-                .registry_version = Some(version.clone()),
-                .package_checksum = Some(checksum.clone()),
+                .identity       = identity.clone(),
+                .kind           = lito::source::PackageSourceKind::Registry,
+                .root_directory = materialized->root.clone(),
+                .registry       = Some(pin.clone()),
             },
         .catalog = rstd::move(catalog).unwrap(),
     });

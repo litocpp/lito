@@ -35,10 +35,7 @@ class InstallSourceProvenance {
               (Local, (PathBuf root; String identity;)),
               (Git,
                (String url; lito::source::GitReference reference; String commit; String identity;)),
-              (Registry,
-               (lito::registry::RegistryPackageId package; lito::registry::SemanticVersion version;
-                lito::registry::PackageChecksum                                            checksum;
-                String identity;)))
+              (Registry, (lito::registry::RegistryReleasePin pin; String identity;)))
 
 public:
     auto clone() const -> InstallSourceProvenance {
@@ -52,9 +49,7 @@ public:
                                                 as_Git().commit.clone(),
                                                 as_Git().identity.clone());
         }
-        return InstallSourceProvenance::Registry(as_Registry().package.clone(),
-                                                 as_Registry().version.clone(),
-                                                 as_Registry().checksum.clone(),
+        return InstallSourceProvenance::Registry(as_Registry().pin.clone(),
                                                  as_Registry().identity.clone());
     }
 };

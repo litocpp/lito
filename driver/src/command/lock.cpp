@@ -22,19 +22,19 @@ namespace lito
 struct RegistryFlatpakResolver {
     const lito::config::LitoBootstrapConfig* config {};
 
-    static auto download_url(void*                                    raw,
-                             const lito::registry::RegistryPackageId& package,
-                             const lito::registry::SemanticVersion&   version) noexcept
+    static auto download_url(void* raw, const lito::registry::RegistryReleaseId& release) noexcept
         -> lito::lock::LockResult<String> {
         auto& self       = *static_cast<RegistryFlatpakResolver*>(raw);
         auto  configured = self.config == nullptr
                                ? Option<ref<lito::config::NamedRegistryConfig>> {}
-                               : self.config->resolve_registry(package.registry.as_str());
+                               : self.config->resolve_registry(release.package.registry.as_str());
         if (configured.is_none()) {
-            return Err(lito::lock::LockError::Schema(
-                rstd::format("Registry '{}' is not configured", package.registry.as_str())));
+            return Err(lito::lock::LockError::Schema(rstd::format(
+                "Registry '{}' is not configured", release.package.registry.as_str())));
         }
-        return Ok((**configured).effective_endpoints()->download.render(package.name, version));
+        return Ok((**configured)
+                      .effective_endpoints()
+                      ->download.render(release.package.name, release.version));
     }
 
     auto provider() noexcept -> lito::lock::RegistryFlatpakArchiveProvider {

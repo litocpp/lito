@@ -6,7 +6,7 @@ export module lito.core:source.fetch;
 import rstd;
 import licrypto;
 import :parse;
-import :registry.digest;
+import :registry.release;
 
 using namespace rstd::prelude;
 
@@ -17,7 +17,7 @@ class FetchIdentity {
     RSTD_ENUM(FetchIdentity,
               (Git, (String url; String commit;)),
               (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)),
-              (RegistryPackage, (lito::registry::PackageChecksum checksum;)))
+              (RegistryPackage, (lito::registry::RegistryReleasePin pin;)))
 };
 
 auto git_fetch_identity(ref<str> url, ref<str> commit) -> FetchIdentity {
@@ -29,8 +29,8 @@ auto archive_fetch_identity(lito::parse::FetchUrl url, licrypto::Sha256Digest sh
     return FetchIdentity::Archive(rstd::move(url), rstd::move(sha256));
 }
 
-auto registry_package_fetch_identity(lito::registry::PackageChecksum checksum) -> FetchIdentity {
-    return FetchIdentity::RegistryPackage(rstd::move(checksum));
+auto registry_package_fetch_identity(lito::registry::RegistryReleasePin pin) -> FetchIdentity {
+    return FetchIdentity::RegistryPackage(rstd::move(pin));
 }
 
 auto fetch_identity_text(const FetchIdentity& identity) -> String {
@@ -44,8 +44,12 @@ auto fetch_identity_text(const FetchIdentity& identity) -> String {
                             identity.as_Archive().url.as_str(),
                             identity.as_Archive().sha256);
     }
-    return rstd::format("lito-fetch-v1\nregistry-package\n{}",
-                        identity.as_RegistryPackage().checksum.text());
+    const auto& pin = identity.as_RegistryPackage().pin;
+    return rstd::format("lito-fetch-v2\nregistry-package\n{}\n{}\n{}\n{}",
+                        pin.release.package.registry.as_str(),
+                        pin.release.package.name.as_str(),
+                        pin.release.version.text().as_str(),
+                        pin.checksum.text());
 }
 
 auto fetch_identity_stable_key(const FetchIdentity& identity) -> String {

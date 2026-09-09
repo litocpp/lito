@@ -81,6 +81,7 @@ target_sources(
          src/parse/value.cppm
         src/registry/artifact.cppm
         src/registry/digest.cppm
+        src/registry/cache.cppm
         src/registry/archive.cppm
         src/registry/config.cppm
         src/registry/inspection.cppm
@@ -90,6 +91,7 @@ target_sources(
          src/registry/spec.cppm
          src/registry/error.cppm
          src/registry/identity.cppm
+         src/registry/release.cppm
          src/registry/mod.cppm
          src/registry/version.cppm
          src/source/error.cppm

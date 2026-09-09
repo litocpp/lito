@@ -60,8 +60,11 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
             descriptor_error(id, rstd::move(descriptor).unwrap_err().message.as_str()));
     }
     auto definition = lito::registry::BuiltinRegistryPackage {
-        .package = descriptor->package.clone(),
-        .version = descriptor->version.clone(),
+        .release =
+            lito::registry::RegistryReleaseId {
+                .package = descriptor->package.clone(),
+                .version = descriptor->version.clone(),
+            },
     };
     for (const auto& index : indices_) {
         if (index.package() == descriptor->package) return Ok(rstd::move(definition));
@@ -78,7 +81,11 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
                                           (*configured)->effective_endpoints()->download.clone(),
                                           lito::registry::RegistryNetworkPolicy::Offline,
                                           {});
-    auto blob = cache.publish(descriptor->package, input->archive);
+    auto pin = lito::registry::RegistryReleasePin {
+        .release  = definition.release.clone(),
+        .checksum = descriptor->archive.checksum.clone(),
+    };
+    auto blob = cache.publish(pin, input->archive);
     if (blob.is_err()) {
         return embedded_failure<lito::registry::BuiltinRegistryPackage>(
             descriptor_error(id, rstd::move(blob).unwrap_err().message.as_str()));

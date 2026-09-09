@@ -1,12 +1,11 @@
 export module lito.core:source.bundle;
 
 import rstd;
-import licrypto;
 import :source.fetch;
 import :source.error;
-import :registry.digest;
+import :registry.cache;
 import :registry.identity;
-import :registry.version;
+import :registry.release;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -45,22 +44,19 @@ public:
             .join(PathBuf::from("source.archive"_str).as_path());
     }
 
-    auto registry_package(const lito::registry::PackageChecksum& checksum) const -> PathBuf {
+    auto registry_package(const lito::registry::RegistryReleasePin& pin) const -> PathBuf {
         return version_root()
             .join(PathBuf::from("registry"_str).as_path())
-            .join(PathBuf::from("packages"_str).as_path())
-            .join(PathBuf::from(checksum.text().as_str()).as_path())
-            .join(PathBuf::from("source.archive"_str).as_path());
+            .join(PathBuf::from("source"_str).as_path())
+            .join(PathBuf::from(lito::registry::registry_archive_filename(pin)).as_path());
     }
 
     auto registry_index(const lito::registry::RegistryPackageId& package) const -> PathBuf {
-        auto registry_key = licrypto::sha256_hex(package.registry.as_str());
         return version_root()
             .join(PathBuf::from("registry"_str).as_path())
-            .join(PathBuf::from("indices"_str).as_path())
-            .join(PathBuf::from(registry_key.as_str()).as_path())
-            .join(PathBuf::from(package.name.as_str()).as_path())
-            .join(PathBuf::from("record.json"_str).as_path());
+            .join(PathBuf::from("index"_str).as_path())
+            .join(PathBuf::from(lito::registry::registry_key(package.registry)).as_path())
+            .join(PathBuf::from(rstd::format("{}.json", package.name.as_str())).as_path());
     }
 
     auto cargo(ref<str> source_identity, ref<rstd::path::Path> manifest, ref<str> target) const
@@ -83,7 +79,7 @@ public:
     auto fetch(const FetchIdentity& identity) const -> PathBuf {
         if (identity.is_Git()) return git(identity);
         if (identity.is_Archive()) return archive(identity);
-        return registry_package(identity.as_RegistryPackage().checksum);
+        return registry_package(identity.as_RegistryPackage().pin);
     }
 };
 

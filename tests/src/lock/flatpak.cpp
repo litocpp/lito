@@ -32,15 +32,14 @@ struct RegistryFlatpakFixture {
     usize calls {};
 
     static auto download_url(void*                                    context,
-                             const lito::registry::RegistryPackageId& package,
-                             const lito::registry::SemanticVersion&   version) noexcept
+                             const lito::registry::RegistryReleaseId& release) noexcept
         -> lito::lock::LockResult<String> {
         auto& self = *static_cast<RegistryFlatpakFixture*>(context);
         ++self.calls;
         return Ok(rstd::format("https://registry.example/packages/{}/{}-{}.tar.zst",
-                               package.name.as_str(),
-                               package.name.as_str(),
-                               version.text().as_str()));
+                               release.package.name.as_str(),
+                               release.package.name.as_str(),
+                               release.version.text().as_str()));
     }
 
     auto provider() noexcept -> lito::lock::RegistryFlatpakArchiveProvider {
@@ -144,22 +143,26 @@ TEST(Lock, RegistryPackageExportsArchiveWithoutIndex) {
     project.packages.push(lito::lock::LockedPackage {
         .name    = String::make("sample"_str),
         .version = Some(String::make("1.2.3"_str)),
-        .source  = Some(lito::lock::LockedSource::Registry(
-            registry.clone(),
-            lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap(),
-            checksum.clone())),
+        .source  = Some(lito::lock::LockedSource::Registry(lito::registry::RegistryReleasePin {
+            .release =
+                lito::registry::RegistryReleaseId {
+                    .package = registry.clone(),
+                    .version = lito::registry::SemanticVersion::parse("1.2.3"_str).unwrap(),
+                },
+            .checksum = checksum.clone(),
+        })),
     });
     auto fixture  = RegistryFlatpakFixture {};
     auto exported = lito::lock::flatpak_sources_json(project, fixture.provider());
     ASSERT_TRUE(exported.is_ok());
     EXPECT_EQ(fixture.calls, usize(1));
     EXPECT_FALSE(exported->as_str().contains("\"type\": \"inline\""_str));
-    EXPECT_FALSE(exported->as_str().contains("v1/registry/indices/"_str));
+    EXPECT_FALSE(exported->as_str().contains("v1/registry/index/"_str));
     EXPECT_TRUE(exported->as_str().contains("https://registry.example/packages/sample/"
                                             "sample-1.2.3.tar.zst"_str));
+    EXPECT_TRUE(exported->as_str().contains("v1/registry/source"_str));
     EXPECT_TRUE(exported->as_str().contains(
-        "v1/registry/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str));
-    EXPECT_TRUE(exported->as_str().contains("\"dest-filename\": \"source.archive\""_str));
+        "\"dest-filename\": \"sample-1.2.3-aaaaaaaaaaaaaaaa.tar.zst\""_str));
 }
 
 TEST(Lock, CargoAttachmentProjectsRegistrySourcesAndSkipsPathPackages) {

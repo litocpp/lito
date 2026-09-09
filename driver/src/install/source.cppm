@@ -261,7 +261,7 @@ auto resolve_registry_install_source(const lito::registry::RegistryPackageName& 
             .join(PathBuf::from("registry"_str).as_path())
             .join(PathBuf::from("builds"_str).as_path())
             .join(PathBuf::from("sha256"_str).as_path())
-            .join(PathBuf::from(root.source.package_checksum->text().as_str()).as_path());
+            .join(PathBuf::from(root.source.registry->checksum.text().as_str()).as_path());
     return Ok(ResolvedInstallSource {
         .project =
             lito::workspace::ResolvedProjectEntry {
@@ -282,8 +282,8 @@ auto resolve_registry_install_source(const lito::registry::RegistryPackageName& 
 auto install_source_identity(const InstallSourceProvenance& provenance)
     -> InstallSourceResult<String> {
     if (provenance.is_Registry()) {
-        const auto& source = provenance.as_Registry();
-        auto expected      = lito::source::registry_source_identity(source.package, source.version);
+        const auto& source   = provenance.as_Registry();
+        auto        expected = lito::source::registry_source_identity(source.pin);
         if (source.identity != expected.as_str()) {
             return install_source_failure<String>(
                 "installed Registry source identity does not match its package and version"_str);
@@ -329,15 +329,12 @@ auto install_source_provenance(const lito::source::ResolvedPackageSource& source
             InstallSourceProvenance::Local(source.root_directory.clone(), source.identity.clone()));
     }
     if (source.kind == lito::source::PackageSourceKind::Registry) {
-        if (source.registry_package.is_none() || source.registry_version.is_none() ||
-            source.package_checksum.is_none()) {
+        if (source.registry.is_none()) {
             return install_source_failure<InstallSourceProvenance>(
                 "resolved Registry package source is missing exact provenance"_str);
         }
-        auto provenance = InstallSourceProvenance::Registry(source.registry_package->clone(),
-                                                            source.registry_version->clone(),
-                                                            source.package_checksum->clone(),
-                                                            source.identity.clone());
+        auto provenance =
+            InstallSourceProvenance::Registry(source.registry->clone(), source.identity.clone());
         rstd_try(install_source_identity(provenance));
         return Ok(rstd::move(provenance));
     }
@@ -362,13 +359,14 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
     source.insert(String::make("identity"_str), Json::String(rstd::move(identity)));
     if (provenance.is_Registry()) {
         const auto& registry = provenance.as_Registry();
-        source.insert(String::make("checksum"_str), Json::String(registry.checksum.text()));
+        source.insert(String::make("checksum"_str), Json::String(registry.pin.checksum.text()));
         source.insert(String::make("kind"_str), Json::String(String::make("registry"_str)));
         source.insert(String::make("package"_str),
-                      Json::String(String::make(registry.package.name.as_str())));
+                      Json::String(String::make(registry.pin.release.package.name.as_str())));
         source.insert(String::make("registry"_str),
-                      Json::String(String::make(registry.package.registry.as_str())));
-        source.insert(String::make("version"_str), Json::String(registry.version.text()));
+                      Json::String(String::make(registry.pin.release.package.registry.as_str())));
+        source.insert(String::make("version"_str),
+                      Json::String(registry.pin.release.version.text()));
         return Ok(Json::Object(rstd::move(source)));
     }
     if (provenance.is_Git()) {
@@ -417,12 +415,18 @@ auto parse_install_source_provenance(const Json& source)
                 "installed Registry source contains invalid exact provenance"_str);
         }
         auto provenance = InstallSourceProvenance::Registry(
-            lito::registry::RegistryPackageId {
-                .registry = rstd::move(registry).unwrap(),
-                .name     = rstd::move(package).unwrap(),
+            lito::registry::RegistryReleasePin {
+                .release =
+                    lito::registry::RegistryReleaseId {
+                        .package =
+                            lito::registry::RegistryPackageId {
+                                .registry = rstd::move(registry).unwrap(),
+                                .name     = rstd::move(package).unwrap(),
+                            },
+                        .version = rstd::move(version).unwrap(),
+                    },
+                .checksum = rstd::move(checksum).unwrap(),
             },
-            rstd::move(version).unwrap(),
-            rstd::move(checksum).unwrap(),
             rstd::move(identity));
         rstd_try(install_source_identity(provenance));
         return Ok(rstd::move(provenance));

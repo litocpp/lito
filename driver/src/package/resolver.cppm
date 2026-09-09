@@ -292,22 +292,22 @@ class PackageGraphResolver {
             return package_resolution_failure<lito::source::PackageSourceRequirement>(
                 rstd::move(definition).unwrap_err().message);
         }
-        if (definition->package.name.as_str() != expected_name) {
+        if (definition->release.package.name.as_str() != expected_name) {
             return package_resolution_failure<lito::source::PackageSourceRequirement>(
                 rstd::format("dependency '{}' resolves builtin '{}' as package '{}'",
                              expected_name,
                              id,
-                             definition->package.name.as_str()));
+                             definition->release.package.name.as_str()));
         }
         auto requirement = lito::registry::VersionRequirement::parse(
-            rstd::format("={}", definition->version.text()).as_str());
+            rstd::format("={}", definition->release.version.text()).as_str());
         if (requirement.is_err()) {
             return package_resolution_failure<lito::source::PackageSourceRequirement>(
                 rstd::format("builtin package '{}' has an invalid embedded version", id));
         }
         return Ok(lito::source::PackageSourceRequirement::Registry(
-            Some(String::make(definition->package.registry.as_str())),
-            definition->package.name.clone(),
+            Some(String::make(definition->release.package.registry.as_str())),
+            definition->release.package.name.clone(),
             rstd::move(requirement).unwrap()));
     }
 

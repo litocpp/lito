@@ -219,17 +219,25 @@ TEST_F(Lock, RegistryWriterUsesIdentityOnly) {
     auto graph = lito::package::resolve_package_graph(fixture->root.as_path(), rstd::move(options));
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
-    auto& source            = graph->packages[usize {}].source;
-    source.kind             = lito::source::PackageSourceKind::Registry;
-    source.registry_package = Some(lito::registry::RegistryPackageId {
-        .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
-        .name     = lito::registry::RegistryPackageName::parse("fixture-lock"_str).unwrap(),
+    auto& source      = graph->packages[usize {}].source;
+    source.kind       = lito::source::PackageSourceKind::Registry;
+    source.registry   = Some(lito::registry::RegistryReleasePin {
+        .release =
+            lito::registry::RegistryReleaseId {
+                .package =
+                    lito::registry::RegistryPackageId {
+                        .registry =
+                            lito::registry::RegistryId::parse("https://registry.example/"_str)
+                                .unwrap(),
+                        .name =
+                            lito::registry::RegistryPackageName::parse("fixture-lock"_str).unwrap(),
+                    },
+                .version = lito::registry::SemanticVersion::parse("1.0.0"_str).unwrap(),
+            },
+        .checksum = lito::registry::PackageChecksum::parse(
+                        "0000000000000000000000000000000000000000000000000000000000000000"_str)
+                        .unwrap(),
     });
-    source.registry_version = Some(lito::registry::SemanticVersion::parse("1.0.0"_str).unwrap());
-    source.package_checksum =
-        Some(lito::registry::PackageChecksum::parse(
-                 "0000000000000000000000000000000000000000000000000000000000000000"_str)
-                 .unwrap());
     auto synchronized = lito::lock::sync_lock(*graph, rstd::move(session).unwrap());
     ASSERT_TRUE(synchronized.is_ok());
 
@@ -288,8 +296,9 @@ checksum = "0000000000000000000000000000000000000000000000000000000000000000"
     ASSERT_TRUE(loaded_registry.is_ok());
     ASSERT_TRUE(loaded_registry->packages[usize {}].source.is_some());
     ASSERT_TRUE(loaded_registry->packages[usize {}].source->is_Registry());
-    EXPECT_EQ(loaded_registry->packages[usize {}].source->as_Registry().package.name.as_str(),
-              "fixture-lock"_str);
+    EXPECT_EQ(
+        loaded_registry->packages[usize {}].source->as_Registry().pin.release.package.name.as_str(),
+        "fixture-lock"_str);
 
     auto registry_reused = lito::lock::load_lock_session(registry->root.as_path(),
                                                          false,

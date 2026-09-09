@@ -64,10 +64,10 @@ struct ProjectRegistryResolver {
     lito::registry::RegistryNetworkPolicy network { lito::registry::RegistryNetworkPolicy::Online };
     lito::registry::RegistryGraphPolicy   policy;
     bool                                  locked_mode {};
-    Vec<lito::source::RegistrySourcePin>  locked;
-    const Vec<PathBuf>*                   source_bundles {};
-    lito::tools::ToolResolver*            tools {};
-    const ResolvedProcessEnvironment*     environment {};
+    Vec<lito::registry::RegistryReleasePin>         locked;
+    const Vec<PathBuf>*                             source_bundles {};
+    lito::tools::ToolResolver*                      tools {};
+    const ResolvedProcessEnvironment*               environment {};
     Option<lito::package::EmbeddedRegistryPackages> embedded;
 
     static auto resolve_builtin(void* raw, ref<str> id) noexcept
@@ -138,7 +138,7 @@ struct ProjectRegistryResolver {
             http       = http_owner->transport();
             blobs      = blob_owner->transport();
         }
-        auto pins = Vec<lito::source::RegistrySourcePin>::with_capacity(self.locked.len());
+        auto pins = Vec<lito::registry::RegistryReleasePin>::with_capacity(self.locked.len());
         for (const auto& pin : self.locked) pins.push(pin.clone());
         auto client = lito::registry::RegistryGraphClient(PathBuf::from(data->root()),
                                                           *self.config,
@@ -206,8 +206,8 @@ auto start_project_resolution(
             graph_policy.index = lito::registry::RegistryIndexUpdatePolicy::Refresh;
             graph_policy.refresh_on_incompatibility = false;
         }
-        auto pins =
-            Vec<lito::source::RegistrySourcePin>::with_capacity(resolution.registry_sources.len());
+        auto pins = Vec<lito::registry::RegistryReleasePin>::with_capacity(
+            resolution.registry_sources.len());
         for (const auto& pin : resolution.registry_sources) pins.push(pin.clone());
         auto embedded          = Option<lito::package::EmbeddedRegistryPackages> {};
         auto embedded_provider = registries->embedded_packages();

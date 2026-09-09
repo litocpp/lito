@@ -6,9 +6,8 @@ export module lito.core:source.requirement;
 import rstd;
 import :source.git;
 import :registry.archive;
-import :registry.digest;
 import :registry.identity;
-import :registry.version;
+import :registry.release;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -65,49 +64,40 @@ struct PackageRegistryRequirement {
 };
 
 struct ResolvedPackageSource {
-    String                                    identity;
-    PackageSourceKind                         kind { PackageSourceKind::Path };
-    PathBuf                                   root_directory;
-    PathBuf                                   path;
-    String                                    git;
-    GitReference                              reference;
-    String                                    commit;
-    String                                    builtin;
-    String                                    digest;
-    Option<lito::registry::RegistryPackageId> registry_package;
-    Option<lito::registry::SemanticVersion>   registry_version;
-    Option<lito::registry::PackageChecksum>   package_checksum;
+    String                                     identity;
+    PackageSourceKind                          kind { PackageSourceKind::Path };
+    PathBuf                                    root_directory;
+    PathBuf                                    path;
+    String                                     git;
+    GitReference                               reference;
+    String                                     commit;
+    String                                     builtin;
+    String                                     digest;
+    Option<lito::registry::RegistryReleasePin> registry;
 
     auto clone() const -> ResolvedPackageSource {
         return ResolvedPackageSource {
-            .identity         = identity.clone(),
-            .kind             = kind,
-            .root_directory   = root_directory.clone(),
-            .path             = path.clone(),
-            .git              = git.clone(),
-            .reference        = reference.clone(),
-            .commit           = commit.clone(),
-            .builtin          = builtin.clone(),
-            .digest           = digest.clone(),
-            .registry_package = registry_package.is_some()
-                                    ? Some(registry_package->clone())
-                                    : None<lito::registry::RegistryPackageId>(),
-            .registry_version = registry_version.is_some()
-                                    ? Some(registry_version->clone())
-                                    : None<lito::registry::SemanticVersion>(),
-            .package_checksum = package_checksum.is_some()
-                                    ? Some(package_checksum->clone())
-                                    : None<lito::registry::PackageChecksum>(),
+            .identity       = identity.clone(),
+            .kind           = kind,
+            .root_directory = root_directory.clone(),
+            .path           = path.clone(),
+            .git            = git.clone(),
+            .reference      = reference.clone(),
+            .commit         = commit.clone(),
+            .builtin        = builtin.clone(),
+            .digest         = digest.clone(),
+            .registry       = registry.is_some() ? Some(registry->clone())
+                                                 : None<lito::registry::RegistryReleasePin>(),
         };
     }
 };
 
-auto registry_source_identity(const lito::registry::RegistryPackageId& package,
-                              const lito::registry::SemanticVersion&   version) -> String {
-    return rstd::format("registry+{}{}@{}",
-                        package.registry.as_str(),
-                        package.name.as_str(),
-                        version.text().as_str());
+auto registry_source_identity(const lito::registry::RegistryReleasePin& pin) -> String {
+    return rstd::format("registry+{}{}@{}#sha256={}",
+                        pin.release.package.registry.as_str(),
+                        pin.release.package.name.as_str(),
+                        pin.release.version.text().as_str(),
+                        pin.checksum.text());
 }
 
 } // namespace lito::source

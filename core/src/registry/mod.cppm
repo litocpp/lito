@@ -5,6 +5,8 @@ export import :registry.identity;
 export import :registry.artifact;
 export import :registry.digest;
 export import :registry.version;
+export import :registry.release;
+export import :registry.cache;
 export import :registry.archive;
 export import :registry.config;
 export import :registry.inspection;

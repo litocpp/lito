@@ -4,8 +4,6 @@ module;
 export module lito.driver:registry.blob;
 
 import rstd;
-import licrypto;
-import rstd.json;
 import lito.core;
 import lito.pack;
 import lito.system;
@@ -49,10 +47,8 @@ public:
           transport_(transport),
           source_bundles_(source_bundles) {}
 
-    auto acquire(const RegistryPackageId& package,
-                 const SemanticVersion&   version,
-                 const PackageChecksum&   checksum) -> RegistryArtifactResult<VerifiedRegistryBlob>;
-    auto publish(const RegistryPackageId& package, slice<u8> contents)
+    auto acquire(const RegistryReleasePin& pin) -> RegistryArtifactResult<VerifiedRegistryBlob>;
+    auto publish(const RegistryReleasePin& pin, slice<u8> contents)
         -> RegistryArtifactResult<VerifiedRegistryBlob>;
 };
 
@@ -100,22 +96,15 @@ auto artifact_failure(RegistryArtifactErrorKind kind,
 }
 
 struct BlobLayout {
-    PathBuf bucket;
     PathBuf source;
-    PathBuf receipt;
     PathBuf lock;
 };
 
-auto blob_layout(ref<rstd::path::Path> root, const PackageChecksum& checksum) -> BlobLayout {
-    auto bucket = PathBuf::from(root)
-                      .join(PathBuf::from("files"_str).as_path())
-                      .join(PathBuf::from("sha256"_str).as_path())
-                      .join(PathBuf::from(checksum.text().as_str()).as_path());
+auto blob_layout(ref<rstd::path::Path> root, const RegistryReleasePin& pin) -> BlobLayout {
+    auto cache = RegistryCacheLayout(PathBuf::from(root));
     return BlobLayout {
-        .bucket  = bucket.clone(),
-        .source  = bucket.join(PathBuf::from("source"_str).as_path()),
-        .receipt = bucket.join(PathBuf::from("receipt.json"_str).as_path()),
-        .lock    = bucket.join(PathBuf::from("lock"_str).as_path()),
+        .source = cache.archive(pin),
+        .lock   = cache.release_lock(pin),
     };
 }
 
@@ -143,24 +132,26 @@ auto ordinary_file(ref<rstd::path::Path> path, const RegistryPackageId& package)
 
 auto reserve_staging(const BlobLayout& layout, const RegistryPackageId& package)
     -> RegistryArtifactResult<PathBuf> {
-    auto created = rstd::fs::create_dir_all(layout.bucket.as_path());
+    auto parent  = layout.source.as_path().parent().unwrap();
+    auto created = rstd::fs::create_dir_all(parent);
     if (created.is_err()) {
         return artifact_failure<PathBuf>(
             RegistryArtifactErrorKind::Io,
             package,
-            rstd::format("cannot create Registry blob cache bucket '{}': {}",
-                         layout.bucket.as_path(),
+            rstd::format("cannot create Registry source cache directory '{}': {}",
+                         parent,
                          rstd::move(created).unwrap_err()));
     }
     auto time = rstd::time::SystemTime::now().as_unix_time();
     for (usize attempt {}; attempt < usize(64); ++attempt) {
-        auto staging = layout.bucket.join(PathBuf::from(rstd::format("source.tmp.{}.{}.{}.{}",
-                                                                     rstd::process::id(),
-                                                                     time.seconds,
-                                                                     time.nanoseconds,
-                                                                     attempt))
-                                              .as_path());
-        auto file    = rstd::fs::File::create_new(staging.as_path());
+        auto staging = PathBuf::from(parent).join(
+            PathBuf::from(rstd::format(".registry-source.tmp.{}.{}.{}.{}",
+                                       rstd::process::id(),
+                                       time.seconds,
+                                       time.nanoseconds,
+                                       attempt))
+                .as_path());
+        auto file = rstd::fs::File::create_new(staging.as_path());
         if (file.is_ok()) return Ok(rstd::move(staging));
         auto error = rstd::move(file).unwrap_err();
         if (error.kind() !=
@@ -179,6 +170,16 @@ auto reserve_staging(const BlobLayout& layout, const RegistryPackageId& package)
 
 auto acquire_lock(const BlobLayout& layout, const RegistryPackageId& package)
     -> RegistryArtifactResult<rstd::fs::FileLock> {
+    auto parent  = layout.lock.as_path().parent().unwrap();
+    auto created = rstd::fs::create_dir_all(parent);
+    if (created.is_err()) {
+        return artifact_failure<rstd::fs::FileLock>(
+            RegistryArtifactErrorKind::Io,
+            package,
+            rstd::format("cannot create Registry cache lock directory '{}': {}",
+                         parent,
+                         rstd::move(created).unwrap_err()));
+    }
     auto opened = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
         layout.lock.as_path());
     if (opened.is_err()) {
@@ -202,74 +203,62 @@ auto acquire_lock(const BlobLayout& layout, const RegistryPackageId& package)
     return Ok(rstd::move(locked).unwrap());
 }
 
-auto write_receipt(const BlobLayout&        layout,
-                   const RegistryPackageId& package,
-                   const PackageChecksum&   checksum,
-                   u64                      size) -> RegistryArtifactResult<empty> {
-    auto object = rstd::json::Map::make();
-    object.insert(String::make("schema"_str),
-                  rstd::json::Value::String(String::make("lito.registry.blob-cache.v1"_str)));
-    object.insert(String::make("checksum"_str), rstd::json::Value::String(checksum.text()));
-    object.insert(String::make("size"_str), rstd::json::Value::String(rstd::format("{}", size)));
-    object.insert(String::make("format"_str),
-                  rstd::json::Value::String(String::make(RegistryArchiveFormat::TAR_ZSTD_V1)));
-    auto text = rstd::json::to_string(rstd::json::Value::Object(rstd::move(object)));
-    text.push_ascii(u8('\n'));
-    auto written = rstd::fs::write_atomic(layout.receipt.as_path(), text.as_str().as_bytes());
-    if (written.is_err()) {
-        return artifact_failure<empty>(RegistryArtifactErrorKind::Io,
-                                       package,
-                                       rstd::format("cannot write Registry blob receipt '{}': {}",
-                                                    layout.receipt.as_path(),
-                                                    rstd::move(written).unwrap_err()));
+struct CachedBlobProbe {
+    Option<VerifiedRegistryBlob> verified;
+    bool                         corrupt {};
+};
+
+auto probe_blob(const BlobLayout&        layout,
+                const RegistryPackageId& package,
+                const PackageChecksum&   checksum) -> RegistryArtifactResult<CachedBlobProbe> {
+    auto metadata = rstd_try(ordinary_file(layout.source.as_path(), package));
+    if (metadata.is_none()) return Ok(CachedBlobProbe {});
+    if (metadata->len() == u64 {} || metadata->len() > MAX_REGISTRY_PACKAGE_ARCHIVE_BYTES) {
+        return Ok(CachedBlobProbe { .corrupt = true });
     }
-    return Ok(empty {});
+    auto verified = rstd_try(registry_blob_from_file(layout.source.clone(), package));
+    if (verified.checksum == checksum) {
+        return Ok(CachedBlobProbe { .verified = Some(rstd::move(verified)) });
+    }
+    auto expected_prefix = checksum.text();
+    expected_prefix.truncate(REGISTRY_CHECKSUM_PREFIX_LENGTH);
+    auto actual = verified.checksum.text();
+    if (actual.as_str().starts_with(expected_prefix.as_str())) {
+        return artifact_failure<CachedBlobProbe>(
+            RegistryArtifactErrorKind::Digest,
+            package,
+            rstd::format("Registry cache filename '{}' has a short checksum collision: expected "
+                         "'{}', found '{}'",
+                         layout.source.as_path(),
+                         checksum.text(),
+                         actual.as_str()));
+    }
+    return Ok(CachedBlobProbe { .corrupt = true });
 }
 
-auto completed_blob(const BlobLayout&        layout,
-                    const RegistryPackageId& package,
-                    const PackageChecksum&   checksum)
-    -> RegistryArtifactResult<Option<VerifiedRegistryBlob>> {
-    auto metadata = rstd_try(ordinary_file(layout.source.as_path(), package));
-    if (metadata.is_none() || metadata->len() == u64 {} ||
-        metadata->len() > MAX_REGISTRY_PACKAGE_ARCHIVE_BYTES) {
-        return Ok(Option<VerifiedRegistryBlob> {});
+auto set_read_only(ref<rstd::path::Path> path, const RegistryPackageId& package)
+    -> RegistryArtifactResult<empty> {
+    auto metadata = rstd::fs::metadata(path);
+    if (metadata.is_err()) {
+        return artifact_failure<empty>(
+            RegistryArtifactErrorKind::Io,
+            package,
+            rstd::format("cannot inspect Registry blob staging file '{}': {}",
+                         path,
+                         rstd::move(metadata).unwrap_err()));
     }
-    auto receipt = rstd::fs::read_to_string(layout.receipt.as_path());
-    if (receipt.is_err()) return Ok(Option<VerifiedRegistryBlob> {});
-    auto parsed = rstd::json::from_str(receipt->as_str(),
-                                       rstd::json::ParseOptions { .reject_duplicate_keys = true });
-    if (parsed.is_err()) return Ok(Option<VerifiedRegistryBlob> {});
-    auto object = parsed->as_object();
-    if (object.is_none() || (**object).len() != usize(4)) {
-        return Ok(Option<VerifiedRegistryBlob> {});
+    auto permissions = metadata->permissions();
+    permissions.set_readonly(true);
+    auto changed = rstd::fs::set_permissions(path, permissions);
+    if (changed.is_err()) {
+        return artifact_failure<empty>(
+            RegistryArtifactErrorKind::Io,
+            package,
+            rstd::format("cannot make Registry blob staging file '{}' read-only: {}",
+                         path,
+                         rstd::move(changed).unwrap_err()));
     }
-    auto schema   = parsed->get("schema"_str);
-    auto recorded = parsed->get("checksum"_str);
-    auto size     = parsed->get("size"_str);
-    auto format   = parsed->get("format"_str);
-    if (schema.is_none() || recorded.is_none() || size.is_none() || format.is_none()) {
-        return Ok(Option<VerifiedRegistryBlob> {});
-    }
-    auto schema_text   = (**schema).as_str();
-    auto checksum_text = (**recorded).as_str();
-    auto size_text     = (**size).as_str();
-    auto format_text   = (**format).as_str();
-    if (schema_text.is_none() || checksum_text.is_none() || size_text.is_none() ||
-        format_text.is_none() || *schema_text != "lito.registry.blob-cache.v1"_str ||
-        *checksum_text != checksum.text().as_str() ||
-        *format_text != RegistryArchiveFormat::TAR_ZSTD_V1) {
-        return Ok(Option<VerifiedRegistryBlob> {});
-    }
-    auto parsed_size = lito::parse::parse_canonical_u64_decimal(*size_text);
-    if (parsed_size.is_err() || *parsed_size != metadata->len()) {
-        return Ok(Option<VerifiedRegistryBlob> {});
-    }
-    return Ok(Some(VerifiedRegistryBlob {
-        .checksum = checksum.clone(),
-        .path     = layout.source.clone(),
-        .size     = metadata->len(),
-    }));
+    return Ok(empty {});
 }
 
 auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path, const RegistryPackageId& package)
@@ -289,69 +278,20 @@ auto discard(ref<rstd::path::Path> path) -> void {
     (void)rstd::fs::remove_file(path);
 }
 
-} // namespace
-
-auto lito::registry::RegistryBlobCache::acquire(const RegistryPackageId& package,
-                                                const SemanticVersion&   version,
-                                                const PackageChecksum&   checksum)
+auto publish_staging(const BlobLayout&           layout,
+                     const RegistryReleasePin&   pin,
+                     PathBuf                     staging,
+                     const VerifiedRegistryBlob& verified)
     -> RegistryArtifactResult<VerifiedRegistryBlob> {
-    auto layout = blob_layout(cache_root_.as_path(), checksum);
-    auto cached = rstd_try(completed_blob(layout, package, checksum));
-    if (cached.is_some()) return Ok(rstd::move(cached).unwrap());
-    if (source_bundles_ != nullptr) {
-        for (const auto& root : *source_bundles_) {
-            auto bundled =
-                lito::source::SourceBundleLayout(root.clone()).registry_package(checksum);
-            auto exists = rstd::fs::exists(bundled.as_path());
-            if (exists.is_err()) {
-                return artifact_failure<VerifiedRegistryBlob>(
-                    RegistryArtifactErrorKind::Io,
-                    package,
-                    rstd::format("cannot inspect Registry source bundle blob '{}': {}",
-                                 bundled.as_path(),
-                                 rstd::move(exists).unwrap_err()));
-            }
-            if (*exists) return verify_registry_blob_file(rstd::move(bundled), package, checksum);
-        }
-    }
-    if (network_ == RegistryNetworkPolicy::Offline) {
-        return artifact_failure<VerifiedRegistryBlob>(
-            RegistryArtifactErrorKind::OfflineCacheMiss,
-            package,
-            rstd::format("offline Registry resolve has no verified package archive '{}'",
-                         checksum.text()));
-    }
-    if (transport_.download == nullptr) {
-        return artifact_failure<VerifiedRegistryBlob>(RegistryArtifactErrorKind::Network,
-                                                      package,
-                                                      "Registry blob transport is unavailable"_str);
-    }
-
-    auto staging   = rstd_try(reserve_staging(layout, package));
-    auto requested = transport_.download(transport_.context,
-                                         RegistryBlobDownloadRequest {
-                                             .package     = package.clone(),
-                                             .url         = endpoint_.render(package.name, version),
-                                             .destination = staging.clone(),
-                                         });
-    if (requested.is_err()) {
+    const auto& package = pin.release.package;
+    auto        lock    = rstd_try(acquire_lock(layout, package));
+    (void)lock;
+    auto current = rstd_try(probe_blob(layout, package, pin.checksum));
+    if (current.verified.is_some()) {
         discard(staging.as_path());
-        return Err(rstd::move(requested).unwrap_err());
+        return Ok(rstd::move(current.verified).unwrap());
     }
-    auto verified = verify_registry_blob_file(staging.clone(), package, checksum);
-    if (verified.is_err()) {
-        discard(staging.as_path());
-        return Err(rstd::move(verified).unwrap_err());
-    }
-
-    auto lock       = rstd_try(acquire_lock(layout, package));
-    auto concurrent = rstd_try(completed_blob(layout, package, checksum));
-    if (concurrent.is_some()) {
-        discard(staging.as_path());
-        return Ok(rstd::move(concurrent).unwrap());
-    }
-    auto existing = rstd_try(ordinary_file(layout.source.as_path(), package));
-    if (existing.is_some()) {
+    if (current.corrupt) {
         auto removed = rstd::fs::remove_file(layout.source.as_path());
         if (removed.is_err()) {
             discard(staging.as_path());
@@ -362,6 +302,11 @@ auto lito::registry::RegistryBlobCache::acquire(const RegistryPackageId& package
                              layout.source.as_path(),
                              rstd::move(removed).unwrap_err()));
         }
+    }
+    auto read_only = set_read_only(staging.as_path(), package);
+    if (read_only.is_err()) {
+        discard(staging.as_path());
+        return Err(rstd::move(read_only).unwrap_err());
     }
     auto renamed = rstd::fs::rename(staging.as_path(), layout.source.as_path());
     if (renamed.is_err()) {
@@ -373,18 +318,90 @@ auto lito::registry::RegistryBlobCache::acquire(const RegistryPackageId& package
                          layout.source.as_path(),
                          rstd::move(renamed).unwrap_err()));
     }
-    auto size = verified->size;
-    rstd_try(write_receipt(layout, package, checksum, size));
     return Ok(VerifiedRegistryBlob {
-        .checksum = checksum.clone(),
+        .checksum = pin.checksum.clone(),
         .path     = layout.source.clone(),
-        .size     = size,
+        .size     = verified.size,
     });
 }
 
-auto lito::registry::RegistryBlobCache::publish(const RegistryPackageId& package,
-                                                slice<u8>                contents)
+} // namespace
+
+auto lito::registry::RegistryBlobCache::acquire(const RegistryReleasePin& pin)
     -> RegistryArtifactResult<VerifiedRegistryBlob> {
+    const auto& package = pin.release.package;
+    auto        layout  = blob_layout(cache_root_.as_path(), pin);
+    auto        cached  = rstd_try(probe_blob(layout, package, pin.checksum));
+    if (cached.verified.is_some()) return Ok(rstd::move(cached.verified).unwrap());
+    if (source_bundles_ != nullptr) {
+        for (const auto& root : *source_bundles_) {
+            auto bundled = lito::source::SourceBundleLayout(root.clone()).registry_package(pin);
+            auto source  = rstd_try(ordinary_file(bundled.as_path(), package));
+            if (source.is_none()) continue;
+            auto staging = rstd_try(reserve_staging(layout, package));
+            auto copied  = rstd::fs::copy(bundled.as_path(), staging.as_path());
+            if (copied.is_err()) {
+                discard(staging.as_path());
+                return artifact_failure<VerifiedRegistryBlob>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("cannot import Registry source bundle blob '{}' into '{}': {}",
+                                 bundled.as_path(),
+                                 staging.as_path(),
+                                 rstd::move(copied).unwrap_err()));
+            }
+            auto verified = verify_registry_blob_file(staging.clone(), package, pin.checksum);
+            if (verified.is_err()) {
+                discard(staging.as_path());
+                return Err(rstd::move(verified).unwrap_err());
+            }
+            return publish_staging(layout, pin, rstd::move(staging), *verified);
+        }
+    }
+    if (network_ == RegistryNetworkPolicy::Offline) {
+        if (cached.corrupt) {
+            return artifact_failure<VerifiedRegistryBlob>(
+                RegistryArtifactErrorKind::Digest,
+                package,
+                rstd::format("offline Registry package archive '{}' is corrupt",
+                             layout.source.as_path()));
+        }
+        return artifact_failure<VerifiedRegistryBlob>(
+            RegistryArtifactErrorKind::OfflineCacheMiss,
+            package,
+            rstd::format("offline Registry resolve has no verified package archive '{}'",
+                         registry_archive_filename(pin).as_str()));
+    }
+    if (transport_.download == nullptr) {
+        return artifact_failure<VerifiedRegistryBlob>(RegistryArtifactErrorKind::Network,
+                                                      package,
+                                                      "Registry blob transport is unavailable"_str);
+    }
+
+    auto staging = rstd_try(reserve_staging(layout, package));
+    auto requested =
+        transport_.download(transport_.context,
+                            RegistryBlobDownloadRequest {
+                                .package     = package.clone(),
+                                .url         = endpoint_.render(package.name, pin.release.version),
+                                .destination = staging.clone(),
+                            });
+    if (requested.is_err()) {
+        discard(staging.as_path());
+        return Err(rstd::move(requested).unwrap_err());
+    }
+    auto verified = verify_registry_blob_file(staging.clone(), package, pin.checksum);
+    if (verified.is_err()) {
+        discard(staging.as_path());
+        return Err(rstd::move(verified).unwrap_err());
+    }
+
+    return publish_staging(layout, pin, rstd::move(staging), *verified);
+}
+
+auto lito::registry::RegistryBlobCache::publish(const RegistryReleasePin& pin, slice<u8> contents)
+    -> RegistryArtifactResult<VerifiedRegistryBlob> {
+    const auto& package = pin.release.package;
     if (contents.is_empty() || as_cast<u64>(contents.len()) > MAX_REGISTRY_PACKAGE_ARCHIVE_BYTES) {
         return artifact_failure<VerifiedRegistryBlob>(
             RegistryArtifactErrorKind::Size,
@@ -392,10 +409,9 @@ auto lito::registry::RegistryBlobCache::publish(const RegistryPackageId& package
             rstd::format("embedded Registry package archive size {} is outside the supported range",
                          contents.len()));
     }
-    auto checksum = PackageChecksum(licrypto::sha256_digest(contents));
-    auto layout   = blob_layout(cache_root_.as_path(), checksum);
-    auto cached   = rstd_try(completed_blob(layout, package, checksum));
-    if (cached.is_some()) return Ok(rstd::move(cached).unwrap());
+    auto layout = blob_layout(cache_root_.as_path(), pin);
+    auto cached = rstd_try(probe_blob(layout, package, pin.checksum));
+    if (cached.verified.is_some()) return Ok(rstd::move(cached.verified).unwrap());
     auto staging = rstd_try(reserve_staging(layout, package));
     auto written = rstd::fs::write(staging.as_path(), contents);
     if (written.is_err()) {
@@ -407,47 +423,12 @@ auto lito::registry::RegistryBlobCache::publish(const RegistryPackageId& package
                          staging.as_path(),
                          rstd::move(written).unwrap_err()));
     }
-    auto verified = verify_registry_blob_file(staging.clone(), package, checksum);
+    auto verified = verify_registry_blob_file(staging.clone(), package, pin.checksum);
     if (verified.is_err()) {
         discard(staging.as_path());
         return Err(rstd::move(verified).unwrap_err());
     }
-    auto lock       = rstd_try(acquire_lock(layout, package));
-    auto concurrent = rstd_try(completed_blob(layout, package, checksum));
-    if (concurrent.is_some()) {
-        discard(staging.as_path());
-        return Ok(rstd::move(concurrent).unwrap());
-    }
-    auto existing = rstd_try(ordinary_file(layout.source.as_path(), package));
-    if (existing.is_some()) {
-        auto removed = rstd::fs::remove_file(layout.source.as_path());
-        if (removed.is_err()) {
-            discard(staging.as_path());
-            return artifact_failure<VerifiedRegistryBlob>(
-                RegistryArtifactErrorKind::Io,
-                package,
-                rstd::format("cannot replace corrupt Registry blob '{}': {}",
-                             layout.source.as_path(),
-                             rstd::move(removed).unwrap_err()));
-        }
-    }
-    auto renamed = rstd::fs::rename(staging.as_path(), layout.source.as_path());
-    if (renamed.is_err()) {
-        discard(staging.as_path());
-        return artifact_failure<VerifiedRegistryBlob>(
-            RegistryArtifactErrorKind::Io,
-            package,
-            rstd::format("cannot publish embedded Registry blob cache entry '{}': {}",
-                         layout.source.as_path(),
-                         rstd::move(renamed).unwrap_err()));
-    }
-    auto size = verified->size;
-    rstd_try(write_receipt(layout, package, checksum, size));
-    return Ok(VerifiedRegistryBlob {
-        .checksum = rstd::move(checksum),
-        .path     = layout.source.clone(),
-        .size     = size,
-    });
+    return publish_staging(layout, pin, rstd::move(staging), *verified);
 }
 
 auto lito::registry::CurlRegistryBlobTransport::download_callback(

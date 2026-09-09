@@ -9,9 +9,7 @@ import lito.system;
 import :source.git;
 import :parse;
 import :registry.archive;
-import :registry.digest;
-import :registry.identity;
-import :registry.version;
+import :registry.release;
 
 using namespace rstd::prelude;
 
@@ -24,9 +22,7 @@ class LockedSource {
     RSTD_ENUM(LockedSource,
               (Git, (String url; String commit;)),
               (Archive, (lito::parse::FetchUrl url; licrypto::Sha256Digest sha256;)),
-              (Registry,
-               (lito::registry::RegistryPackageId package; lito::registry::SemanticVersion version;
-                lito::registry::PackageChecksum checksum;)))
+              (Registry, (lito::registry::RegistryReleasePin pin;)))
 };
 
 struct LockedPackageExternalSource {

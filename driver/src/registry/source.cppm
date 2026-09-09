@@ -4,7 +4,6 @@ module;
 export module lito.driver:registry.source;
 
 import rstd;
-import rstd.json;
 import lito.core;
 import lito.pack;
 import :registry.blob;
@@ -38,9 +37,7 @@ public:
                  transport,
                  source_bundles) {}
 
-    auto materialize(const RegistryPackageId& package,
-                     const SemanticVersion&   version,
-                     const PackageChecksum&   checksum)
+    auto materialize(const RegistryReleasePin& pin)
         -> RegistryArtifactResult<MaterializedRegistrySource>;
 };
 
@@ -50,10 +47,6 @@ namespace
 {
 
 using namespace lito::registry;
-using Json    = rstd::json::Value;
-using JsonMap = rstd::json::Map;
-
-inline constexpr auto SOURCE_RECEIPT_SCHEMA = "lito.registry.source-receipt.v1"_str;
 
 template<typename T>
 auto source_failure(RegistryArtifactErrorKind kind,
@@ -74,35 +67,40 @@ auto source_failure(RegistryArtifactErrorKind kind,
 }
 
 struct SourceLayout {
-    PathBuf bucket;
     PathBuf tree;
-    PathBuf receipt;
+    PathBuf marker;
     PathBuf lock;
 };
 
-auto source_layout(ref<rstd::path::Path> root, const PackageChecksum& checksum) -> SourceLayout {
-    auto bucket = PathBuf::from(root)
-                      .join(PathBuf::from("registry"_str).as_path())
-                      .join(PathBuf::from("sources"_str).as_path())
-                      .join(PathBuf::from("sha256"_str).as_path())
-                      .join(PathBuf::from(checksum.text().as_str()).as_path());
+auto source_layout(ref<rstd::path::Path> root, const RegistryReleasePin& pin) -> SourceLayout {
+    auto cache = RegistryCacheLayout(PathBuf::from(root));
     return SourceLayout {
-        .bucket  = bucket.clone(),
-        .tree    = bucket.join(PathBuf::from("tree"_str).as_path()),
-        .receipt = bucket.join(PathBuf::from("receipt.json"_str).as_path()),
-        .lock    = bucket.join(PathBuf::from("lock"_str).as_path()),
+        .tree   = cache.tree(pin),
+        .marker = cache.tree_marker(pin),
+        .lock   = cache.release_lock(pin),
     };
 }
 
 auto acquire_source_lock(const SourceLayout& layout, const RegistryPackageId& package)
     -> RegistryArtifactResult<rstd::fs::FileLock> {
-    auto created = rstd::fs::create_dir_all(layout.bucket.as_path());
+    auto tree_parent = layout.tree.as_path().parent().unwrap();
+    auto created     = rstd::fs::create_dir_all(tree_parent);
     if (created.is_err()) {
         return source_failure<rstd::fs::FileLock>(
             RegistryArtifactErrorKind::Io,
             package,
-            rstd::format("cannot create Registry source cache directory '{}': {}",
-                         layout.bucket.as_path(),
+            rstd::format("cannot create Registry tree cache directory '{}': {}",
+                         tree_parent,
+                         rstd::move(created).unwrap_err()));
+    }
+    auto lock_parent = layout.lock.as_path().parent().unwrap();
+    created          = rstd::fs::create_dir_all(lock_parent);
+    if (created.is_err()) {
+        return source_failure<rstd::fs::FileLock>(
+            RegistryArtifactErrorKind::Io,
+            package,
+            rstd::format("cannot create Registry cache lock directory '{}': {}",
+                         lock_parent,
                          rstd::move(created).unwrap_err()));
     }
     auto file = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
@@ -128,66 +126,60 @@ auto acquire_source_lock(const SourceLayout& layout, const RegistryPackageId& pa
     return Ok(rstd::move(lock).unwrap());
 }
 
-auto required_string(const Json& value, ref<str> field) -> Option<ref<str>> {
-    auto member = value.get(field);
-    if (member.is_none()) return None();
-    return (**member).as_str();
-}
-
-auto receipt_matches(const SourceLayout&      layout,
-                     const RegistryPackageId& package,
-                     const SemanticVersion&   version,
-                     const PackageChecksum&   checksum) -> RegistryArtifactResult<bool> {
-    auto text = rstd::fs::read_to_string(layout.receipt.as_path());
-    if (text.is_err()) {
-        auto error = rstd::move(text).unwrap_err();
+auto reusable_tree(const SourceLayout&      layout,
+                   const RegistryPackageId& package,
+                   const PackageChecksum&   checksum) -> RegistryArtifactResult<bool> {
+    auto marker_metadata = rstd::fs::symlink_metadata(layout.marker.as_path());
+    if (marker_metadata.is_err()) {
+        auto error = rstd::move(marker_metadata).unwrap_err();
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(false);
         }
         return source_failure<bool>(RegistryArtifactErrorKind::Io,
                                     package,
-                                    rstd::format("cannot read Registry source receipt '{}': {}",
-                                                 layout.receipt.as_path(),
+                                    rstd::format("cannot inspect Registry tree marker '{}': {}",
+                                                 layout.marker.as_path(),
                                                  error));
     }
-    auto parsed = rstd::json::from_str(text->as_str(),
-                                       rstd::json::ParseOptions { .reject_duplicate_keys = true });
-    if (parsed.is_err()) return Ok(false);
-    auto object = parsed->as_object();
-    if (object.is_none() || (**object).len() != usize(6)) return Ok(false);
-    auto schema            = required_string(*parsed, "schema"_str);
-    auto registry          = required_string(*parsed, "registry"_str);
-    auto name              = required_string(*parsed, "package"_str);
-    auto recorded_version  = required_string(*parsed, "version"_str);
-    auto recorded_checksum = required_string(*parsed, "checksum"_str);
-    auto format            = required_string(*parsed, "format"_str);
-    if (schema.is_none() || registry.is_none() || name.is_none() || recorded_version.is_none() ||
-        recorded_checksum.is_none() || format.is_none() || *schema != SOURCE_RECEIPT_SCHEMA ||
-        *registry != package.registry.as_str() || *name != package.name.as_str() ||
-        *recorded_version != version.text() || *recorded_checksum != checksum.text().as_str() ||
-        *format != RegistryArchiveFormat::TAR_ZSTD_V1) {
-        return Ok(false);
+    if (! marker_metadata->is_file() || marker_metadata->is_symlink()) {
+        return source_failure<bool>(
+            RegistryArtifactErrorKind::Io,
+            package,
+            rstd::format("Registry tree marker '{}' is not an ordinary file",
+                         layout.marker.as_path()));
     }
-    auto metadata = rstd::fs::symlink_metadata(layout.tree.as_path());
-    return Ok(metadata.is_ok() && metadata->is_dir() && ! metadata->is_symlink());
-}
+    auto text = rstd::fs::read_to_string(layout.marker.as_path());
+    if (text.is_err()) {
+        return source_failure<bool>(RegistryArtifactErrorKind::Io,
+                                    package,
+                                    rstd::format("cannot read Registry tree marker '{}': {}",
+                                                 layout.marker.as_path(),
+                                                 rstd::move(text).unwrap_err()));
+    }
+    auto expected = checksum.text();
+    expected.push_ascii('\n');
+    if (*text != expected.as_str()) return Ok(false);
 
-auto receipt_json(const RegistryPackageId& package,
-                  const SemanticVersion&   version,
-                  const PackageChecksum&   checksum) -> String {
-    const auto string_value = [](ref<str> value) -> Json {
-        return Json::String(String::make(value));
-    };
-    auto value = JsonMap::make();
-    value.insert(String::make("schema"_str), string_value(SOURCE_RECEIPT_SCHEMA));
-    value.insert(String::make("registry"_str), string_value(package.registry.as_str()));
-    value.insert(String::make("package"_str), string_value(package.name.as_str()));
-    value.insert(String::make("version"_str), string_value(version.text()));
-    value.insert(String::make("checksum"_str), string_value(checksum.text().as_str()));
-    value.insert(String::make("format"_str), string_value(RegistryArchiveFormat::TAR_ZSTD_V1));
-    auto text = rstd::json::to_string(Json::Object(rstd::move(value)));
-    text.push_ascii('\n');
-    return text;
+    auto tree = rstd::fs::symlink_metadata(layout.tree.as_path());
+    if (tree.is_err()) {
+        auto error = rstd::move(tree).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(false);
+        }
+        return source_failure<bool>(RegistryArtifactErrorKind::Io,
+                                    package,
+                                    rstd::format("cannot inspect Registry source tree '{}': {}",
+                                                 layout.tree.as_path(),
+                                                 error));
+    }
+    if (! tree->is_dir() || tree->is_symlink()) {
+        return source_failure<bool>(
+            RegistryArtifactErrorKind::Io,
+            package,
+            rstd::format("Registry source tree '{}' is not an ordinary directory",
+                         layout.tree.as_path()));
+    }
+    return Ok(true);
 }
 
 auto set_read_only(const lito::source::SourceTree& tree,
@@ -222,29 +214,58 @@ auto set_read_only(const lito::source::SourceTree& tree,
 
 } // namespace
 
-auto lito::registry::RegistrySourceResolver::materialize(const RegistryPackageId& package,
-                                                         const SemanticVersion&   version,
-                                                         const PackageChecksum&   checksum)
+auto lito::registry::RegistrySourceResolver::materialize(const RegistryReleasePin& pin)
     -> RegistryArtifactResult<MaterializedRegistrySource> {
-    auto layout = source_layout(cache_root_.as_path(), checksum);
-    auto blob   = rstd_try(blobs_.acquire(package, version, checksum));
-    auto inspected =
-        PackageArchiveInspector::inspect_at_root(blob, package, version, layout.tree.as_path());
+    const auto& package   = pin.release.package;
+    auto        layout    = source_layout(cache_root_.as_path(), pin);
+    auto        blob      = rstd_try(blobs_.acquire(pin));
+    auto        inspected = PackageArchiveInspector::inspect_at_root(
+        blob, package, pin.release.version, layout.tree.as_path());
     if (inspected.is_err()) return Err(rstd::move(inspected).unwrap_err());
     auto lock = rstd_try(acquire_source_lock(layout, package));
     (void)lock;
-    auto reusable = rstd_try(receipt_matches(layout, package, version, checksum));
+    auto reusable = rstd_try(reusable_tree(layout, package, pin.checksum));
     if (! reusable) {
-        auto existing = rstd::fs::exists(layout.tree.as_path());
-        if (existing.is_err()) {
-            return source_failure<MaterializedRegistrySource>(
-                RegistryArtifactErrorKind::Io,
-                package,
-                rstd::format("cannot inspect Registry source cache '{}': {}",
-                             layout.tree.as_path(),
-                             rstd::move(existing).unwrap_err()));
+        auto marker = rstd::fs::symlink_metadata(layout.marker.as_path());
+        if (marker.is_ok()) {
+            if (! marker->is_file() || marker->is_symlink()) {
+                return source_failure<MaterializedRegistrySource>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("Registry tree marker '{}' is not an ordinary file",
+                                 layout.marker.as_path()));
+            }
+            auto removed = rstd::fs::remove_file(layout.marker.as_path());
+            if (removed.is_err()) {
+                return source_failure<MaterializedRegistrySource>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("cannot remove incomplete Registry tree marker '{}': {}",
+                                 layout.marker.as_path(),
+                                 rstd::move(removed).unwrap_err()));
+            }
+        } else {
+            auto error = rstd::move(marker).unwrap_err();
+            if (error.kind() !=
+                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+                return source_failure<MaterializedRegistrySource>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("cannot inspect Registry tree marker '{}': {}",
+                                 layout.marker.as_path(),
+                                 error));
+            }
         }
-        if (*existing) {
+
+        auto existing = rstd::fs::symlink_metadata(layout.tree.as_path());
+        if (existing.is_ok()) {
+            if (! existing->is_dir() || existing->is_symlink()) {
+                return source_failure<MaterializedRegistrySource>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("Registry source tree '{}' is not an ordinary directory",
+                                 layout.tree.as_path()));
+            }
             auto removed = rstd::fs::remove_dir_all(layout.tree.as_path());
             if (removed.is_err()) {
                 return source_failure<MaterializedRegistrySource>(
@@ -254,13 +275,25 @@ auto lito::registry::RegistrySourceResolver::materialize(const RegistryPackageId
                                  layout.tree.as_path(),
                                  rstd::move(removed).unwrap_err()));
             }
+        } else {
+            auto error = rstd::move(existing).unwrap_err();
+            if (error.kind() !=
+                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+                return source_failure<MaterializedRegistrySource>(
+                    RegistryArtifactErrorKind::Io,
+                    package,
+                    rstd::format("cannot inspect Registry source tree '{}': {}",
+                                 layout.tree.as_path(),
+                                 error));
+            }
         }
         auto now     = rstd::time::SystemTime::now().as_unix_time();
-        auto staging = layout.bucket.join(PathBuf::from(rstd::format("tree-staging-{}-{}-{}",
-                                                                     rstd::process::id(),
-                                                                     now.seconds,
-                                                                     now.nanoseconds))
-                                              .as_path());
+        auto staging = PathBuf::from(layout.tree.as_path().parent().unwrap())
+                           .join(PathBuf::from(rstd::format(".registry-tree.tmp.{}.{}.{}",
+                                                            rstd::process::id(),
+                                                            now.seconds,
+                                                            now.nanoseconds))
+                                     .as_path());
         auto materialized =
             lito::source::materialize_source_tree(inspected->tree, staging.as_path());
         if (materialized.is_err()) {
@@ -285,15 +318,16 @@ auto lito::registry::RegistrySourceResolver::materialize(const RegistryPackageId
                              layout.tree.as_path(),
                              rstd::move(committed).unwrap_err()));
         }
-        auto receipt = receipt_json(package, version, checksum);
+        auto marker_text = pin.checksum.text();
+        marker_text.push_ascii('\n');
         auto written =
-            rstd::fs::write_atomic(layout.receipt.as_path(), receipt.as_str().as_bytes());
+            rstd::fs::write_atomic(layout.marker.as_path(), marker_text.as_str().as_bytes());
         if (written.is_err()) {
             return source_failure<MaterializedRegistrySource>(
                 RegistryArtifactErrorKind::Io,
                 package,
-                rstd::format("cannot write Registry source receipt '{}': {}",
-                             layout.receipt.as_path(),
+                rstd::format("cannot write Registry tree marker '{}': {}",
+                             layout.marker.as_path(),
                              rstd::move(written).unwrap_err()));
         }
     }
@@ -309,12 +343,10 @@ auto lito::registry::RegistrySourceResolver::materialize(const RegistryPackageId
     return Ok(MaterializedRegistrySource {
         .source =
             lito::source::ResolvedPackageSource {
-                .identity         = lito::source::registry_source_identity(package, version),
-                .kind             = lito::source::PackageSourceKind::Registry,
-                .root_directory   = layout.tree.clone(),
-                .registry_package = Some(package.clone()),
-                .registry_version = Some(version.clone()),
-                .package_checksum = Some(checksum.clone()),
+                .identity       = lito::source::registry_source_identity(pin),
+                .kind           = lito::source::PackageSourceKind::Registry,
+                .root_directory = layout.tree.clone(),
+                .registry       = Some(pin.clone()),
             },
         .catalog = rstd::move(catalog).unwrap(),
     });

@@ -193,9 +193,9 @@ auto append_git_bundle_entry(Vec<GitBundleEntry>&                       entries,
 
 auto builtin_package_source(const lito::package::ResolvedPackageGraph& graph,
                             const lito::source::ResolvedPackageSource& source) noexcept -> bool {
-    if (source.registry_package.is_none()) return false;
+    if (source.registry.is_none()) return false;
     for (const auto& package : graph.builtin_packages) {
-        if (package.as_str() == source.registry_package->name.as_str()) return true;
+        if (package.as_str() == source.registry->release.package.name.as_str()) return true;
     }
     return false;
 }
@@ -217,15 +217,13 @@ auto fetch_entry_count(const lito::package::ResolvedPackageGraph&          graph
             return;
         }
         if (builtin_package_source(graph, source)) return;
-        if (source.kind != lito::source::PackageSourceKind::Registry ||
-            source.registry_package.is_none() || source.registry_version.is_none() ||
-            source.package_checksum.is_none())
+        if (source.kind != lito::source::PackageSourceKind::Registry || source.registry.is_none())
             return;
-        entries.insert(
-            bundle.registry_package(*source.package_checksum).as_path().to_string_lossy(),
-            empty {});
-        entries.insert(bundle.registry_index(*source.registry_package).as_path().to_string_lossy(),
+        entries.insert(bundle.registry_package(*source.registry).as_path().to_string_lossy(),
                        empty {});
+        entries.insert(
+            bundle.registry_index(source.registry->release.package).as_path().to_string_lossy(),
+            empty {});
     };
     for (const auto& source : graph.sources) append_package_source(source);
     for (const auto& package : graph.packages) append_package_source(package.source);
@@ -472,16 +470,16 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
     for (const auto& source : graph.sources) {
         if (source.kind != lito::source::PackageSourceKind::Registry) continue;
         if (builtin_package_source(graph, source)) continue;
-        if (registries.is_none() || source.registry_package.is_none() ||
-            source.registry_version.is_none() || source.package_checksum.is_none()) {
+        if (registries.is_none() || source.registry.is_none()) {
             cleanup();
             return fetch_failure<usize>("Registry source bundle metadata is incomplete"_str);
         }
-        auto configured = registry_configuration(*registries, source.registry_package->registry);
+        const auto& pin        = *source.registry;
+        auto        configured = registry_configuration(*registries, pin.release.package.registry);
         if (configured.is_none()) {
             cleanup();
             return fetch_failure<usize>(rstd::format("Registry '{}' is not configured",
-                                                     source.registry_package->registry.as_str()));
+                                                     pin.release.package.registry.as_str()));
         }
         if (registry_cache.is_none()) {
             auto data = lito::system::LitoDataRoot::resolve();
@@ -492,7 +490,7 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             registry_cache = Some(PathBuf::from(data->root()));
         }
 
-        auto index_destination = layout.registry_index(*source.registry_package);
+        auto index_destination = layout.registry_index(pin.release.package);
         auto index_key         = index_destination.as_path().to_string_lossy();
         if (! registry_indices.contains_key(index_key.as_str())) {
             auto indices = lito::registry::RegistryIndexClient(
@@ -501,8 +499,7 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
                 lito::registry::RegistryNetworkPolicy::Offline,
                 lito::registry::RegistryIndexUpdatePolicy::Reuse,
                 {});
-            auto record = indices.source_bundle_record(
-                *source.registry_package, *source.registry_version, *source.package_checksum);
+            auto record = indices.source_bundle_record(pin);
             if (record.is_err()) {
                 cleanup();
                 return fetch_failure<usize>(rstd::format("cannot read Registry package index: {}",
@@ -517,7 +514,7 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             ++entries;
         }
 
-        auto destination = layout.registry_package(*source.package_checksum);
+        auto destination = layout.registry_package(pin);
         auto key         = destination.as_path().to_string_lossy();
         if (registry_packages.contains_key(key.as_str())) continue;
         auto blobs = lito::registry::RegistryBlobCache(
@@ -525,8 +522,7 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             (**configured).effective_endpoints()->download.clone(),
             lito::registry::RegistryNetworkPolicy::Offline,
             {});
-        auto blob = blobs.acquire(
-            *source.registry_package, *source.registry_version, *source.package_checksum);
+        auto blob = blobs.acquire(pin);
         if (blob.is_err()) {
             cleanup();
             return fetch_failure<usize>(rstd::format(
