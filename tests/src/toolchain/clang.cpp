@@ -15,6 +15,55 @@ using namespace lito;
 using namespace lito::toolchain;
 using namespace lito_test;
 
+TEST(ClangPreprocessor, PreservesBuiltinAndEnvironmentIdentityBytes) {
+    if (! rstd::fs::exists(PathBuf::from("/bin/sh"_str).as_path()).unwrap_or(false)) {
+        GTEST_SKIP() << "Requires /bin/sh";
+    }
+    auto directory = rstd::fs::TempDir::make("lito-hash-probe"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto command  = strings("/bin/sh"_str,
+                            "-c"_str,
+                            R"sh(
+case " $* " in
+  *" -dM "*) printf '#define FIXTURE_VALUE 7\n#define EMPTY\n' ;;
+  *" -v "*) printf '#include <...> search starts here:\nEnd of search list.\n' >&2 ;;
+  *) IFS= read -r line
+     case "$line" in
+       LITO_BUILTIN_DATE*) printf 'LITO_BUILTIN_DATE "Sep 11 2026"\nLITO_BUILTIN_TIME "00:00:00"\n' ;;
+     esac ;;
+esac
+)sh"_str,
+                            "fixture"_str);
+    auto semantic = BuiltinSemanticContext {};
+    auto builtin  = query_clang_builtin_environment_snapshot(command,
+                                                             "fixture-key"_str,
+                                                             semantic,
+                                                             PreprocessorLanguage::C,
+                                                             directory->path(),
+                                                             *environment);
+    ASSERT_TRUE(builtin.is_ok()) << (builtin.is_err()
+                                         ? rstd::format("{}", builtin.unwrap_err()).as_str()
+                                         : ""_str);
+    EXPECT_EQ((*builtin)->identity.as_str(), "52a75aa7b7e79368"_str);
+    EXPECT_EQ((*builtin)->clang_macro_count, usize(2));
+    auto queried = query_preprocessor_environment(
+        command,
+        PreprocessorEnvironmentKey::make(
+            "fixture-context"_str, directory->path(), PreprocessorLanguage::C),
+        rstd::move(*builtin),
+        rstd::move(semantic),
+        PreprocessorLanguage::C,
+        Vec<PreprocessorMacroDirective>::make(),
+        *environment);
+    ASSERT_TRUE(queried.is_ok()) << (queried.is_err()
+                                         ? rstd::format("{}", queried.unwrap_err()).as_str()
+                                         : ""_str);
+    EXPECT_EQ(queried->identity.as_str(), "782a07bcc753cd3f"_str);
+}
+
 TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
     auto directory = rstd::fs::TempDir::make("lito-framework-include-test"_str);
     ASSERT_TRUE(directory.is_ok());

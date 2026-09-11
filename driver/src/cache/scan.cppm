@@ -11,7 +11,6 @@ import lito.cpp;
 import lito.frontend;
 import lito.toolchain;
 import :build.layout;
-import :cache.hash;
 import :cache.common;
 import :cache.scan_wire;
 
@@ -405,53 +404,54 @@ class ScanCacheSession {
                  const Vec<frontend::IncludeLookupDependency>&               lookups,
                  const Vec<frontend::EmbedLookupDependency>&                 embed_lookups,
                  const frontend::FrontendResult& result) const -> CacheResult<String> {
-        auto hash     = cache::FNV_OFFSET;
+        auto hash     = lito::hash::Fnv1a64 {};
         auto add_path = [&](ref<rstd::path::Path> path) -> CacheResult<empty> {
             auto text = path.to_str();
             if (text.is_none()) {
                 return cache_failure<empty>(rstd::format("path '{}' is not valid UTF-8", path));
             }
-            cache::add_text(hash, *text);
+            hash.write_zero_terminated(*text);
             return Ok(empty {});
         };
-        cache::add_text(hash, "lito-scan-receipt-v1"_str);
-        cache::add_text(hash, state_->environment.as_str());
-        cache::add_text(hash, input.target.as_str());
-        cache::add_text(hash, input.context_identity.as_str());
-        cache::add_text(hash, input.external_macro_schema.as_str());
+        hash.write_zero_terminated("lito-scan-receipt-v1"_str);
+        hash.write_zero_terminated(state_->environment.as_str());
+        hash.write_zero_terminated(input.target.as_str());
+        hash.write_zero_terminated(input.context_identity.as_str());
+        hash.write_zero_terminated(input.external_macro_schema.as_str());
         rstd_try(add_path(input.working_directory.as_path()));
         rstd_try(add_path(input.source.as_path()));
         rstd_try(add_path(input.relative_source.as_path()));
-        cache::add_text(hash, input.source_origin_identity.as_str());
-        cache::add_text(hash, source.fingerprint.as_str());
+        hash.write_zero_terminated(input.source_origin_identity.as_str());
+        hash.write_zero_terminated(source.fingerprint.as_str());
         auto file_iter = files.iter();
         for (auto item : file_iter) {
             const auto& file = *item.template get<1>();
             rstd_try(add_path(file.path.as_path()));
-            cache::add_text(hash, file.fingerprint.as_str());
+            hash.write_zero_terminated(file.fingerprint.as_str());
         }
         for (const auto& lookup : lookups) {
-            cache::add_text(hash, scan_cache_wire::include_kind_name(lookup.kind));
-            cache::add_text(hash, lookup.name.as_str());
+            hash.write_zero_terminated(scan_cache_wire::include_kind_name(lookup.kind));
+            hash.write_zero_terminated(lookup.name.as_str());
             rstd_try(add_path(lookup.including_path.as_path()));
-            cache::add_text(hash,
-                            lookup.previous_search_index.is_some()
-                                ? rstd::format("{}", *lookup.previous_search_index).as_str()
-                                : "none"_str);
+            hash.write_zero_terminated(
+                lookup.previous_search_index.is_some()
+                    ? rstd::format("{}", *lookup.previous_search_index).as_str()
+                    : "none"_str);
             for (const auto& candidate : lookup.missing_candidates) {
                 rstd_try(add_path(candidate.as_path()));
             }
             if (lookup.resolved.is_some()) {
                 rstd_try(add_path(lookup.resolved->requested_path.as_path()));
                 rstd_try(add_path(lookup.resolved->canonical_path.as_path()));
-                cache::add_text(hash, rstd::format("{}", lookup.resolved->search_index).as_str());
+                hash.write_zero_terminated(
+                    rstd::format("{}", lookup.resolved->search_index).as_str());
             } else {
-                cache::add_text(hash, "unresolved"_str);
+                hash.write_zero_terminated("unresolved"_str);
             }
         }
         for (const auto& lookup : embed_lookups) {
-            cache::add_text(hash, scan_cache_wire::embed_kind_name(lookup.kind));
-            cache::add_text(hash, lookup.name.as_str());
+            hash.write_zero_terminated(scan_cache_wire::embed_kind_name(lookup.kind));
+            hash.write_zero_terminated(lookup.name.as_str());
             rstd_try(add_path(lookup.including_path.as_path()));
             for (const auto& candidate : lookup.missing_candidates) {
                 rstd_try(add_path(candidate.as_path()));
@@ -459,9 +459,10 @@ class ScanCacheSession {
             if (lookup.resolved.is_some()) {
                 rstd_try(add_path(lookup.resolved->requested_path.as_path()));
                 rstd_try(add_path(lookup.resolved->canonical_path.as_path()));
-                cache::add_text(hash, rstd::format("{}", lookup.resolved->search_index).as_str());
+                hash.write_zero_terminated(
+                    rstd::format("{}", lookup.resolved->search_index).as_str());
             } else {
-                cache::add_text(hash, "unresolved"_str);
+                hash.write_zero_terminated("unresolved"_str);
             }
         }
         auto encoded = rstd::json::encode_direct(scan_cache_wire::WriteSnapshot {
@@ -471,8 +472,8 @@ class ScanCacheSession {
             return cache_failure<String>(
                 rstd::format("serialize scan cache result: {}", rstd::move(encoded).unwrap_err()));
         }
-        cache::add_text(hash, encoded->as_str());
-        return Ok(cache::hex(hash));
+        hash.write_zero_terminated(encoded->as_str());
+        return Ok(hash.hex64());
     }
 
 public:

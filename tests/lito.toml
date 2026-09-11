@@ -38,6 +38,7 @@ sources = [
   "src/compiler/arguments.cpp",
   "src/config/mod.cpp",
   "src/crypto.cpp",
+  "src/hash.cpp",
   "src/cpp/bmi.cpp",
   "src/cpp/header.cpp",
   "src/cpp/mod.cppm",

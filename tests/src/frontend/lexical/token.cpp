@@ -22,6 +22,7 @@ struct CollidingSecondName {
 };
 
 TEST(CppReservedIdentifier, StaticTypes) {
+    static_assert(cpp::CppConceptKeyword::hash == uint64_t(0x62e792f6d2691013ull));
     static_assert(cpp::CppConceptKeyword::name == "concept"_str);
     static_assert(cpp::CppReservedIdentifierSet::contains("co_await"_str));
     static_assert(cpp::CppReservedIdentifierSet::contains("xor_eq"_str));
@@ -76,4 +77,12 @@ TEST(StaticNameSet, ConfirmsTextAfterHashMatch) {
         visited    = rstd::mtp::same_as<Name, CollidingSecondName>;
     });
     EXPECT_TRUE(visited);
+}
+
+TEST(TokenMatcher, PreservesPrecomputedHashWhenSharingBorrowedText) {
+    auto text   = TokenText::borrowed("concept"_str, uint64_t(17));
+    auto shared = text.shared_clone();
+    EXPECT_EQ(text.comparable_hash(), uint64_t(17));
+    EXPECT_EQ(shared.comparable_hash(), uint64_t(17));
+    EXPECT_EQ(shared.as_bytes().as_ptr(), text.as_bytes().as_ptr());
 }

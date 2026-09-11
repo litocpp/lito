@@ -1,6 +1,7 @@
 export module lito.cpp:bmi.artifact;
 
 import rstd;
+import lito.core;
 import :bmi.compatibility;
 
 using namespace rstd::prelude;
@@ -11,34 +12,11 @@ using PathBuf = rstd::path::PathBuf;
 namespace lito::cpp
 {
 
-inline constexpr uint64_t BMI_FNV_OFFSET = 14695981039346656037ull;
-inline constexpr uint64_t BMI_FNV_PRIME  = 1099511628211ull;
-
-auto hash_bmi_identity(uint64_t& hash, ref<str> value) -> void {
-    for (auto byte : value) {
-        hash ^= byte.to_primitive();
-        hash *= BMI_FNV_PRIME;
-    }
-    hash ^= 0;
-    hash *= BMI_FNV_PRIME;
-}
-
-auto bmi_identity_hex(uint64_t value) -> String {
-    static constexpr char digits[] = "0123456789abcdef";
-    char                  result[16];
-    for (size_t index = 0; index < 16; ++index) {
-        result[15 - index] = digits[value & 0xfu];
-        value >>= 4u;
-    }
-    return String::make(
-        ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16)));
-}
-
 auto bmi_identity_digest(ref<str> recipe, ref<str> value) -> String {
-    auto hash = BMI_FNV_OFFSET;
-    hash_bmi_identity(hash, recipe);
-    hash_bmi_identity(hash, value);
-    return bmi_identity_hex(hash);
+    auto hash = lito::hash::Fnv1a64 {};
+    hash.write_zero_terminated(recipe);
+    hash.write_zero_terminated(value);
+    return hash.hex64();
 }
 
 auto append_bmi_identity_value(String& output, ref<str> key, ref<str> value) -> void {

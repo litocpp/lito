@@ -238,16 +238,9 @@ struct ParsedMacroDump {
 
 auto parse_macro_dump(String output, ref<str> source_name, ref<str> key)
     -> ToolchainResult<ParsedMacroDump> {
-    constexpr uint64_t offset = 14695981039346656037ull;
-    constexpr uint64_t prime  = 1099511628211ull;
-    auto               hash   = offset;
-    auto               add    = [&hash](ref<str> value) {
-        for (auto byte : value) {
-            hash ^= byte.to_primitive();
-            hash *= prime;
-        }
-        hash ^= 0;
-        hash *= prime;
+    auto hash = lito::hash::Fnv1a64 {};
+    auto add  = [&hash](ref<str> value) {
+        hash.write_zero_terminated(value);
     };
     add("lito-clang-builtin-environment-v2"_str);
     add(key);
@@ -273,13 +266,6 @@ auto parse_macro_dump(String output, ref<str> source_name, ref<str> key)
     });
     if (summarized.is_err()) return Err(rstd::move(summarized).unwrap_err());
 
-    static constexpr char digits[] = "0123456789abcdef";
-    char                  identity_text[16];
-    for (size_t index = 0; index < 16; ++index) {
-        identity_text[15 - index] = digits[hash & 0xfu];
-        hash >>= 4u;
-    }
-
     auto parsed = preprocessor::parse_macro_source(lexical::SourceBuffer {
         .path     = PathBuf::from(source_name),
         .contents = rstd::move(output),
@@ -299,8 +285,7 @@ auto parse_macro_dump(String output, ref<str> source_name, ref<str> key)
     }
     return Ok(ParsedMacroDump {
         .definitions = rstd::move(definitions),
-        .identity    = String::make(ref<str>::from_raw_parts_unchecked(
-            reinterpret_cast<const byte*>(identity_text), usize(16))),
+        .identity    = hash.hex64(),
         .macro_count = macro_count,
     });
 }
@@ -309,16 +294,9 @@ auto environment_identity(ref<str>                       builtin_identity,
                           const Vec<IncludeSearchEntry>& includes,
                           ref<str>                       context_id,
                           PreprocessorLanguage           language) -> ToolchainResult<String> {
-    constexpr uint64_t offset = 14695981039346656037ull;
-    constexpr uint64_t prime  = 1099511628211ull;
-    auto               hash   = offset;
-    auto               add    = [&hash](ref<str> value) {
-        for (auto byte : value) {
-            hash ^= byte.to_primitive();
-            hash *= prime;
-        }
-        hash ^= 0;
-        hash *= prime;
+    auto hash = lito::hash::Fnv1a64 {};
+    auto add  = [&hash](ref<str> value) {
+        hash.write_zero_terminated(value);
     };
     add("lito-clang-preprocessor-environment-v3"_str);
     add(context_id);
@@ -336,14 +314,7 @@ auto environment_identity(ref<str>                       builtin_identity,
         add(include.system ? "system"_str : "quote"_str);
         add(include.framework ? "framework"_str : "directory"_str);
     }
-    static constexpr char digits[] = "0123456789abcdef";
-    char                  result[16];
-    for (size_t index = 0; index < 16; ++index) {
-        result[15 - index] = digits[hash & 0xfu];
-        hash >>= 4u;
-    }
-    return Ok(String::make(
-        ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16))));
+    return Ok(hash.hex64());
 }
 
 } // namespace lito::toolchain

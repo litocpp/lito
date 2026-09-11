@@ -12,6 +12,20 @@ using namespace rstd::literals;
 using namespace lito;
 using namespace lito_test;
 
+TEST(Bmi, PreservesFormatKeyBytes) {
+    EXPECT_EQ(cpp::bmi_format_key(format()).as_str(), "5d3baf6481c1b8ce"_str);
+}
+
+TEST(Bmi, PreservesArtifactKeyBytes) {
+    auto key = artifact_key(cpp::BmiRepresentation::Reduced,
+                            cpp::BmiSourceEmbeddingPolicy::ExternalSources,
+                            "dependency-a"_str);
+    EXPECT_EQ(key.value.as_str(), "18901b15d74a9de7"_str);
+    auto empty = artifact_key(
+        cpp::BmiRepresentation::Reduced, cpp::BmiSourceEmbeddingPolicy::ExternalSources, ""_str);
+    EXPECT_EQ(empty.value.as_str(), "a492e4d2acb31f6c"_str);
+}
+
 TEST(Bmi, SeparatesBuildRecipeFromConsumerCompatibility) {
     auto provider            = cpp_options("c++20"_str,
                                            lito::manifest::Optimization::None,

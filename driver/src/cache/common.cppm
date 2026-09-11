@@ -144,8 +144,8 @@ auto output_content_digest(ref<rstd::path::Path> path) -> CacheResult<String> {
             "open compiler output"_str, path, rstd::move(opened).unwrap_err());
     }
     auto file = rstd::move(opened).unwrap();
-    auto hash = cache::FNV_OFFSET;
-    cache::add_text(hash, "lito-output-content-v1"_str);
+    auto hash = lito::hash::Fnv1a64 {};
+    hash.write_zero_terminated("lito-output-content-v1"_str);
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
@@ -154,9 +154,9 @@ auto output_content_digest(ref<rstd::path::Path> path) -> CacheResult<String> {
                 "read compiler output"_str, path, rstd::move(read).unwrap_err());
         }
         if (*read == usize {}) break;
-        cache::add_bytes(hash, slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
+        hash.write(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
     }
-    return Ok(cache::hex(hash));
+    return Ok(hash.hex64());
 }
 
 auto receipt_output_paths(const Json& document) -> Vec<PathBuf> {

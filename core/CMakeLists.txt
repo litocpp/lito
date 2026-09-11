@@ -15,6 +15,7 @@ target_sources(
          CXX_MODULES
          FILES
          src/artifact.cppm
+         src/hash/mod.cppm
          src/config/error.cppm
          src/config/mod.cppm
          src/config/project.cppm

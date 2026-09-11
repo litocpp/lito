@@ -287,13 +287,13 @@ public:
         auto invocation_identity = invocation.identity();
         auto command_key =
             cache::text_identity("lito-command-key-v1"_str, invocation_identity.as_str());
-        auto artifact_hash = cache::FNV_OFFSET;
-        cache::add_text(artifact_hash, "lito-artifact-v2"_str);
-        cache::add_text(artifact_hash, environment_.as_str());
-        cache::add_text(artifact_hash, context_key.as_str());
-        cache::add_text(artifact_hash, command_key.as_str());
-        cache::add_text(artifact_hash, scan_receipt);
-        cache::add_text(artifact_hash, unit.unit.source_origin_identity.as_str());
+        auto artifact_hash = lito::hash::Fnv1a64 {};
+        artifact_hash.write_zero_terminated("lito-artifact-v2"_str);
+        artifact_hash.write_zero_terminated(environment_.as_str());
+        artifact_hash.write_zero_terminated(context_key.as_str());
+        artifact_hash.write_zero_terminated(command_key.as_str());
+        artifact_hash.write_zero_terminated(scan_receipt);
+        artifact_hash.write_zero_terminated(unit.unit.source_origin_identity.as_str());
 
         auto direct = Vec<CacheModuleReceipt>::with_capacity(dependencies.len());
         for (const auto& dependency : dependencies) {
@@ -301,10 +301,10 @@ public:
                 .artifact     = dependency.artifact.clone(),
                 .logical_name = dependency.logical_name.clone(),
             });
-            cache::add_text(artifact_hash, dependency.logical_name.as_str());
-            cache::add_text(artifact_hash, dependency.artifact.as_str());
+            artifact_hash.write_zero_terminated(dependency.logical_name.as_str());
+            artifact_hash.write_zero_terminated(dependency.artifact.as_str());
         }
-        auto artifact = cache::hex(artifact_hash);
+        auto artifact = artifact_hash.hex64();
 
         auto        bmi_receipt  = Option<CacheBmiOutputReceipt> {};
         const auto* bmi_artifact = cpp::unit_bmi(unit.unit);

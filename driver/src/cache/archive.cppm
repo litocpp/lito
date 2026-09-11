@@ -167,19 +167,19 @@ public:
         auto command_identity = invocation.identity();
         auto command =
             cache::text_identity("lito-archive-command-v1"_str, command_identity.as_str());
-        auto artifact_hash = cache::FNV_OFFSET;
-        cache::add_text(artifact_hash, "lito-archive-artifact-v1"_str);
-        cache::add_text(artifact_hash, environment_.as_str());
-        cache::add_text(artifact_hash, command.as_str());
-        cache::add_text(artifact_hash, target);
+        auto artifact_hash = lito::hash::Fnv1a64 {};
+        artifact_hash.write_zero_terminated("lito-archive-artifact-v1"_str);
+        artifact_hash.write_zero_terminated(environment_.as_str());
+        artifact_hash.write_zero_terminated(command.as_str());
+        artifact_hash.write_zero_terminated(target);
         auto input_receipts = Vec<CachedArtifactIdentity>::with_capacity(inputs.len());
         for (const auto& input : inputs) {
             input_receipts.push(input.clone());
-            cache::add_text(artifact_hash, input.recipe.as_str());
-            cache::add_text(artifact_hash, input.content.as_str());
+            artifact_hash.write_zero_terminated(input.recipe.as_str());
+            artifact_hash.write_zero_terminated(input.content.as_str());
         }
         auto receipt = ArchiveCacheReceipt {
-            .artifact    = cache::hex(artifact_hash),
+            .artifact    = artifact_hash.hex64(),
             .command     = rstd::move(command),
             .environment = environment_.clone(),
             .inputs      = rstd::move(input_receipts),

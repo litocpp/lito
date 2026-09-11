@@ -1,22 +1,18 @@
 export module lito.frontend.static_name;
 
 import rstd;
+import lito.core;
 
 using namespace rstd::prelude;
 
 export namespace lito::frontend
 {
 
-inline constexpr uint64_t COMPARABLE_NAME_HASH_OFFSET = 14695981039346656037ull;
-inline constexpr uint64_t COMPARABLE_NAME_HASH_PRIME  = 1099511628211ull;
+inline constexpr uint64_t COMPARABLE_NAME_HASH_OFFSET = lito::hash::Fnv1a64::OFFSET;
+inline constexpr uint64_t COMPARABLE_NAME_HASH_PRIME  = lito::hash::Fnv1a64::PRIME;
 
 constexpr auto comparable_name_hash(slice<u8> name) noexcept -> uint64_t {
-    auto hash = COMPARABLE_NAME_HASH_OFFSET;
-    for (auto value : name) {
-        hash ^= value.to_primitive();
-        hash *= COMPARABLE_NAME_HASH_PRIME;
-    }
-    return hash;
+    return lito::hash::fnv1a64(name).to_primitive();
 }
 
 constexpr auto comparable_name_hash(ref<str> name) noexcept -> uint64_t {
