@@ -75,7 +75,7 @@ auto registry_download_endpoint(ref<str> value)
 
 auto registry_test_config() -> lito::config::NamedRegistryConfig {
     return lito::config::NamedRegistryConfig {
-        .name     = String::make("fixture"_str),
+        .name     = "fixture"_Str,
         .identity = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .endpoints =
             lito::registry::RegistryDataEndpoints {
@@ -103,7 +103,7 @@ struct SolverFixtureProvider {
             return Err(lito::registry::RegistryIndexError {
                 .kind    = lito::registry::RegistryIndexErrorKind::NotFound,
                 .package = package.clone(),
-                .message = String::make("fixture is missing"_str),
+                .message = "fixture is missing"_Str,
             });
         }
         auto parsed = lito::registry::parse_package_index(fixture.as_bytes(), package);
@@ -142,7 +142,7 @@ struct IndexHttpFixture {
         return Ok(lito::registry::RegistryHttpResponse {
             .status = not_modified ? u16(304) : u16(200),
             .body   = not_modified ? String::make() : self.body.clone(),
-            .etag   = Some(String::make("\"fixture-etag\""_str)),
+            .etag   = Some("\"fixture-etag\""_Str),
         });
     }
 
@@ -171,7 +171,7 @@ struct BlobTransportFixture {
             return Err(lito::registry::RegistryArtifactError {
                 .kind    = lito::registry::RegistryArtifactErrorKind::Io,
                 .package = request.package.clone(),
-                .message = String::make("fixture write failed"_str),
+                .message = "fixture write failed"_Str,
             });
         }
         return Ok(empty {});
@@ -199,7 +199,7 @@ struct CopyBlobTransportFixture {
             return Err(lito::registry::RegistryArtifactError {
                 .kind    = lito::registry::RegistryArtifactErrorKind::Io,
                 .package = request.package.clone(),
-                .message = String::make("fixture copy failed"_str),
+                .message = "fixture copy failed"_Str,
             });
         }
         return Ok(empty {});
@@ -243,7 +243,7 @@ struct PublishTransportFixture {
             return Err(lito::registry::RegistryPublishError {
                 .kind    = lito::registry::RegistryPublishErrorKind::Network,
                 .package = package.clone(),
-                .message = String::make("fixture response is missing"_str),
+                .message = "fixture response is missing"_Str,
             });
         }
         return Ok(lito::registry::RegistryPublishHttpResponse {
@@ -478,7 +478,7 @@ TEST(RegistryPublish, UploadsAndReturnsWhenSubmissionQueuesCheck) {
         .status = u16(200),
         .body   = publish_session_json("uploaded"_str, false, false, false),
     });
-    auto token   = lito::config::RegistryBearerToken(String::make("fixture-token"_str));
+    auto token   = lito::config::RegistryBearerToken("fixture-token"_Str);
     auto request = publish_request(PathBuf::from("fixture.tar.zst"_str).as_path(), token);
     auto result  = lito::registry::RegistryPublishClient(fixture.transport()).publish(request);
     ASSERT_TRUE(result.is_ok());
@@ -502,7 +502,7 @@ TEST(RegistryPublish, RejectsResponseContextMismatchBeforeUpload) {
         .status = u16(201),
         .body   = publish_session_json("prepared"_str, true, true, false, "other"_str),
     });
-    auto token   = lito::config::RegistryBearerToken(String::make("fixture-token"_str));
+    auto token   = lito::config::RegistryBearerToken("fixture-token"_Str);
     auto request = publish_request(PathBuf::from("fixture.tar.zst"_str).as_path(), token);
     auto result  = lito::registry::RegistryPublishClient(fixture.transport()).publish(request);
     ASSERT_TRUE(result.is_err());
@@ -517,7 +517,7 @@ TEST(RegistryPublish, ReportsTerminalCheckInfrastructureFailure) {
         .body   = publish_session_json(
             "check_failed"_str, true, false, false, "sample"_str, "runner unavailable"_str),
     });
-    auto token   = lito::config::RegistryBearerToken(String::make("fixture-token"_str));
+    auto token   = lito::config::RegistryBearerToken("fixture-token"_Str);
     auto request = publish_request(PathBuf::from("fixture.tar.zst"_str).as_path(), token);
     auto result  = lito::registry::RegistryPublishClient(fixture.transport()).publish(request);
     ASSERT_TRUE(result.is_err());
@@ -583,12 +583,12 @@ TEST(RegistrySolver, BacktracksAndUnifiesEachPackageToOneVersion) {
     roots.push(lito::registry::RegistrySolverRequirement {
         .package     = registry_package("sample"_str),
         .requirement = lito::registry::VersionRequirement::parse(">=1, <2"_str).unwrap(),
-        .source      = String::make("workspace dependency 'sample'"_str),
+        .source      = "workspace dependency 'sample'"_Str,
     });
     roots.push(lito::registry::RegistrySolverRequirement {
         .package     = registry_package("helper"_str),
         .requirement = lito::registry::VersionRequirement::parse("=1.0.0"_str).unwrap(),
-        .source      = String::make("workspace dependency 'helper'"_str),
+        .source      = "workspace dependency 'helper'"_Str,
     });
     auto solved = lito::registry::RegistryVersionSolver::solve(
         lito::registry::RegistrySolverInput { .roots = rstd::move(roots) }, fixture.provider());
@@ -605,12 +605,12 @@ TEST(RegistrySolver, RejectsTheSameNameFromDifferentRegistries) {
     roots.push(lito::registry::RegistrySolverRequirement {
         .package     = registry_package_from("https://registry.example/"_str, "sample"_str),
         .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
-        .source      = String::make("workspace dependency 'sample'"_str),
+        .source      = "workspace dependency 'sample'"_Str,
     });
     roots.push(lito::registry::RegistrySolverRequirement {
         .package     = registry_package_from("https://mirror.example/"_str, "sample"_str),
         .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
-        .source      = String::make("package dependency 'sample'"_str),
+        .source      = "package dependency 'sample'"_Str,
     });
     auto solved = lito::registry::RegistryVersionSolver::solve(
         lito::registry::RegistrySolverInput { .roots = rstd::move(roots) }, fixture.provider());
@@ -625,7 +625,7 @@ TEST(RegistrySolver, PreservesAnExactlyLockedYankedVersion) {
     roots.push(lito::registry::RegistrySolverRequirement {
         .package     = registry_package("sample"_str),
         .requirement = lito::registry::VersionRequirement::parse(">=2.0.0"_str).unwrap(),
-        .source      = String::make("workspace dependency 'sample'"_str),
+        .source      = "workspace dependency 'sample'"_Str,
     });
     auto locked = Vec<lito::registry::RegistryLockedPreference>::make();
     locked.push(lito::registry::RegistryLockedPreference {
@@ -650,7 +650,7 @@ TEST(RegistrySolver, RejectsChecksumChangeForLockedVersion) {
     roots.push(lito::registry::RegistrySolverRequirement {
         .package     = registry_package("sample"_str),
         .requirement = lito::registry::VersionRequirement::parse("=2.0.0"_str).unwrap(),
-        .source      = String::make("workspace dependency 'sample'"_str),
+        .source      = "workspace dependency 'sample'"_Str,
     });
     auto locked = Vec<lito::registry::RegistryLockedPreference>::make();
     locked.push(lito::registry::RegistryLockedPreference {
@@ -836,7 +836,7 @@ TEST(RegistryBlobCache, VerifiesNewBytesAndSharesCompletedContent) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner = rstd::move(temporary).unwrap();
-    auto bytes = String::make("fixture tar zstd bytes"_str);
+    auto bytes = "fixture tar zstd bytes"_Str;
     auto checksum =
         lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes()));
     auto fixture = BlobTransportFixture { .bytes = bytes.clone() };
@@ -881,7 +881,7 @@ TEST(RegistryBlobCache, RejectsDownloadedBytesWithTheWrongChecksum) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner   = rstd::move(temporary).unwrap();
-    auto fixture = BlobTransportFixture { .bytes = String::make("wrong bytes"_str) };
+    auto fixture = BlobTransportFixture { .bytes = "wrong bytes"_Str };
     auto cache   = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),
         registry_download_endpoint(
@@ -901,7 +901,7 @@ TEST(RegistryBlobCache, RehashesCachedBytesAndRefetchesCorruption) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner = rstd::move(temporary).unwrap();
-    auto bytes = String::make("verified bytes"_str);
+    auto bytes = "verified bytes"_Str;
     auto pin   = registry_pin(
         registry_package("sample"_str),
         registry_version("1.2.3"_str),
@@ -940,7 +940,7 @@ TEST(RegistryBlobCache, RejectsShortChecksumCollisionWithoutOverwriting) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner = rstd::move(temporary).unwrap();
-    auto bytes = String::make("collision bytes"_str);
+    auto bytes = "collision bytes"_Str;
     auto pin   = registry_pin(
         registry_package("sample"_str),
         registry_version("1.2.3"_str),
@@ -995,7 +995,7 @@ TEST(RegistryBlobCache, ImportsVerifiedSourceBundleBytesIntoTheGlobalCache) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner = rstd::move(temporary).unwrap();
-    auto bytes = String::make("source bundle bytes"_str);
+    auto bytes = "source bundle bytes"_Str;
     auto pin   = registry_pin(
         registry_package("sample"_str),
         registry_version("1.2.3"_str),
@@ -1180,11 +1180,10 @@ archive = "sample"
 
     auto registries = Vec<lito::config::NamedRegistryConfig>::make();
     registries.push(registry_test_config());
-    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries),
-                                                       Some(String::make("fixture"_str)));
+    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries), Some("fixture"_Str));
     auto pins      = Vec<lito::registry::RegistryReleasePin>::make();
     pins.push(registry_pin(package, version, built->archive.checksum));
-    auto http   = IndexHttpFixture { .body = String::make("must not be read"_str) };
+    auto http   = IndexHttpFixture { .body = "must not be read"_Str };
     auto blob   = CopyBlobTransportFixture { .source = archive.clone() };
     auto client = lito::registry::RegistryGraphClient(
         PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path()),
@@ -1199,7 +1198,7 @@ archive = "sample"
     requirements.push(lito::registry::RegistryGraphRequirement {
         .package     = package.name.clone(),
         .requirement = lito::registry::VersionRequirement::parse("^1.0.0"_str).unwrap(),
-        .source      = String::make("root dependency 'sample'"_str),
+        .source      = "root dependency 'sample'"_Str,
     });
     auto resolved = client.resolve(requirements.as_slice());
     ASSERT_TRUE(resolved.is_ok());
@@ -1242,9 +1241,8 @@ archive = "sample"
 
     auto registries = Vec<lito::config::NamedRegistryConfig>::make();
     registries.push(registry_test_config());
-    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries),
-                                                       Some(String::make("fixture"_str)));
-    auto http      = IndexHttpFixture { .body = String::make("must not be read"_str) };
+    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries), Some("fixture"_Str));
+    auto http      = IndexHttpFixture { .body = "must not be read"_Str };
     auto blob      = CopyBlobTransportFixture { .source = archive.clone() };
     auto client    = lito::registry::RegistryGraphClient(
         PathBuf::from(owner.path()).join(PathBuf::from("cache"_str).as_path()),
@@ -1262,7 +1260,7 @@ archive = "sample"
     requirements.push(lito::registry::RegistryGraphRequirement {
         .package     = package.name.clone(),
         .requirement = lito::registry::VersionRequirement::parse("^1.0.0"_str).unwrap(),
-        .source      = String::make("builtin dependency 'sample'"_str),
+        .source      = "builtin dependency 'sample'"_Str,
     });
     auto resolved = client.resolve(requirements.as_slice());
     ASSERT_TRUE(resolved.is_ok());
@@ -1323,8 +1321,7 @@ archive = "sample"
     auto blob       = CopyBlobTransportFixture { .source = archive.clone() };
     auto registries = Vec<lito::config::NamedRegistryConfig>::make();
     registries.push(config.clone());
-    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries),
-                                                       Some(String::make("fixture"_str)));
+    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries), Some("fixture"_Str));
     auto client    = lito::registry::RegistryGraphClient(
         rstd::move(cache),
         bootstrap,
@@ -1340,7 +1337,7 @@ archive = "sample"
     requirements.push(lito::registry::RegistryGraphRequirement {
         .package     = package.name.clone(),
         .requirement = lito::registry::VersionRequirement::parse(">=2.0.0"_str).unwrap(),
-        .source      = String::make("root dependency 'sample'"_str),
+        .source      = "root dependency 'sample'"_Str,
     });
     auto resolved = client.resolve(requirements.as_slice());
     ASSERT_TRUE(resolved.is_ok());

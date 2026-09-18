@@ -48,14 +48,14 @@ auto configure_binding(ConfigureSession& session, luato::Table request)
     -> luato::Result<luato::Table> {
     auto table = rstd::move(request);
     auto known = Vec<String>::make();
-    known.push(String::make("package"_str));
-    known.push(String::make("input"_str));
-    known.push(String::make("output"_str));
-    known.push(String::make("values"_str));
+    known.push("package"_Str);
+    known.push("input"_Str);
+    known.push("output"_Str);
+    known.push("values"_Str);
     auto checked = table.reject_unknown_fields(known.as_slice());
     if (checked.is_err()) return Err(rstd::move(checked).unwrap_err_unchecked());
     auto package = Result<String, luato::Error>(
-        Err(luato::Error::binding(String::make("configure_file.package is required"_str))));
+        Err(luato::Error::binding("configure_file.package is required"_Str)));
     if (table.contains("package"_str)) {
         package = table.required<String>("package"_str);
     } else {
@@ -97,13 +97,11 @@ auto configure_binding(ConfigureSession& session, luato::Table request)
     auto result = luato::Table::make();
     auto path   = configured->output.as_path().to_str();
     if (path.is_none()) {
-        return Err(luato::Error::binding(
-            String::make("configure_file output path is not valid UTF-8"_str)));
+        return Err(luato::Error::binding("configure_file output path is not valid UTF-8"_Str));
     }
-    auto inserted = result.set(String::make("output"_str), String::make(*path));
+    auto inserted = result.set("output"_Str, String::make(*path));
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
-    inserted = result.set(String::make("changed"_str),
-                          configured->write != rstd::fs::WriteOutcome::Unchanged);
+    inserted = result.set("changed"_Str, configured->write != rstd::fs::WriteOutcome::Unchanged);
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     return Ok(rstd::move(result));
 }
@@ -219,11 +217,11 @@ auto run_binding(ToolActionSession& session, luato::Table request) -> luato::Res
     auto ran = session.run(rstd_try(parse_run_request(request, session.default_package())));
     if (ran.is_err()) return Err(binding_error(rstd::move(ran).unwrap_err()));
     auto result   = luato::Table::make();
-    auto inserted = result.set(String::make("changed"_str), ran->changed);
+    auto inserted = result.set("changed"_Str, ran->changed);
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     auto values = Vec<luato::Value>::with_capacity(ran->outputs.len());
     for (auto output : ran->outputs) values.push(luato::Value::Opaque(output.identity));
-    inserted = result.set(String::make("outputs"_str), luato::Array::from(rstd::move(values)));
+    inserted = result.set("outputs"_Str, luato::Array::from(rstd::move(values)));
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     return Ok(rstd::move(result));
 }
@@ -233,14 +231,13 @@ auto write_binding(ToolActionSession& session, luato::Table request)
     auto written = session.write(rstd_try(parse_write_request(request, session.default_package())));
     if (written.is_err()) return Err(binding_error(rstd::move(written).unwrap_err()));
     auto result   = luato::Table::make();
-    auto inserted = result.set(String::make("changed"_str), written->changed);
+    auto inserted = result.set("changed"_Str, written->changed);
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     if (written->outputs.len() != usize(1)) {
-        return Err(luato::Error::binding(
-            String::make("lito.write did not produce exactly one output"_str)));
+        return Err(luato::Error::binding("lito.write did not produce exactly one output"_Str));
     }
-    inserted = result.set(String::make("output"_str),
-                          luato::OpaqueHandle { written->outputs[usize {}].identity });
+    inserted =
+        result.set("output"_Str, luato::OpaqueHandle { written->outputs[usize {}].identity });
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     return Ok(rstd::move(result));
 }
@@ -249,14 +246,12 @@ auto copy_binding(ToolActionSession& session, luato::Table request) -> luato::Re
     auto copied = session.copy(rstd_try(parse_copy_request(request, session.default_package())));
     if (copied.is_err()) return Err(binding_error(rstd::move(copied).unwrap_err()));
     if (copied->outputs.len() != usize(1)) {
-        return Err(luato::Error::binding(
-            String::make("lito.copy did not produce exactly one output"_str)));
+        return Err(luato::Error::binding("lito.copy did not produce exactly one output"_Str));
     }
     auto result   = luato::Table::make();
-    auto inserted = result.set(String::make("changed"_str), copied->changed);
+    auto inserted = result.set("changed"_Str, copied->changed);
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
-    inserted = result.set(String::make("output"_str),
-                          luato::OpaqueHandle { copied->outputs[usize {}].identity });
+    inserted = result.set("output"_Str, luato::OpaqueHandle { copied->outputs[usize {}].identity });
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     return Ok(rstd::move(result));
 }
@@ -269,9 +264,9 @@ auto transform_binding(ToolActionSession& session, luato::Table request)
     auto values = Vec<luato::Value>::with_capacity(transformed->outputs.len());
     for (auto output : transformed->outputs) values.push(luato::Value::Opaque(output.identity));
     auto result   = luato::Table::make();
-    auto inserted = result.set(String::make("changed"_str), transformed->changed);
+    auto inserted = result.set("changed"_Str, transformed->changed);
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
-    inserted = result.set(String::make("outputs"_str), luato::Array::from(rstd::move(values)));
+    inserted = result.set("outputs"_Str, luato::Array::from(rstd::move(values)));
     if (inserted.is_err()) return Err(rstd::move(inserted).unwrap_err_unchecked());
     return Ok(rstd::move(result));
 }
@@ -342,9 +337,8 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
 
     auto state = luato::State::create(luato::StateOptions::build_script());
     if (state.is_err()) {
-        return Err(BuildScriptError::Lua(String::make("create Lua state"_str),
-                                         None(),
-                                         rstd::move(state).unwrap_err_unchecked()));
+        return Err(BuildScriptError::Lua(
+            "create Lua state"_Str, None(), rstd::move(state).unwrap_err_unchecked()));
     }
     auto        lua          = rstd::move(state).unwrap_unchecked();
     const auto& script_owner = metadata.build_scripts[invocation.owner_index];
@@ -360,18 +354,18 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
     auto modules            = rstd::move(module_sources).unwrap();
     auto configured_modules = attach_script_modules(lua, modules);
     if (configured_modules.is_err()) {
-        return Err(BuildScriptError::Lua(String::make("configure build script modules"_str),
+        return Err(BuildScriptError::Lua("configure build script modules"_Str,
                                          Some(invocation.script.clone()),
                                          rstd::move(configured_modules).unwrap_err_unchecked()));
     }
-    auto module = luato::ModuleSpec(String::make("lito"_str));
-    module.set(String::make("profile"_str), String::make(profile));
+    auto module = luato::ModuleSpec("lito"_Str);
+    module.set("profile"_Str, String::make(profile));
     auto project_root = metadata.root.as_path().to_str();
     if (project_root.is_none()) {
         return build_script_failure<DeclaredBuildScriptInvocation>(
             "project root is not valid UTF-8"_str);
     }
-    module.set(String::make("project_root"_str), String::make(*project_root));
+    module.set("project_root"_Str, String::make(*project_root));
     if (invocation.package.is_some()) {
         auto package_root = invocation.root.as_path().to_str();
         if (package_root.is_none()) {
@@ -385,124 +379,118 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
             return build_script_failure<DeclaredBuildScriptInvocation>(
                 "generated root is not valid UTF-8"_str);
         }
-        module.set(String::make("package"_str), invocation.package->clone());
-        module.set(String::make("package_root"_str), String::make(*package_root));
-        module.set(String::make("generated_root"_str), String::make(*generated_root));
+        module.set("package"_Str, invocation.package->clone());
+        module.set("package_root"_Str, String::make(*package_root));
+        module.set("generated_root"_Str, String::make(*generated_root));
     }
-    module.function(String::make("configure_file"_str), [&configure](luato::Table request) {
+    module.function("configure_file"_Str, [&configure](luato::Table request) {
         return configure_binding(configure, rstd::move(request));
     });
-    module.function(String::make("tool"_str), [&actions](String alias) {
+    module.function("tool"_Str, [&actions](String alias) {
         return tool_binding(actions, rstd::move(alias));
     });
-    module.function(String::make("target"_str), [&actions](luato::Table request) {
+    module.function("target"_Str, [&actions](luato::Table request) {
         return target_binding(actions, rstd::move(request));
     });
-    module.function(String::make("external_dependency"_str),
-                    [&actions](luato::OpaqueHandle target, String alias) {
-                        return external_dependency_binding(
-                            actions, rstd::move(target), rstd::move(alias));
-                    });
     module.function(
-        String::make("_external_source"_str), [&actions](luato::OpaqueHandle target, String alias) {
-            return external_source_binding(actions, rstd::move(target), rstd::move(alias));
+        "external_dependency"_Str, [&actions](luato::OpaqueHandle target, String alias) {
+            return external_dependency_binding(actions, rstd::move(target), rstd::move(alias));
         });
-    module.function(String::make("_external_source_file"_str),
-                    [&actions](luato::OpaqueHandle source, String relative) {
-                        return external_source_file_binding(
-                            actions, rstd::move(source), rstd::move(relative));
-                    });
+    module.function("_external_source"_Str, [&actions](luato::OpaqueHandle target, String alias) {
+        return external_source_binding(actions, rstd::move(target), rstd::move(alias));
+    });
     module.function(
-        String::make("external_tool"_str), [&actions](luato::OpaqueHandle dependency, String name) {
-            return external_tool_binding(actions, rstd::move(dependency), rstd::move(name));
+        "_external_source_file"_Str, [&actions](luato::OpaqueHandle source, String relative) {
+            return external_source_file_binding(actions, rstd::move(source), rstd::move(relative));
         });
-    module.function(String::make("host_tool"_str),
+    module.function("external_tool"_Str, [&actions](luato::OpaqueHandle dependency, String name) {
+        return external_tool_binding(actions, rstd::move(dependency), rstd::move(name));
+    });
+    module.function("host_tool"_Str,
                     [&actions](luato::OpaqueHandle target, String package, String name) {
                         return host_tool_binding(
                             actions, rstd::move(target), rstd::move(package), rstd::move(name));
                     });
-    module.function(String::make("external_dependency_info"_str),
-                    [&actions](luato::OpaqueHandle dependency) {
-                        return external_dependency_info_binding(actions, rstd::move(dependency));
-                    });
-    module.function(String::make("target_preprocessor_environment"_str),
-                    [&actions](luato::OpaqueHandle target) {
-                        return preprocessor_environment_binding(actions, rstd::move(target));
-                    });
-    module.function(String::make("target_add_generated_source"_str),
+    module.function("external_dependency_info"_Str, [&actions](luato::OpaqueHandle dependency) {
+        return external_dependency_info_binding(actions, rstd::move(dependency));
+    });
+    module.function("target_preprocessor_environment"_Str, [&actions](luato::OpaqueHandle target) {
+        return preprocessor_environment_binding(actions, rstd::move(target));
+    });
+    module.function("target_add_generated_source"_Str,
                     [&actions](luato::OpaqueHandle target, luato::OpaqueHandle output) {
                         return add_generated_source_binding(
                             actions, rstd::move(target), rstd::move(output));
                     });
-    module.function(String::make("target_add_generated_include"_str),
+    module.function("target_add_generated_include"_Str,
                     [&actions](luato::OpaqueHandle target, String relative) {
                         return add_generated_include_binding(
                             actions, rstd::move(target), rstd::move(relative));
                     });
-    module.function(String::make("target_add_generated_definition"_str),
+    module.function("target_add_generated_definition"_Str,
                     [&actions](luato::OpaqueHandle target, String definition) {
                         return add_generated_definition_binding(
                             actions, rstd::move(target), rstd::move(definition));
                     });
-    module.function(String::make("target_add_resource"_str),
+    module.function("target_add_resource"_Str,
                     [&actions](luato::OpaqueHandle target, luato::OpaqueHandle output) {
                         return add_generated_artifact_binding(
                             actions, target, output, cpp::GeneratedArtifactRole::Resource);
                     });
-    module.function(String::make("target_add_metadata"_str),
+    module.function("target_add_metadata"_Str,
                     [&actions](luato::OpaqueHandle target, luato::OpaqueHandle output) {
                         return add_generated_artifact_binding(
                             actions, target, output, cpp::GeneratedArtifactRole::Metadata);
                     });
-    module.function(String::make("target_add_auxiliary_artifact"_str),
+    module.function("target_add_auxiliary_artifact"_Str,
                     [&actions](luato::OpaqueHandle target, luato::OpaqueHandle output) {
                         return add_generated_artifact_binding(
                             actions, target, output, cpp::GeneratedArtifactRole::Auxiliary);
                     });
-    module.function(String::make("run"_str), [&actions, &lua](luato::Table request) {
+    module.function("run"_Str, [&actions, &lua](luato::Table request) {
         actions.set_module_identities(loaded_script_identities(lua));
         return run_binding(actions, rstd::move(request));
     });
-    module.function(String::make("write"_str), [&actions, &lua](luato::Table request) {
+    module.function("write"_Str, [&actions, &lua](luato::Table request) {
         actions.set_module_identities(loaded_script_identities(lua));
         return write_binding(actions, rstd::move(request));
     });
-    module.function(String::make("copy"_str), [&actions](luato::Table request) {
+    module.function("copy"_Str, [&actions](luato::Table request) {
         return copy_binding(actions, rstd::move(request));
     });
-    module.function(String::make("transform"_str), [&actions, &lua](luato::Table request) {
+    module.function("transform"_Str, [&actions, &lua](luato::Table request) {
         actions.set_module_identities(loaded_script_identities(lua));
         return transform_binding(actions, rstd::move(request));
     });
     auto native_module = luato::NativeRequireModuleSpec(
-        String::make("@lito"_str), String::make(build_host_api_identity), rstd::move(module));
-    native_module.set_global_alias(String::make("lito"_str));
+        "@lito"_Str, String::make(build_host_api_identity), rstd::move(module));
+    native_module.set_global_alias("lito"_Str);
     auto registered = lua.register_native_require_module(rstd::move(native_module));
     if (registered.is_err()) {
-        return Err(BuildScriptError::Lua(String::make("register build script API"_str),
+        return Err(BuildScriptError::Lua("register build script API"_Str,
                                          None(),
                                          rstd::move(registered).unwrap_err_unchecked()));
     }
     auto initialized = lua.execute_entry(luato::LuaModuleSource {
-        .logical_name = String::make("@lito/bootstrap"_str),
+        .logical_name = "@lito/bootstrap"_Str,
         .identity     = String::make(build_host_api_identity),
-        .display_path = String::make("@lito/bootstrap.lua"_str),
+        .display_path = "@lito/bootstrap.lua"_Str,
         .bytes        = Vec<u8>::from(build_host_lua_api.as_bytes()),
     });
     if (initialized.is_err()) {
-        return Err(BuildScriptError::Lua(String::make("initialize build script API"_str),
+        return Err(BuildScriptError::Lua("initialize build script API"_Str,
                                          None(),
                                          rstd::move(initialized).unwrap_err_unchecked()));
     }
     auto entry = modules.entry(invocation.script.as_path(), invocation.owner.as_str());
     if (entry.is_err()) {
-        return Err(BuildScriptError::Lua(String::make("load build script"_str),
+        return Err(BuildScriptError::Lua("load build script"_Str,
                                          Some(invocation.script.clone()),
                                          rstd::move(entry).unwrap_err_unchecked()));
     }
     auto executed = lua.execute_entry(rstd::move(entry).unwrap_unchecked());
     if (executed.is_err()) {
-        return Err(BuildScriptError::Lua(String::make("execute build script"_str),
+        return Err(BuildScriptError::Lua("execute build script"_Str,
                                          Some(invocation.script.clone()),
                                          rstd::move(executed).unwrap_err_unchecked()));
     }

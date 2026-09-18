@@ -265,8 +265,7 @@ private:
         const auto& token = tokens_[index_++];
         if ((token.kind == TokenKind::Identifier || token.kind == TokenKind::PpNumber) &&
             token.text.utf8().is_err()) {
-            return Err(
-                Error::at(String::make("invalid UTF-8 preprocessing token"_str), token.expansion));
+            return Err(Error::at("invalid UTF-8 preprocessing token"_Str, token.expansion));
         }
         if (token.kind == TokenKind::Identifier) return Ok(i64 {});
         if (token.kind == TokenKind::CharacterLiteral) {

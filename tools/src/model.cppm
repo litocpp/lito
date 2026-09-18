@@ -168,7 +168,7 @@ auto host_tool_requirement_origin_text(const HostToolRequirementOrigin& origin) 
         return rstd::format(
             "install entry '{}:{}'", origin.owner.as_str(), origin.subject.as_str());
     }
-    return String::make("current operation"_str);
+    return "current operation"_Str;
 }
 
 struct HostToolResolution {

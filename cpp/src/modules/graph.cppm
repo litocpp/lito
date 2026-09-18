@@ -493,7 +493,7 @@ auto SemanticScanGraphBuilder::add_header(DiscoveryUnitId unit, ref<rstd::path::
 
 auto SemanticScanGraphBuilder::complete(DiscoveryUnitId unit, const SourceScanArtifact& artifact)
     -> Result<empty, String> {
-    if (unit >= units_.len()) return Err(String::make("scan graph received unknown unit"_str));
+    if (unit >= units_.len()) return Err("scan graph received unknown unit"_Str);
     auto& node = units_[unit];
     if (node.complete) return Ok(empty {});
     if (node.context_identity != artifact.context_identity.as_str()) {
@@ -744,7 +744,7 @@ auto SemanticScanGraphBuilder::finalize(
     const Vec<PreparedUnit>& units,
     const Vec<ScanResult>&   scans) && -> Result<IncrementalSemanticScanGraph, String> {
     if (units.len() != scans.len()) {
-        return Err(String::make("scan graph received mismatched final units and scans"_str));
+        return Err("scan graph received mismatched final units and scans"_Str);
     }
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         if (units[unit].unit.owner.is_StandardLibrary()) {

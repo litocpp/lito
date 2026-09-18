@@ -192,8 +192,7 @@ auto string_array(const luato::Table& root, ref<str> field) -> luato::Result<Vec
 
 auto environment_value(String name) -> luato::Result<Option<String>> {
     if (name.is_empty()) {
-        return Err(
-            luato::Error::binding(String::make("environment variable name must not be empty"_str)));
+        return Err(luato::Error::binding("environment variable name must not be empty"_Str));
     }
     for (auto byte : name.as_str().as_bytes()) {
         if (byte == u8('=') || byte == u8 {}) {
@@ -228,8 +227,7 @@ public:
 
     auto install(luato::Table table) -> luato::Result<empty> {
         if (recipe_.is_some()) {
-            return Err(
-                luato::Error::binding(String::make("lito.install may only be called once"_str)));
+            return Err(luato::Error::binding("lito.install may only be called once"_Str));
         }
         rstd_try(known_fields(table,
                               { "artifacts"_str,
@@ -263,7 +261,7 @@ public:
                     target_kind = lito::package::PackageTargetKind::Library;
                 } else if (kind != "bin"_str) {
                     return Err(luato::Error::binding(
-                        String::make("install artifact target.kind must be 'bin' or 'lib'"_str)));
+                        "install artifact target.kind must be 'bin' or 'lib'"_Str));
                 }
                 auto name = rstd_try(target.required<String>("name"_str));
                 auto destination =
@@ -317,8 +315,7 @@ public:
                 rstd_try(known_fields(item, { "name"_str, "destination"_str }));
                 auto name = rstd_try(item.required<String>("name"_str));
                 if (name.is_empty()) {
-                    return Err(luato::Error::binding(
-                        String::make("target runtime name must not be empty"_str)));
+                    return Err(luato::Error::binding("target runtime name must not be empty"_Str));
                 }
                 for (const auto& existing : recipe.target_runtimes) {
                     if (existing.name == name.as_str()) {
@@ -400,8 +397,7 @@ public:
                 rstd_try(known_fields(target, { "kind"_str, "name"_str }));
                 auto kind = rstd_try(target.required<String>("kind"_str));
                 if (kind != "lib"_str) {
-                    return Err(luato::Error::binding(
-                        String::make("pkg_config target.kind must be 'lib'"_str)));
+                    return Err(luato::Error::binding("pkg_config target.kind must be 'lib'"_Str));
                 }
                 auto module = String::make();
                 if (item.contains("module"_str)) {
@@ -587,43 +583,39 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
         return Err(InstallScriptError::Lua(package.script->clone(),
                                            rstd::move(configured).unwrap_err_unchecked()));
     }
-    auto module = luato::ModuleSpec(String::make("lito"_str));
-    module.set(String::make("package_name"_str), package.name.clone());
-    module.set(String::make("package_version"_str), package.version.clone());
-    module.set(String::make("profile"_str), context.profile.clone());
-    module.set(String::make("target"_str), context.target.clone());
-    module.set(String::make("target_arch"_str), context.target_arch.clone());
-    module.function(String::make("install"_str), [&session](luato::Table table) {
+    auto module = luato::ModuleSpec("lito"_Str);
+    module.set("package_name"_Str, package.name.clone());
+    module.set("package_version"_Str, package.version.clone());
+    module.set("profile"_Str, context.profile.clone());
+    module.set("target"_Str, context.target.clone());
+    module.set("target_arch"_Str, context.target_arch.clone());
+    module.function("install"_Str, [&session](luato::Table table) {
         return session.install(rstd::move(table));
     });
-    module.function(String::make("render_template"_str),
-                    [&session](luato::Table table) -> luato::Result<String> {
-                        auto rendered = session.render(rstd::move(table));
-                        if (rendered.is_err()) {
-                            auto error = rstd::move(rendered).unwrap_err();
-                            auto text  = rstd::format("{}", error);
-                            session.defer_error(rstd::move(error));
-                            return Err(luato::Error::binding(rstd::move(text)));
-                        }
-                        return Ok(rstd::move(rendered).unwrap());
-                    });
-    module.function(String::make("read_file"_str),
-                    [&session](String path) -> luato::Result<String> {
-                        auto contents = session.read_file(rstd::move(path));
-                        if (contents.is_err()) {
-                            auto error = rstd::move(contents).unwrap_err();
-                            auto text  = rstd::format("{}", error);
-                            session.defer_error(rstd::move(error));
-                            return Err(luato::Error::binding(rstd::move(text)));
-                        }
-                        return Ok(rstd::move(contents).unwrap());
-                    });
-    module.function(String::make("env"_str), &environment_value);
-    auto native_module =
-        luato::NativeRequireModuleSpec(String::make("@lito"_str),
-                                       String::make("lito:install-host-api:v1"_str),
-                                       rstd::move(module));
-    native_module.set_global_alias(String::make("lito"_str));
+    module.function("render_template"_Str, [&session](luato::Table table) -> luato::Result<String> {
+        auto rendered = session.render(rstd::move(table));
+        if (rendered.is_err()) {
+            auto error = rstd::move(rendered).unwrap_err();
+            auto text  = rstd::format("{}", error);
+            session.defer_error(rstd::move(error));
+            return Err(luato::Error::binding(rstd::move(text)));
+        }
+        return Ok(rstd::move(rendered).unwrap());
+    });
+    module.function("read_file"_Str, [&session](String path) -> luato::Result<String> {
+        auto contents = session.read_file(rstd::move(path));
+        if (contents.is_err()) {
+            auto error = rstd::move(contents).unwrap_err();
+            auto text  = rstd::format("{}", error);
+            session.defer_error(rstd::move(error));
+            return Err(luato::Error::binding(rstd::move(text)));
+        }
+        return Ok(rstd::move(contents).unwrap());
+    });
+    module.function("env"_Str, &environment_value);
+    auto native_module = luato::NativeRequireModuleSpec(
+        "@lito"_Str, "lito:install-host-api:v1"_Str, rstd::move(module));
+    native_module.set_global_alias("lito"_Str);
     auto registered = lua.register_native_require_module(rstd::move(native_module));
     if (registered.is_err()) {
         return Err(InstallScriptError::Lua(package.script->clone(),

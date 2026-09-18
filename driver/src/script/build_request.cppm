@@ -238,29 +238,27 @@ auto script_string_values(const Vec<String>& values) -> luato::Array {
 
 auto dependency_info_table(ScriptDependencyInfo info) -> luato::Result<luato::Table> {
     auto table = luato::Table::make();
-    rstd_try(table.set(String::make("alias"_str), rstd::move(info.alias)));
-    rstd_try(table.set(String::make("provider"_str), rstd::move(info.provider)));
-    rstd_try(table.set(String::make("version"_str), rstd::move(info.version)));
-    rstd_try(table.set(String::make("identity"_str), rstd::move(info.identity)));
-    rstd_try(table.set(String::make("targets"_str), script_string_values(info.targets)));
+    rstd_try(table.set("alias"_Str, rstd::move(info.alias)));
+    rstd_try(table.set("provider"_Str, rstd::move(info.provider)));
+    rstd_try(table.set("version"_Str, rstd::move(info.version)));
+    rstd_try(table.set("identity"_Str, rstd::move(info.identity)));
+    rstd_try(table.set("targets"_Str, script_string_values(info.targets)));
     return Ok(rstd::move(table));
 }
 
 auto preprocessor_info_table(ScriptPreprocessorInfo info) -> luato::Result<luato::Table> {
     auto table = luato::Table::make();
-    rstd_try(table.set(String::make("include_directories"_str),
+    rstd_try(table.set("include_directories"_Str,
                        script_string_values(info.projection.user_include_directories)));
-    rstd_try(table.set(String::make("system_include_directories"_str),
+    rstd_try(table.set("system_include_directories"_Str,
                        script_string_values(info.projection.system_include_directories)));
-    rstd_try(table.set(String::make("framework_include_directories"_str),
+    rstd_try(table.set("framework_include_directories"_Str,
                        script_string_values(info.projection.framework_include_directories)));
-    rstd_try(table.set(String::make("definitions"_str),
-                       script_string_values(info.projection.definitions)));
-    rstd_try(table.set(String::make("undefinitions"_str),
-                       script_string_values(info.projection.undefinitions)));
-    rstd_try(table.set(String::make("compiler_flavor"_str), rstd::move(info.compiler_flavor)));
-    rstd_try(table.set(String::make("target"_str), rstd::move(info.target)));
-    rstd_try(table.set(String::make("identity"_str), rstd::move(info.projection.identity)));
+    rstd_try(table.set("definitions"_Str, script_string_values(info.projection.definitions)));
+    rstd_try(table.set("undefinitions"_Str, script_string_values(info.projection.undefinitions)));
+    rstd_try(table.set("compiler_flavor"_Str, rstd::move(info.compiler_flavor)));
+    rstd_try(table.set("target"_Str, rstd::move(info.target)));
+    rstd_try(table.set("identity"_Str, rstd::move(info.projection.identity)));
     return Ok(rstd::move(table));
 }
 

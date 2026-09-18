@@ -59,7 +59,7 @@ auto normalize_host_tool_provider_shorthand(Toml& document) -> void {
         auto entry = rstd::move(value).unwrap_unchecked();
         if (entry.as_str().is_some()) {
             auto normalized = rstd::toml::Table::make();
-            normalized.insert(String::make("executable"_str), rstd::move(entry));
+            normalized.insert("executable"_Str, rstd::move(entry));
             entry = Toml::Table(rstd::move(normalized));
         }
         (**table).insert(String::make(provider), rstd::move(entry));
@@ -360,7 +360,7 @@ auto configured_environment(const Option<lito::config::wire::Environment>& value
 auto configured_cmake(const lito::config::wire::CMake& value, ref<rstd::path::Path> project_root)
     -> ConfigResult<lito::dependency::CMakeProviderConfig> {
     auto result = lito::dependency::CMakeProviderConfig {
-        .generator = String::make("Ninja"_str),
+        .generator = "Ninja"_Str,
     };
     auto root = rstd::serde::DataPath().with_field("tools"_str).with_field("cmake"_str);
     if (value.generator.is_some()) {
@@ -518,7 +518,7 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
         .executables = rstd::move(executables),
         .cmake =
             lito::dependency::CMakeProviderConfig {
-                .generator = String::make("Ninja"_str),
+                .generator = "Ninja"_Str,
             },
     };
     if (value.is_none()) return Ok(rstd::move(result));

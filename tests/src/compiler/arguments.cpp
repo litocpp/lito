@@ -33,7 +33,7 @@ TEST(CompilerArguments, PreservesTokenRangesAndDoesNotGuessUnknownArity) {
 TEST(CompilerArguments, RejectsInvalidAndDuplicateSchemaDefinitions) {
     auto invalid_schema = cpp::CompilerArgumentSchema::make();
     invalid_schema.add(cpp::CompilerArgumentDefinition {
-        .name      = String::make("invalid"_str),
+        .name      = "invalid"_Str,
         .spellings = Vec<cpp::CompilerArgumentSpelling>::make(),
     });
     auto invalid = rstd::move(invalid_schema).build();
@@ -43,18 +43,18 @@ TEST(CompilerArguments, RejectsInvalidAndDuplicateSchemaDefinitions) {
     auto duplicate_schema = cpp::CompilerArgumentSchema::make();
     auto first_spellings  = Vec<cpp::CompilerArgumentSpelling>::make();
     first_spellings.push(cpp::CompilerArgumentSpelling {
-        .value = String::make("-duplicate"_str),
+        .value = "-duplicate"_Str,
     });
     duplicate_schema.add(cpp::CompilerArgumentDefinition {
-        .name      = String::make("first"_str),
+        .name      = "first"_Str,
         .spellings = rstd::move(first_spellings),
     });
     auto second_spellings = Vec<cpp::CompilerArgumentSpelling>::make();
     second_spellings.push(cpp::CompilerArgumentSpelling {
-        .value = String::make("-duplicate"_str),
+        .value = "-duplicate"_Str,
     });
     duplicate_schema.add(cpp::CompilerArgumentDefinition {
-        .name      = String::make("second"_str),
+        .name      = "second"_Str,
         .spellings = rstd::move(second_spellings),
     });
     auto duplicate = rstd::move(duplicate_schema).build();
@@ -175,8 +175,8 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
 
     auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
         .tokens   = strings("-pthread"_str, "-ldl"_str, "-lm"_str),
-        .source   = String::make("compiler arguments test"_str),
-        .identity = String::make("link-v1"_str),
+        .source   = "compiler arguments test"_Str,
+        .identity = "link-v1"_Str,
     });
     ASSERT_TRUE(normalized.is_ok());
     EXPECT_TRUE(normalized->requirements.posix_threads);
@@ -205,8 +205,8 @@ TEST(CompilerArguments, NormalizesRuntimeSearchRequirements) {
                             "-Wl,--rpath,/tmp/build-lib"_str,
                             "-Wl,-rpath,$ORIGIN"_str,
                             "-lm"_str),
-        .source   = String::make("runtime search test"_str),
-        .identity = String::make("runtime-search-v1"_str),
+        .source   = "runtime search test"_Str,
+        .identity = "runtime-search-v1"_Str,
     });
     ASSERT_TRUE(normalized.is_ok());
     ASSERT_EQ(normalized->requirements.runtime_search_paths.len(), usize(2));
@@ -218,8 +218,8 @@ TEST(CompilerArguments, NormalizesRuntimeSearchRequirements) {
 
     auto legacy = normalize_clang_link_arguments(lito::link::ArgumentSequence {
         .tokens   = strings("-Wl,--disable-new-dtags"_str),
-        .source   = String::make("legacy runtime search test"_str),
-        .identity = String::make("runtime-search-v1"_str),
+        .source   = "legacy runtime search test"_Str,
+        .identity = "runtime-search-v1"_Str,
     });
     ASSERT_TRUE(legacy.is_err());
     EXPECT_TRUE(legacy.unwrap_err().is_LegacyRpath());
@@ -233,8 +233,8 @@ TEST(CompilerArguments, PreservesTypedLinkProfileArguments) {
     auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
         .tokens =
             strings("-Wl,--as-needed"_str, "-flto=auto"_str, "-Wl,--strip-debug"_str, "-lm"_str),
-        .source   = String::make("LDFLAGS"_str),
-        .identity = String::make("profile-link-v1"_str),
+        .source   = "LDFLAGS"_Str,
+        .identity = "profile-link-v1"_Str,
     });
     ASSERT_TRUE(normalized.is_ok());
     ASSERT_EQ(normalized->profile_arguments.len(), usize(2));

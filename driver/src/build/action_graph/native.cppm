@@ -118,8 +118,7 @@ auto extend_native_action_graph(NativeActionGraph&            result,
         result.compile_actions.len() > units.len() ||
         result.target_actions.len() != package.targets.len() ||
         result.target_artifacts.len() != package.targets.len()) {
-        return Err(BuildError::Message(
-            String::make("native action graph inputs have inconsistent lengths"_str)));
+        return Err(BuildError::Message("native action graph inputs have inconsistent lengths"_Str));
     }
 
     auto first_new_unit = cpp::UnitId(result.compile_actions.len());

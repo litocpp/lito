@@ -59,13 +59,13 @@ auto identify_cmake_provider(Provider provider, const ResolvedProcessEnvironment
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto arguments = Vec<String>::make();
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("--version"_str));
+    arguments.push("--version"_Str);
     auto output = invoke_cmake(arguments, environment, None(), false);
     if (output.is_err()) {
         return Err(rstd::into<lito::tools::ToolError>(rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
-        return Err(lito::tools::ToolError::Execution(String::make("CMake provider identity"_str),
+        return Err(lito::tools::ToolError::Execution("CMake provider identity"_Str,
                                                      output->exit_code,
                                                      rstd::move(output->standard_output),
                                                      rstd::move(output->standard_error)));
@@ -243,7 +243,7 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
             rstd::move(version).unwrap_err());
     }
     auto normalized_version = String::make(version->as_str().trim_ascii());
-    if (normalized_version.is_empty()) normalized_version = String::make("unknown"_str);
+    if (normalized_version.is_empty()) normalized_version = "unknown"_Str;
     snapshots->version = rstd::move(normalized_version);
     rstd_try(write_usage_snapshot(area, requirement, *snapshots));
     return Ok(rstd::move(snapshots).unwrap());

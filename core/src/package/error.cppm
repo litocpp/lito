@@ -120,7 +120,7 @@ struct Impl<fmt::Display, lito::package::PackageError> : ImplBase<lito::package:
                                        sizeof("package build configuration is invalid") - 1);
         }
         if (error.is_Cycle()) {
-            auto        text  = String::make("package dependency cycle: "_str);
+            auto        text  = "package dependency cycle: "_Str;
             const auto& cycle = error.as_Cycle().cycle;
             for (usize index {}; index < cycle.packages.len(); ++index) {
                 if (index != usize {}) text.push_str(" -> "_str);

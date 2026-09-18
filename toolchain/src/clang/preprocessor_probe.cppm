@@ -157,7 +157,7 @@ auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchE
         auto directory = PathBuf::from(directory_text);
         auto canonical = rstd::fs::canonicalize(directory.as_path());
         if (canonical.is_err()) {
-            return Err(ToolchainError::Io(String::make("resolve clang include directory"_str),
+            return Err(ToolchainError::Io("resolve clang include directory"_Str,
                                           rstd::move(directory),
                                           rstd::move(canonical).unwrap_err()));
         }

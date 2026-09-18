@@ -65,7 +65,7 @@ auto canonical_existing(ref<rstd::path::Path> path, ref<str> context)
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
         return Err(ManifestSchemaError::Io(String::make(context),
-                                           String::make("resolve"_str),
+                                           "resolve"_Str,
                                            PathBuf::from(path),
                                            rstd::move(canonical).unwrap_err()));
     }

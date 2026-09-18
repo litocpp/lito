@@ -149,7 +149,7 @@ constexpr auto profile_strip_name(ProfileStrip value) noexcept -> ref<str> {
 }
 
 auto profile_configuration_identity(const ProfileConfiguration& profile) -> String {
-    auto result = String::make("lito-cargo-profile-v1\n"_str);
+    auto result = "lito-cargo-profile-v1\n"_Str;
     result.push_str("inherits="_str);
     result.push_str(profile.inherits.as_str());
     result.push_ascii('\n');

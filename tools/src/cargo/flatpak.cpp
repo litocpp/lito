@@ -177,7 +177,7 @@ auto canonical_git_url(ref<str> value, ref<str> source) -> cargo::FlatpakExportR
     if (result.as_str().ends_with(".git"_str)) result.truncate(result.len() - usize(4));
     if (result.as_str().starts_with("http://github.com/"_str)) {
         auto suffix = result.as_str().strip_prefix("http://"_str).unwrap();
-        auto secure = String::make("https://"_str);
+        auto secure = "https://"_Str;
         secure.push_str(suffix);
         result = rstd::move(secure);
     }
@@ -526,7 +526,7 @@ auto apply_workspace_values(Table& package, const Table* workspace) -> void {
                 }
             } else if ((**item_table).len() > usize(1)) {
                 (**item_table).remove("workspace"_str);
-                (**item_table).insert(String::make("version"_str), (**inherited).clone());
+                (**item_table).insert("version"_Str, (**inherited).clone());
             } else {
                 item = (**inherited).clone();
             }
@@ -559,11 +559,11 @@ auto checksum_json(Option<ref<licrypto::Sha256Digest>> checksum) -> String {
     auto root  = JsonMap::make();
     if (checksum.is_some()) {
         auto text = (*checksum)->to_hex();
-        root.insert(String::make("package"_str), Json::String(rstd::move(text)));
+        root.insert("package"_Str, Json::String(rstd::move(text)));
     } else {
-        root.insert(String::make("package"_str), Json::Null());
+        root.insert("package"_Str, Json::Null());
     }
-    root.insert(String::make("files"_str), Json::Object(rstd::move(files)));
+    root.insert("files"_Str, Json::Object(rstd::move(files)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
@@ -583,7 +583,7 @@ auto git_repository_name(ref<str> url, ref<str> commit) -> cargo::FlatpakExportR
 }
 
 auto shell_quote(ref<str> value) -> String {
-    auto result = String::make("'"_str);
+    auto result = "'"_Str;
     for (auto byte : value.as_bytes()) {
         if (byte == u8('\'')) {
             result.push_str("'\\''"_str);
@@ -642,21 +642,19 @@ auto source_config(const rstd::collections::BTreeMap<String, cargo::GitSource>& 
                    ref<rstd::path::Path> path) -> cargo::FlatpakExportResult<String> {
     auto source   = Table::make();
     auto vendored = Table::make();
-    vendored.insert(String::make("directory"_str), Toml::String(String::make("cargo/vendor"_str)));
-    source.insert(String::make("vendored-sources"_str), Toml::Table(rstd::move(vendored)));
+    vendored.insert("directory"_Str, Toml::String("cargo/vendor"_Str));
+    source.insert("vendored-sources"_Str, Toml::Table(rstd::move(vendored)));
     if (crates_io) {
         auto crates = Table::make();
-        crates.insert(String::make("replace-with"_str),
-                      Toml::String(String::make("vendored-sources"_str)));
-        source.insert(String::make("crates-io"_str), Toml::Table(rstd::move(crates)));
+        crates.insert("replace-with"_Str, Toml::String("vendored-sources"_Str));
+        source.insert("crates-io"_Str, Toml::Table(rstd::move(crates)));
     }
     for (auto entry : git_sources.iter()) {
         const auto& url   = *entry.template get<0>();
         const auto& git   = *entry.template get<1>();
         auto        value = Table::make();
-        value.insert(String::make("git"_str), Toml::String(url.clone()));
-        value.insert(String::make("replace-with"_str),
-                     Toml::String(String::make("vendored-sources"_str)));
+        value.insert("git"_Str, Toml::String(url.clone()));
+        value.insert("replace-with"_Str, Toml::String("vendored-sources"_Str));
         if (git.selector.is_some()) {
             value.insert(String::make(lito::source::git_reference_kind_name(git.selector->kind)),
                          Toml::String(git.selector->value.clone()));
@@ -664,7 +662,7 @@ auto source_config(const rstd::collections::BTreeMap<String, cargo::GitSource>& 
         source.insert(url.clone(), Toml::Table(rstd::move(value)));
     }
     auto root = Table::make();
-    root.insert(String::make("source"_str), Toml::Table(rstd::move(source)));
+    root.insert("source"_Str, Toml::Table(rstd::move(source)));
     auto serialized = rstd::toml::to_string(Toml::Table(rstd::move(root)));
     if (serialized.is_err()) {
         return Err(cargo::FlatpakExportError::Serialize(PathBuf::from(path),
@@ -735,7 +733,7 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
                             checksum_json(Some(ref<licrypto::Sha256Digest>::from_raw_parts(
                                 rstd::addressof(*package.checksum)))),
                             PathBuf::from(destination.as_str()),
-                            String::make(".cargo-checksum.json"_str)));
+                            ".cargo-checksum.json"_Str));
             continue;
         }
 
@@ -779,11 +777,11 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
                     lito::flatpak::Source::Inline(
                         rstd_try(normalized_manifest(**scanned, manifest_path.as_path())),
                         destination.clone(),
-                        String::make("Cargo.toml"_str)));
+                        "Cargo.toml"_Str));
         result.push(rstd::move(origin),
                     lito::flatpak::Source::Inline(checksum_json(None()),
                                                   rstd::move(destination),
-                                                  String::make(".cargo-checksum.json"_str)));
+                                                  ".cargo-checksum.json"_Str));
     }
 
     if (! document.packages.is_empty()) {
@@ -791,7 +789,7 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
                     lito::flatpak::Source::Inline(
                         rstd_try(source_config(git_sources, crates_io, document.path.as_path())),
                         PathBuf::from("cargo"_str),
-                        String::make("config"_str)));
+                        "config"_Str));
     }
     return Ok(rstd::move(result));
 }

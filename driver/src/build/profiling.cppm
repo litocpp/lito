@@ -11,23 +11,23 @@ namespace lito
 {
 
 auto probe_error_message(const rstd::bench::probe::ProbeError& error) -> String {
-    if (error.is_ProbeIdExhausted()) return String::make("scan probe id exhausted"_str);
-    if (error.is_SchemaMismatch()) return String::make("scan probe schema mismatch"_str);
+    if (error.is_ProbeIdExhausted()) return "scan probe id exhausted"_Str;
+    if (error.is_SchemaMismatch()) return "scan probe schema mismatch"_Str;
     const auto& diagnostic = error.as_Diagnostic().reason;
-    if (diagnostic.is_InvalidProbe()) return String::make("invalid scan probe"_str);
-    if (diagnostic.is_WrongThread()) return String::make("scan probe used from another thread"_str);
+    if (diagnostic.is_InvalidProbe()) return "invalid scan probe"_Str;
+    if (diagnostic.is_WrongThread()) return "scan probe used from another thread"_Str;
     if (diagnostic.is_ActiveSpanOverflow()) {
-        return String::make("scan probe active span capacity exceeded"_str);
+        return "scan probe active span capacity exceeded"_Str;
     }
-    if (diagnostic.is_NonLifo()) return String::make("scan probe spans ended out of order"_str);
+    if (diagnostic.is_NonLifo()) return "scan probe spans ended out of order"_Str;
     if (diagnostic.is_ActiveSpansPending()) {
-        return String::make("scan probe has active spans at completion"_str);
+        return "scan probe has active spans at completion"_Str;
     }
-    if (diagnostic.is_FrameAlreadyActive()) return String::make("scan probe frame is active"_str);
-    if (diagnostic.is_NoActiveFrame()) return String::make("scan probe frame is not active"_str);
-    if (diagnostic.is_FrameStillActive()) return String::make("scan probe frame is pending"_str);
-    if (diagnostic.is_SequenceExhausted()) return String::make("scan probe sequence exhausted"_str);
-    return String::make("scan probe clock stalled"_str);
+    if (diagnostic.is_FrameAlreadyActive()) return "scan probe frame is active"_Str;
+    if (diagnostic.is_NoActiveFrame()) return "scan probe frame is not active"_Str;
+    if (diagnostic.is_FrameStillActive()) return "scan probe frame is pending"_Str;
+    if (diagnostic.is_SequenceExhausted()) return "scan probe sequence exhausted"_Str;
+    return "scan probe clock stalled"_Str;
 }
 
 } // namespace lito
@@ -597,7 +597,7 @@ public:
     }
 
     auto finish() -> Result<ScanTaskProfile, String> {
-        if (! active_) return Err(String::make("scan task profile is already complete"_str));
+        if (! active_) return Err("scan task profile is already complete"_Str);
         auto ended = recorder_.end_frame();
         if (ended.is_err()) {
             return Err(probe_error_message(rstd::move(ended).unwrap_err_unchecked()));
@@ -674,7 +674,7 @@ public:
     auto task(ref<str> target, ref<rstd::path::Path> source, ScanSourceOrigin origin)
         -> Result<ScanTaskProfileContext, String> {
         if (next_source_frame_ == u64::MAX) {
-            return Err(String::make("scan source frame id exhausted"_str));
+            return Err("scan source frame id exhausted"_Str);
         }
         auto task_probes = Vec<rstd::bench::probe::ProbeId>::with_capacity(probes_.len());
         for (auto value : probes_) task_probes.push(rstd::move(value));
@@ -730,7 +730,7 @@ public:
     auto begin_source_frame(ref<str> target, ref<rstd::path::Path> source, ScanSourceOrigin origin)
         -> Result<empty, String> {
         if (next_source_frame_ == u64::MAX) {
-            return Err(String::make("scan source frame id exhausted"_str));
+            return Err("scan source frame id exhausted"_Str);
         }
         auto begun = source_recorder_.begin_frame(next_source_frame_);
         if (begun.is_err()) {

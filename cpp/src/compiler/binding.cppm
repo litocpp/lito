@@ -40,7 +40,7 @@ struct Impl<convert::TryFrom<lito::cpp::CppCompilerArgumentOccurrence>, lito::cp
             if (setting.is_DebugInfo()) field = "debug information"_str;
             if (setting.is_Lto()) field = "link-time optimization"_str;
             auto spelling = occurrence.raw_tokens.is_empty()
-                                ? String::make("<structured compiler option>"_str)
+                                ? "<structured compiler option>"_Str
                                 : occurrence.raw_tokens[usize {}].clone();
             return Err(lito::cpp::CppOptionError::Message(
                 rstd::format("{} arguments {}..{}: compiler option '{}' overrides a Lito-owned "
@@ -63,7 +63,7 @@ struct Impl<convert::TryFrom<lito::cpp::CppCompilerArgumentOccurrence>, lito::cp
             case lito::cpp::CppOwnedSetting::Exceptions: field = "exceptions"_str; break;
             }
             auto spelling = occurrence.raw_tokens.is_empty()
-                                ? String::make("<structured compiler option>"_str)
+                                ? "<structured compiler option>"_Str
                                 : occurrence.raw_tokens[usize {}].clone();
             return Err(lito::cpp::CppOptionError::Message(
                 rstd::format("{} arguments {}..{}: compiler option '{}' overrides Lito-owned {}",

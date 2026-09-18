@@ -378,7 +378,7 @@ auto resolve_import_requirements(const PackageMetadata& package,
 }
 
 auto context_id(const CompileContext& context) -> String {
-    auto result = String::make("lito-compile-context-v6\n"_str);
+    auto result = "lito-compile-context-v6\n"_Str;
     if (context.language.is_C()) {
         const auto& c = context.language.as_C();
         result.push_str("language:c\n"_str);
@@ -405,7 +405,7 @@ auto context_id(const CompileContext& context) -> String {
 }
 
 auto scan_context_id(const CompileContext& context) -> String {
-    auto result = String::make("lito-scan-context-v4\n"_str);
+    auto result = "lito-scan-context-v4\n"_Str;
     if (context.language.is_C()) {
         const auto& c = context.language.as_C();
         result.push_str("language:c\n"_str);
@@ -500,7 +500,7 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
         for (const auto& macro : context.language.as_Cpp().options.preprocessor.macros)
             append_macro(macro);
     }
-    auto identity = String::make("lito-preprocessor-projection-v2\n"_str);
+    auto identity = "lito-preprocessor-projection-v2\n"_Str;
     for (const auto& value : result.user_include_directories)
         identity.push_str(rstd::format("include:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.system_include_directories)
@@ -603,7 +603,7 @@ auto add_private_definition(ResolvedTarget& target, CompileContext& context, Str
     auto name = separator.is_some() ? definition.as_str().split_at(*separator).template get<0>()
                                     : definition.as_str();
     if (name.is_empty()) {
-        return Err(String::make("generated definition must have a macro name"_str));
+        return Err("generated definition must have a macro name"_Str);
     }
     for (usize index {}; index < name.len(); ++index) {
         auto byte  = name.as_bytes()[index];

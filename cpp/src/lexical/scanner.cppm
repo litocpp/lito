@@ -81,8 +81,8 @@ struct CppWordScanner {
 
         auto spelling = rstd::str_::from_utf8(cursor.lexeme());
         if (spelling.is_err()) {
-            return Err(frontend::lexical::Error::at(String::make("C++ word is not valid UTF-8"_str),
-                                                    cursor.begin()));
+            return Err(
+                frontend::lexical::Error::at("C++ word is not valid UTF-8"_Str, cursor.begin()));
         }
         auto hash = frontend::comparable_name_hash(*spelling);
         if (hash == CppModuleKeyword::hash && *spelling == CppModuleKeyword::name &&

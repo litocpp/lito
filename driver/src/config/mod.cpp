@@ -294,7 +294,7 @@ auto set_config_assignment_value(Toml& document, const rstd::toml::KeyPath& key,
     }
     if (value.as_str().is_some()) {
         auto executable = key.clone();
-        executable.push(String::make("executable"_str));
+        executable.push("executable"_Str);
         return set_config_value(document, executable, rstd::move(value));
     }
     if (value.is_table()) {

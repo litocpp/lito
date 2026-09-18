@@ -85,9 +85,9 @@ auto string_array(const Vec<String>& values) -> Toml {
 
 auto dependency_usage_value(lito::dependency::DependencyUsage usage) -> Toml {
     auto values = Vec<String>::with_capacity(usage.len());
-    if (usage.uses_compile()) values.push(String::make("compile"_str));
-    if (usage.uses_link()) values.push(String::make("link"_str));
-    if (usage.uses_runtime()) values.push(String::make("runtime"_str));
+    if (usage.uses_compile()) values.push("compile"_Str);
+    if (usage.uses_link()) values.push("link"_Str);
+    if (usage.uses_runtime()) values.push("runtime"_Str);
     if (values.len() == usize(1)) return string_value(values[usize {}].as_str());
     return string_array(values);
 }
@@ -96,9 +96,9 @@ auto insert_consumption(Table&                                  table,
                         lito::dependency::DependencyConsumption consumption,
                         lito::dependency::DependencyUsage       default_usage) -> void {
     if (! (consumption.usage == default_usage)) {
-        table.insert(String::make("usage"_str), dependency_usage_value(consumption.usage));
+        table.insert("usage"_Str, dependency_usage_value(consumption.usage));
     }
-    if (consumption.is_public) table.insert(String::make("pub"_str), Toml::Boolean(true));
+    if (consumption.is_public) table.insert("pub"_Str, Toml::Boolean(true));
 }
 
 auto registry_identity(const StandaloneManifestOptions& options, ref<str> value)
@@ -137,7 +137,7 @@ auto package_source_table(const PackageManifest&                          manife
                          source.package.as_str()));
     }
     auto table = Table::make();
-    table.insert(String::make("version"_str), string_value(source.requirement.text()));
+    table.insert("version"_Str, string_value(source.requirement.text()));
     if (source.registry.is_some()) {
         auto identity = registry_identity(options, source.registry->as_str());
         if (identity.is_none()) {
@@ -148,7 +148,7 @@ auto package_source_table(const PackageManifest&                          manife
                              source.registry->as_str()));
         }
         if (! (**identity == options.owner_registry)) {
-            table.insert(String::make("registry"_str), string_value((*identity)->as_str()));
+            table.insert("registry"_Str, string_value((*identity)->as_str()));
         }
     }
     return Ok(rstd::move(table));
@@ -169,17 +169,16 @@ auto dependency_table(const PackageManifest&           manifest,
         manifest, *dependency.source.publication, dependency.name.as_str(), options));
     if (dependency.usage.is_some() &&
         ! (*dependency.usage == lito::dependency::DependencyUsage::compile_and_link())) {
-        table.insert(String::make("usage"_str), dependency_usage_value(*dependency.usage));
+        table.insert("usage"_Str, dependency_usage_value(*dependency.usage));
     }
     if (! development && dependency.is_public.is_some() && *dependency.is_public) {
-        table.insert(String::make("pub"_str), Toml::Boolean(true));
+        table.insert("pub"_Str, Toml::Boolean(true));
     }
     if (dependency.features.is_some()) {
-        table.insert(String::make("features"_str), string_array(*dependency.features));
+        table.insert("features"_Str, string_array(*dependency.features));
     }
     if (dependency.default_features.is_some()) {
-        table.insert(String::make("default-features"_str),
-                     Toml::Boolean(*dependency.default_features));
+        table.insert("default-features"_Str, Toml::Boolean(*dependency.default_features));
     }
     return Ok(Some(Toml::Table(rstd::move(table))));
 }
@@ -265,7 +264,7 @@ auto external_source_table(const PackageManifest&                  manifest,
         auto root = source.declaration_root.is_some() ? source.declaration_root->as_path()
                                                       : manifest.root.as_path();
         table.insert(
-            String::make("path"_str),
+            "path"_Str,
             string_value(rstd_try(portable_relative_path(manifest,
                                                          root,
                                                          requirement.as_Path().path.as_path(),
@@ -280,24 +279,22 @@ auto external_source_table(const PackageManifest&                  manifest,
                 rstd::format("published external source '{}' Git reference must be a full commit",
                              source.name.as_str()));
         }
-        table.insert(String::make("git"_str), string_value(git.url.as_str()));
-        table.insert(String::make("commit"_str), string_value(git.reference.value.as_str()));
+        table.insert("git"_Str, string_value(git.url.as_str()));
+        table.insert("commit"_Str, string_value(git.reference.value.as_str()));
     } else if (requirement.is_Archive()) {
         const auto& archive = requirement.as_Archive();
-        table.insert(String::make("archive"_str), string_value(archive.url.as_str()));
-        table.insert(String::make("sha256"_str),
-                     string_value(sha256_text(archive.sha256).as_str()));
+        table.insert("archive"_Str, string_value(archive.url.as_str()));
+        table.insert("sha256"_Str, string_value(sha256_text(archive.sha256).as_str()));
     } else {
         auto archives = Table::make();
         for (const auto& variant : requirement.as_ArchitectureArchives().variants) {
             auto entry = Table::make();
-            entry.insert(String::make("archive"_str), string_value(variant.url.as_str()));
-            entry.insert(String::make("sha256"_str),
-                         string_value(sha256_text(variant.sha256).as_str()));
+            entry.insert("archive"_Str, string_value(variant.url.as_str()));
+            entry.insert("sha256"_Str, string_value(sha256_text(variant.sha256).as_str()));
             archives.insert(String::make(architecture_name(variant.architecture)),
                             Toml::Table(rstd::move(entry)));
         }
-        table.insert(String::make("archives"_str), Toml::Table(rstd::move(archives)));
+        table.insert("archives"_Str, Toml::Table(rstd::move(archives)));
     }
     return Ok(Toml::Table(rstd::move(table)));
 }
@@ -328,21 +325,19 @@ auto pkg_config_dependencies(const PackageManifest& manifest) -> Option<Toml> {
     auto table = Table::make();
     for (const auto& dependency : manifest.pkg_config_external_dependencies) {
         auto value = Table::make();
-        value.insert(String::make("module"_str),
-                     string_value(dependency.requirement.module.as_str()));
+        value.insert("module"_Str, string_value(dependency.requirement.module.as_str()));
         if (dependency.requirement.version.is_some()) {
             value.insert(
-                String::make("version"_str),
+                "version"_Str,
                 string_value(pkg_config_version(*dependency.requirement.version).as_str()));
         }
         if (dependency.requirement.mode == lito::dependency::PkgConfigQueryMode::Static) {
-            value.insert(String::make("static"_str), Toml::Boolean(true));
+            value.insert("static"_Str, Toml::Boolean(true));
         }
         insert_consumption(
             value, dependency.consumption, lito::dependency::DependencyUsage::compile_and_link());
         if (dependency.condition.is_some()) {
-            value.insert(String::make("condition"_str),
-                         string_value(dependency.condition->source.as_str()));
+            value.insert("condition"_Str, string_value(dependency.condition->source.as_str()));
         }
         table.insert(dependency.alias.clone(), Toml::Table(rstd::move(value)));
     }
@@ -354,17 +349,17 @@ auto cmake_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
     auto table = Table::make();
     for (const auto& dependency : manifest.cmake_external_dependencies) {
         auto value = Table::make();
-        value.insert(String::make("package"_str), string_value(dependency.package.as_str()));
+        value.insert("package"_Str, string_value(dependency.package.as_str()));
         if (! dependency.components.is_empty()) {
-            value.insert(String::make("components"_str), string_array(dependency.components));
+            value.insert("components"_Str, string_array(dependency.components));
         }
         if (dependency.source.is_some()) {
-            value.insert(String::make("source"_str), string_value(dependency.source->as_str()));
+            value.insert("source"_Str, string_value(dependency.source->as_str()));
         }
         if (dependency.adapter.is_some()) {
             auto root = dependency.adapter_root.is_some() ? dependency.adapter_root->as_path()
                                                           : manifest.root.as_path();
-            value.insert(String::make("adapter"_str),
+            value.insert("adapter"_Str,
                          string_value(rstd_try(portable_relative_path(manifest,
                                                                       root,
                                                                       dependency.adapter->as_path(),
@@ -377,40 +372,39 @@ auto cmake_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
                 return standalone_failure<Option<Toml>>(
                     manifest, "published CMake config-directory is not valid UTF-8"_str);
             }
-            value.insert(String::make("config-directory"_str), string_value(*text));
+            value.insert("config-directory"_Str, string_value(*text));
         }
         if (! dependency.cache.is_empty()) {
             auto cache = Table::make();
             for (const auto& entry : dependency.cache) {
                 cache.insert(entry.name.clone(), string_value(entry.value.as_str()));
             }
-            value.insert(String::make("cache"_str), Toml::Table(rstd::move(cache)));
+            value.insert("cache"_Str, Toml::Table(rstd::move(cache)));
         }
         if (! dependency.targets.is_empty()) {
             auto targets = rstd::toml::Array::with_capacity(dependency.targets.len());
             for (const auto& target : dependency.targets) {
                 auto item = Table::make();
-                item.insert(String::make("name"_str), string_value(target.name.as_str()));
+                item.insert("name"_Str, string_value(target.name.as_str()));
                 insert_consumption(item,
                                    target.consumption,
                                    lito::dependency::DependencyUsage::compile_and_link());
                 targets.push(Toml::Table(rstd::move(item)));
             }
-            value.insert(String::make("targets"_str), Toml::Array(rstd::move(targets)));
+            value.insert("targets"_Str, Toml::Array(rstd::move(targets)));
         }
         if (! dependency.host_tools.is_empty()) {
             auto tools = rstd::toml::Array::with_capacity(dependency.host_tools.len());
             for (const auto& tool : dependency.host_tools) {
                 auto item = Table::make();
-                item.insert(String::make("name"_str), string_value(tool.name.as_str()));
-                item.insert(String::make("target"_str), string_value(tool.target.as_str()));
+                item.insert("name"_Str, string_value(tool.name.as_str()));
+                item.insert("target"_Str, string_value(tool.target.as_str()));
                 tools.push(Toml::Table(rstd::move(item)));
             }
-            value.insert(String::make("host-tools"_str), Toml::Array(rstd::move(tools)));
+            value.insert("host-tools"_Str, Toml::Array(rstd::move(tools)));
         }
         if (dependency.condition.is_some()) {
-            value.insert(String::make("condition"_str),
-                         string_value(dependency.condition->source.as_str()));
+            value.insert("condition"_Str, string_value(dependency.condition->source.as_str()));
         }
         table.insert(dependency.alias.clone(), Toml::Table(rstd::move(value)));
     }
@@ -427,25 +421,23 @@ auto cargo_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
                 manifest, "Cargo external manifest-path is not valid UTF-8"_str);
         }
         auto value = Table::make();
-        value.insert(String::make("source"_str), string_value(dependency.recipe.source.as_str()));
-        value.insert(String::make("package"_str), string_value(dependency.recipe.package.as_str()));
-        value.insert(String::make("manifest-path"_str), string_value(*manifest_path));
+        value.insert("source"_Str, string_value(dependency.recipe.source.as_str()));
+        value.insert("package"_Str, string_value(dependency.recipe.package.as_str()));
+        value.insert("manifest-path"_Str, string_value(*manifest_path));
         insert_consumption(value,
                            dependency.consumption.dependency,
                            lito::dependency::DependencyUsage::link_only());
         if (! dependency.consumption.features.is_empty()) {
-            value.insert(String::make("features"_str),
-                         string_array(dependency.consumption.features));
+            value.insert("features"_Str, string_array(dependency.consumption.features));
         }
         if (! dependency.consumption.default_features) {
-            value.insert(String::make("default-features"_str), Toml::Boolean(false));
+            value.insert("default-features"_Str, Toml::Boolean(false));
         }
         if (dependency.consumption.profile.is_some()) {
-            value.insert(String::make("profile"_str),
-                         string_value(dependency.consumption.profile->as_str()));
+            value.insert("profile"_Str, string_value(dependency.consumption.profile->as_str()));
         }
         if (dependency.consumption.condition.is_some()) {
-            value.insert(String::make("condition"_str),
+            value.insert("condition"_Str,
                          string_value(dependency.consumption.condition->source.as_str()));
         }
         table.insert(dependency.alias.clone(), Toml::Table(rstd::move(value)));
@@ -490,16 +482,14 @@ auto lito::manifest::serialize_standalone_package_manifest(const PackageManifest
             manifest, "package manifest has no package table"_str);
     }
     auto package_table = (**package).as_table_mut().unwrap();
-    package_table->insert(String::make("version"_str),
-                          string_value(manifest.version.value->as_str()));
+    package_table->insert("version"_Str, string_value(manifest.version.value->as_str()));
     if (manifest.license.value.is_some()) {
-        package_table->insert(String::make("license"_str),
-                              string_value(manifest.license.value->as_str()));
+        package_table->insert("license"_Str, string_value(manifest.license.value->as_str()));
     } else {
         package_table->remove("license"_str);
     }
     if (! manifest.authors.values.is_empty()) {
-        package_table->insert(String::make("authors"_str), string_array(manifest.authors.values));
+        package_table->insert("authors"_Str, string_array(manifest.authors.values));
     } else {
         package_table->remove("authors"_str);
     }
@@ -514,10 +504,9 @@ auto lito::manifest::serialize_standalone_package_manifest(const PackageManifest
     replace_package_metadata("repository"_str, manifest.repository);
     replace_package_metadata("documentation"_str, manifest.documentation);
     if (manifest.readme.archive_path.is_some()) {
-        package_table->insert(String::make("readme"_str),
-                              string_value(manifest.readme.archive_path->as_str()));
+        package_table->insert("readme"_Str, string_value(manifest.readme.archive_path->as_str()));
     } else if (manifest.readme.source == PackageReadmeSource::Disabled) {
-        package_table->insert(String::make("readme"_str), Toml::Boolean(false));
+        package_table->insert("readme"_Str, Toml::Boolean(false));
     } else {
         package_table->remove("readme"_str);
     }
@@ -539,15 +528,15 @@ auto lito::manifest::serialize_standalone_package_manifest(const PackageManifest
     auto external   = Table::make();
     auto pkg_config = pkg_config_dependencies(manifest);
     if (pkg_config.is_some()) {
-        external.insert(String::make("pkg-config"_str), rstd::move(pkg_config).unwrap());
+        external.insert("pkg-config"_Str, rstd::move(pkg_config).unwrap());
     }
     auto cmake = rstd_try(cmake_dependencies(manifest));
     if (cmake.is_some()) {
-        external.insert(String::make("cmake"_str), rstd::move(cmake).unwrap());
+        external.insert("cmake"_Str, rstd::move(cmake).unwrap());
     }
     auto cargo = rstd_try(cargo_dependencies(manifest));
     if (cargo.is_some()) {
-        external.insert(String::make("cargo"_str), rstd::move(cargo).unwrap());
+        external.insert("cargo"_Str, rstd::move(cargo).unwrap());
     }
     replace_optional(*root,
                      "external-dependencies"_str,

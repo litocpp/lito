@@ -339,7 +339,7 @@ class ScanCacheSession {
             auto metadata = rstd::fs::metadata(path);
             if (metadata.is_err()) {
                 return Err(rstd::sync::Arc<CacheError>::make(
-                    CacheError::SharedIo(String::make("inspect scan cache input"_str),
+                    CacheError::SharedIo("inspect scan cache input"_Str,
                                          PathBuf::from(path),
                                          rstd::sync::Arc<rstd::io::error::Error>::make(
                                              rstd::move(metadata).unwrap_err()))));
@@ -351,7 +351,7 @@ class ScanCacheSession {
             auto opened = rstd::fs::File::open(path);
             if (opened.is_err()) {
                 return Err(rstd::sync::Arc<CacheError>::make(
-                    CacheError::SharedIo(String::make("hash scan cache input"_str),
+                    CacheError::SharedIo("hash scan cache input"_Str,
                                          PathBuf::from(path),
                                          rstd::sync::Arc<rstd::io::error::Error>::make(
                                              rstd::move(opened).unwrap_err()))));
@@ -363,7 +363,7 @@ class ScanCacheSession {
                 auto read = file.read(buffer.as_mut_slice());
                 if (read.is_err()) {
                     return Err(rstd::sync::Arc<CacheError>::make(
-                        CacheError::SharedIo(String::make("hash scan cache input"_str),
+                        CacheError::SharedIo("hash scan cache input"_Str,
                                              PathBuf::from(path),
                                              rstd::sync::Arc<rstd::io::error::Error>::make(
                                                  rstd::move(read).unwrap_err()))));

@@ -33,13 +33,12 @@ auto append_build_units(PreparedBuildUnits&       result,
             result.target_units.emplace_back();
         }
     } else if (result.target_units.len() != package.targets.len()) {
-        return Err(BuildError::Message(
-            String::make("prepared build units do not match package targets"_str)));
+        return Err(BuildError::Message("prepared build units do not match package targets"_Str));
     }
     for (auto target : targets) {
         if (target >= package.targets.len()) {
-            return Err(BuildError::Message(
-                String::make("build unit target selection does not match package"_str)));
+            return Err(
+                BuildError::Message("build unit target selection does not match package"_Str));
         }
         auto& target_spec = package.targets[target];
         for (auto& source : target_spec.sources) {

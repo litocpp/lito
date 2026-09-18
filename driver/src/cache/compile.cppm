@@ -71,9 +71,8 @@ auto complete_receipt_json(const CompileCacheReceipt& receipt) -> Json {
     auto direct = JsonArray::with_capacity(receipt.direct_modules.len());
     for (const auto& dependency : receipt.direct_modules) {
         auto value = JsonMap::make();
-        value.insert(String::make("artifact"_str), cache_string(dependency.artifact.as_str()));
-        value.insert(String::make("logical-name"_str),
-                     cache_string(dependency.logical_name.as_str()));
+        value.insert("artifact"_Str, cache_string(dependency.artifact.as_str()));
+        value.insert("logical-name"_Str, cache_string(dependency.logical_name.as_str()));
         direct.push(Json::Object(rstd::move(value)));
     }
 
@@ -82,57 +81,54 @@ auto complete_receipt_json(const CompileCacheReceipt& receipt) -> Json {
     if (receipt.bmi.is_some()) {
         const auto& bmi   = *receipt.bmi;
         auto        value = JsonMap::make();
-        value.insert(String::make("format"_str), cache_string(bmi.format.as_str()));
-        value.insert(String::make("kind"_str), cache_string("bmi"_str));
-        value.insert(String::make("path"_str), cache_string(bmi.path.as_str()));
-        value.insert(String::make("recipe"_str), cache_string(bmi.recipe.as_str()));
-        value.insert(String::make("representation"_str), cache_string(bmi.representation.as_str()));
-        value.insert(String::make("source-embedding"_str),
-                     cache_string(bmi.source_embedding.as_str()));
+        value.insert("format"_Str, cache_string(bmi.format.as_str()));
+        value.insert("kind"_Str, cache_string("bmi"_str));
+        value.insert("path"_Str, cache_string(bmi.path.as_str()));
+        value.insert("recipe"_Str, cache_string(bmi.recipe.as_str()));
+        value.insert("representation"_Str, cache_string(bmi.representation.as_str()));
+        value.insert("source-embedding"_Str, cache_string(bmi.source_embedding.as_str()));
         bmi_json = Json::Object(rstd::move(value));
     }
-    outputs.insert(String::make("bmi"_str), rstd::move(bmi_json));
+    outputs.insert("bmi"_Str, rstd::move(bmi_json));
 
     auto object_json = Json::Null();
     if (receipt.object.is_some()) {
         const auto& object = *receipt.object;
         auto        value  = JsonMap::make();
-        value.insert(String::make("kind"_str), cache_string("object"_str));
-        value.insert(String::make("path"_str), cache_string(object.path.as_str()));
-        value.insert(String::make("recipe"_str), cache_string(object.recipe.as_str()));
+        value.insert("kind"_Str, cache_string("object"_str));
+        value.insert("path"_Str, cache_string(object.path.as_str()));
+        value.insert("recipe"_Str, cache_string(object.recipe.as_str()));
         object_json = Json::Object(rstd::move(value));
     }
-    outputs.insert(String::make("object"_str), rstd::move(object_json));
+    outputs.insert("object"_Str, rstd::move(object_json));
 
     auto complete = JsonMap::make();
-    complete.insert(String::make("artifact"_str), cache_string(receipt.artifact.as_str()));
-    complete.insert(String::make("command"_str), cache_string(receipt.command.as_str()));
-    complete.insert(String::make("context"_str), cache_string(receipt.context.as_str()));
-    complete.insert(String::make("direct-modules"_str), Json::Array(rstd::move(direct)));
-    complete.insert(String::make("environment"_str), cache_string(receipt.environment.as_str()));
-    complete.insert(String::make("outputs"_str), Json::Object(rstd::move(outputs)));
-    complete.insert(String::make("scan-receipt"_str), cache_string(receipt.scan_receipt.as_str()));
-    complete.insert(String::make("source"_str), cache_string(receipt.source.as_str()));
-    complete.insert(String::make("source-path"_str), cache_string(receipt.source_path.as_str()));
-    complete.insert(String::make("source-origin"_str),
-                    cache_string(receipt.source_origin.as_str()));
-    complete.insert(String::make("state"_str), cache_string("complete"_str));
-    complete.insert(String::make("target"_str), cache_string(receipt.target.as_str()));
-    complete.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+    complete.insert("artifact"_Str, cache_string(receipt.artifact.as_str()));
+    complete.insert("command"_Str, cache_string(receipt.command.as_str()));
+    complete.insert("context"_Str, cache_string(receipt.context.as_str()));
+    complete.insert("direct-modules"_Str, Json::Array(rstd::move(direct)));
+    complete.insert("environment"_Str, cache_string(receipt.environment.as_str()));
+    complete.insert("outputs"_Str, Json::Object(rstd::move(outputs)));
+    complete.insert("scan-receipt"_Str, cache_string(receipt.scan_receipt.as_str()));
+    complete.insert("source"_Str, cache_string(receipt.source.as_str()));
+    complete.insert("source-path"_Str, cache_string(receipt.source_path.as_str()));
+    complete.insert("source-origin"_Str, cache_string(receipt.source_origin.as_str()));
+    complete.insert("state"_Str, cache_string("complete"_str));
+    complete.insert("target"_Str, cache_string(receipt.target.as_str()));
+    complete.insert("version"_Str, cache_u64(CACHE_VERSION));
     return Json::Object(rstd::move(complete));
 }
 
 auto building_receipt_json(const CompileCacheReceipt& receipt) -> Json {
     auto building = JsonMap::make();
-    building.insert(String::make("artifact"_str), cache_string(receipt.artifact.as_str()));
-    building.insert(String::make("command"_str), cache_string(receipt.command.as_str()));
-    building.insert(String::make("environment"_str), cache_string(receipt.environment.as_str()));
-    building.insert(String::make("source"_str), cache_string(receipt.source.as_str()));
-    building.insert(String::make("source-origin"_str),
-                    cache_string(receipt.source_origin.as_str()));
-    building.insert(String::make("state"_str), cache_string("building"_str));
-    building.insert(String::make("target"_str), cache_string(receipt.target.as_str()));
-    building.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+    building.insert("artifact"_Str, cache_string(receipt.artifact.as_str()));
+    building.insert("command"_Str, cache_string(receipt.command.as_str()));
+    building.insert("environment"_Str, cache_string(receipt.environment.as_str()));
+    building.insert("source"_Str, cache_string(receipt.source.as_str()));
+    building.insert("source-origin"_Str, cache_string(receipt.source_origin.as_str()));
+    building.insert("state"_Str, cache_string("building"_str));
+    building.insert("target"_Str, cache_string(receipt.target.as_str()));
+    building.insert("version"_Str, cache_u64(CACHE_VERSION));
     return Json::Object(rstd::move(building));
 }
 
@@ -378,14 +374,14 @@ public:
                             ref<rstd::path::Path>               record,
                             const cpp::ResolvedCompileTestCase& test) -> CacheResult<empty> {
         auto root = JsonMap::make();
-        root.insert(String::make("case"_str), cache_string(test.name.as_str()));
-        root.insert(String::make("compile"_str), complete_receipt_json(decision.receipt_));
-        root.insert(String::make("expected"_str),
+        root.insert("case"_Str, cache_string(test.name.as_str()));
+        root.insert("compile"_Str, complete_receipt_json(decision.receipt_));
+        root.insert("expected"_Str,
                     cache_string(test.outcome == lito::manifest::CompileTestOutcome::Success
                                      ? "success"_str
                                      : "failure"_str));
-        root.insert(String::make("state"_str), cache_string("running"_str));
-        root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+        root.insert("state"_Str, cache_string("running"_str));
+        root.insert("version"_Str, cache_u64(CACHE_VERSION));
         return write_json(record, Json::Object(rstd::move(root)));
     }
 
@@ -397,28 +393,26 @@ public:
             mismatch = cache_string(execution.mismatch->as_str());
         }
         auto result = JsonMap::make();
-        result.insert(String::make("exit-code"_str), cache_i64(as_cast<i64>(execution.exit_code)));
-        result.insert(String::make("matched"_str), Json::Bool(execution.success()));
-        result.insert(String::make("mismatch"_str), rstd::move(mismatch));
-        result.insert(String::make("stderr-bytes"_str),
-                      cache_u64(as_cast<u64>(execution.standard_error.len())));
-        result.insert(String::make("stderr-fingerprint"_str),
+        result.insert("exit-code"_Str, cache_i64(as_cast<i64>(execution.exit_code)));
+        result.insert("matched"_Str, Json::Bool(execution.success()));
+        result.insert("mismatch"_Str, rstd::move(mismatch));
+        result.insert("stderr-bytes"_Str, cache_u64(as_cast<u64>(execution.standard_error.len())));
+        result.insert("stderr-fingerprint"_Str,
                       cache_string(cache::text_identity("lito-compile-test-stderr-v1"_str,
                                                         execution.standard_error.as_str())
                                        .as_str()));
-        result.insert(String::make("stdout-bytes"_str),
-                      cache_u64(as_cast<u64>(execution.standard_output.len())));
+        result.insert("stdout-bytes"_Str, cache_u64(as_cast<u64>(execution.standard_output.len())));
 
         auto root = JsonMap::make();
-        root.insert(String::make("case"_str), cache_string(execution.name.as_str()));
-        root.insert(String::make("compile"_str), complete_receipt_json(decision.receipt_));
-        root.insert(String::make("expected"_str),
+        root.insert("case"_Str, cache_string(execution.name.as_str()));
+        root.insert("compile"_Str, complete_receipt_json(decision.receipt_));
+        root.insert("expected"_Str,
                     cache_string(execution.expected == lito::manifest::CompileTestOutcome::Success
                                      ? "success"_str
                                      : "failure"_str));
-        root.insert(String::make("result"_str), Json::Object(rstd::move(result)));
-        root.insert(String::make("state"_str), cache_string("complete"_str));
-        root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+        root.insert("result"_Str, Json::Object(rstd::move(result)));
+        root.insert("state"_Str, cache_string("complete"_str));
+        root.insert("version"_Str, cache_u64(CACHE_VERSION));
         return write_json(record, Json::Object(rstd::move(root)));
     }
 
@@ -435,7 +429,7 @@ public:
             }
             auto object_digest = output_content_digest(decision.object_->as_path());
             if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
-            digests.insert(String::make("object"_str), cache_string(object_digest->as_str()));
+            digests.insert("object"_Str, cache_string(object_digest->as_str()));
             object_identity = Some(CachedArtifactIdentity {
                 .recipe  = decision.receipt_.artifact.clone(),
                 .content = rstd::move(object_digest).unwrap(),
@@ -451,16 +445,15 @@ public:
             }
             auto bmi_digest = output_content_digest(bmi_artifact->path.as_path());
             if (bmi_digest.is_err()) return Err(rstd::move(bmi_digest).unwrap_err());
-            digests.insert(String::make("bmi"_str), cache_string(bmi_digest->as_str()));
+            digests.insert("bmi"_Str, cache_string(bmi_digest->as_str()));
         }
         auto complete        = complete_receipt_json(decision.receipt_);
         auto complete_object = complete.as_object_mut();
         if (complete_object.is_none()) {
             return cache_failure<Option<CachedArtifactIdentity>>(
-                String::make("compile cache receipt is not an object"_str));
+                "compile cache receipt is not an object"_Str);
         }
-        (**complete_object)
-            .insert(String::make("content-digests"_str), Json::Object(rstd::move(digests)));
+        (**complete_object).insert("content-digests"_Str, Json::Object(rstd::move(digests)));
         for (const auto& output : decision.stale_outputs_) {
             auto removed = remove_owned_output(output.as_path(), owner_root_.as_path());
             if (removed.is_err()) return Err(rstd::move(removed).unwrap_err());

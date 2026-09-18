@@ -349,9 +349,9 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     ASSERT_TRUE(project.is_ok());
     auto output = build_root("install-link-variant"_str);
     auto target = lito::package::PackageTargetId {
-        .package = String::make("fixture-install-link"_str),
+        .package = "fixture-install-link"_Str,
         .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("fixture-install-link"_str),
+        .name    = "fixture-install-link"_Str,
     };
 
     auto normal_request = build_request(
@@ -378,7 +378,7 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
         .policy =
             lito::InstallArtifactLinkPolicy {
                 .runtime_search = rstd::move(runpath).unwrap(),
-                .identity       = String::make("fixture-install-link-v1"_str),
+                .identity       = "fixture-install-link-v1"_Str,
             },
     });
     auto installed = lito::build(rstd::move(install_request));
@@ -456,15 +456,15 @@ int main() {
         "c-cpp-build"_str, project->root.as_path(), strings("fixture-cpp-consumer"_str));
     request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-DLITO_CPP_GLOBAL=1"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     request.configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-DLITO_C_GLOBAL=1"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     request.configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-Wl,--as-needed"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto result = lito::build(request);
     if (result.is_err()) {
@@ -479,7 +479,7 @@ int main() {
         "c-cpp-target-conflict"_str, project->root.as_path(), strings("fixture-cpp-consumer"_str));
     conflicting.configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("--target=wasm32-unknown-unknown"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto rejected = lito::build(conflicting);
     ASSERT_TRUE(rejected.is_err());
@@ -1581,7 +1581,7 @@ auto main() -> int {
         project->root.as_path(), output.as_path(), strings("fixture-qt-protobuf"_str));
     request.cmake = fixture_cmake();
     request.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {
-        .id     = String::make("qt"_str),
+        .id     = "qt"_Str,
         .source = lito::source::BuiltinPackageSource::Path(rstd::move(qt_package).unwrap()),
     });
     auto built = lito::build(request);
@@ -1760,7 +1760,7 @@ set_property(TARGET LitoOverrideFixture::fixture PROPERTY
     request.cmake = fixture_cmake();
     request.cmake.search_paths.push(project->root.join(PathBuf::from("system"_str).as_path()));
     request.cmake_build_overrides.entries.push(lito::dependency::CMakeBuildOverride {
-        .package = String::make("LitoOverrideFixture"_str),
+        .package = "LitoOverrideFixture"_Str,
     });
     auto events      = CMakeOverrideEvents {};
     request.observer = Some(lito::BuildEventSink {
@@ -1852,7 +1852,7 @@ auto main() -> int {
     request.cmake           = fixture_cmake();
     request.sources.network = lito::source::NetworkPolicy::Offline;
     request.sources.patches.push(lito::source::GitSourcePatch {
-        .git  = String::make("https://example.invalid/lito-cmake-git-patch.git"_str),
+        .git  = "https://example.invalid/lito-cmake-git-patch.git"_Str,
         .path = source->root.clone(),
     });
     auto events      = CMakeOverrideEvents {};
@@ -1967,7 +1967,7 @@ export module fixture.feature:optional;
     ASSERT_TRUE(disabled.is_ok());
     EXPECT_EQ(disabled->compiled, usize(1));
 
-    request.selection.features.enabled.push(String::make("optional"_str));
+    request.selection.features.enabled.push("optional"_Str);
     auto enabled = lito::build(request);
     if (enabled.is_err()) {
         auto message = error_chain_text(enabled.unwrap_err());

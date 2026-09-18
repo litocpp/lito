@@ -106,11 +106,11 @@ public:
         }
         auto pool = rstd::thread::ThreadPoolBuilder::make()
                         .worker_count(jobs)
-                        .thread_name(String::make("lito-compile"_str))
+                        .thread_name("lito-compile"_Str)
                         .build();
         if (pool.is_err()) {
             return Err(
-                BuildError::System(SystemError::Io(String::make("create compile worker pool"_str),
+                BuildError::System(SystemError::Io("create compile worker pool"_Str,
                                                    PathBuf::make(),
                                                    rstd::move(pool).unwrap_err_unchecked())));
         }
@@ -119,7 +119,7 @@ public:
             rstd::thread::BlockingTaskSet<CompileWorkerResult>::make(value.handle(), max_in_flight);
         if (tasks.is_err()) {
             return Err(
-                BuildError::System(SystemError::Io(String::make("create compile task set"_str),
+                BuildError::System(SystemError::Io("create compile task set"_Str,
                                                    PathBuf::make(),
                                                    rstd::move(tasks).unwrap_err_unchecked())));
         }

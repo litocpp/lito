@@ -332,7 +332,7 @@ auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
         return archive_failure<InspectedRegistryArchive>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("Registry packages must not declare external inputs"_str),
+            "Registry packages must not declare external inputs"_Str,
             RegistryArtifactFailureCode::ExternalInputsNotAllowed);
     }
     return Ok(InspectedRegistryArchive {

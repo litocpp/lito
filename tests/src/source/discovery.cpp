@@ -146,24 +146,24 @@ TEST_F(SourceDiscovery, SourceGroupsRetainOriginsAcrossMultipleRoots) {
     ASSERT_TRUE(project.is_ok());
     auto groups = Vec<lito::cpp::ResolvedSourceGroup>::make();
     groups.push(lito::cpp::ResolvedSourceGroup {
-        .name     = String::make("local"_str),
+        .name     = "local"_Str,
         .root     = project->root.clone(),
-        .identity = String::make("package:fixture"_str),
+        .identity = "package:fixture"_Str,
         .sources  = discovery_sources("local.c"_str),
     });
     groups.push(lito::cpp::ResolvedSourceGroup {
-        .name     = String::make("vendor"_str),
+        .name     = "vendor"_Str,
         .root     = project->root.join(PathBuf::from("vendor"_str).as_path()),
-        .identity = String::make("archive:vendor"_str),
+        .identity = "archive:vendor"_Str,
         .sources  = discovery_sources("vendor.c"_str),
         .external = true,
     });
     auto target = lito::cpp::ResolvedTarget {
         .id =
             lito::package::PackageTargetId {
-                .package = String::make("fixture-source-groups"_str),
+                .package = "fixture-source-groups"_Str,
                 .kind    = lito::package::PackageTargetKind::Library,
-                .name    = String::make("fixture-source-groups"_str),
+                .name    = "fixture-source-groups"_Str,
             },
         .language      = lito::manifest::PackageLanguage::C,
         .source_groups = rstd::move(groups),
@@ -192,16 +192,16 @@ TEST_F(SourceDiscovery, DuplicatePhysicalSourceNamesBothSourceGroups) {
         groups.push(lito::cpp::ResolvedSourceGroup {
             .name     = String::make(name),
             .root     = project->root.clone(),
-            .identity = String::make("package:fixture"_str),
+            .identity = "package:fixture"_Str,
             .sources  = discovery_sources("shared.c"_str),
         });
     }
     auto target = lito::cpp::ResolvedTarget {
         .id =
             lito::package::PackageTargetId {
-                .package = String::make("fixture-source-groups"_str),
+                .package = "fixture-source-groups"_Str,
                 .kind    = lito::package::PackageTargetKind::Library,
-                .name    = String::make("fixture-source-groups"_str),
+                .name    = "fixture-source-groups"_Str,
             },
         .language      = lito::manifest::PackageLanguage::C,
         .source_groups = rstd::move(groups),

@@ -114,27 +114,27 @@ auto lito::registry::CurlRegistryHttpTransport::get(const RegistryHttpRequest& r
     auto arguments = Vec<String>::make();
     auto path      = push_path(arguments, executable_.as_path(), request.package);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-    arguments.push(String::make("--silent"_str));
-    arguments.push(String::make("--show-error"_str));
-    arguments.push(String::make("--location"_str));
-    arguments.push(String::make("--globoff"_str));
-    arguments.push(String::make("--proto"_str));
-    arguments.push(String::make("=https"_str));
-    arguments.push(String::make("--proto-redir"_str));
-    arguments.push(String::make("=https"_str));
-    arguments.push(String::make("--connect-timeout"_str));
-    arguments.push(String::make("30"_str));
-    arguments.push(String::make("--max-filesize"_str));
-    arguments.push(String::make("16777216"_str));
-    arguments.push(String::make("--header"_str));
-    arguments.push(String::make("Accept: application/json"_str));
+    arguments.push("--silent"_Str);
+    arguments.push("--show-error"_Str);
+    arguments.push("--location"_Str);
+    arguments.push("--globoff"_Str);
+    arguments.push("--proto"_Str);
+    arguments.push("=https"_Str);
+    arguments.push("--proto-redir"_Str);
+    arguments.push("=https"_Str);
+    arguments.push("--connect-timeout"_Str);
+    arguments.push("30"_Str);
+    arguments.push("--max-filesize"_Str);
+    arguments.push("16777216"_Str);
+    arguments.push("--header"_Str);
+    arguments.push("Accept: application/json"_Str);
     if (request.if_none_match.is_some()) {
-        arguments.push(String::make("--header"_str));
+        arguments.push("--header"_Str);
         arguments.push(rstd::format("If-None-Match: {}", request.if_none_match->as_str()));
     }
-    arguments.push(String::make("--write-out"_str));
-    arguments.push(String::make("\nLITO_REGISTRY_HTTP_V1\n%{response_code}\n%header{etag}"_str));
-    arguments.push(String::make("--"_str));
+    arguments.push("--write-out"_Str);
+    arguments.push("\nLITO_REGISTRY_HTTP_V1\n%{response_code}\n%header{etag}"_Str);
+    arguments.push("--"_Str);
     arguments.push(request.url.clone());
     auto executed = lito::system::run_command(arguments, *environment_);
     if (executed.is_err()) {

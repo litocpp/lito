@@ -12,9 +12,9 @@ TEST(Condition, ParsesAndEvaluatesTypedExpressions) {
     ASSERT_TRUE(expression.is_ok());
 
     auto context = lito::condition::Context {};
-    context.set_string(String::make("target.os"_str), String::make("linux"_str));
-    context.set_bool(String::make("build.cross"_str), true);
-    context.set_bool(String::make("feature.ffi"_str), true);
+    context.set_string("target.os"_Str, "linux"_Str);
+    context.set_bool("build.cross"_Str, true);
+    context.set_bool("feature.ffi"_Str, true);
     auto evaluated = lito::condition::evaluate(*expression, context);
     ASSERT_TRUE(evaluated.is_ok());
     EXPECT_TRUE(*evaluated);
@@ -36,7 +36,7 @@ TEST(Condition, RejectsUnknownKeysAndTypeMismatches) {
     auto comparison = lito::condition::parse(R"(target.os == true)"_str);
     ASSERT_TRUE(comparison.is_ok());
     auto context = lito::condition::Context {};
-    context.set_string(String::make("target.os"_str), String::make("linux"_str));
+    context.set_string("target.os"_Str, "linux"_Str);
     EXPECT_TRUE(lito::condition::evaluate(*comparison, context).is_err());
     EXPECT_TRUE(lito::condition::parse("target.os &&"_str).is_err());
 }
@@ -46,9 +46,9 @@ TEST(Condition, DistinguishesHostTargetAndCrossState) {
         R"(target.os == "windows" && host.os == "linux" && build.cross)"_str);
     ASSERT_TRUE(expression.is_ok());
     auto context = lito::condition::Context {};
-    context.set_string(String::make("target.os"_str), String::make("windows"_str));
-    context.set_string(String::make("host.os"_str), String::make("linux"_str));
-    context.set_bool(String::make("build.cross"_str), true);
+    context.set_string("target.os"_Str, "windows"_Str);
+    context.set_string("host.os"_Str, "linux"_Str);
+    context.set_bool("build.cross"_Str, true);
 
     auto evaluated = lito::condition::evaluate(*expression, context);
     ASSERT_TRUE(evaluated.is_ok());

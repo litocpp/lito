@@ -92,7 +92,7 @@ public:
 
     static auto parse(ref<str> value) -> RegistryValueResult<VersionRequirement>;
     static auto any() -> VersionRequirement {
-        return VersionRequirement(String::make(">=0.0.0"_str), {}, false, {}, {}, {});
+        return VersionRequirement(">=0.0.0"_Str, {}, false, {}, {}, {});
     }
 
     auto comparators() const noexcept -> slice<VersionComparator> {

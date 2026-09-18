@@ -250,7 +250,7 @@ auto compile_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> 
                     is_system = *value;
                 }
                 if (is_system) {
-                    result.push(String::make("-isystem"_str));
+                    result.push("-isystem"_Str);
                     result.push(String::make(*path));
                 } else {
                     result.push(rstd::format("-I{}", *path));
@@ -342,8 +342,7 @@ auto validate_asset_snapshot(const CMakeWorkArea&  area,
         auto& set = sets[set_index];
         if (set.name.is_empty() || set.name.as_str().contains("\t"_str) ||
             set.name.as_str().contains("\r"_str) || set.name.as_str().contains("\n"_str)) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
-                String::make("CMake asset set has an invalid name"_str));
+            return cmake_failure<Vec<ExternalAssetSet>>("CMake asset set has an invalid name"_Str);
         }
         for (usize prior {}; prior < set_index; ++prior) {
             if (sets[prior].name == set.name.as_str()) {

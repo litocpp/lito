@@ -282,7 +282,7 @@ auto apply_c_option_layer(CCompileOptions options, CArgumentLayer layer)
             RSTD_CASE(CodegenSetting, setting) {
                 static_cast<void>(setting);
                 return Err(lito::cpp::CompilerOptionError::Message(
-                    String::make("compiler option overrides a Lito-owned codegen setting"_str)));
+                    "compiler option overrides a Lito-owned codegen setting"_Str));
             }
             RSTD_CASE(Diagnostic, value) {
                 auto repeated = false;
@@ -324,7 +324,7 @@ auto append_c_vendor_identity(String& result, const CVendorOption& option) -> vo
 }
 
 auto c_compile_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-compile-options-v5\n"_str);
+    auto result = "lito-c-compile-options-v5\n"_Str;
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -384,7 +384,7 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
 }
 
 auto c_scan_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-scan-options-v5\n"_str);
+    auto result = "lito-c-scan-options-v5\n"_Str;
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {

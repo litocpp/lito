@@ -220,25 +220,25 @@ private:
         auto resolved_resource = rstd::move(canonical_resource).unwrap();
         auto compiler_metadata = rstd::fs::metadata(compiler_path.as_path());
         if (compiler_metadata.is_err()) {
-            return Err(ToolchainError::Io(String::make("inspect compiler"_str),
+            return Err(ToolchainError::Io("inspect compiler"_Str,
                                           compiler_path.clone(),
                                           rstd::move(compiler_metadata).unwrap_err()));
         }
         auto modified = compiler_metadata->modified();
         if (modified.is_err()) {
-            return Err(ToolchainError::Io(String::make("read compiler modification time"_str),
+            return Err(ToolchainError::Io("read compiler modification time"_Str,
                                           compiler_path.clone(),
                                           rstd::move(modified).unwrap_err()));
         }
         auto c_compiler_metadata = rstd::fs::metadata(c_compiler_path.as_path());
         if (c_compiler_metadata.is_err()) {
-            return Err(ToolchainError::Io(String::make("inspect C compiler"_str),
+            return Err(ToolchainError::Io("inspect C compiler"_Str,
                                           c_compiler_path.clone(),
                                           rstd::move(c_compiler_metadata).unwrap_err()));
         }
         auto c_modified = c_compiler_metadata->modified();
         if (c_modified.is_err()) {
-            return Err(ToolchainError::Io(String::make("read C compiler modification time"_str),
+            return Err(ToolchainError::Io("read C compiler modification time"_Str,
                                           c_compiler_path.clone(),
                                           rstd::move(c_modified).unwrap_err()));
         }
@@ -302,7 +302,7 @@ private:
                                            "support"_str);
         }
         auto format = cpp::BmiFormatIdentity {
-            .family               = String::make("clang"_str),
+            .family               = "clang"_Str,
             .compiler_build       = rstd::move(build_identity),
             .target               = identity.target.clone(),
             .resource_environment = String::make(*resource_text),
@@ -376,17 +376,16 @@ public:
                                      .join(PathBuf::from("../include/c++/v1"_str).as_path());
         auto include_directory = rstd::fs::canonicalize(include_requested.as_path());
         if (include_directory.is_err()) {
-            return Err(ToolchainError::Io(String::make("resolve freestanding libc++ headers"_str),
+            return Err(ToolchainError::Io("resolve freestanding libc++ headers"_Str,
                                           rstd::move(include_requested),
                                           rstd::move(include_directory).unwrap_err()));
         }
         auto version_header = include_directory->join(PathBuf::from("version"_str).as_path());
         auto inspected      = rstd::fs::symlink_metadata(version_header.as_path());
         if (inspected.is_err()) {
-            return Err(
-                ToolchainError::Io(String::make("inspect freestanding libc++ version header"_str),
-                                   rstd::move(version_header),
-                                   rstd::move(inspected).unwrap_err()));
+            return Err(ToolchainError::Io("inspect freestanding libc++ version header"_Str,
+                                          rstd::move(version_header),
+                                          rstd::move(inspected).unwrap_err()));
         }
         if (! inspected->is_file() || inspected->is_symlink()) {
             return failure<empty>(
@@ -399,7 +398,7 @@ public:
                           .as_path());
         auto created = rstd::fs::create_dir_all(support_root.as_path());
         if (created.is_err()) {
-            return Err(ToolchainError::Io(String::make("create freestanding libc++ support"_str),
+            return Err(ToolchainError::Io("create freestanding libc++ support"_Str,
                                           support_root.clone(),
                                           rstd::move(created).unwrap_err()));
         }
@@ -434,7 +433,7 @@ public:
                        "#endif\n"_str;
         auto written = rstd::fs::write_atomic_if_changed(config.as_path(), content.as_bytes());
         if (written.is_err()) {
-            return Err(ToolchainError::Io(String::make("write freestanding libc++ config"_str),
+            return Err(ToolchainError::Io("write freestanding libc++ config"_Str,
                                           rstd::move(config),
                                           rstd::move(written).unwrap_err()));
         }
@@ -445,10 +444,9 @@ public:
         auto mbstate_directory = c_support.join(PathBuf::from("bits/types"_str).as_path());
         created                = rstd::fs::create_dir_all(mbstate_directory.as_path());
         if (created.is_err()) {
-            return Err(
-                ToolchainError::Io(String::make("create freestanding libc++ type support"_str),
-                                   rstd::move(mbstate_directory),
-                                   rstd::move(created).unwrap_err()));
+            return Err(ToolchainError::Io("create freestanding libc++ type support"_Str,
+                                          rstd::move(mbstate_directory),
+                                          rstd::move(created).unwrap_err()));
         }
         auto mbstate = c_support.join(PathBuf::from("bits/types/mbstate_t.h"_str).as_path());
         auto mbstate_content = "#ifndef LITO_FREESTANDING_MBSTATE_T_H\n"
@@ -457,10 +455,9 @@ public:
                                "#endif\n"_str;
         written = rstd::fs::write_atomic_if_changed(mbstate.as_path(), mbstate_content.as_bytes());
         if (written.is_err()) {
-            return Err(
-                ToolchainError::Io(String::make("write freestanding libc++ type support"_str),
-                                   rstd::move(mbstate),
-                                   rstd::move(written).unwrap_err()));
+            return Err(ToolchainError::Io("write freestanding libc++ type support"_Str,
+                                          rstd::move(mbstate),
+                                          rstd::move(written).unwrap_err()));
         }
         struct FreestandingHeader {
             ref<str> path;
@@ -596,10 +593,9 @@ public:
             auto path = c_support.join(PathBuf::from(header.path).as_path());
             written = rstd::fs::write_atomic_if_changed(path.as_path(), header.content.as_bytes());
             if (written.is_err()) {
-                return Err(
-                    ToolchainError::Io(String::make("write freestanding C header support"_str),
-                                       rstd::move(path),
-                                       rstd::move(written).unwrap_err()));
+                return Err(ToolchainError::Io("write freestanding C header support"_Str,
+                                              rstd::move(path),
+                                              rstd::move(written).unwrap_err()));
             }
         }
         auto includes = Vec<cpp::CppIncludeDirectory>::with_capacity(
@@ -873,14 +869,14 @@ public:
                                               timestamp.nanoseconds);
             if (canonical.is_ok()) canonical_binary = rstd::move(canonical).unwrap();
         }
-        auto thread_backend = String::make("unknown"_str);
+        auto thread_backend = "unknown"_Str;
         if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_PTHREAD"_str) ||
             queried->standard_output.as_str().contains("_GLIBCXX_HAS_GTHREADS"_str)) {
-            thread_backend = String::make("pthread"_str);
+            thread_backend = "pthread"_Str;
         } else if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
-            thread_backend = String::make("win32"_str);
+            thread_backend = "win32"_Str;
         } else if (target.is_msvc()) {
-            thread_backend = String::make("win32"_str);
+            thread_backend = "win32"_Str;
         }
         auto family = lito::config::standard_library_name(*detected_family);
         auto headers_identity =
@@ -1075,7 +1071,7 @@ public:
                 .access = cpp::HeaderAccess::Global(),
                 .kind =
                     entry.system ? cpp::HeaderIncludeKind::System : cpp::HeaderIncludeKind::User,
-                .provenance = String::make("Clang default include search"_str),
+                .provenance = "Clang default include search"_Str,
             });
         }
         return Ok(rstd::move(roots));
@@ -1508,14 +1504,14 @@ public:
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto archive_exists = rstd::fs::exists(invocation.output.as_path());
         if (archive_exists.is_err()) {
-            return Err(ToolchainError::Io(String::make("inspect archive"_str),
+            return Err(ToolchainError::Io("inspect archive"_Str,
                                           invocation.output.clone(),
                                           rstd::move(archive_exists).unwrap_err()));
         }
         if (*archive_exists) {
             auto removed = rstd::fs::remove_file(invocation.output.as_path());
             if (removed.is_err()) {
-                return Err(ToolchainError::Io(String::make("replace archive"_str),
+                return Err(ToolchainError::Io("replace archive"_Str,
                                               invocation.output.clone(),
                                               rstd::move(removed).unwrap_err()));
             }
@@ -1656,7 +1652,7 @@ public:
         if (! link_requirements.runtime_search_paths.is_empty()) {
             toolchain::command::push_option(command, "-Wl,--enable-new-dtags"_str);
             for (const auto& requirement : link_requirements.runtime_search_paths) {
-                auto option = String::make("-Wl,--rpath,"_str);
+                auto option = "-Wl,--rpath,"_Str;
                 option.push_str(requirement.path.as_str());
                 command.push(rstd::move(option));
             }
@@ -1699,7 +1695,7 @@ public:
                     return failure<rstd::time::Duration>(rstd::format(
                         "whole-archive path '{}' is not valid UTF-8", archive.path.as_path()));
                 }
-                auto option = String::make("/WHOLEARCHIVE:"_str);
+                auto option = "/WHOLEARCHIVE:"_Str;
                 option.push_str(*text);
                 toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
                 command.push(rstd::move(option));
@@ -1735,8 +1731,8 @@ public:
             }
             if (requirement.name.as_str() == "dl"_str && target.platform == TargetPlatform::Macos)
                 continue;
-            auto option = target.family == TargetFamily::Windows ? requirement.name.clone()
-                                                                 : String::make("-l"_str);
+            auto option =
+                target.family == TargetFamily::Windows ? requirement.name.clone() : "-l"_Str;
             option.push_str(target.family == TargetFamily::Windows ? ".lib"_str
                                                                    : requirement.name.as_str());
             command.push(rstd::move(option));
@@ -1813,7 +1809,7 @@ public:
         }
         auto archive_metadata = rstd::fs::metadata(request.archive.path.as_path());
         if (archive_metadata.is_err()) {
-            return Err(ToolchainError::Io(String::make("inspect ELF shared-library archive"_str),
+            return Err(ToolchainError::Io("inspect ELF shared-library archive"_Str,
                                           request.archive.path.clone(),
                                           rstd::move(archive_metadata).unwrap_err()));
         }
@@ -1823,16 +1819,15 @@ public:
         }
         auto archive_contents = rstd::fs::read(request.archive.path.as_path());
         if (archive_contents.is_err()) {
-            return Err(ToolchainError::Io(String::make("read ELF shared-library archive"_str),
+            return Err(ToolchainError::Io("read ELF shared-library archive"_Str,
                                           request.archive.path.clone(),
                                           rstd::move(archive_contents).unwrap_err()));
         }
         auto version_script = rstd::fs::read(request.version_script.as_path());
         if (version_script.is_err()) {
-            return Err(
-                ToolchainError::Io(String::make("read ELF shared-library version script"_str),
-                                   request.version_script.clone(),
-                                   rstd::move(version_script).unwrap_err()));
+            return Err(ToolchainError::Io("read ELF shared-library version script"_Str,
+                                          request.version_script.clone(),
+                                          rstd::move(version_script).unwrap_err()));
         }
         auto host = detect_host_info();
         if (host.is_err()) {
@@ -1855,8 +1850,8 @@ public:
         }));
         auto linker_options = Vec<String>::make();
         linker_options.push(rstd::format("-Wl,--version-script={}", *version_script_text));
-        linker_options.push(String::make("-Wl,--gc-sections"_str));
-        linker_options.push(String::make("-Wl,--no-undefined"_str));
+        linker_options.push("-Wl,--gc-sections"_Str);
+        linker_options.push("-Wl,--no-undefined"_Str);
         auto linked = link_shared_library(request.output.as_path(),
                                           Vec<PathBuf>::make(),
                                           inputs,

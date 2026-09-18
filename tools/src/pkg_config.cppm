@@ -131,14 +131,14 @@ auto provider_environment(const Provider& provider) -> ToolResult<CommandEnviron
     if (! provider.search_paths.is_empty()) {
         auto value = rstd_try(path_list(provider.search_paths, provider.path_separator));
         result.entries.push(CommandEnvironmentEntry {
-            .key   = String::make("PKG_CONFIG_PATH"_str),
+            .key   = "PKG_CONFIG_PATH"_Str,
             .value = Some(rstd::ffi::OsString::from(rstd::move(value))),
         });
     }
     if (! provider.library_paths.is_empty()) {
         auto value = rstd_try(path_list(provider.library_paths, provider.path_separator));
         result.entries.push(CommandEnvironmentEntry {
-            .key   = String::make("PKG_CONFIG_LIBDIR"_str),
+            .key   = "PKG_CONFIG_LIBDIR"_Str,
             .value = Some(rstd::ffi::OsString::from(rstd::move(value))),
         });
     }
@@ -149,7 +149,7 @@ auto provider_environment(const Provider& provider) -> ToolResult<CommandEnviron
                 "pkg-config sysroot '{}' is not valid UTF-8", provider.sysroot->as_path()));
         }
         result.entries.push(CommandEnvironmentEntry {
-            .key   = String::make("PKG_CONFIG_SYSROOT_DIR"_str),
+            .key   = "PKG_CONFIG_SYSROOT_DIR"_Str,
             .value = Some(rstd::ffi::OsString::from(*text)),
         });
     }
@@ -168,8 +168,8 @@ auto run_query(const Provider&                   provider,
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
-    if (request.mode == QueryMode::Static) arguments.push(String::make("--static"_str));
-    arguments.push(String::make("--print-errors"_str));
+    if (request.mode == QueryMode::Static) arguments.push("--static"_Str);
+    arguments.push("--print-errors"_Str);
     arguments.push(rstd::format("--{}", query_name));
     arguments.push(module_spec(request));
     auto output =
@@ -203,7 +203,7 @@ auto provider_version(const Provider&                   provider,
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
-    arguments.push(String::make("--version"_str));
+    arguments.push("--version"_Str);
     auto output =
         run_command(arguments,
                     environment,
@@ -234,7 +234,7 @@ auto provider_identity(const Provider& provider, ref<str> version) -> ToolResult
     if (executable.is_none()) {
         return failure<String>("pkg-config executable path is not valid UTF-8"_str);
     }
-    auto result = String::make("lito-pkg-config-provider-v1\n"_str);
+    auto result = "lito-pkg-config-provider-v1\n"_Str;
     append_identity_value(result, *executable);
     append_identity_value(result, version);
     append_identity_value(result, provider.effective_target.as_str());
@@ -261,7 +261,7 @@ auto snapshot_identity(ref<str>           provider,
                        ref<str>           version,
                        const Vec<String>& cflags,
                        const Vec<String>& libs) -> String {
-    auto result = String::make("lito-external-dependency-v1\n"_str);
+    auto result = "lito-external-dependency-v1\n"_Str;
     append_identity_value(result, provider);
     append_identity_value(result, module_spec(request).as_str());
     append_identity_value(result, version);

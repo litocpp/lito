@@ -69,10 +69,10 @@ auto add_visibility(cpp::CppArgumentSchema&      schema,
                     ref<str>                     value) -> void {
     auto item = definition(name);
     spelling(item, value, cpp::CompilerArgumentValueForm::Equals);
-    item.allowed_values.push(String::make("default"_str));
-    item.allowed_values.push(String::make("hidden"_str));
-    item.allowed_values.push(String::make("internal"_str));
-    item.allowed_values.push(String::make("protected"_str));
+    item.allowed_values.push("default"_Str);
+    item.allowed_values.push("hidden"_Str);
+    item.allowed_values.push("internal"_Str);
+    item.allowed_values.push("protected"_Str);
     schema.add(kind, rstd::move(item));
 }
 
@@ -135,10 +135,10 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
 
     auto microsoft_runtime = definition("microsoft-runtime-library"_str);
     spelling(microsoft_runtime, "-fms-runtime-lib"_str, cpp::CompilerArgumentValueForm::Equals);
-    microsoft_runtime.allowed_values.push(String::make("static"_str));
-    microsoft_runtime.allowed_values.push(String::make("static_dbg"_str));
-    microsoft_runtime.allowed_values.push(String::make("dll"_str));
-    microsoft_runtime.allowed_values.push(String::make("dll_dbg"_str));
+    microsoft_runtime.allowed_values.push("static"_Str);
+    microsoft_runtime.allowed_values.push("static_dbg"_Str);
+    microsoft_runtime.allowed_values.push("dll"_Str);
+    microsoft_runtime.allowed_values.push("dll_dbg"_Str);
     schema.add(cpp::CppCompilerArgumentKind::MicrosoftRuntime, rstd::move(microsoft_runtime));
 
     auto bmi = definition("bmi-representation"_str);

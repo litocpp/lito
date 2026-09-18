@@ -32,11 +32,11 @@ auto has_external_macro(const lito::cpp::CompileContext& context) -> bool {
 
 auto pkg_config_target() -> lito::system::TargetInfo {
     return lito::system::TargetInfo {
-        .triple           = String::make("x86_64-unknown-linux-gnu"_str),
+        .triple           = "x86_64-unknown-linux-gnu"_Str,
         .architecture     = lito::system::Architecture::X86_64,
-        .vendor           = String::make("unknown"_str),
-        .operating_system = String::make("linux"_str),
-        .environment      = Some(String::make("gnu"_str)),
+        .vendor           = "unknown"_Str,
+        .operating_system = "linux"_Str,
+        .environment      = Some("gnu"_Str),
         .family           = lito::system::TargetFamily::Unix,
         .platform         = lito::system::TargetPlatform::Linux,
     };
@@ -75,7 +75,7 @@ auto default_profile(const lito::cpp::CppArgumentParser& parser) -> lito::cpp::P
 auto fixture_cmake() -> lito::dependency::CMakeProviderConfig {
     return lito::dependency::CMakeProviderConfig {
         .executable = rstd::path::PathBuf::from("cmake"_str),
-        .generator  = String::make("Ninja"_str),
+        .generator  = "Ninja"_Str,
     };
 }
 
@@ -308,7 +308,7 @@ auto resolve_cmake_fixtures_with_provider(
     auto tool     = resolver.resolve(provider.executable.as_path(), "CMake executable"_str);
     if (tool.is_err()) {
         return Err(lito::dependency::DependencyError::Provider(
-            String::make("cannot resolve CMake executable"_str),
+            "cannot resolve CMake executable"_Str,
             Box<dyn<rstd::error::Error>>::make(rstd::move(tool).unwrap_err())));
     }
     provider.executable = rstd::move(tool).unwrap().executable;
@@ -376,7 +376,7 @@ auto versioned_fixture(
         .alias = String::make(alias),
         .requirement =
             lito::dependency::PkgConfigDependencyRequirement {
-                .module  = String::make("lito-fixture"_str),
+                .module  = "lito-fixture"_Str,
                 .version = Some(lito::dependency::PkgConfigVersionRequirement {
                     .comparison = comparison,
                     .value      = String::make(version),
@@ -399,31 +399,31 @@ auto external_usage_metadata(lito::dependency::DependencyConsumption consumption
     auto external         = Vec<lito::cpp::ResolvedExternalDependency>::make();
     auto external_targets = Vec<lito::cpp::ResolvedExternalTargetUsage>::make();
     external_targets.push(lito::cpp::ResolvedExternalTargetUsage {
-        .name              = String::make("lito-fixture"_str),
+        .name              = "lito-fixture"_Str,
         .consumption       = consumption,
         .compile_arguments = lito::cpp::LanguageArgumentLayer::Cpp(rstd::move(arguments).unwrap()),
-        .identity          = String::make("fixture-resolution-v1"_str),
+        .identity          = "fixture-resolution-v1"_Str,
     });
     external.push(lito::cpp::ResolvedExternalDependency {
-        .alias    = String::make("fixture"_str),
-        .provider = String::make("pkg-config"_str),
-        .version  = String::make("2.3.4"_str),
+        .alias    = "fixture"_Str,
+        .provider = "pkg-config"_Str,
+        .version  = "2.3.4"_Str,
         .targets  = rstd::move(external_targets),
         .link_arguments =
             lito::link::ArgumentSequence {
                 .tokens   = strings("-llito_fixture"_str),
-                .source   = String::make("pkg-config fixture"_str),
-                .identity = String::make("fixture-link-v1"_str),
+                .source   = "pkg-config fixture"_Str,
+                .identity = "fixture-link-v1"_Str,
             },
-        .identity = String::make("fixture-resolution-v1"_str),
+        .identity = "fixture-resolution-v1"_Str,
     });
     auto dependencies = Vec<lito::cpp::DependencySpec>::make();
     dependencies.push(lito::cpp::DependencySpec {
         .target =
             lito::package::PackageTargetId {
-                .package = String::make("external-usage"_str),
+                .package = "external-usage"_Str,
                 .kind    = lito::package::PackageTargetKind::Library,
-                .name    = String::make("library"_str),
+                .name    = "library"_Str,
             },
         .consumption = lito::dependency::DependencyConsumption {},
     });
@@ -431,23 +431,23 @@ auto external_usage_metadata(lito::dependency::DependencyConsumption consumption
     targets.push(lito::cpp::ResolvedTarget {
         .id =
             lito::package::PackageTargetId {
-                .package = String::make("external-usage"_str),
+                .package = "external-usage"_Str,
                 .kind    = lito::package::PackageTargetKind::Library,
-                .name    = String::make("library"_str),
+                .name    = "library"_Str,
             },
         .artifact_kind         = lito::cpp::ArtifactKind::StaticLibrary,
-        .artifact_name         = String::make("library"_str),
+        .artifact_name         = "library"_Str,
         .external_dependencies = rstd::move(external),
     });
     targets.push(lito::cpp::ResolvedTarget {
         .id =
             lito::package::PackageTargetId {
-                .package = String::make("external-usage"_str),
+                .package = "external-usage"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("app"_str),
+                .name    = "app"_Str,
             },
         .artifact_kind = lito::cpp::ArtifactKind::Executable,
-        .artifact_name = String::make("app"_str),
+        .artifact_name = "app"_Str,
         .dependencies  = rstd::move(dependencies),
     });
     auto default_targets = Vec<lito::package::PackageTargetId>::make();
@@ -457,8 +457,8 @@ auto external_usage_metadata(lito::dependency::DependencyConsumption consumption
     auto profiles = Vec<lito::cpp::ProfileSpec>::make();
     profiles.push(default_profile(parser));
     return Ok(lito::cpp::PackageMetadata {
-        .name              = String::make("external-usage"_str),
-        .default_profile   = String::make("debug"_str),
+        .name              = "external-usage"_Str,
+        .default_profile   = "debug"_Str,
         .default_targets   = rstd::move(default_targets),
         .available_targets = rstd::move(available_targets),
         .profiles          = rstd::move(profiles),

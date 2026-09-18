@@ -165,7 +165,7 @@ auto resolve_pkg_config_dependencies(
         }
         result.push(cpp::ExternalDependencyUsage {
             .alias             = declaration.alias.clone(),
-            .provider          = String::make("pkg-config"_str),
+            .provider          = "pkg-config"_Str,
             .version           = snapshot.version.clone(),
             .targets           = rstd::move(targets),
             .link_arguments    = rstd::move(link_arguments),

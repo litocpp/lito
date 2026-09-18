@@ -722,7 +722,7 @@ private:
                 auto comma = clone_token(origin);
                 ++raw_statistics_.synthetic_tokens;
                 comma.kind = TokenKind::Punctuation;
-                comma.text = String::make(","_str);
+                comma.text = ","_Str;
                 result.push(rstd::move(comma));
             }
             for (auto& token : arguments[index]) {
@@ -1578,7 +1578,7 @@ private:
             output.push(number_token(i64 {},
                                      Token {
                                          .kind      = TokenKind::PpNumber,
-                                         .text      = String::make("0"_str),
+                                         .text      = "0"_Str,
                                          .spelling  = location,
                                          .expansion = location,
                                      }));

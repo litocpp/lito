@@ -81,7 +81,7 @@ TEST_F(SourceBundle, LayoutOwnsVersionedReadOnlyLookup) {
     auto patched = lito::source::acquired_git_fetch_identity(
         lito::source::AcquiredSource {
             .root     = directory.clone(),
-            .identity = String::make("path+../patched-source"_str),
+            .identity = "path+../patched-source"_Str,
         },
         "https://example.invalid/source.git"_str);
     ASSERT_TRUE(patched.is_ok());
@@ -111,7 +111,7 @@ TEST_F(SourceBundle, OfflineArchiveAcquisitionUsesVerifiedBundleWithoutDownloadT
     auto resolver = lito::tools::ToolResolver(*environment);
     auto requests = Vec<lito::tools::acquisition::VerifiedArchiveRequest>::make();
     requests.push(lito::tools::acquisition::VerifiedArchiveRequest {
-        .label                = String::make("archive bundle"_str),
+        .label                = "archive bundle"_Str,
         .url                  = rstd::move(url).unwrap(),
         .sha256               = rstd::move(digest),
         .provided_source      = Some(rstd::move(located).unwrap().unwrap()),

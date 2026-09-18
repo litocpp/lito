@@ -340,27 +340,27 @@ TEST(LexicalFragment, ClassifiesCompletePreprocessingTokens) {
     auto origin = SourceLocation {
         .source = usize(9), .offset = usize(17), .line = usize(3), .column = usize(5)
     };
-    auto identifier = classify_preprocessing_token(String::make("name\\u0030"_str), origin);
+    auto identifier = classify_preprocessing_token("name\\u0030"_Str, origin);
     ASSERT_TRUE(identifier.is_ok());
     EXPECT_TRUE(*identifier == TokenKind::Identifier);
-    auto unicode = classify_preprocessing_token(String::make("变量"_str), origin);
+    auto unicode = classify_preprocessing_token("变量"_Str, origin);
     ASSERT_TRUE(unicode.is_ok());
     EXPECT_TRUE(*unicode == TokenKind::Identifier);
-    auto number = classify_preprocessing_token(String::make("1.0e+4f"_str), origin);
+    auto number = classify_preprocessing_token("1.0e+4f"_Str, origin);
     ASSERT_TRUE(number.is_ok());
     EXPECT_TRUE(*number == TokenKind::PpNumber);
-    auto literal = classify_preprocessing_token(String::make("u8\"text\""_str), origin);
+    auto literal = classify_preprocessing_token("u8\"text\""_Str, origin);
     ASSERT_TRUE(literal.is_ok());
     EXPECT_TRUE(*literal == TokenKind::StringLiteral);
-    auto punctuation = classify_preprocessing_token(String::make(">>="_str), origin);
+    auto punctuation = classify_preprocessing_token(">>="_Str, origin);
     ASSERT_TRUE(punctuation.is_ok());
     EXPECT_TRUE(*punctuation == TokenKind::Punctuation);
 
-    auto multiple = classify_preprocessing_token(String::make("first second"_str), origin);
+    auto multiple = classify_preprocessing_token("first second"_Str, origin);
     ASSERT_TRUE(multiple.is_err());
     ASSERT_TRUE(multiple.unwrap_err().location.is_some());
     EXPECT_EQ(multiple.unwrap_err().location->source, origin.source);
-    auto invalid = classify_preprocessing_token(String::make("\"unterminated"_str), origin);
+    auto invalid = classify_preprocessing_token("\"unterminated"_Str, origin);
     ASSERT_TRUE(invalid.is_err());
     ASSERT_TRUE(invalid.unwrap_err().location.is_some());
     EXPECT_EQ(invalid.unwrap_err().location->line, origin.line);
@@ -377,7 +377,7 @@ TEST(LexicalFragment, ValidatesIdentifiersAndPreservesOrigin) {
     auto origin = SourceLocation {
         .source = usize(4), .offset = usize(28), .line = usize(7), .column = usize(2)
     };
-    auto fragment = lex_preprocessing_fragment(String::make("push_macro(\"NAME\")"_str), origin);
+    auto fragment = lex_preprocessing_fragment("push_macro(\"NAME\")"_Str, origin);
     ASSERT_TRUE(fragment.is_ok());
     ASSERT_EQ(fragment->len(), usize(4));
     for (const auto& token : *fragment) {
@@ -424,7 +424,7 @@ TEST(LexicalScanner, MarkedEndAndFailuresRestoreCarriageReturnState) {
             }
             cursor.advance(true);
             if (mode == 1) return Ok(None());
-            return Err(Error::at(String::make("fixture failure"_str), cursor.location()));
+            return Err(Error::at("fixture failure"_Str, cursor.location()));
         }
     };
     auto session = ScannerSession::make<FixtureLanguageA>(fixture_source("\r\na"_str));

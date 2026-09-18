@@ -178,7 +178,7 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     auto scan_record_json = rstd::json::from_str(scan_record_text->as_str());
     ASSERT_TRUE(scan_record_json.is_ok());
     (*scan_record_json)["source-origin"_str] =
-        rstd::json::Value::String(String::make("path+different-package-source"_str));
+        rstd::json::Value::String("path+different-package-source"_Str);
     auto changed_record = rstd::json::to_string(
         *scan_record_json, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     ASSERT_TRUE(rstd::fs::write(scan_record.as_path(), changed_record.as_str().as_bytes()).is_ok());
@@ -443,7 +443,7 @@ TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
     EXPECT_EQ(changed_version->frontend.persistent_scan_external_macro, usize(1));
     EXPECT_EQ(changed_version->frontend.persistent_scan_hits, usize(3));
 
-    request.selection.features.enabled.push(String::make("optional"_str));
+    request.selection.features.enabled.push("optional"_Str);
     auto changed_feature = lito::build(request);
     ASSERT_TRUE(changed_feature.is_ok());
     EXPECT_EQ(changed_feature->compiled, usize(1));
@@ -456,7 +456,7 @@ TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
     ASSERT_TRUE(enabled_status->code().is_some());
     EXPECT_EQ(*enabled_status->code(), i32(1));
 
-    request.selection.features.enabled.push(String::make("unused"_str));
+    request.selection.features.enabled.push("unused"_Str);
     auto changed_unused = lito::build(request);
     ASSERT_TRUE(changed_unused.is_ok());
     EXPECT_EQ(changed_unused->compiled, usize {});

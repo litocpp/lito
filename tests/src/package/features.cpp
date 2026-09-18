@@ -93,12 +93,12 @@ auto package_with_external_backends() -> lito::package::ResolvedPackage {
     auto result = package("provider"_str, rstd::move(declarations));
     result.manifest.pkg_config_external_dependencies.push(
         lito::dependency::PkgConfigExternalDependency {
-            .alias     = String::make("curl"_str),
+            .alias     = "curl"_Str,
             .condition = Some(external_condition("!feature.qt"_str)),
         });
     result.manifest.cmake_external_dependencies.push(lito::dependency::CMakeDependencyRequirement {
-        .alias     = String::make("qt"_str),
-        .package   = String::make("Qt6"_str),
+        .alias     = "qt"_Str,
+        .package   = "Qt6"_Str,
         .condition = Some(external_condition("feature.qt"_str)),
     });
     return result;

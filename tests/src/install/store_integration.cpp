@@ -25,11 +25,11 @@ auto fake_strip(void* raw_context, const lito::InstallStripRequest& request)
     auto& context = *static_cast<FakeStripContext*>(raw_context);
     ++context.calls;
     if (context.fail) {
-        return Err(lito::ToolchainError::Message(String::make("fake strip failure"_str)));
+        return Err(lito::ToolchainError::Message("fake strip failure"_Str));
     }
     auto written = rstd::fs::write(request.staged, "stripped"_str.as_bytes());
     if (written.is_err()) {
-        return Err(lito::ToolchainError::Io(String::make("write fake stripped entry"_str),
+        return Err(lito::ToolchainError::Io("write fake stripped entry"_Str,
                                             PathBuf::from(request.staged),
                                             rstd::move(written).unwrap_err()));
     }
@@ -49,7 +49,7 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
         return lito::InstallBinary {
             .target =
                 lito::package::PackageTargetId {
-                    .package = String::make("fixture-tool"_str),
+                    .package = "fixture-tool"_Str,
                     .kind    = lito::package::PackageTargetKind::Binary,
                     .name    = String::make(name),
                 },
@@ -63,10 +63,10 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
             if (include_old) binaries.push(make_binary(old_source.as_path(), "old"_str));
             auto packages = Vec<lito::InstallPackageRecord>::make();
             packages.push(lito::InstallPackageRecord {
-                .name       = String::make("fixture-tool"_str),
+                .name       = "fixture-tool"_Str,
                 .version    = String::make(version),
-                .profile    = String::make("release"_str),
-                .target     = String::make("x86_64-test"_str),
+                .profile    = "release"_Str,
+                .target     = "x86_64-test"_Str,
                 .binaries   = rstd::move(binaries),
                 .provenance = local_provenance(source_directory.as_path()),
             });
@@ -113,18 +113,18 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     binaries.push(lito::InstallBinary {
         .target =
             lito::package::PackageTargetId {
-                .package = String::make("fixture-other"_str),
+                .package = "fixture-other"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("unmanaged"_str),
+                .name    = "unmanaged"_Str,
             },
         .source = rstd::move(external),
     });
     auto conflict_packages = Vec<lito::InstallPackageRecord>::make();
     conflict_packages.push(lito::InstallPackageRecord {
-        .name       = String::make("fixture-other"_str),
-        .version    = String::make("1.0.0"_str),
-        .profile    = String::make("release"_str),
-        .target     = String::make("x86_64-test"_str),
+        .name       = "fixture-other"_Str,
+        .version    = "1.0.0"_Str,
+        .profile    = "release"_Str,
+        .target     = "x86_64-test"_Str,
         .binaries   = rstd::move(binaries),
         .provenance = local_provenance(source_directory.as_path()),
     });
@@ -144,18 +144,18 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     forced_binaries.push(lito::InstallBinary {
         .target =
             lito::package::PackageTargetId {
-                .package = String::make("fixture-other"_str),
+                .package = "fixture-other"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("unmanaged"_str),
+                .name    = "unmanaged"_Str,
             },
         .source = rstd::move(forced_source),
     });
     auto forced_packages = Vec<lito::InstallPackageRecord>::make();
     forced_packages.push(lito::InstallPackageRecord {
-        .name       = String::make("fixture-other"_str),
-        .version    = String::make("1.0.0"_str),
-        .profile    = String::make("release"_str),
-        .target     = String::make("x86_64-test"_str),
+        .name       = "fixture-other"_Str,
+        .version    = "1.0.0"_Str,
+        .profile    = "release"_Str,
+        .target     = "x86_64-test"_Str,
         .binaries   = rstd::move(forced_binaries),
         .provenance = local_provenance(source_directory.as_path()),
     });
@@ -190,9 +190,9 @@ TEST_F(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
         });
         return lito::InstallPackageRecord {
             .name       = String::make(name),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .binaries   = rstd::move(binaries),
             .provenance = local_provenance(source_directory.as_path()),
         };
@@ -238,15 +238,15 @@ TEST_F(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
                 lito::package::PackageTargetId {
                     .package = String::make(name),
                     .kind    = lito::package::PackageTargetKind::Binary,
-                    .name    = String::make("collision"_str),
+                    .name    = "collision"_Str,
                 },
             .source = rstd::move(source),
         });
         return lito::InstallPackageRecord {
             .name       = String::make(name),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .binaries   = rstd::move(binaries),
             .provenance = local_provenance(source_directory.as_path()),
         };
@@ -300,9 +300,9 @@ TEST_F(InstallStore, InstallStoreRejectsForceThatWouldBreakRuntimeDependencies) 
         });
         return lito::InstallPackageRecord {
             .name       = String::make(name),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .entries    = rstd::move(entries),
             .provenance = local_provenance(source_directory.as_path()),
         };
@@ -311,7 +311,7 @@ TEST_F(InstallStore, InstallStoreRejectsForceThatWouldBreakRuntimeDependencies) 
     auto runtime = package("fixture-runtime"_str, "bin/shared"_str, "runtime"_str);
     auto app     = package("fixture-app"_str, "bin/app"_str, "app"_str);
     app.runtime_dependencies.push(lito::InstallRuntimeDependency {
-        .name            = String::make("fixture-runtime"_str),
+        .name            = "fixture-runtime"_Str,
         .source_identity = lito::source::path_source_identity(source_directory.as_path()),
     });
     auto initial = Vec<lito::InstallPackageRecord>::make();
@@ -357,10 +357,8 @@ TEST_F(InstallStore, InstallStorePublishesNestedGenericEntries) {
     auto install = [&]() {
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
-            .origin =
-                lito::InstallEntryOrigin::ExternalAsset(String::make("runtime"_str),
-                                                        String::make("files"_str),
-                                                        PathBuf::from("nested/runtime.so"_str)),
+            .origin = lito::InstallEntryOrigin::ExternalAsset(
+                "runtime"_Str, "files"_Str, PathBuf::from("nested/runtime.so"_str)),
             .payload              = lito::InstallEntryPayload::CopyFile(source.clone()),
             .relative_destination = PathBuf::from("lib/runtime/nested/runtime.so"_str),
         });
@@ -372,10 +370,10 @@ TEST_F(InstallStore, InstallStorePublishesNestedGenericEntries) {
         });
         auto packages = Vec<lito::InstallPackageRecord>::make();
         packages.push(lito::InstallPackageRecord {
-            .name       = String::make("fixture-generic"_str),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .name       = "fixture-generic"_Str,
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .entries    = rstd::move(entries),
             .provenance = local_provenance(source_directory.as_path()),
         });
@@ -437,19 +435,18 @@ TEST_F(InstallStore, InstallStoreStripsOnlyTransactionStagingCopies) {
         transforms.push(lito::InstallEntryTransform::Strip(lito::artifact::StripMode::Symbols));
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
-            .origin     = lito::InstallEntryOrigin::ExternalAsset(String::make("cef"_str),
-                                                                  String::make("runtime"_str),
-                                                                  PathBuf::from("libcef.so"_str)),
-            .payload    = lito::InstallEntryPayload::CopyFile(source.clone()),
-            .transforms = rstd::move(transforms),
+            .origin = lito::InstallEntryOrigin::ExternalAsset(
+                "cef"_Str, "runtime"_Str, PathBuf::from("libcef.so"_str)),
+            .payload              = lito::InstallEntryPayload::CopyFile(source.clone()),
+            .transforms           = rstd::move(transforms),
             .relative_destination = PathBuf::from("lib/cef/libcef.so"_str),
         });
         auto packages = Vec<lito::InstallPackageRecord>::make();
         packages.push(lito::InstallPackageRecord {
-            .name       = String::make("fixture-strip"_str),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test-linux"_str),
+            .name       = "fixture-strip"_Str,
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test-linux"_Str,
             .entries    = rstd::move(entries),
             .provenance = local_provenance(source_directory.as_path()),
         });
@@ -535,27 +532,27 @@ TEST_F(InstallStore, ManagedCatalogRecordsInstallLinkProduction) {
     ASSERT_TRUE(runpath.is_ok());
 
     auto target = lito::package::PackageTargetId {
-        .package = String::make("fixture-link-production"_str),
+        .package = "fixture-link-production"_Str,
         .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("renderer"_str),
+        .name    = "renderer"_Str,
     };
     auto entries = Vec<lito::InstallEntry>::make();
     entries.push(lito::InstallEntry {
         .origin               = lito::InstallEntryOrigin::BuildArtifact(target.clone()),
         .payload              = lito::InstallEntryPayload::CopyFile(source.clone()),
         .link_production      = Some(lito::InstallLinkProduction {
-            .variant_identity = String::make("install-variant-v1"_str),
-            .link_identity    = String::make("link-identity-v1"_str),
+            .variant_identity = "install-variant-v1"_Str,
+            .link_identity    = "link-identity-v1"_Str,
             .runtime_search   = rstd::move(runpath).unwrap(),
         }),
         .relative_destination = PathBuf::from("bin/renderer"_str),
     });
     auto packages = Vec<lito::InstallPackageRecord>::make();
     packages.push(lito::InstallPackageRecord {
-        .name       = String::make("fixture-link-production"_str),
-        .version    = String::make("1.0.0"_str),
-        .profile    = String::make("release"_str),
-        .target     = String::make("x86_64-test-linux"_str),
+        .name       = "fixture-link-production"_Str,
+        .version    = "1.0.0"_Str,
+        .profile    = "release"_Str,
+        .target     = "x86_64-test-linux"_Str,
         .entries    = rstd::move(entries),
         .provenance = local_provenance(source_directory.as_path()),
     });

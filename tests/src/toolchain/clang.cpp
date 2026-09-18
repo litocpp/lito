@@ -95,7 +95,7 @@ TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
     };
     auto resolver = ClangIncludeResolver(environment);
     auto result   = resolver.resolve(lito::frontend::preprocessor::IncludeRequest {
-        .name           = String::make("Foo/Foo.h"_str),
+        .name           = "Foo/Foo.h"_Str,
         .kind           = lito::frontend::preprocessor::IncludeKind::Angled,
         .including_path = root.join(PathBuf::from("main.cpp"_str).as_path()),
     });
@@ -139,7 +139,7 @@ TEST(ClangPreprocessor, SubframeworkSearchOrderAndCacheInvalidation) {
         .system    = false,
     });
     auto request = pp::IncludeRequest {
-        .name                  = String::make("AE/AE.h"_str),
+        .name                  = "AE/AE.h"_Str,
         .kind                  = pp::IncludeKind::Angled,
         .including_path        = root.join(PathBuf::from("helper.h"_str).as_path()),
         .previous_search_index = Some(usize(1)),
@@ -198,7 +198,7 @@ TEST(ClangPreprocessor, FrameworkPrivateHeadersAndExactBoundary) {
     });
     auto resolver = ClangIncludeResolver(environment);
     auto request  = pp::IncludeRequest {
-        .name           = String::make("Foo/Foo.h"_str),
+        .name           = "Foo/Foo.h"_Str,
         .kind           = pp::IncludeKind::Angled,
         .including_path = root.join(PathBuf::from("main.cpp"_str).as_path()),
     };
@@ -219,7 +219,7 @@ TEST(ClangPreprocessor, FrameworkPrivateHeadersAndExactBoundary) {
     auto child = root.join(
         PathBuf::from("Parent.framework/Frameworks/Child.framework/Headers/Child.h"_str).as_path());
     ASSERT_TRUE(write_framework_header(child.as_path()));
-    request.name = String::make("Child/Child.h"_str);
+    request.name = "Child/Child.h"_Str;
     request.including_path =
         root.join(PathBuf::from("Parent.framework/Versions/A/Headers/Parent.h"_str).as_path());
     result = resolver.resolve(request);
@@ -232,7 +232,7 @@ TEST(ClangPreprocessor, FrameworkPrivateHeadersAndExactBoundary) {
     EXPECT_TRUE(result->is_none());
     request.including_path =
         root.join(PathBuf::from("Parent.framework/Headers/Parent.h"_str).as_path());
-    request.name = String::make("Child.h"_str);
+    request.name = "Child.h"_Str;
     result       = resolver.resolve(request);
     ASSERT_TRUE(result.is_ok());
     EXPECT_TRUE(result->is_none());
@@ -403,7 +403,7 @@ TEST(ClangToolchain, QueriesAndCanonicalizesDefaultAndConfiguredTargets) {
             .ld     = linker.clone(),
             .ar     = archiver.clone(),
             .target = lito::config::ToolchainTargetSelection::Config(
-                String::make("windows"_str), rstd::move(architecture), None(), None()),
+                "windows"_Str, rstd::move(architecture), None(), None()),
         },
         lito::config::StandardLibrarySelection::Msvc,
         *environment);
@@ -497,7 +497,7 @@ TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
     EXPECT_EQ(c_scan->language.as_C().facts.common.header_inputs.len(), usize(1));
 
     facts.provided = Some(frontend::ProvidedModule {
-        .logical_name = String::make("invalid.c.module"_str),
+        .logical_name = "invalid.c.module"_Str,
         .is_interface = true,
     });
     auto invalid =
@@ -529,7 +529,7 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     }));
     layer.occurrences.push(c::CCompilerArgumentOccurrence {
         .argument = c::CCompilerArgument::Vendor(c::CVendorOption {
-            .value               = String::make("-fno-builtin"_str),
+            .value               = "-fno-builtin"_Str,
             .raw_tokens          = strings("-fno-builtin"_str),
             .preserve_raw_tokens = true,
         }),
@@ -539,7 +539,7 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
         rstd::move(layer));
     ASSERT_TRUE(options.is_ok());
     auto context = cpp::CompileContext {
-        .id = String::make("c-context"_str),
+        .id = "c-context"_Str,
         .language =
             cpp::LanguageCompileContext::C(rstd::move(options).unwrap(), c::CPublicRequirements {}),
     };
@@ -580,7 +580,7 @@ TEST(ClangToolchain, EmitsObjectiveCppLanguageForObjectiveCppUnits) {
     auto options   = cpp_options(
         "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
     auto context = cpp::CompileContext {
-        .id       = String::make("objective-cpp-context"_str),
+        .id       = "objective-cpp-context"_Str,
         .language = cpp::LanguageCompileContext::Cpp(
             cpp::BmiRequest {}, rstd::move(options), cpp::CppPublicRequirements {}),
     };
@@ -619,7 +619,7 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     auto cpp = cpp_options(
         "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
     auto context = cpp::CompileContext {
-        .id       = String::make("context"_str),
+        .id       = "context"_Str,
         .language = cpp::LanguageCompileContext::Cpp(
             cpp::BmiRequest {}, rstd::move(cpp), cpp::CppPublicRequirements {}),
     };
@@ -636,8 +636,8 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     };
     auto dependencies = Vec<cpp::ModuleArtifactDependency>::make();
     dependencies.push(cpp::ModuleArtifactDependency {
-        .logical_name = String::make("sample.module"_str),
-        .artifact_key = cpp::BmiArtifactKey { .value = String::make("artifact-key"_str) },
+        .logical_name = "sample.module"_Str,
+        .artifact_key = cpp::BmiArtifactKey { .value = "artifact-key"_Str },
         .path         = PathBuf::from("/tmp/sample.module.pcm"_str),
     });
     auto invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
@@ -729,7 +729,7 @@ TEST(ClangToolchain, ParsesStandardLibraryModuleManifest) {
     candidates.push(manifest.clone());
     auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
         .family   = lito::config::StandardLibrary::Libcxx,
-        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .target   = "x86_64-unknown-linux-gnu"_Str,
         .artifact = directory.join(PathBuf::from("libc++.so"_str).as_path()),
         .module_manifest =
             cpp::StandardLibraryModuleManifestCandidate {
@@ -754,7 +754,7 @@ TEST(ClangToolchain, ReportsTypedMissingStandardLibraryModuleManifest) {
     candidates.push(PathBuf::from("/tmp/lito-missing-stdlib.modules.json"_str));
     auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
         .family   = lito::config::StandardLibrary::Libstdcxx,
-        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .target   = "x86_64-unknown-linux-gnu"_Str,
         .artifact = PathBuf::from("/tmp/libstdc++.so"_str),
         .module_manifest =
             cpp::StandardLibraryModuleManifestCandidate {
@@ -789,7 +789,7 @@ TEST(ClangToolchain, ReportsTypedAmbiguousStandardLibraryModuleManifest) {
     candidates.push(rstd::move(second));
     auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
         .family   = lito::config::StandardLibrary::Libcxx,
-        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .target   = "x86_64-unknown-linux-gnu"_Str,
         .artifact = directory.join(PathBuf::from("libc++.so"_str).as_path()),
         .module_manifest =
             cpp::StandardLibraryModuleManifestCandidate {
@@ -821,7 +821,7 @@ TEST(ClangToolchain, RejectsUnsupportedStandardLibraryModuleManifestVersion) {
     candidates.push(rstd::move(manifest));
     auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
         .family   = lito::config::StandardLibrary::Libstdcxx,
-        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .target   = "x86_64-unknown-linux-gnu"_Str,
         .artifact = directory.join(PathBuf::from("libstdc++.so"_str).as_path()),
         .module_manifest =
             cpp::StandardLibraryModuleManifestCandidate {
@@ -858,7 +858,7 @@ TEST(ClangToolchain, ReportsManifestEntryForMissingStandardLibraryModuleSource) 
     candidates.push(manifest.clone());
     auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
         .family   = lito::config::StandardLibrary::Libstdcxx,
-        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .target   = "x86_64-unknown-linux-gnu"_Str,
         .artifact = directory.join(PathBuf::from("libstdc++.so"_str).as_path()),
         .module_manifest =
             cpp::StandardLibraryModuleManifestCandidate {
@@ -887,22 +887,22 @@ TEST(ClangToolchain, MaterializesStandardLibraryModuleAsBmiOnly) {
     auto options   = cpp_options(
         "c++23"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
     auto context = cpp::CompileContext {
-        .id       = String::make("standard-context"_str),
+        .id       = "standard-context"_Str,
         .language = cpp::LanguageCompileContext::Cpp(
             cpp::BmiRequest {}, rstd::move(options), cpp::CppPublicRequirements {}),
     };
     auto artifact = cpp::BmiArtifact {
-        .logical_name      = String::make("std"_str),
-        .provider_identity = String::make("standard-library:std"_str),
-        .key    = cpp::BmiArtifactKey { .value = String::make("standard-library-key"_str) },
-        .format = format(),
-        .path   = PathBuf::from("/tmp/lito-std.pcm"_str),
+        .logical_name      = "std"_Str,
+        .provider_identity = "standard-library:std"_Str,
+        .key               = cpp::BmiArtifactKey { .value = "standard-library-key"_Str },
+        .format            = format(),
+        .path              = PathBuf::from("/tmp/lito-std.pcm"_str),
     };
     auto prepared = cpp::PreparedUnit {
         .unit =
             cpp::UnitSpec {
                 .owner    = cpp::CompileUnitOwner::StandardLibrary(cpp::StandardLibraryModuleUnit {
-                    .logical_name = String::make("std"_str),
+                    .logical_name = "std"_Str,
                 }),
                 .source   = PathBuf::from("/tmp/std.cc"_str),
                 .object   = PathBuf::from("/tmp/std.o"_str),
@@ -914,7 +914,7 @@ TEST(ClangToolchain, MaterializesStandardLibraryModuleAsBmiOnly) {
     auto scan = cpp::ScanResult {
         .language = cpp::LanguageScanResult::Cpp(cpp::CppScanResult {
             .provided = Some(frontend::ProvidedModule {
-                .logical_name = String::make("std"_str),
+                .logical_name = "std"_Str,
                 .is_interface = true,
             }),
         }),
@@ -955,7 +955,7 @@ TEST(ClangToolchain, RemovesTransientBmiOnlyObject) {
     auto result = toolchain.execute_compile_capture(CompileInvocation {
         .arguments                  = strings("/bin/sh"_str, "-c"_str, script.as_str()),
         .working_directory          = directory.clone(),
-        .identity_working_directory = String::make("bmi-only-output"_str),
+        .identity_working_directory = "bmi-only-output"_Str,
         .staged_object              = staged_object.clone(),
         .staged_bmi                 = Some(staged_bmi.clone()),
         .final_bmi                  = Some(final_bmi.clone()),
@@ -1091,7 +1091,7 @@ TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
     auto invocation    = CompileInvocation {
         .arguments                  = strings("/bin/sh"_str, "-c"_str, script.as_str()),
         .working_directory          = directory.clone(),
-        .identity_working_directory = String::make("partial-output"_str),
+        .identity_working_directory = "partial-output"_Str,
         .staged_object              = staged_object.clone(),
         .final_object               = Some(final_object.clone()),
         .staged_bmi                 = Some(staged_bmi.clone()),
@@ -1118,19 +1118,18 @@ TEST(ClangToolchain, AttachesResolvedCompilerPluginUsageToCompileIdentity) {
     auto invocation = CompileInvocation {
         .arguments                  = strings("clang++"_str, "-c"_str, "source.cpp"_str),
         .working_directory          = PathBuf::from("workspace"_str),
-        .identity_working_directory = String::make("workspace"_str),
+        .identity_working_directory = "workspace"_Str,
         .staged_object              = PathBuf::from("object.o.building"_str),
     };
     auto original_identity = invocation.identity();
     auto arguments         = strings("mode=define"_str, "provider=fixture"_str);
-    auto attached =
-        toolchain.attach_compile_plugin(invocation,
-                                        ResolvedCompilerPluginUsage {
-                                            .plugin    = PathBuf::from("fixture.so"_str),
-                                            .name      = String::make("fixture"_str),
-                                            .arguments = rstd::move(arguments),
-                                            .identity = String::make("fixture-plugin-identity"_str),
-                                        });
+    auto attached = toolchain.attach_compile_plugin(invocation,
+                                                    ResolvedCompilerPluginUsage {
+                                                        .plugin = PathBuf::from("fixture.so"_str),
+                                                        .name   = "fixture"_Str,
+                                                        .arguments = rstd::move(arguments),
+                                                        .identity  = "fixture-plugin-identity"_Str,
+                                                    });
     ASSERT_TRUE(attached.is_ok());
     EXPECT_TRUE(has_argument(invocation.arguments, "-fplugin=fixture.so"_str));
     EXPECT_TRUE(has_argument(invocation.arguments, "-fplugin-arg-fixture-mode=define"_str));

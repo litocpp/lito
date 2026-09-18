@@ -23,22 +23,20 @@ auto run(usize files, usize jobs, const Function& function) -> CommandResult<Vec
     jobs         = worker_count(files, Some(jobs));
     auto created = rstd::thread::ThreadPoolBuilder::make()
                        .worker_count(jobs)
-                       .thread_name(String::make("lito-format"_str))
+                       .thread_name("lito-format"_Str)
                        .build();
     if (created.is_err()) {
-        return Err(CommandError::System(
-            system::SystemError::Io(String::make("create format worker pool"_str),
-                                    rstd::path::PathBuf::make(),
-                                    rstd::move(created).unwrap_err())));
+        return Err(CommandError::System(system::SystemError::Io("create format worker pool"_Str,
+                                                                rstd::path::PathBuf::make(),
+                                                                rstd::move(created).unwrap_err())));
     }
     auto pool    = rstd::move(created).unwrap();
     auto bounded = rstd::thread::BlockingTaskSet<CommandResult<bool>>::make(pool.handle(), jobs);
     if (bounded.is_err()) {
         rstd::move(pool).join();
-        return Err(
-            CommandError::System(system::SystemError::Io(String::make("create format task set"_str),
-                                                         rstd::path::PathBuf::make(),
-                                                         rstd::move(bounded).unwrap_err())));
+        return Err(CommandError::System(system::SystemError::Io("create format task set"_Str,
+                                                                rstd::path::PathBuf::make(),
+                                                                rstd::move(bounded).unwrap_err())));
     }
     auto tasks = rstd::move(bounded).unwrap();
     for (usize index {}; index < files; ++index) results.push(false);
@@ -52,8 +50,7 @@ auto run(usize files, usize jobs, const Function& function) -> CommandResult<Vec
                 return function(index);
             });
             if (submitted.is_err()) {
-                error =
-                    Some(CommandError::Message(String::make("could not submit format task"_str)));
+                error = Some(CommandError::Message("could not submit format task"_Str));
                 break;
             }
             ++next;
@@ -62,8 +59,7 @@ auto run(usize files, usize jobs, const Function& function) -> CommandResult<Vec
         if (active == usize {}) break;
         auto completion = tasks.recv();
         if (completion.is_none()) {
-            error = Some(CommandError::Message(
-                String::make("format task set closed before completion"_str)));
+            error = Some(CommandError::Message("format task set closed before completion"_Str));
             break;
         }
         --active;
@@ -72,8 +68,7 @@ auto run(usize files, usize jobs, const Function& function) -> CommandResult<Vec
         if (value.is_none()) {
             if (index < first_error) {
                 first_error = index;
-                error       = Some(CommandError::Message(
-                    String::make("format task completed without a result"_str)));
+                error = Some(CommandError::Message("format task completed without a result"_Str));
             }
         } else if (value->is_err()) {
             if (index < first_error) {

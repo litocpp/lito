@@ -66,7 +66,7 @@ auto configuration() -> lito::cpp::BuildConfiguration {
         .standard_library         = resolved.compile_target().standard_library,
         .standard_library_runtime = lito::config::StandardLibraryRuntime::Dynamic,
         .bmi_mode                 = lito::cpp::BmiMode::Reduced,
-        .language_standard        = String::make("c++20"_str),
+        .language_standard        = "c++20"_Str,
     };
 }
 

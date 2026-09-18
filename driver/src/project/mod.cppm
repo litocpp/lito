@@ -86,7 +86,7 @@ struct ProjectRegistryResolver {
         auto& self = *static_cast<ProjectRegistryResolver*>(raw);
         if (self.config == nullptr) {
             return Err(lito::registry::RegistryGraphError {
-                .message = String::make("Registry resolution has no bootstrap context"_str),
+                .message = "Registry resolution has no bootstrap context"_Str,
             });
         }
         auto selected = selector.is_some() ? self.config->resolve_registry(*selector)
@@ -101,7 +101,7 @@ struct ProjectRegistryResolver {
         auto& self = *static_cast<ProjectRegistryResolver*>(raw);
         if (self.config == nullptr || self.environment == nullptr) {
             return Err(lito::registry::RegistryGraphError {
-                .message = String::make("Registry resolution has no bootstrap context"_str),
+                .message = "Registry resolution has no bootstrap context"_Str,
             });
         }
         auto data = lito::system::LitoDataRoot::resolve();
@@ -118,7 +118,7 @@ struct ProjectRegistryResolver {
         if (self.network == lito::registry::RegistryNetworkPolicy::Online) {
             if (self.tools == nullptr) {
                 return Err(lito::registry::RegistryGraphError {
-                    .message = String::make("online Registry resolution has no tool resolver"_str),
+                    .message = "online Registry resolution has no tool resolver"_Str,
                 });
             }
             auto curl = self.tools->require(
@@ -507,7 +507,7 @@ auto resolve_configured_toolchain(const config::BuildConfigurationRequest& confi
     }
     if (configuration.toolchain.sdk.is_none()) {
         return Err(ProjectError::Message(
-            String::make("Android target requires toolchain.sdk with kind 'android-ndk'"_str)));
+            "Android target requires toolchain.sdk with kind 'android-ndk'"_Str));
     }
     const auto& selection = *configuration.toolchain.sdk;
     if (selection.kind() != lito::config::SdkKind::AndroidNdk) {
@@ -851,8 +851,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     rstd_try(normalize_microsoft_runtime(resolved_profile.cpp.common));
     if (resolved_profile.c.common.microsoft_runtime_library !=
         resolved_profile.cpp.common.microsoft_runtime_library) {
-        return Err(ProjectError::Message(String::make(
-            "C and C++ compilation selected different Microsoft runtime libraries"_str)));
+        return Err(ProjectError::Message(
+            "C and C++ compilation selected different Microsoft runtime libraries"_Str));
     }
     auto layout = BuildLayout::create(project.graph.root_directory.as_path(),
                                       requested_output,
@@ -1319,7 +1319,7 @@ auto update_project_dependencies(
     const lito::config::LitoBootstrapConfig*           registries    = nullptr)
     -> ProjectResult<lito::lock::LockStatus> {
     if (root.is_empty()) {
-        return Err(ProjectError::Message(String::make("update directory is required"_str)));
+        return Err(ProjectError::Message("update directory is required"_Str));
     }
     auto selection = lito::package::PackageSelection {
         .root = PathBuf::from(root),

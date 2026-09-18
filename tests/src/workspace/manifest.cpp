@@ -403,7 +403,7 @@ members = ["app"]
     EXPECT_TRUE(contents->as_str().contains("sample = \"0.4\""_str));
 
     auto promoted = lito::manifest::add_registry_dependency(
-        project->root.as_path(), *package, *requirement, Some(String::make("litocpp"_str)));
+        project->root.as_path(), *package, *requirement, Some("litocpp"_Str));
     ASSERT_TRUE(promoted.is_ok());
     auto document = lito::manifest::load_manifest_document(project->root.as_path());
     ASSERT_TRUE(document.is_ok());

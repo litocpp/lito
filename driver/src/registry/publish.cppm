@@ -179,16 +179,14 @@ auto publish_failure(RegistryPublishErrorKind kind,
 
 auto request_body(const RegistryPublishRequest& request) -> String {
     auto archive = JsonMap::make();
-    archive.insert(String::make("checksum"_str),
-                   rstd::into<Json>(request.artifact.checksum.text().as_str()));
-    archive.insert(String::make("size"_str),
-                   rstd::into<Json>(request.artifact.size.text().as_str()));
-    archive.insert(String::make("format"_str), rstd::into<Json>(request.artifact.format.as_str()));
+    archive.insert("checksum"_Str, rstd::into<Json>(request.artifact.checksum.text().as_str()));
+    archive.insert("size"_Str, rstd::into<Json>(request.artifact.size.text().as_str()));
+    archive.insert("format"_Str, rstd::into<Json>(request.artifact.format.as_str()));
     auto root = JsonMap::make();
-    root.insert(String::make("registry"_str), rstd::into<Json>(request.package.registry.as_str()));
-    root.insert(String::make("package"_str), rstd::into<Json>(request.package.name.as_str()));
-    root.insert(String::make("version"_str), rstd::into<Json>(request.version.text()));
-    root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
+    root.insert("registry"_Str, rstd::into<Json>(request.package.registry.as_str()));
+    root.insert("package"_Str, rstd::into<Json>(request.package.name.as_str()));
+    root.insert("version"_Str, rstd::into<Json>(request.version.text()));
+    root.insert("archive"_Str, Json::Object(rstd::move(archive)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
@@ -553,12 +551,12 @@ auto authorization_headers(const lito::config::RegistryBearerToken& token)
     -> Vec<RegistryPublishHeader> {
     auto headers = Vec<RegistryPublishHeader>::make();
     headers.push(RegistryPublishHeader {
-        .name  = String::make("Authorization"_str),
+        .name  = "Authorization"_Str,
         .value = token.authorization_header(),
     });
     headers.push(RegistryPublishHeader {
-        .name  = String::make("Accept"_str),
-        .value = String::make("application/json"_str),
+        .name  = "Accept"_Str,
+        .value = "application/json"_Str,
     });
     return headers;
 }
@@ -699,18 +697,18 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
     auto idempotency = rstd::format("lito-{}", licrypto::sha256_hex(body.as_str()));
     auto headers     = authorization_headers(*request.token);
     headers.push(RegistryPublishHeader {
-        .name  = String::make("Content-Type"_str),
-        .value = String::make("application/json"_str),
+        .name  = "Content-Type"_Str,
+        .value = "application/json"_Str,
     });
     headers.push(RegistryPublishHeader {
-        .name  = String::make("Idempotency-Key"_str),
+        .name  = "Idempotency-Key"_Str,
         .value = rstd::move(idempotency),
     });
     auto prepared_response =
         rstd_try(execute_request(transport_,
                                  request.package,
                                  RegistryPublishHttpRequest {
-                                     .method  = String::make("POST"_str),
+                                     .method  = "POST"_Str,
                                      .url     = api_url(request.api, "/v1/publish/sessions"_str),
                                      .headers = rstd::move(headers),
                                      .body    = Some(rstd::move(body)),
@@ -726,7 +724,7 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
             rstd_try(execute_request(transport_,
                                      request.package,
                                      RegistryPublishHttpRequest {
-                                         .method  = String::make("PUT"_str),
+                                         .method  = "PUT"_Str,
                                          .url     = rstd::move(prepared.upload_url).unwrap(),
                                          .headers = rstd::move(upload_headers),
                                          .upload  = Some(request.archive.clone()),
@@ -748,7 +746,7 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
             transport_,
             request.package,
             RegistryPublishHttpRequest {
-                .method = String::make("POST"_str),
+                .method = "POST"_Str,
                 .url = api_url(request.api,
                                rstd::format("/v1/publish/sessions/{}/submit", session.id).as_str()),
                 .headers = authorization_headers(*request.token),
@@ -822,7 +820,7 @@ auto lito::registry::CurlRegistryPublishTransport::execute(
             package,
             "Registry publish request URL is not an allowed endpoint"_str);
     }
-    auto config = String::make("silent\nshow-error\ngloboff\n"_str);
+    auto config = "silent\nshow-error\ngloboff\n"_Str;
     config.push_str(rstd::format("proto = \"={}\"\n", endpoint->scheme()).as_str());
     config.push_str("connect-timeout = 30\nmax-time = 300\nmax-filesize = 1048576\n"_str);
     rstd_try(append_curl_config(config, "request"_str, request.method.as_str(), package));
@@ -860,8 +858,8 @@ auto lito::registry::CurlRegistryPublishTransport::execute(
 
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
-    arguments.push(String::make("--config"_str));
-    arguments.push(String::make("-"_str));
+    arguments.push("--config"_Str);
+    arguments.push("-"_Str);
     auto executed = lito::system::run_command_with_input(arguments, config.as_str(), *environment_);
     if (executed.is_err()) {
         return publish_failure<RegistryPublishHttpResponse>(

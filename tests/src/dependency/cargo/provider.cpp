@@ -71,14 +71,14 @@ TEST_F(CargoProvider, FetchUsesTypedManifestTargetAndPolicyArguments) {
     auto result   = lito::tools::cargo::fetch_dependencies(
         lito::tools::cargo::Provider {
             .executable  = project->root.join(PathBuf::from("cargo"_str).as_path()),
-            .identity    = String::make("fixture Cargo provider"_str),
-            .host_target = String::make("x86_64-unknown-linux-gnu"_str),
+            .identity    = "fixture Cargo provider"_Str,
+            .host_target = "x86_64-unknown-linux-gnu"_Str,
         },
         lito::tools::cargo::FetchRequest {
-            .alias       = String::make("fixture"_str),
+            .alias       = "fixture"_Str,
             .source_root = project->root.clone(),
             .manifest    = manifest.clone(),
-            .target      = String::make("aarch64-unknown-linux-gnu"_str),
+            .target      = "aarch64-unknown-linux-gnu"_Str,
             .locked      = true,
             .offline     = true,
         },
@@ -115,11 +115,11 @@ printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' '' '[sour
     auto result      = lito::tools::cargo::vendor_dependencies(
         lito::tools::cargo::Provider {
             .executable  = project->root.join(PathBuf::from("cargo"_str).as_path()),
-            .identity    = String::make("fixture Cargo provider"_str),
-            .host_target = String::make("x86_64-unknown-linux-gnu"_str),
+            .identity    = "fixture Cargo provider"_Str,
+            .host_target = "x86_64-unknown-linux-gnu"_Str,
         },
         lito::tools::cargo::VendorRequest {
-            .alias       = String::make("fixture"_str),
+            .alias       = "fixture"_Str,
             .source_root = project->root.clone(),
             .manifest    = manifest.clone(),
             .destination = destination.clone(),
@@ -152,15 +152,15 @@ TEST_F(CargoProvider, EffectivePlainProfileProjectsTypedCargoConfigurationByLang
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g1"_str, "-flto=thin"_str, "-DNDEBUG"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-O3"_str, "-g0"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str, "-Wl,--strip-debug"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -169,16 +169,16 @@ TEST_F(CargoProvider, EffectivePlainProfileProjectsTypedCargoConfigurationByLang
     ASSERT_TRUE(profile.is_ok());
 
     auto declaration = lito::dependency::CargoDependencyRequirement {
-        .alias = String::make("fixture"_str),
+        .alias = "fixture"_Str,
         .recipe =
             lito::dependency::CargoDependencyRecipe {
-                .package = String::make("fixture"_str),
-                .source  = String::make("fixture-source"_str),
+                .package = "fixture"_Str,
+                .source  = "fixture-source"_Str,
             },
         .consumption =
             lito::dependency::CargoDependencyConsumption {
                 .profile = Some(lito::dependency::CargoProfileName {
-                    .value = String::make("packaging"_str),
+                    .value = "packaging"_Str,
                 }),
                 .dependency =
                     lito::dependency::DependencyConsumption {
@@ -229,7 +229,7 @@ TEST_F(CargoProvider, BuiltinProfilesSelectCargoBaseAndAssertionPolicy) {
     ASSERT_TRUE(debug.is_ok());
     ASSERT_TRUE(release.is_ok());
     auto declaration = lito::dependency::CargoDependencyRequirement {
-        .alias = String::make("fixture"_str),
+        .alias = "fixture"_Str,
     };
     auto debug_cargo = lito::resolve_cargo_profile_configuration(
         "owner"_str, declaration, *debug, lito::manifest::PackageLanguage::Cpp);
@@ -251,7 +251,7 @@ TEST_F(CargoProvider, UnsupportedNativeOptimizationFailsCargoProjection) {
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-Og"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -259,7 +259,7 @@ TEST_F(CargoProvider, UnsupportedNativeOptimizationFailsCargoProjection) {
                                                 *parser);
     ASSERT_TRUE(profile.is_ok());
     auto declaration = lito::dependency::CargoDependencyRequirement {
-        .alias = String::make("fixture"_str),
+        .alias = "fixture"_Str,
     };
     constexpr lito::manifest::Optimization unsupported[] = {
         lito::manifest::Optimization::Level4,
@@ -324,15 +324,15 @@ pub extern "C" fn lito_cargo_provider_answer(value: i32) -> i32 {
     EXPECT_FALSE(provider->host_target.is_empty());
 
     auto manifest = project->root.join(PathBuf::from("Cargo.toml"_str).as_path());
-    auto metadata = lito::tools::cargo::query_metadata(
-        *provider,
-        lito::tools::cargo::MetadataRequest {
-            .source_root = project->root.clone(),
-            .manifest    = manifest.clone(),
-            .package     = String::make("lito-cargo-provider-fixture"_str),
-            .offline     = true,
-        },
-        *environment);
+    auto metadata =
+        lito::tools::cargo::query_metadata(*provider,
+                                           lito::tools::cargo::MetadataRequest {
+                                               .source_root = project->root.clone(),
+                                               .manifest    = manifest.clone(),
+                                               .package     = "lito-cargo-provider-fixture"_Str,
+                                               .offline     = true,
+                                           },
+                                           *environment);
     ASSERT_TRUE(metadata.is_ok());
     EXPECT_EQ(metadata->name.as_str(), "lito-cargo-provider-fixture"_str);
     ASSERT_TRUE(metadata->library.is_some());
@@ -343,15 +343,15 @@ pub extern "C" fn lito_cargo_provider_answer(value: i32) -> i32 {
     auto work    = build_root("cargo-provider"_str);
     auto target  = work.join(PathBuf::from("target"_str).as_path());
     auto request = lito::tools::cargo::BuildRequest {
-        .alias            = String::make("fixture"_str),
+        .alias            = "fixture"_Str,
         .source_root      = project->root.clone(),
         .manifest         = metadata->manifest.clone(),
-        .package          = String::make("lito-cargo-provider-fixture"_str),
+        .package          = "lito-cargo-provider-fixture"_Str,
         .features         = strings("selected"_str),
         .default_features = false,
         .profile          = cargo_profile("lito-provider-test"_str, "dev"_str),
         .target           = provider->host_target.clone(),
-        .request_identity = String::make("cargo-provider-request-v1"_str),
+        .request_identity = "cargo-provider-request-v1"_Str,
         .work_root        = work.clone(),
         .target_directory = target.clone(),
         .jobs             = usize(1),
@@ -426,7 +426,7 @@ version = "0.1.0"
         lito::tools::cargo::MetadataRequest {
             .source_root = project->root.clone(),
             .manifest    = project->root.join(PathBuf::from("Cargo.toml"_str).as_path()),
-            .package     = String::make("lito-cargo-runtime-fixture"_str),
+            .package     = "lito-cargo-runtime-fixture"_Str,
             .offline     = true,
         },
         *environment);
@@ -439,13 +439,13 @@ version = "0.1.0"
     auto work    = build_root("cargo-runtime-provider"_str);
     auto target  = work.join(PathBuf::from("target"_str).as_path());
     auto request = lito::tools::cargo::BuildRequest {
-        .alias            = String::make("runtime"_str),
+        .alias            = "runtime"_Str,
         .source_root      = project->root.clone(),
         .manifest         = metadata->manifest.clone(),
-        .package          = String::make("lito-cargo-runtime-fixture"_str),
+        .package          = "lito-cargo-runtime-fixture"_Str,
         .profile          = cargo_profile("lito-runtime-test"_str, "dev"_str),
         .target           = provider->host_target.clone(),
-        .request_identity = String::make("cargo-runtime-request-v1"_str),
+        .request_identity = "cargo-runtime-request-v1"_Str,
         .work_root        = work.clone(),
         .target_directory = target.clone(),
         .jobs             = usize(1),

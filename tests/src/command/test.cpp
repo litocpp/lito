@@ -655,7 +655,7 @@ TEST(TestCommandRunner, AndroidArtifactsRequireAnExplicitRunner) {
     auto platform = lito::system::BuildPlatform {};
     platform.effective_target =
         lito::system::parse_target_info("aarch64-linux-android21"_str).unwrap();
-    platform.android_abi = Some(String::make("arm64-v8a"_str));
+    platform.android_abi = Some("arm64-v8a"_Str);
 
     auto rejected = lito::ensure_artifact_runner(platform, "test"_str);
     ASSERT_TRUE(rejected.is_err());

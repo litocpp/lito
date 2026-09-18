@@ -73,10 +73,10 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     auto targets      = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name = String::make("LitoFixture::fixture"_str),
+        .name = "LitoFixture::fixture"_Str,
     });
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name = String::make("LitoFixture::headers"_str),
+        .name = "LitoFixture::headers"_Str,
         .consumption =
             lito::dependency::DependencyConsumption {
                 .usage     = lito::dependency::DependencyUsage::compile_only(),
@@ -84,7 +84,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
             },
     });
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name = String::make("LitoFixture::order"_str),
+        .name = "LitoFixture::order"_Str,
         .consumption =
             lito::dependency::DependencyConsumption {
                 .usage = lito::dependency::DependencyUsage::link_only(),
@@ -92,15 +92,15 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     });
     auto cache = Vec<lito::dependency::CMakeCacheEntry>::make();
     cache.push(lito::dependency::CMakeCacheEntry {
-        .name  = String::make("LITO_FIXTURE_CONFIGURE_COUNT"_str),
+        .name  = "LITO_FIXTURE_CONFIGURE_COUNT"_Str,
         .value = String::make(count_path.as_path().to_str().unwrap()),
     });
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias      = String::make("fixture"_str),
-        .package    = String::make("LitoFixture"_str),
+        .alias      = "fixture"_Str,
+        .package    = "LitoFixture"_Str,
         .components = strings("Core"_str),
         .source     = lito::PreparedCMakeDependencySource::Directory(
-            project->root.clone(), String::make("lito-test-cmake-fixture-v5"_str), true),
+            project->root.clone(), "lito-test-cmake-fixture-v5"_Str, true),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
@@ -218,8 +218,8 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 #else
     EXPECT_EQ(warm_count->as_str(), "configure\n"_str);
 #endif
-    declarations[usize {}].targets[usize {}].name = String::make("LitoFixture::headers"_str);
-    declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
+    declarations[usize {}].targets[usize {}].name = "LitoFixture::headers"_Str;
+    declarations[usize {}].targets[usize(1)].name = "LitoFixture::fixture"_Str;
     auto queried_again = resolve_cmake_fixtures(declarations,
                                                 default_profile(*parser),
                                                 native_platform(),
@@ -234,8 +234,8 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 #endif
 
     declarations[usize {}].cache.push(lito::dependency::CMakeCacheEntry {
-        .name  = String::make("LITO_FIXTURE_VARIANT"_str),
-        .value = String::make("ON"_str),
+        .name  = "LITO_FIXTURE_VARIANT"_Str,
+        .value = "ON"_Str,
     });
     auto installed_again = resolve_cmake_fixtures(declarations,
                                                   default_profile(*parser),
@@ -287,11 +287,11 @@ TEST_F(CMakeProvider, LitoOwnedConfigurationBuildsWithSingleAndMultiConfigGenera
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -301,21 +301,21 @@ TEST_F(CMakeProvider, LitoOwnedConfigurationBuildsWithSingleAndMultiConfigGenera
 
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoFixture::fixture"_str),
+        .name        = "LitoFixture::fixture"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto cache = Vec<lito::dependency::CMakeCacheEntry>::make();
     cache.push(lito::dependency::CMakeCacheEntry {
-        .name  = String::make("LITO_FIXTURE_EXPECT_PLAIN"_str),
-        .value = String::make("ON"_str),
+        .name  = "LITO_FIXTURE_EXPECT_PLAIN"_Str,
+        .value = "ON"_Str,
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias      = String::make("plain-fixture"_str),
-        .package    = String::make("LitoFixture"_str),
+        .alias      = "plain-fixture"_Str,
+        .package    = "LitoFixture"_Str,
         .components = strings("Core"_str),
         .source     = lito::PreparedCMakeDependencySource::Directory(
-            project->root.clone(), String::make("lito-test-cmake-plain-v1"_str), false),
+            project->root.clone(), "lito-test-cmake-plain-v1"_Str, false),
         .config_directory = Some(PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
@@ -351,15 +351,15 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
     ASSERT_TRUE(project.is_ok());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoSourceAdapter::fixture"_str),
+        .name        = "LitoSourceAdapter::fixture"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("LitoSourceAdapter"_str),
+        .alias   = "fixture"_Str,
+        .package = "LitoSourceAdapter"_Str,
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            project->root.clone(), String::make("lito-test-cmake-source-adapter-v1"_str), false),
+            project->root.clone(), "lito-test-cmake-source-adapter-v1"_Str, false),
         .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets = rstd::move(targets),
     });
@@ -418,13 +418,13 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
     provider.search_paths.push(project->root.clone());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoFindFixture::raw"_str),
+        .name        = "LitoFindFixture::raw"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("LitoFindFixture"_str),
+        .alias   = "fixture"_Str,
+        .package = "LitoFindFixture"_Str,
         .source  = lito::PreparedCMakeDependencySource::Find(),
         .targets = rstd::move(targets),
     });
@@ -508,13 +508,13 @@ TEST_F(CMakeProvider, CMakeProviderRequestsRequiredFindComponents) {
     provider.search_paths.push(project->root.clone());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoFindFixture::component"_str),
+        .name        = "LitoFindFixture::component"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias      = String::make("fixture"_str),
-        .package    = String::make("LitoFindFixture"_str),
+        .alias      = "fixture"_Str,
+        .package    = "LitoFindFixture"_Str,
         .components = strings("Feature"_str),
         .source     = lito::PreparedCMakeDependencySource::Find(),
         .targets    = rstd::move(targets),
@@ -553,13 +553,13 @@ TEST_F(CMakeProvider, CMakeProviderUsesInstallPrefixForFindQueries) {
     provider.search_paths.push(project->root.clone());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoFindFixture::prefix"_str),
+        .name        = "LitoFindFixture::prefix"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("LitoFindFixture"_str),
+        .alias   = "fixture"_Str,
+        .package = "LitoFindFixture"_Str,
         .source  = lito::PreparedCMakeDependencySource::Find(),
         .targets = rstd::move(targets),
     });
@@ -606,13 +606,13 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
     provider.search_paths.push(project->root.clone());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoFindFixture::fixture"_str),
+        .name        = "LitoFindFixture::fixture"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias      = String::make("fixture"_str),
-        .package    = String::make("LitoFindFixture"_str),
+        .alias      = "fixture"_Str,
+        .package    = "LitoFindFixture"_Str,
         .components = strings("Raw"_str),
         .source     = lito::PreparedCMakeDependencySource::Find(),
         .adapter    = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
@@ -666,13 +666,13 @@ TEST_F(CMakeProvider, CMakeProviderReportsFindAdapterTargetContractFailure) {
     provider.search_paths.push(project->root.clone());
     auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("LitoFindFixture::missing"_str),
+        .name        = "LitoFindFixture::missing"_Str,
         .consumption = lito::dependency::DependencyConsumption {},
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias      = String::make("fixture"_str),
-        .package    = String::make("LitoFindFixture"_str),
+        .alias      = "fixture"_Str,
+        .package    = "LitoFindFixture"_Str,
         .components = strings("Raw"_str),
         .source     = lito::PreparedCMakeDependencySource::Find(),
         .adapter    = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),

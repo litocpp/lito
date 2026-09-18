@@ -55,7 +55,7 @@ auto action_directory_digest(ref<rstd::path::Path> path) -> BuildScriptResult<St
         records.push(rstd::format("{}:{}:{}", kind.len(), kind, name.as_str()));
     }
     rstd::slice_::sort_unstable(records.as_mut_slice().as_mut_ref());
-    auto identity = String::make("build-tool-directory-v1"_str);
+    auto identity = "build-tool-directory-v1"_Str;
     for (const auto& record : records) {
         identity.push_ascii('\n');
         identity.push_str(record.as_str());
@@ -183,8 +183,7 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
         if (metadata.is_err() || metadata->is_symlink() ||
             (! metadata->is_file() && ! metadata->is_dir())) {
             return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(),
-                String::make("depfile dependency is not a regular file or directory"_str)));
+                canonical->clone(), "depfile dependency is not a regular file or directory"_Str));
         }
         auto              allowed   = false;
         static const auto env_roots = [] {
@@ -230,8 +229,7 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
         }
         if (! allowed) {
             return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(),
-                String::make("depfile dependency is outside allowed roots"_str)));
+                canonical->clone(), "depfile dependency is outside allowed roots"_Str));
         }
         auto duplicate = false;
         for (const auto& dependency : result) {
@@ -327,27 +325,24 @@ auto action_receipt_text(ref<str>                     identity,
     auto entries = rstd::json::Array::with_capacity(outputs.len());
     for (usize index {}; index < outputs.len(); ++index) {
         auto item = rstd::json::Map::make();
-        item.insert(String::make("path"_str),
-                    Json::String(outputs[index].as_path().to_string_lossy()));
-        item.insert(String::make("sha256"_str), Json::String(digests[index].clone()));
+        item.insert("path"_Str, Json::String(outputs[index].as_path().to_string_lossy()));
+        item.insert("sha256"_Str, Json::String(digests[index].clone()));
         entries.push(Json::Object(rstd::move(item)));
     }
     auto document = rstd::json::Map::make();
-    document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(3))));
-    document.insert(String::make("identity"_str), Json::String(String::make(identity)));
-    document.insert(String::make("outputs"_str), Json::Array(rstd::move(entries)));
+    document.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(3))));
+    document.insert("identity"_Str, Json::String(String::make(identity)));
+    document.insert("outputs"_Str, Json::Array(rstd::move(entries)));
     auto dependency_entries = rstd::json::Array::with_capacity(dependencies.len());
     for (const auto& dependency : dependencies) {
         auto item = rstd::json::Map::make();
-        item.insert(String::make("path"_str),
-                    Json::String(dependency.path.as_path().to_string_lossy()));
-        item.insert(String::make("kind"_str),
+        item.insert("path"_Str, Json::String(dependency.path.as_path().to_string_lossy()));
+        item.insert("kind"_Str,
                     Json::String(String::make(action_dependency_kind_name(dependency.kind))));
-        item.insert(String::make("sha256"_str), Json::String(dependency.digest.clone()));
+        item.insert("sha256"_Str, Json::String(dependency.digest.clone()));
         dependency_entries.push(Json::Object(rstd::move(item)));
     }
-    document.insert(String::make("dependencies"_str), Json::Array(rstd::move(dependency_entries)));
+    document.insert("dependencies"_Str, Json::Array(rstd::move(dependency_entries)));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
@@ -380,7 +375,7 @@ auto collect_action_outputs(ref<rstd::path::Path> root,
         }
         if (type->is_symlink()) {
             return action_failure<empty>(BuildToolActionError::InvalidOutput(
-                path.clone(), String::make("produced output is a symlink"_str)));
+                path.clone(), "produced output is a symlink"_Str));
         }
         if (type->is_dir()) {
             rstd_try(collect_action_outputs(root, path.as_path(), files));
@@ -388,12 +383,12 @@ auto collect_action_outputs(ref<rstd::path::Path> root,
         }
         if (! type->is_file()) {
             return action_failure<empty>(BuildToolActionError::InvalidOutput(
-                path.clone(), String::make("produced output is not a regular file"_str)));
+                path.clone(), "produced output is not a regular file"_Str));
         }
         auto relative = path.as_path().strip_prefix(root);
         if (relative.is_none() || (*relative).is_empty()) {
             return action_failure<empty>(BuildToolActionError::InvalidOutput(
-                path.clone(), String::make("produced output escapes staging"_str)));
+                path.clone(), "produced output escapes staging"_Str));
         }
         files.push(PathBuf::from(*relative));
     }

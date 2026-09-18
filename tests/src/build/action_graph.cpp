@@ -11,7 +11,7 @@ namespace
 {
 
 auto domain() -> lito::ExecutionDomainId {
-    return lito::ExecutionDomainId { .value = String::make("native"_str) };
+    return lito::ExecutionDomainId { .value = "native"_Str };
 }
 
 auto artifact(lito::BuildActionGraph& graph,
@@ -44,7 +44,7 @@ TEST(BuildActionGraph, PropagatesArtifactReadinessAcrossCompileArchiveAndLink) {
     auto executable = artifact(graph, "executable"_str, lito::BuildArtifactKind::Executable);
     auto compile    = graph
                           .add_action(lito::BuildActionSpec {
-                              .identity = String::make("compile"_str),
+                              .identity = "compile"_Str,
                               .domain   = domain(),
                               .kind     = lito::BuildActionKind::Compile,
                               .inputs   = ids(source),
@@ -53,7 +53,7 @@ TEST(BuildActionGraph, PropagatesArtifactReadinessAcrossCompileArchiveAndLink) {
                           .unwrap();
     auto archived   = graph
                           .add_action(lito::BuildActionSpec {
-                              .identity = String::make("archive"_str),
+                              .identity = "archive"_Str,
                               .domain   = domain(),
                               .kind     = lito::BuildActionKind::Archive,
                               .inputs   = ids(object),
@@ -62,7 +62,7 @@ TEST(BuildActionGraph, PropagatesArtifactReadinessAcrossCompileArchiveAndLink) {
                           .unwrap();
     auto linked     = graph
                           .add_action(lito::BuildActionSpec {
-                              .identity = String::make("link"_str),
+                              .identity = "link"_Str,
                               .domain   = domain(),
                               .kind     = lito::BuildActionKind::Link,
                               .inputs   = ids(archive),
@@ -91,7 +91,7 @@ TEST(BuildActionGraph, LinksReadyClosureBeforeUnrelatedCompileCompletes) {
     auto executable    = artifact(graph, "executable"_str, lito::BuildArtifactKind::Executable);
     auto first_compile = graph
                              .add_action(lito::BuildActionSpec {
-                                 .identity = String::make("first-compile"_str),
+                                 .identity = "first-compile"_Str,
                                  .domain   = domain(),
                                  .kind     = lito::BuildActionKind::Compile,
                                  .inputs   = ids(first_source),
@@ -100,7 +100,7 @@ TEST(BuildActionGraph, LinksReadyClosureBeforeUnrelatedCompileCompletes) {
                              .unwrap();
     auto other_compile = graph
                              .add_action(lito::BuildActionSpec {
-                                 .identity = String::make("other-compile"_str),
+                                 .identity = "other-compile"_Str,
                                  .domain   = domain(),
                                  .kind     = lito::BuildActionKind::Compile,
                                  .inputs   = ids(other_source),
@@ -109,7 +109,7 @@ TEST(BuildActionGraph, LinksReadyClosureBeforeUnrelatedCompileCompletes) {
                              .unwrap();
     auto link          = graph
                              .add_action(lito::BuildActionSpec {
-                                 .identity = String::make("link"_str),
+                                 .identity = "link"_Str,
                                  .domain   = domain(),
                                  .kind     = lito::BuildActionKind::Link,
                                  .inputs   = ids(first_object),
@@ -129,7 +129,7 @@ TEST(BuildActionGraph, ConnectsConsumerDeclaredBeforeProducer) {
     auto output  = artifact(graph, "output"_str, lito::BuildArtifactKind::Executable);
     auto link    = graph
                        .add_action(lito::BuildActionSpec {
-                           .identity = String::make("link"_str),
+                           .identity = "link"_Str,
                            .domain   = domain(),
                            .kind     = lito::BuildActionKind::Link,
                            .inputs   = ids(object),
@@ -138,7 +138,7 @@ TEST(BuildActionGraph, ConnectsConsumerDeclaredBeforeProducer) {
                        .unwrap();
     auto compile = graph
                        .add_action(lito::BuildActionSpec {
-                           .identity = String::make("compile"_str),
+                           .identity = "compile"_Str,
                            .domain   = domain(),
                            .kind     = lito::BuildActionKind::Compile,
                            .inputs   = ids(source),
@@ -160,7 +160,7 @@ TEST(BuildActionGraph, RejectsConflictingProducerAndBlocksDependents) {
     auto output   = artifact(graph, "output"_str, lito::BuildArtifactKind::Executable);
     auto compile  = graph
                         .add_action(lito::BuildActionSpec {
-                            .identity = String::make("compile"_str),
+                            .identity = "compile"_Str,
                             .domain   = domain(),
                             .kind     = lito::BuildActionKind::Compile,
                             .inputs   = ids(source),
@@ -168,7 +168,7 @@ TEST(BuildActionGraph, RejectsConflictingProducerAndBlocksDependents) {
                         })
                         .unwrap();
     auto conflict = graph.add_action(lito::BuildActionSpec {
-        .identity = String::make("other-compile"_str),
+        .identity = "other-compile"_Str,
         .domain   = domain(),
         .kind     = lito::BuildActionKind::Compile,
         .inputs   = ids(source),
@@ -177,7 +177,7 @@ TEST(BuildActionGraph, RejectsConflictingProducerAndBlocksDependents) {
     EXPECT_TRUE(conflict.is_err());
     auto link = graph
                     .add_action(lito::BuildActionSpec {
-                        .identity = String::make("link"_str),
+                        .identity = "link"_Str,
                         .domain   = domain(),
                         .kind     = lito::BuildActionKind::Link,
                         .inputs   = ids(object),
@@ -193,10 +193,10 @@ TEST(BuildActionGraph, RejectsNativeInputsFromAnotherExecutionDomain) {
     auto graph   = lito::BuildActionGraph {};
     auto source  = graph
                        .add_artifact(lito::BuildArtifactSpec {
-                           .identity = String::make("source"_str),
+                           .identity = "source"_Str,
                            .domain =
                                lito::ExecutionDomainId {
-                                   .value = String::make("host"_str),
+                                   .value = "host"_Str,
                                },
                            .kind            = lito::BuildArtifactKind::Source,
                            .initially_ready = true,
@@ -204,7 +204,7 @@ TEST(BuildActionGraph, RejectsNativeInputsFromAnotherExecutionDomain) {
                        .unwrap();
     auto object  = artifact(graph, "object"_str, lito::BuildArtifactKind::Object);
     auto compile = graph.add_action(lito::BuildActionSpec {
-        .identity = String::make("compile"_str),
+        .identity = "compile"_Str,
         .domain   = domain(),
         .kind     = lito::BuildActionKind::Compile,
         .inputs   = ids(source),
@@ -217,10 +217,10 @@ TEST(BuildActionGraph, KeepsSameLogicalArtifactSeparateAcrossExecutionDomains) {
     auto graph  = lito::BuildActionGraph {};
     auto host   = graph
                       .add_artifact(lito::BuildArtifactSpec {
-                          .identity = String::make("shared-source"_str),
+                          .identity = "shared-source"_Str,
                           .domain =
                               lito::ExecutionDomainId {
-                                  .value = String::make("host"_str),
+                                  .value = "host"_Str,
                               },
                           .kind            = lito::BuildArtifactKind::Source,
                           .initially_ready = true,
@@ -228,7 +228,7 @@ TEST(BuildActionGraph, KeepsSameLogicalArtifactSeparateAcrossExecutionDomains) {
                       .unwrap();
     auto target = graph
                       .add_artifact(lito::BuildArtifactSpec {
-                          .identity        = String::make("shared-source"_str),
+                          .identity        = "shared-source"_Str,
                           .domain          = domain(),
                           .kind            = lito::BuildArtifactKind::Source,
                           .initially_ready = true,
@@ -245,7 +245,7 @@ TEST(BuildActionGraph, RejectsDependencyCycles) {
     auto second = artifact(graph, "second"_str, lito::BuildArtifactKind::Object);
     static_cast<void>(graph
                           .add_action(lito::BuildActionSpec {
-                              .identity = String::make("first-action"_str),
+                              .identity = "first-action"_Str,
                               .domain   = domain(),
                               .kind     = lito::BuildActionKind::Compile,
                               .inputs   = ids(second),
@@ -254,7 +254,7 @@ TEST(BuildActionGraph, RejectsDependencyCycles) {
                           .unwrap());
     static_cast<void>(graph
                           .add_action(lito::BuildActionSpec {
-                              .identity = String::make("second-action"_str),
+                              .identity = "second-action"_Str,
                               .domain   = domain(),
                               .kind     = lito::BuildActionKind::Compile,
                               .inputs   = ids(first),

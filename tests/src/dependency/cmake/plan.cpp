@@ -27,13 +27,13 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     auto platform = native_platform();
     auto targets  = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
-        .name = String::make("Fixture::fixture"_str),
+        .name = "Fixture::fixture"_Str,
     });
     auto prepared = lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("planner-fixture"_str),
-        .package = String::make("Fixture"_str),
+        .alias   = "planner-fixture"_Str,
+        .package = "Fixture"_Str,
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            project->root.clone(), String::make("lito-test-cmake-planner-pure-v1"_str), false),
+            project->root.clone(), "lito-test-cmake-planner-pure-v1"_Str, false),
         .targets = rstd::move(targets),
     };
     auto selected = lito::resolve_cmake_requirement_for_platform(prepared, platform);
@@ -84,8 +84,8 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
 
     auto cache_variant_requirement = requirement->clone();
     cache_variant_requirement.cache.push(lito::dependency::CMakeCacheEntry {
-        .name  = String::make("FIXTURE_VARIANT"_str),
-        .value = String::make("ON"_str),
+        .name  = "FIXTURE_VARIANT"_Str,
+        .value = "ON"_Str,
     });
     auto cache_variant = lito::plan_cmake_package(cache_variant_requirement,
                                                   fixture_cmake(),
@@ -102,7 +102,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
 
     auto source_variant_requirement   = requirement->clone();
     source_variant_requirement.source = lito::ResolvedCMakeDependencySource::Directory(
-        project->root.clone(), String::make("lito-test-cmake-planner-pure-v2"_str), false);
+        project->root.clone(), "lito-test-cmake-planner-pure-v2"_Str, false);
     auto source_variant = lito::plan_cmake_package(source_variant_requirement,
                                                    fixture_cmake(),
                                                    configuration(),
@@ -115,7 +115,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_NE(first->tool.area.root.as_path(), source_variant->tool.area.root.as_path());
 
     auto package_variant_requirement    = requirement->clone();
-    package_variant_requirement.package = String::make("OtherFixture"_str);
+    package_variant_requirement.package = "OtherFixture"_Str;
     auto package_variant = lito::plan_cmake_package(package_variant_requirement,
                                                     fixture_cmake(),
                                                     configuration(),
@@ -127,7 +127,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     ASSERT_TRUE(package_variant.is_ok());
     EXPECT_NE(first->tool.area.root.as_path(), package_variant->tool.area.root.as_path());
 
-    requirement->components.push(String::make("Feature"_str));
+    requirement->components.push("Feature"_Str);
     auto component_variant = lito::plan_cmake_package(*requirement,
                                                       fixture_cmake(),
                                                       configuration(),
@@ -227,10 +227,10 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     auto android = lito::AndroidCmakeProjection {
         .toolchain_file =
             project->root.join(PathBuf::from("android.toolchain.cmake"_str).as_path()),
-        .abi              = String::make("arm64-v8a"_str),
-        .platform         = String::make("android-21"_str),
-        .standard_library = String::make("c++_shared"_str),
-        .identity         = String::make("android-cmake-fixture-v1"_str),
+        .abi              = "arm64-v8a"_Str,
+        .platform         = "android-21"_Str,
+        .standard_library = "c++_shared"_Str,
+        .identity         = "android-cmake-fixture-v1"_Str,
     };
     auto android_plan = lito::plan_cmake_package(*requirement,
                                                  fixture_cmake(),
@@ -262,35 +262,35 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
 TEST_F(CMakePlan, PackageResolutionMergesRequirementsAndRejectsContractConflicts) {
     auto first_targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     first_targets.push(lito::dependency::CMakeTargetRequirement {
-        .name        = String::make("Fixture::core"_str),
+        .name        = "Fixture::core"_Str,
         .consumption = lito::dependency::DependencyConsumption { .is_public = true },
     });
     auto second_targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
     second_targets.push(lito::dependency::CMakeTargetRequirement {
-        .name = String::make("Fixture::core"_str),
+        .name = "Fixture::core"_Str,
         .consumption =
             lito::dependency::DependencyConsumption {
                 .usage = lito::dependency::DependencyUsage::link_only(),
             },
     });
     second_targets.push(lito::dependency::CMakeTargetRequirement {
-        .name = String::make("Fixture::extra"_str),
+        .name = "Fixture::extra"_Str,
     });
     auto requirements = Vec<lito::ResolvedCMakeDependencyRequirement>::make();
     requirements.push(lito::ResolvedCMakeDependencyRequirement {
-        .alias      = String::make("fixture-core"_str),
-        .package    = String::make("Fixture"_str),
+        .alias      = "fixture-core"_Str,
+        .package    = "Fixture"_Str,
         .components = strings("Core"_str),
         .source     = lito::ResolvedCMakeDependencySource::Directory(
-            PathBuf::from("/fixture"_str), String::make("git+fixture#1"_str), true),
+            PathBuf::from("/fixture"_str), "git+fixture#1"_Str, true),
         .targets = rstd::move(first_targets),
     });
     requirements.push(lito::ResolvedCMakeDependencyRequirement {
-        .alias      = String::make("fixture-extra"_str),
-        .package    = String::make("Fixture"_str),
+        .alias      = "fixture-extra"_Str,
+        .package    = "Fixture"_Str,
         .components = strings("Extra"_str, "Core"_str),
         .source     = lito::ResolvedCMakeDependencySource::Directory(
-            PathBuf::from("/fixture"_str), String::make("git+fixture#1"_str), true),
+            PathBuf::from("/fixture"_str), "git+fixture#1"_Str, true),
         .targets = rstd::move(second_targets),
     });
     auto merged = lito::resolve_cmake_package(requirements);
@@ -326,7 +326,7 @@ TEST_F(CMakePlan, PackageResolutionMergesRequirementsAndRejectsContractConflicts
         .link    = strings("-lfixture-extra"_str),
     });
     auto snapshot = lito::CMakeUsageSnapshot {
-        .version = String::make("1.0.0"_str),
+        .version = "1.0.0"_Str,
         .targets = rstd::move(target_snapshots),
         .combined =
             lito::tools::cmake::CMakeTargetUsageSnapshot {

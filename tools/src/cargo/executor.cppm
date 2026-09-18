@@ -58,7 +58,7 @@ auto cargo_path_text(ref<rstd::path::Path> path, ref<str> context)
 }
 
 auto cargo_profile_environment_prefix(const ProfileConfiguration& profile) -> String {
-    auto result = String::make("CARGO_PROFILE_"_str);
+    auto result = "CARGO_PROFILE_"_Str;
     for (auto byte : profile.selected.as_str().as_bytes()) {
         if (byte >= u8('a') && byte <= u8('z')) {
             result.push_ascii(byte - u8('a') + u8('A'));
@@ -135,7 +135,7 @@ auto invoke_cargo(const Vec<String>&                arguments,
 }
 
 auto cargo_profile_string(ref<str> value) -> String {
-    auto result = String::make("\""_str);
+    auto result = "\""_Str;
     result.push_str(value);
     result.push_ascii('"');
     return result;
@@ -145,14 +145,14 @@ auto append_cargo_profile_config(Vec<String>& arguments,
                                  ref<str>     profile,
                                  ref<str>     key,
                                  String       value) -> void {
-    arguments.push(String::make("--config"_str));
+    arguments.push("--config"_Str);
     arguments.push(rstd::format("profile.{}.{}={}", profile, key, value.as_str()));
 }
 
 auto append_cargo_source_config(Vec<String>& arguments, const Option<PathBuf>& source_config)
     -> lito::tools::ToolResult<empty> {
     if (source_config.is_none()) return Ok(empty {});
-    arguments.push(String::make("--config"_str));
+    arguments.push("--config"_Str);
     arguments.push(rstd_try(cargo_path_text(source_config->as_path(), "Cargo source config"_str)));
     return Ok(empty {});
 }
@@ -183,7 +183,7 @@ auto append_cargo_profile_arguments(Vec<String>& arguments, const ProfileConfigu
     }
     if (profile.lto.is_some()) {
         auto value = *profile.lto == ProfileLto::Off
-                         ? String::make("false"_str)
+                         ? "false"_Str
                          : cargo_profile_string(profile_lto_name(*profile.lto));
         append_cargo_profile_config(arguments, selected, "lto"_str, rstd::move(value));
     }
@@ -319,11 +319,11 @@ auto identify_provider(PathBuf executable, const ResolvedProcessEnvironment& env
     auto program   = rstd_try(cargo_path_text(executable.as_path(), "Cargo executable"_str));
     auto arguments = Vec<String>::make();
     arguments.push(rstd::move(program));
-    arguments.push(String::make("--version"_str));
-    arguments.push(String::make("--verbose"_str));
+    arguments.push("--version"_Str);
+    arguments.push("--verbose"_Str);
     auto output = rstd_try(invoke_cargo(arguments, environment));
     if (output.exit_code != i32 {}) {
-        return Err(lito::tools::ToolError::Execution(String::make("Cargo provider identity"_str),
+        return Err(lito::tools::ToolError::Execution("Cargo provider identity"_Str,
                                                      output.exit_code,
                                                      rstd::move(output.standard_output),
                                                      rstd::move(output.standard_error)));
@@ -365,15 +365,15 @@ auto fetch_dependencies(const Provider&                   provider,
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
     rstd_try(append_cargo_source_config(arguments, request.source_config));
-    arguments.push(String::make("fetch"_str));
-    arguments.push(String::make("--manifest-path"_str));
+    arguments.push("fetch"_Str);
+    arguments.push("--manifest-path"_Str);
     arguments.push(rstd_try(cargo_path_text(manifest.as_path(), "Cargo manifest"_str)));
     if (! request.target.is_empty()) {
-        arguments.push(String::make("--target"_str));
+        arguments.push("--target"_Str);
         arguments.push(request.target.clone());
     }
-    if (request.locked) arguments.push(String::make("--locked"_str));
-    if (request.offline) arguments.push(String::make("--offline"_str));
+    if (request.locked) arguments.push("--locked"_Str);
+    if (request.offline) arguments.push("--offline"_Str);
     emit_cargo(observer, EventKind::Fetch, request.alias.as_str(), manifest.as_path());
     auto output =
         rstd_try(invoke_cargo(arguments, environment, Some(request.source_root.as_path()), true));
@@ -409,13 +409,13 @@ auto vendor_dependencies(const Provider&                   provider,
     auto arguments = Vec<String>::make();
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
-    arguments.push(String::make("vendor"_str));
-    arguments.push(String::make("--versioned-dirs"_str));
-    arguments.push(String::make("--manifest-path"_str));
+    arguments.push("vendor"_Str);
+    arguments.push("--versioned-dirs"_Str);
+    arguments.push("--manifest-path"_Str);
     arguments.push(rstd_try(cargo_path_text(manifest.as_path(), "Cargo manifest"_str)));
-    if (request.locked) arguments.push(String::make("--locked"_str));
-    if (request.offline) arguments.push(String::make("--offline"_str));
-    arguments.push(String::make("vendor"_str));
+    if (request.locked) arguments.push("--locked"_Str);
+    if (request.offline) arguments.push("--offline"_Str);
+    arguments.push("vendor"_Str);
     emit_cargo(observer, EventKind::Fetch, request.alias.as_str(), request.destination.as_path());
     auto output =
         rstd_try(invoke_cargo(arguments, environment, Some(request.destination.as_path())));
@@ -532,14 +532,14 @@ auto query_metadata(const Provider&                   provider,
     arguments.push(
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
     rstd_try(append_cargo_source_config(arguments, request.source_config));
-    arguments.push(String::make("metadata"_str));
-    arguments.push(String::make("--format-version"_str));
-    arguments.push(String::make("1"_str));
-    arguments.push(String::make("--no-deps"_str));
-    arguments.push(String::make("--manifest-path"_str));
+    arguments.push("metadata"_Str);
+    arguments.push("--format-version"_Str);
+    arguments.push("1"_Str);
+    arguments.push("--no-deps"_Str);
+    arguments.push("--manifest-path"_Str);
     arguments.push(rstd_try(cargo_path_text(manifest.as_path(), "Cargo manifest"_str)));
-    arguments.push(String::make("--locked"_str));
-    if (request.offline) arguments.push(String::make("--offline"_str));
+    arguments.push("--locked"_Str);
+    if (request.offline) arguments.push("--offline"_Str);
     emit_cargo(observer, EventKind::Metadata, request.package.as_str(), manifest.as_path());
     auto output = rstd_try(invoke_cargo(arguments, environment, Some(source_root.as_path())));
     emit_cargo(observer,
@@ -549,7 +549,7 @@ auto query_metadata(const Provider&                   provider,
                output.elapsed,
                true);
     if (output.exit_code != i32 {}) {
-        return Err(lito::tools::ToolError::Execution(String::make("Cargo metadata"_str),
+        return Err(lito::tools::ToolError::Execution("Cargo metadata"_Str,
                                                      output.exit_code,
                                                      rstd::move(output.standard_output),
                                                      rstd::move(output.standard_error)));
@@ -732,7 +732,7 @@ auto parse_rendered_native_arguments(ref<str> output) -> lito::tools::ToolResult
                 return cargo_failure<Vec<String>>(
                     "Cargo emitted duplicate native-static-libs notes"_str);
             }
-            auto message = String::make("native-static-libs:"_str);
+            auto message = "native-static-libs:"_Str;
             message.push_str(native->template get<1>());
             result = Some(rstd_try(parse_native_arguments(message.as_str())));
         }
@@ -889,40 +889,40 @@ auto build_static_library(const Provider&                   provider,
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
     rstd_try(append_cargo_source_config(arguments, request.source_config));
     rstd_try(append_cargo_profile_arguments(arguments, request.profile));
-    arguments.push(String::make("rustc"_str));
-    arguments.push(String::make("--manifest-path"_str));
+    arguments.push("rustc"_Str);
+    arguments.push("--manifest-path"_Str);
     arguments.push(rstd_try(cargo_path_text(request.manifest.as_path(), "Cargo manifest"_str)));
-    arguments.push(String::make("--package"_str));
+    arguments.push("--package"_Str);
     arguments.push(request.package.clone());
-    arguments.push(String::make("--lib"_str));
-    arguments.push(String::make("--profile"_str));
+    arguments.push("--lib"_Str);
+    arguments.push("--profile"_Str);
     arguments.push(request.profile.selected.value.clone());
-    arguments.push(String::make("--target"_str));
+    arguments.push("--target"_Str);
     arguments.push(request.target.clone());
-    arguments.push(String::make("--target-dir"_str));
+    arguments.push("--target-dir"_Str);
     arguments.push(rstd_try(
         cargo_path_text(request.target_directory.as_path(), "Cargo target directory"_str)));
-    arguments.push(String::make("--jobs"_str));
+    arguments.push("--jobs"_Str);
     arguments.push(rstd::format("{}", request.jobs));
-    arguments.push(String::make("--message-format"_str));
-    arguments.push(String::make("json-render-diagnostics"_str));
-    arguments.push(String::make("--locked"_str));
-    if (request.offline) arguments.push(String::make("--offline"_str));
+    arguments.push("--message-format"_Str);
+    arguments.push("json-render-diagnostics"_Str);
+    arguments.push("--locked"_Str);
+    if (request.offline) arguments.push("--offline"_Str);
     if (! request.features.is_empty()) {
         auto features = String::make();
         for (usize index {}; index < request.features.len(); ++index) {
             if (index != usize {}) features.push_ascii(u8(','));
             features.push_str(request.features[index].as_str());
         }
-        arguments.push(String::make("--features"_str));
+        arguments.push("--features"_Str);
         arguments.push(rstd::move(features));
     }
     if (! request.default_features) {
-        arguments.push(String::make("--no-default-features"_str));
+        arguments.push("--no-default-features"_Str);
     }
-    arguments.push(String::make("--"_str));
-    arguments.push(String::make("--print"_str));
-    arguments.push(String::make("native-static-libs"_str));
+    arguments.push("--"_Str);
+    arguments.push("--print"_Str);
+    arguments.push("native-static-libs"_Str);
     emit_cargo(observer, EventKind::Build, request.alias.as_str(), request.work_root.as_path());
     auto output = rstd_try(invoke_cargo(arguments,
                                         environment,
@@ -952,7 +952,7 @@ auto build_static_library(const Provider&                   provider,
                                                        rstd::move(contents).unwrap_err());
     }
     auto digest        = licrypto::sha256_hex(contents->as_slice());
-    auto identity_text = String::make("lito-cargo-staticlib-v1\n"_str);
+    auto identity_text = "lito-cargo-staticlib-v1\n"_Str;
     identity_text.push_str(request.request_identity.as_str());
     identity_text.push_ascii(u8('\n'));
     identity_text.push_str(metadata.id.as_str());
@@ -1119,36 +1119,36 @@ auto build_binaries(const Provider&                   provider,
         rstd_try(cargo_path_text(provider.executable.as_path(), "Cargo executable"_str)));
     rstd_try(append_cargo_source_config(arguments, request.source_config));
     rstd_try(append_cargo_profile_arguments(arguments, request.profile));
-    arguments.push(String::make("build"_str));
-    arguments.push(String::make("--manifest-path"_str));
+    arguments.push("build"_Str);
+    arguments.push("--manifest-path"_Str);
     arguments.push(rstd_try(cargo_path_text(request.manifest.as_path(), "Cargo manifest"_str)));
-    arguments.push(String::make("--package"_str));
+    arguments.push("--package"_Str);
     arguments.push(request.package.clone());
-    arguments.push(String::make("--bins"_str));
-    arguments.push(String::make("--profile"_str));
+    arguments.push("--bins"_Str);
+    arguments.push("--profile"_Str);
     arguments.push(request.profile.selected.value.clone());
-    arguments.push(String::make("--target"_str));
+    arguments.push("--target"_Str);
     arguments.push(request.target.clone());
-    arguments.push(String::make("--target-dir"_str));
+    arguments.push("--target-dir"_Str);
     arguments.push(rstd_try(
         cargo_path_text(request.target_directory.as_path(), "Cargo target directory"_str)));
-    arguments.push(String::make("--jobs"_str));
+    arguments.push("--jobs"_Str);
     arguments.push(rstd::format("{}", request.jobs));
-    arguments.push(String::make("--message-format"_str));
-    arguments.push(String::make("json-render-diagnostics"_str));
-    arguments.push(String::make("--locked"_str));
-    if (request.offline) arguments.push(String::make("--offline"_str));
+    arguments.push("--message-format"_Str);
+    arguments.push("json-render-diagnostics"_Str);
+    arguments.push("--locked"_Str);
+    if (request.offline) arguments.push("--offline"_Str);
     if (! request.features.is_empty()) {
         auto features = String::make();
         for (usize index {}; index < request.features.len(); ++index) {
             if (index != usize {}) features.push_ascii(u8(','));
             features.push_str(request.features[index].as_str());
         }
-        arguments.push(String::make("--features"_str));
+        arguments.push("--features"_Str);
         arguments.push(rstd::move(features));
     }
     if (! request.default_features) {
-        arguments.push(String::make("--no-default-features"_str));
+        arguments.push("--no-default-features"_Str);
     }
     emit_cargo(observer, EventKind::Build, request.alias.as_str(), request.work_root.as_path());
     auto output = rstd_try(invoke_cargo(arguments,
@@ -1177,7 +1177,7 @@ auto build_binaries(const Provider&                   provider,
                                                     rstd::move(contents).unwrap_err());
         }
         auto digest        = licrypto::sha256_hex(contents->as_slice());
-        auto identity_text = String::make("lito-cargo-bin-v1\n"_str);
+        auto identity_text = "lito-cargo-bin-v1\n"_Str;
         identity_text.push_str(request.request_identity.as_str());
         identity_text.push_ascii(u8('\n'));
         identity_text.push_str(metadata.id.as_str());

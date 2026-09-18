@@ -193,7 +193,7 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
         return Err(RegistryIndexError {
             .kind    = RegistryIndexErrorKind::ContextMismatch,
             .package = package.clone(),
-            .message = String::make("Registry graph client has no bootstrap config"_str),
+            .message = "Registry graph client has no bootstrap config"_Str,
         });
     }
     for (const auto& index : self.provided_indices_) {

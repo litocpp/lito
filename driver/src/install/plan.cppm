@@ -161,7 +161,7 @@ auto pkg_config_path_value(ref<rstd::path::Path> path, ref<str> context)
 }
 
 auto pkg_config_variable_path(ref<rstd::path::Path> path) -> InstallMaterializeResult<String> {
-    auto result = String::make("${prefix}"_str);
+    auto result = "${prefix}"_Str;
     if (path.is_empty()) return Ok(rstd::move(result));
     result.push_ascii('/');
     result.push_str(rstd_try(pkg_config_path_value(path, "pkg-config install path"_str)).as_str());
@@ -169,7 +169,7 @@ auto pkg_config_variable_path(ref<rstd::path::Path> path) -> InstallMaterializeR
 }
 
 auto pkg_config_prefix(ref<rstd::path::Path> destination) -> String {
-    auto result = String::make("${pcfiledir}"_str);
+    auto result = "${pcfiledir}"_Str;
     auto parent = destination.parent();
     if (parent.is_none()) return result;
     for (auto component : parent->components()) {
@@ -193,7 +193,7 @@ auto append_pkg_config_requirements(String& output, ref<str> field, const Vec<St
 
 auto render_pkg_config(const ResolvedInstallPkgConfigFile& file, ref<str> version)
     -> InstallMaterializeResult<Vec<u8>> {
-    auto output = String::make("prefix="_str);
+    auto output = "prefix="_Str;
     output.push_str(pkg_config_prefix(file.destination.as_path()).as_str());
     output.push_str("\nlibdir="_str);
     auto library_directory = rstd_try(pkg_config_variable_path(file.library_directory.as_path()));

@@ -246,7 +246,7 @@ targets = [{ name = "FixtureShader::shader" }]
 TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetching) {
     auto reference = lito::source::GitReference {
         .kind  = lito::source::GitReferenceKind::Branch,
-        .value = String::make("main"_str),
+        .value = "main"_Str,
     };
     auto graph   = external_git_graph("https://example.invalid/fixture.git"_str,
                                       source_root("cmake-override-git"_str).as_path(),
@@ -255,8 +255,8 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
         .locked = true,
     };
     options.git_sources.push(lito::source::GitSourcePin {
-        .git    = String::make("https://example.invalid/fixture.git"_str),
-        .commit = String::make("0123456789abcdef0123456789abcdef01234567"_str),
+        .git    = "https://example.invalid/fixture.git"_Str,
+        .commit = "0123456789abcdef0123456789abcdef01234567"_Str,
     });
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
@@ -272,7 +272,7 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
     auto selected  = strings("fixture-root"_str);
     auto overrides = lito::dependency::CMakeBuildOverrideSet {};
     overrides.entries.push(lito::dependency::CMakeBuildOverride {
-        .package = String::make("Fixture"_str),
+        .package = "Fixture"_Str,
     });
     auto prepared = lito::prepare_external_dependency_sources(
         graph, selected, rstd::move(declared).unwrap(), overrides, resolver, *environment);
@@ -311,7 +311,7 @@ targets = [{ name = "LitoSourceAdapter::fixture" }]
     auto resolver  = lito::tools::ToolResolver(*environment);
     auto overrides = lito::dependency::CMakeBuildOverrideSet {};
     overrides.entries.push(lito::dependency::CMakeBuildOverride {
-        .package = String::make("LitoSourceAdapter"_str),
+        .package = "LitoSourceAdapter"_Str,
     });
     auto unselected_declared =
         lito::resolve_external_dependency_sources(*graph, {}, resolver, *environment);
@@ -327,7 +327,7 @@ targets = [{ name = "LitoSourceAdapter::fixture" }]
     auto selected = strings("cmake-override-source-adapter"_str);
     auto missing  = lito::dependency::CMakeBuildOverrideSet {};
     missing.entries.push(lito::dependency::CMakeBuildOverride {
-        .package = String::make("Missing"_str),
+        .package = "Missing"_Str,
     });
     auto missing_result = lito::prepare_external_dependency_sources(
         *graph, selected, rstd::move(declared).unwrap(), missing, resolver, *environment);
@@ -583,8 +583,8 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
                             .unwrap(),
     });
     auto requirement = lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("Fixture"_str),
+        .alias   = "fixture"_Str,
+        .package = "Fixture"_Str,
         .source  = lito::PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants)),
     };
 
@@ -616,7 +616,7 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     ASSERT_TRUE(parser.is_ok());
     auto cross_platform = explicit_platform("aarch64-unknown-linux-gnu"_str);
     arm->source         = lito::SelectedCMakeDependencySource::Directory(
-        build_root("cross-cmake-source"_str), String::make("cross-cmake-source-v1"_str), false);
+        build_root("cross-cmake-source"_str), "cross-cmake-source-v1"_Str, false);
     auto cross_requirement = lito::materialize_cmake_requirement(*arm);
     ASSERT_TRUE(cross_requirement.is_ok());
     auto cross_cmake = lito::plan_cmake_package(*cross_requirement,

@@ -111,7 +111,7 @@ auto require_cxx23(const cpp::PreparedUnit& importer, ref<str> logical_name) -> 
             cpp::StandardLibraryError::LanguageStandard(importer.unit.source.clone(),
                                                         String::make(logical_name),
                                                         standard.clone(),
-                                                        String::make("C++23"_str)));
+                                                        "C++23"_Str));
     }
     return Ok(empty {});
 }

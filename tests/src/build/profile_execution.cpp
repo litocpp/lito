@@ -52,7 +52,7 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
         directory.as_path(), output.as_path(), Vec<String>::make(), build_profile("plain"_str));
     plain_request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g"_str, "-fno-exceptions"_str, "-fno-rtti"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto plain_report            = CompileProgressCapture {};
     plain_request.setup_reporter = Some(lito::BuildSetupReportSink {
@@ -161,7 +161,7 @@ TEST_F(BuildProfileExecution, ConfiguredGnuLdIsRejectedBeforeCompilation) {
     request.configuration.toolchain.ld = PathBuf::from("/usr/bin/ld"_str);
     request.configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str),
-        .source    = String::make("internal SDK override"_str),
+        .source    = "internal SDK override"_Str,
     });
     auto built = lito::build(request);
     ASSERT_TRUE(built.is_err());

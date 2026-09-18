@@ -64,10 +64,9 @@ auto resolve_package_owned_external(
         PathBuf::from(declaring_root).join(declaration.source.as_Path().path.as_path());
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return Err(
-            lito::dependency::DependencyError::Io(String::make("resolve external source"_str),
-                                                  rstd::move(requested),
-                                                  rstd::move(canonical).unwrap_err()));
+        return Err(lito::dependency::DependencyError::Io("resolve external source"_Str,
+                                                         rstd::move(requested),
+                                                         rstd::move(canonical).unwrap_err()));
     }
     auto physical = rstd::move(canonical).unwrap();
     auto relative = physical.as_path().strip_prefix(package.source.root_directory.as_path());
@@ -83,10 +82,8 @@ auto resolve_package_owned_external(
     }
     auto metadata = rstd::fs::metadata(physical.as_path());
     if (metadata.is_err()) {
-        return Err(
-            lito::dependency::DependencyError::Io(String::make("inspect external source"_str),
-                                                  physical.clone(),
-                                                  rstd::move(metadata).unwrap_err()));
+        return Err(lito::dependency::DependencyError::Io(
+            "inspect external source"_Str, physical.clone(), rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
         return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
@@ -339,10 +336,10 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
     auto workspace_script     = graph.root_directory.join(PathBuf::from("build.lua"_str).as_path());
     auto has_workspace_script = rstd::fs::exists(workspace_script.as_path());
     if (has_workspace_script.is_err()) {
-        return Err(lito::dependency::DependencyError::Io(
-            String::make("inspect workspace build script"_str),
-            rstd::move(workspace_script),
-            rstd::move(has_workspace_script).unwrap_err()));
+        return Err(
+            lito::dependency::DependencyError::Io("inspect workspace build script"_Str,
+                                                  rstd::move(workspace_script),
+                                                  rstd::move(has_workspace_script).unwrap_err()));
     }
     const auto activate_source = [&](usize    package_index,
                                      ref<str> name) -> lito::dependency::DependencyResult<usize> {
@@ -413,10 +410,10 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
         auto package_script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path());
         auto has_package_script = rstd::fs::exists(package_script.as_path());
         if (has_package_script.is_err()) {
-            return Err(lito::dependency::DependencyError::Io(
-                String::make("inspect package build script"_str),
-                rstd::move(package_script),
-                rstd::move(has_package_script).unwrap_err()));
+            return Err(
+                lito::dependency::DependencyError::Io("inspect package build script"_Str,
+                                                      rstd::move(package_script),
+                                                      rstd::move(has_package_script).unwrap_err()));
         }
         if (*has_workspace_script || *has_package_script) {
             for (const auto& declaration : package.manifest.external_sources) {

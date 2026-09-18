@@ -101,7 +101,7 @@ auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& 
                            "-DCMAKE_CXX_USING_LINKER_lito_configured=-fuse-ld=lld;--ld-path="_str,
                            toolchain.linker.as_path(),
                            "linker"_str));
-    arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_configured"_str));
+    arguments.push("-DCMAKE_LINKER_TYPE=lito_configured"_Str);
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, toolchain.archiver.as_path(), "archiver"_str));
     return Ok(empty {});
@@ -110,7 +110,7 @@ auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& 
 auto push_cmake_search_path(Vec<String>& arguments, const Provider& provider)
     -> lito::tools::ToolResult<empty> {
     if (provider.search_paths.is_empty()) return Ok(empty {});
-    auto value = String::make("-DCMAKE_PREFIX_PATH="_str);
+    auto value = "-DCMAKE_PREFIX_PATH="_Str;
     for (usize index {}; index < provider.search_paths.len(); ++index) {
         auto path = path_text(provider.search_paths[index].as_path(), "CMake search path"_str);
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -135,15 +135,15 @@ auto cmake_generator_uses_multiple_configurations(ref<str> generator) noexcept -
 auto push_lito_owned_cmake_configuration(Vec<String>& arguments, ref<str> generator) -> void {
     const auto multi_config = cmake_generator_uses_multiple_configurations(generator);
     if (multi_config) {
-        arguments.push(String::make("-DCMAKE_CONFIGURATION_TYPES=None"_str));
+        arguments.push("-DCMAKE_CONFIGURATION_TYPES=None"_Str);
     } else {
-        arguments.push(String::make("-DCMAKE_BUILD_TYPE=None"_str));
+        arguments.push("-DCMAKE_BUILD_TYPE=None"_Str);
     }
-    arguments.push(String::make("-DCMAKE_C_FLAGS_NONE="_str));
-    arguments.push(String::make("-DCMAKE_CXX_FLAGS_NONE="_str));
-    arguments.push(String::make("-DCMAKE_EXE_LINKER_FLAGS_NONE="_str));
-    arguments.push(String::make("-DCMAKE_SHARED_LINKER_FLAGS_NONE="_str));
-    arguments.push(String::make("-DCMAKE_MODULE_LINKER_FLAGS_NONE="_str));
+    arguments.push("-DCMAKE_C_FLAGS_NONE="_Str);
+    arguments.push("-DCMAKE_CXX_FLAGS_NONE="_Str);
+    arguments.push("-DCMAKE_EXE_LINKER_FLAGS_NONE="_Str);
+    arguments.push("-DCMAKE_SHARED_LINKER_FLAGS_NONE="_Str);
+    arguments.push("-DCMAKE_MODULE_LINKER_FLAGS_NONE="_Str);
 }
 
 auto configure_source(const Request&                    requirement,
@@ -157,15 +157,15 @@ auto configure_source(const Request&                    requirement,
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("-S"_str));
+    arguments.push("-S"_Str);
     auto source = path_text(area.source.as_path(), "CMake source"_str);
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     arguments.push(rstd::move(source).unwrap());
-    arguments.push(String::make("-B"_str));
+    arguments.push("-B"_Str);
     auto build = path_text(area.build.as_path(), "CMake build"_str);
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
-    arguments.push(String::make("-G"_str));
+    arguments.push("-G"_Str);
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_path_argument(
@@ -174,7 +174,7 @@ auto configure_source(const Request&                    requirement,
     push_lito_owned_cmake_configuration(arguments, provider.generator.as_str());
     arguments.push(
         rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
-    arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
+    arguments.push("-DCMAKE_CXX_EXTENSIONS=OFF"_Str);
     arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", profile.c_flags.as_str()));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", profile.cxx_flags.as_str()));
     if (! profile.msvc_runtime.is_empty()) {
@@ -203,13 +203,13 @@ auto build_source(const Request&                    requirement,
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("--build"_str));
+    arguments.push("--build"_Str);
     auto build = path_text(area.build.as_path(), "CMake build"_str);
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
-    arguments.push(String::make("--config"_str));
-    arguments.push(String::make("None"_str));
-    arguments.push(String::make("--parallel"_str));
+    arguments.push("--config"_Str);
+    arguments.push("None"_Str);
+    arguments.push("--parallel"_Str);
     arguments.push(rstd::format("{}", jobs));
     return run_cmake(
         rstd::move(arguments),
@@ -228,12 +228,12 @@ auto install_source(const Request&                    requirement,
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("--install"_str));
+    arguments.push("--install"_Str);
     auto build = path_text(area.build.as_path(), "CMake build"_str);
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
-    arguments.push(String::make("--config"_str));
-    arguments.push(String::make("None"_str));
+    arguments.push("--config"_Str);
+    arguments.push("None"_Str);
     rstd_try(run_cmake(
         rstd::move(arguments),
         rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str(),
@@ -243,7 +243,7 @@ auto install_source(const Request&                    requirement,
 
 auto probe_project(const Request& requirement, const CMakeWorkArea& area)
     -> lito::tools::ToolResult<String> {
-    auto       result          = String::make(R"cmake(cmake_minimum_required(VERSION 3.29)
+    auto       result          = R"cmake(cmake_minimum_required(VERSION 3.29)
 project(lito_cmake_probe LANGUAGES C CXX)
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
 set(_LITO_ASSET_RECEIPT "${CMAKE_BINARY_DIR}/lito-assets-v2.txt")
@@ -284,7 +284,7 @@ function(lito_export_asset_set)
          "entry\t${LITO_ASSET_NAME}\t${_lito_asset_file}\t${_lito_asset_source}\n")
   endforeach()
 endfunction()
-)cmake"_str);
+)cmake"_Str;
     const auto safe_cmake_name = [](ref<str> value) noexcept {
         if (value.is_empty() || value.starts_with("-"_str)) return false;
         for (const auto byte : value) {
@@ -489,15 +489,15 @@ auto configure_probe(const Request&                    requirement,
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("-S"_str));
+    arguments.push("-S"_Str);
     auto source = path_text(area.query_source.as_path(), "CMake query source"_str);
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     arguments.push(rstd::move(source).unwrap());
-    arguments.push(String::make("-B"_str));
+    arguments.push("-B"_Str);
     auto build = path_text(area.query_build.as_path(), "CMake query build"_str);
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
-    arguments.push(String::make("-G"_str));
+    arguments.push("-G"_Str);
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
     if (requirement.source.is_Find() && requirement.find_install_prefix.is_some()) {
@@ -510,7 +510,7 @@ auto configure_probe(const Request&                    requirement,
     push_lito_owned_cmake_configuration(arguments, provider.generator.as_str());
     arguments.push(
         rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
-    arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
+    arguments.push("-DCMAKE_CXX_EXTENSIONS=OFF"_Str);
     arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", profile.c_flags.as_str()));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", profile.cxx_flags.as_str()));
     if (! profile.msvc_runtime.is_empty()) {
@@ -552,15 +552,15 @@ auto build_probe(const Request&                    requirement,
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("--build"_str));
+    arguments.push("--build"_Str);
     auto build = path_text(area.query_build.as_path(), "CMake query build"_str);
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
-    arguments.push(String::make("--target"_str));
-    arguments.push(String::make("lito_cmake_combined"_str));
-    arguments.push(String::make("--config"_str));
-    arguments.push(String::make("None"_str));
-    arguments.push(String::make("--parallel"_str));
+    arguments.push("--target"_Str);
+    arguments.push("lito_cmake_combined"_Str);
+    arguments.push("--config"_Str);
+    arguments.push("None"_Str);
+    arguments.push("--parallel"_Str);
     arguments.push(rstd::format("{}", jobs));
     return run_cmake(
         rstd::move(arguments),

@@ -229,7 +229,7 @@ TEST_F(GitSource, PatchedGitFrontierUsesOnePathSourceWithoutGitResolution) {
     auto options            = lito::source::SourceResolutionOptions {};
     options.sources.network = lito::source::NetworkPolicy::Offline;
     options.sources.patches.push(lito::source::GitSourcePatch {
-        .git  = String::make("https://example.invalid/patched.git"_str),
+        .git  = "https://example.invalid/patched.git"_Str,
         .path = patch.clone(),
     });
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
@@ -263,10 +263,10 @@ TEST_F(GitSource, PatchedGitFrontierUsesOnePathSourceWithoutGitResolution) {
     auto requests = Vec<lito::source::PackageSourceFetchRequest>::make();
     for (const auto& reference : references) {
         requests.push(lito::source::PackageSourceFetchRequest {
-            .owner  = String::make("consumer"_str),
-            .name   = String::make("patched"_str),
+            .owner  = "consumer"_Str,
+            .name   = "patched"_Str,
             .source = lito::source::PackageSourceRequirement::Git(
-                String::make("https://example.invalid/patched.git"_str),
+                "https://example.invalid/patched.git"_Str,
                 lito::source::GitReference {
                     .kind  = reference.kind,
                     .value = String::make(reference.value),
@@ -275,8 +275,8 @@ TEST_F(GitSource, PatchedGitFrontierUsesOnePathSourceWithoutGitResolution) {
         });
     }
     requests.push(lito::source::PackageSourceFetchRequest {
-        .owner  = String::make("consumer"_str),
-        .name   = String::make("patched-path"_str),
+        .owner  = "consumer"_Str,
+        .name   = "patched-path"_Str,
         .source = lito::source::PackageSourceRequirement::Path(PathBuf::from("../patch"_str)),
         .declaring_root = project.clone(),
     });
@@ -308,17 +308,16 @@ TEST_F(GitSource, PatchedGitExternalUsesNonCacheablePathSource) {
         rstd::fs::write_atomic(patch.join(PathBuf::from("CMakeLists.txt"_str).as_path()).as_path(),
                                "cmake_minimum_required(VERSION 3.29)\n"_str.as_bytes())
             .is_ok());
-    auto graph = external_git_graph(
-        "https://example.invalid/external.git"_str,
-        directory.as_path(),
-        lito::source::GitReference {
-            .kind  = lito::source::GitReferenceKind::Commit,
-            .value = String::make("0123456789abcdef0123456789abcdef01234567"_str),
-        });
-    auto options            = lito::source::SourceResolutionOptions {};
+    auto graph   = external_git_graph("https://example.invalid/external.git"_str,
+                                      directory.as_path(),
+                                      lito::source::GitReference {
+                                          .kind  = lito::source::GitReferenceKind::Commit,
+                                          .value = "0123456789abcdef0123456789abcdef01234567"_Str,
+                                      });
+    auto options = lito::source::SourceResolutionOptions {};
     options.sources.network = lito::source::NetworkPolicy::Offline;
     options.sources.patches.push(lito::source::GitSourcePatch {
-        .git  = String::make("https://example.invalid/external.git"_str),
+        .git  = "https://example.invalid/external.git"_Str,
         .path = patch.clone(),
     });
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
@@ -662,9 +661,9 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
         external_git_graph(*url, repository.as_path(), lito::source::GitReference {});
     reuse_graph.packages[usize {}].manifest.cmake_external_dependencies.push(
         lito::dependency::CMakeDependencyRequirement {
-            .alias   = String::make("fixture-reuse"_str),
-            .package = String::make("Fixture"_str),
-            .source  = Some(String::make("fixture"_str)),
+            .alias   = "fixture-reuse"_Str,
+            .package = "Fixture"_Str,
+            .source  = Some("fixture"_Str),
         });
     auto reused =
         lito::prepare_external_dependency_sources(reuse_graph,

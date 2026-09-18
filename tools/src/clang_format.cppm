@@ -50,7 +50,7 @@ public:
     auto is_formatted(ref<rstd::path::Path> source) const -> ToolResult<bool> {
         auto contents = rstd::fs::read_to_string(source);
         if (contents.is_err()) {
-            return Err(ToolError::Io(String::make("cannot read format source"_str),
+            return Err(ToolError::Io("cannot read format source"_Str,
                                      PathBuf::from(source),
                                      rstd::move(contents).unwrap_err()));
         }

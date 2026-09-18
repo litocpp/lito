@@ -123,9 +123,9 @@ auto file_json(const FileFingerprint& file) -> CacheResult<Json> {
     auto path = path_string(file.path.as_path());
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     auto object = JsonMap::make();
-    object.insert(String::make("fingerprint"_str), cache_string(file.fingerprint.as_str()));
-    object.insert(String::make("path"_str), cache_string(path->as_str()));
-    object.insert(String::make("size"_str), cache_u64(file.size));
+    object.insert("fingerprint"_Str, cache_string(file.fingerprint.as_str()));
+    object.insert("path"_Str, cache_string(path->as_str()));
+    object.insert("size"_Str, cache_u64(file.size));
     return Ok(Json::Object(rstd::move(object)));
 }
 
@@ -319,7 +319,7 @@ public:
         if (c_compiler_path.is_err()) return Err(rstd::move(c_compiler_path).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
 
-        auto identity = String::make("lito-cache-environment-v2\n"_str);
+        auto identity = "lito-cache-environment-v2\n"_Str;
         identity.push_str(owner->as_str());
         identity.push_ascii('\n');
         identity.push_str(profile);
@@ -355,7 +355,7 @@ public:
                               .as_str());
         auto key = cache::text_identity("lito-cache-environment-key-v2"_str, identity.as_str());
 
-        auto scan_identity = String::make("lito-scan-cache-environment-v1\n"_str);
+        auto scan_identity = "lito-scan-cache-environment-v1\n"_Str;
         scan_identity.push_str(owner->as_str());
         scan_identity.push_ascii('\n');
         scan_identity.push_str(SCAN_RECIPE);
@@ -389,35 +389,30 @@ public:
             cache::text_identity("lito-scan-cache-environment-key-v1"_str, scan_identity.as_str());
 
         auto compiler_json = JsonMap::make();
-        compiler_json.insert(String::make("modified-nanoseconds"_str),
+        compiler_json.insert("modified-nanoseconds"_Str,
                              cache_u64(as_cast<u64>(compiler.modified_nanoseconds)));
-        compiler_json.insert(String::make("modified-seconds"_str),
-                             cache_i64(compiler.modified_seconds));
-        compiler_json.insert(String::make("path"_str), cache_string(compiler_path->as_str()));
-        compiler_json.insert(String::make("build-identity"_str),
-                             cache_string(compiler.build_identity.as_str()));
-        compiler_json.insert(String::make("resource-directory"_str),
-                             cache_string(resource->as_str()));
-        compiler_json.insert(String::make("size"_str), cache_u64(compiler.size));
-        compiler_json.insert(String::make("target"_str), cache_string(compiler.target.as_str()));
-        compiler_json.insert(String::make("version"_str), cache_string(compiler.version.as_str()));
-        compiler_json.insert(String::make("c-path"_str), cache_string(c_compiler_path->as_str()));
-        compiler_json.insert(String::make("c-version"_str),
-                             cache_string(compiler.c_version.as_str()));
-        compiler_json.insert(String::make("c-size"_str), cache_u64(compiler.c_size));
-        compiler_json.insert(String::make("c-modified-seconds"_str),
-                             cache_i64(compiler.c_modified_seconds));
-        compiler_json.insert(String::make("c-modified-nanoseconds"_str),
+        compiler_json.insert("modified-seconds"_Str, cache_i64(compiler.modified_seconds));
+        compiler_json.insert("path"_Str, cache_string(compiler_path->as_str()));
+        compiler_json.insert("build-identity"_Str, cache_string(compiler.build_identity.as_str()));
+        compiler_json.insert("resource-directory"_Str, cache_string(resource->as_str()));
+        compiler_json.insert("size"_Str, cache_u64(compiler.size));
+        compiler_json.insert("target"_Str, cache_string(compiler.target.as_str()));
+        compiler_json.insert("version"_Str, cache_string(compiler.version.as_str()));
+        compiler_json.insert("c-path"_Str, cache_string(c_compiler_path->as_str()));
+        compiler_json.insert("c-version"_Str, cache_string(compiler.c_version.as_str()));
+        compiler_json.insert("c-size"_Str, cache_u64(compiler.c_size));
+        compiler_json.insert("c-modified-seconds"_Str, cache_i64(compiler.c_modified_seconds));
+        compiler_json.insert("c-modified-nanoseconds"_Str,
                              cache_u64(as_cast<u64>(compiler.c_modified_nanoseconds)));
 
         auto root = JsonMap::make();
-        root.insert(String::make("compile-recipe"_str), cache_string(COMPILE_RECIPE));
-        root.insert(String::make("compiler"_str), Json::Object(rstd::move(compiler_json)));
-        root.insert(String::make("key"_str), cache_string(key.as_str()));
-        root.insert(String::make("owner-root"_str), cache_string(owner->as_str()));
-        root.insert(String::make("profile"_str), cache_string(profile));
-        root.insert(String::make("scan-recipe"_str), cache_string(SCAN_RECIPE));
-        root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+        root.insert("compile-recipe"_Str, cache_string(COMPILE_RECIPE));
+        root.insert("compiler"_Str, Json::Object(rstd::move(compiler_json)));
+        root.insert("key"_Str, cache_string(key.as_str()));
+        root.insert("owner-root"_Str, cache_string(owner->as_str()));
+        root.insert("profile"_Str, cache_string(profile));
+        root.insert("scan-recipe"_Str, cache_string(SCAN_RECIPE));
+        root.insert("version"_Str, cache_u64(CACHE_VERSION));
         auto desired = Json::Object(rstd::move(root));
         auto path    = layout.cache_environment(key.as_str());
 

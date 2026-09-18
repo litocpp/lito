@@ -48,7 +48,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
 
     auto host = lito::system::HostInfo {
         .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
-        .os           = String::make("linux"_str),
+        .os           = "linux"_Str,
     };
     auto artifact = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(artifact.is_some());
@@ -76,7 +76,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsWindowsDevelopmentArchives) {
     ASSERT_TRUE(catalog.is_ok());
     auto host = lito::system::HostInfo {
         .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
-        .os           = String::make("windows"_str),
+        .os           = "windows"_Str,
     };
     auto x64 = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(x64.is_some());
@@ -232,7 +232,7 @@ TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
 
     auto host = lito::system::HostInfo {
         .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
-        .os           = String::make("linux"_str),
+        .os           = "linux"_Str,
     };
     auto artifact = lito::find_android_ndk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(artifact.is_some());

@@ -146,8 +146,7 @@ auto validate_unicode_codepoints(ref<str> path) -> SourceTreeResult<empty> {
         if (value <= 0x1f || (value >= 0x7f && value <= 0x9f) ||
             (value >= 0xfdd0 && value <= 0xfdef) || (value & 0xffff) >= 0xfffe) {
             return Err(SourceTreeError::InvalidPath(
-                String::make(path),
-                String::make("path contains a forbidden Unicode codepoint"_str)));
+                String::make(path), "path contains a forbidden Unicode codepoint"_Str));
         }
     }
     return Ok(empty {});
@@ -303,10 +302,10 @@ auto lito::source::SourceTree::replace_bytes(ref<str> path, slice<u8> contents, 
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto index = find(path);
     if (index.is_none()) {
-        return source_tree_conflict(path, String::make("file does not exist"_str));
+        return source_tree_conflict(path, "file does not exist"_Str);
     }
     if (entries_[*index].kind() != SourceEntryKind::File) {
-        return source_tree_conflict(path, String::make("entry is not a file"_str));
+        return source_tree_conflict(path, "entry is not a file"_Str);
     }
     entries_[*index].contents_ = Vec<u8>::from(contents);
     entries_[*index].mode_     = mode;
@@ -323,7 +322,7 @@ auto lito::source::SourceTree::remove(ref<str> path) -> SourceTreeResult<empty> 
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto index = find(path);
     if (index.is_none()) {
-        return source_tree_conflict(path, String::make("entry does not exist"_str));
+        return source_tree_conflict(path, "entry does not exist"_Str);
     }
     if (entries_[*index].kind() == SourceEntryKind::Directory) {
         for (const auto& existing : entries_) {
@@ -389,7 +388,7 @@ auto ensure_directories(ref<rstd::path::Path>     destination,
     for (auto component : rstd::iter::for_range(components)) {
         if (! component.is_normal()) {
             return Err(SourceTreeError::Protocol(
-                String::make("validated source path contains a non-normal component"_str)));
+                "validated source path contains a non-normal component"_Str));
         }
         auto part = ref<rstd::path::Path>(component.as_os_str());
         relative_path.push(part);

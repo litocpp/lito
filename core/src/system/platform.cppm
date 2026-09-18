@@ -509,11 +509,11 @@ auto platform_failure(ref<str> message) -> PlatformResult<T> {
 }
 
 auto host_os(ref<str> name) -> PlatformResult<String> {
-    if (name == "Linux"_str) return Ok(String::make("linux"_str));
-    if (name == "Darwin"_str) return Ok(String::make("macos"_str));
-    if (name == "FreeBSD"_str) return Ok(String::make("freebsd"_str));
-    if (name == "NetBSD"_str) return Ok(String::make("netbsd"_str));
-    if (name == "OpenBSD"_str) return Ok(String::make("openbsd"_str));
+    if (name == "Linux"_str) return Ok("linux"_Str);
+    if (name == "Darwin"_str) return Ok("macos"_Str);
+    if (name == "FreeBSD"_str) return Ok("freebsd"_Str);
+    if (name == "NetBSD"_str) return Ok("netbsd"_Str);
+    if (name == "OpenBSD"_str) return Ok("openbsd"_Str);
     return platform_failure<String>(rstd::format("unsupported host operating system '{}'", name));
 }
 
@@ -728,8 +728,8 @@ auto detect_host_info() -> PlatformResult<HostInfo> {
     ::GetNativeSystemInfo(&information);
     auto machine = String::make();
     switch (information.wProcessorArchitecture) {
-    case PROCESSOR_ARCHITECTURE_AMD64: machine = String::make("amd64"_str); break;
-    case PROCESSOR_ARCHITECTURE_ARM64: machine = String::make("arm64"_str); break;
+    case PROCESSOR_ARCHITECTURE_AMD64: machine = "amd64"_Str; break;
+    case PROCESSOR_ARCHITECTURE_ARM64: machine = "arm64"_Str; break;
     default:
         return platform_failure<HostInfo>(rstd::format(
             "unsupported Windows processor architecture {}", information.wProcessorArchitecture));
@@ -737,7 +737,7 @@ auto detect_host_info() -> PlatformResult<HostInfo> {
     auto architecture = parse_target_architecture(machine.as_str());
     return Ok(HostInfo {
         .architecture = architecture,
-        .os           = String::make("windows"_str),
+        .os           = "windows"_Str,
     });
 #else
     auto information = utsname {};
@@ -784,7 +784,7 @@ auto resolve_build_platform(const HostInfo&   host,
             : host.architecture != effective.architecture || host.os != effective.platform_name();
     auto output_key = String::make();
     if (intent == BuildTargetIntent::ExplicitTarget) {
-        output_key = String::make("target-"_str);
+        output_key = "target-"_Str;
         output_key.push_str(licrypto::sha256_hex(effective.triple.as_str()).as_str());
     }
     return Ok(BuildPlatform {

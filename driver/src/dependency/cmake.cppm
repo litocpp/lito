@@ -278,15 +278,15 @@ auto cmake_toolchain(const cpp::BuildConfiguration&        configuration,
     if (android.is_some()) {
         auto cache = Vec<lito::tools::cmake::CacheEntry>::make();
         cache.push(lito::tools::cmake::CacheEntry {
-            .name  = String::make("ANDROID_ABI"_str),
+            .name  = "ANDROID_ABI"_Str,
             .value = android->abi.clone(),
         });
         cache.push(lito::tools::cmake::CacheEntry {
-            .name  = String::make("ANDROID_PLATFORM"_str),
+            .name  = "ANDROID_PLATFORM"_Str,
             .value = android->platform.clone(),
         });
         cache.push(lito::tools::cmake::CacheEntry {
-            .name  = String::make("ANDROID_STL"_str),
+            .name  = "ANDROID_STL"_Str,
             .value = android->standard_library.clone(),
         });
         result.target = Some(lito::tools::cmake::TargetToolchainConfiguration {
@@ -356,10 +356,10 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
     if (profile.cpp.common.microsoft_runtime_library.is_some()) {
         switch (*profile.cpp.common.microsoft_runtime_library) {
         case lito::compiler::MicrosoftRuntimeLibrary::Dynamic:
-            msvc_runtime = String::make("MultiThreadedDLL"_str);
+            msvc_runtime = "MultiThreadedDLL"_Str;
             break;
         case lito::compiler::MicrosoftRuntimeLibrary::DynamicDebug:
-            msvc_runtime = String::make("MultiThreadedDebugDLL"_str);
+            msvc_runtime = "MultiThreadedDebugDLL"_Str;
             break;
         case lito::compiler::MicrosoftRuntimeLibrary::Static:
         case lito::compiler::MicrosoftRuntimeLibrary::StaticDebug: break;
@@ -603,7 +603,7 @@ auto materialize_cmake_usage_impl(const CMakePackagePlan&                       
     }
     return Ok(cpp::ExternalDependencyUsage {
         .alias      = requirement.alias.clone(),
-        .provider   = String::make("cmake"_str),
+        .provider   = "cmake"_Str,
         .version    = snapshots.version.clone(),
         .targets    = rstd::move(targets),
         .host_tools = rstd::move(host_tools),

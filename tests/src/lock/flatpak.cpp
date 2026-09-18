@@ -69,27 +69,27 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
 
     auto project = lito::lock::LockedProject {};
     project.packages.push(lito::lock::LockedPackage {
-        .name         = String::make("app"_str),
-        .version      = Some(String::make("0.1.0"_str)),
+        .name         = "app"_Str,
+        .version      = Some("0.1.0"_Str),
         .source       = None(),
         .dependencies = Vec<String>::make(),
     });
     auto x86_architectures = Vec<Architecture>::make();
     x86_architectures.push(Architecture::X86_64);
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
-        .name          = String::make("shared-x86"_str),
+        .name          = "shared-x86"_Str,
         .architectures = rstd::move(x86_architectures),
         .source        = lito::lock::LockedSource::Git(String::make(git_url), String::make(commit)),
     });
     auto arm_architectures = Vec<Architecture>::make();
     arm_architectures.push(Architecture::Aarch64);
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
-        .name          = String::make("shared-arm"_str),
+        .name          = "shared-arm"_Str,
         .architectures = rstd::move(arm_architectures),
         .source        = lito::lock::LockedSource::Git(String::make(git_url), String::make(commit)),
     });
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
-        .name          = String::make("archive"_str),
+        .name          = "archive"_Str,
         .architectures = Vec<Architecture>::make(),
         .source        = lito::lock::LockedSource::Archive(
             lito::parse::FetchUrl::parse("https://example.invalid/archive.tar.gz"_str).unwrap(),
@@ -116,11 +116,11 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
 TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {
     auto project = lito::lock::LockedProject {};
     project.packages.push(lito::lock::LockedPackage {
-        .name    = String::make("wavsen"_str),
-        .version = Some(String::make("0.1.0"_str)),
-        .source  = Some(lito::lock::LockedSource::Git(
-            String::make("https://example.invalid/wavsen.git"_str),
-            String::make("0123456789abcdef0123456789abcdef01234567"_str))),
+        .name    = "wavsen"_Str,
+        .version = Some("0.1.0"_Str),
+        .source =
+            Some(lito::lock::LockedSource::Git("https://example.invalid/wavsen.git"_Str,
+                                               "0123456789abcdef0123456789abcdef01234567"_Str)),
     });
 
     auto exported = lito::lock::flatpak_sources_json(project);
@@ -141,8 +141,8 @@ TEST(Lock, RegistryPackageExportsArchiveWithoutIndex) {
                         .unwrap();
     auto project  = lito::lock::LockedProject {};
     project.packages.push(lito::lock::LockedPackage {
-        .name    = String::make("sample"_str),
-        .version = Some(String::make("1.2.3"_str)),
+        .name    = "sample"_Str,
+        .version = Some("1.2.3"_Str),
         .source  = Some(lito::lock::LockedSource::Registry(lito::registry::RegistryReleasePin {
             .release =
                 lito::registry::RegistryReleaseId {

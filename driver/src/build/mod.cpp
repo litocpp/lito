@@ -284,7 +284,7 @@ auto build_link_target(const BuildRequest&                 request,
         }
         timing.record(BuildOperation::Strip, *stripped);
     }
-    auto link_identity = String::make("lito-built-artifact-link-v3\n"_str);
+    auto link_identity = "lito-built-artifact-link-v3\n"_Str;
     link_identity.push_str(toolchain.linker_identity().build_identity.as_str());
     link_identity.push_str("\ntarget="_str);
     link_identity.push_str(platform.effective_target.triple.as_str());
@@ -331,7 +331,7 @@ auto build_link_target(const BuildRequest&                 request,
                                     ? ArtifactFileRole::LinkInput
                                     : ArtifactFileRole::Runtime,
                 .path         = rstd::move(executable_path),
-                .content_type = String::make("application/octet-stream"_str),
+                .content_type = "application/octet-stream"_Str,
             },
         .package_root  = target_spec.root.clone(),
         .install_link  = rstd::move(install_link),
@@ -648,10 +648,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                      project.platform.output_key.as_str());
         auto canonical_output = rstd::fs::canonicalize(requested_layout.output());
         if (canonical_output.is_err()) {
-            return Err(BuildError::System(
-                SystemError::Io(String::make("resolve requested prepared build output"_str),
-                                PathBuf::from(requested_layout.output()),
-                                rstd::move(canonical_output).unwrap_err())));
+            return Err(
+                BuildError::System(SystemError::Io("resolve requested prepared build output"_Str,
+                                                   PathBuf::from(requested_layout.output()),
+                                                   rstd::move(canonical_output).unwrap_err())));
         }
         if (canonical_output->as_path() != layout.output()) {
             return build_failure<BuildSummary>(
@@ -1657,7 +1657,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                     BuiltArtifactFile {
                         .role         = ArtifactFileRole::LinkInput,
                         .path         = rstd::move(archive_path),
-                        .content_type = String::make("application/x-archive"_str),
+                        .content_type = "application/x-archive"_Str,
                     },
                 .package_root  = target_spec.root.clone(),
                 .link_identity = String::make(),
@@ -1879,9 +1879,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             module_artifact.primary = BuiltArtifactFile {
                 .role         = ArtifactFileRole::Runtime,
                 .path         = rstd::move(module_path),
-                .content_type = String::make("application/wasm"_str),
+                .content_type = "application/wasm"_Str,
             };
-            auto link_identity = String::make("lito-built-wasm-static-root-v1\n"_str);
+            auto link_identity = "lito-built-wasm-static-root-v1\n"_Str;
             link_identity.push_str(toolchain.linker_identity().build_identity.as_str());
             link_identity.push_ascii('\n');
             link_identity.push_str(project.platform.effective_target.triple.as_str());

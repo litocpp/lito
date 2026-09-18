@@ -190,7 +190,7 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
                 "artifact processor primary file must be a published runtime"_str);
         }
     }
-    auto identity = String::make("lito-artifact-processor-output-v1\n"_str);
+    auto identity = "lito-artifact-processor-output-v1\n"_Str;
     for (const auto& declaration : declarations) {
         identity.push_str(declaration.relative.as_path().to_string_lossy().as_str());
         identity.push_ascii('\n');
@@ -211,11 +211,9 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
 
 auto artifact_processor_receipt(ref<str> identity, ref<str> output_identity) -> String {
     auto document = rstd::json::Map::make();
-    document.insert(String::make("protocol"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(1))));
-    document.insert(String::make("identity"_str), Json::String(String::make(identity)));
-    document.insert(String::make("output-identity"_str),
-                    Json::String(String::make(output_identity)));
+    document.insert("protocol"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    document.insert("identity"_Str, Json::String(String::make(identity)));
+    document.insert("output-identity"_Str, Json::String(String::make(output_identity)));
     auto text = rstd::json::to_string(Json::Object(rstd::move(document)),
                                       rstd::json::FormatOptions {
                                           .pretty = true,
@@ -282,7 +280,7 @@ auto artifact_processor_identity(const BuiltArtifact&                   raw,
                                  ref<str>                               target,
                                  ref<str>                               raw_digest,
                                  ref<str> processor_digest) -> String {
-    auto data = String::make("lito-artifact-processor-v1\n"_str);
+    auto data = "lito-artifact-processor-v1\n"_Str;
     data.push_str(lito::package::package_target_id_text(raw.target).as_str());
     data.push_ascii('\n');
     data.push_str(profile);

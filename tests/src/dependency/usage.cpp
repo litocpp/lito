@@ -18,8 +18,8 @@ using PathBuf = rstd::path::PathBuf;
 
 TEST(DependencyUsage, AssetClonePreservesOrderAndOwnership) {
     auto original = lito::dependency::ExternalAssetSet {
-        .alias       = String::make("vendor"_str),
-        .name        = String::make("assets"_str),
+        .alias       = "vendor"_Str,
+        .name        = "assets"_Str,
         .disposition = lito::dependency::ExternalAssetDisposition::Provided,
     };
     EXPECT_TRUE(original.clone().entries.is_empty());
@@ -28,8 +28,8 @@ TEST(DependencyUsage, AssetClonePreservesOrderAndOwnership) {
     original.entries.push(lito::dependency::ExternalAssetEntry {
         .logical_path = PathBuf::from("first"_str), .source = PathBuf::from("src/first"_str) });
     auto copied                             = original.clone();
-    original.alias                          = String::make("changed"_str);
-    original.name                           = String::make("changed"_str);
+    original.alias                          = "changed"_Str;
+    original.name                           = "changed"_Str;
     original.entries[usize {}].logical_path = PathBuf::from("changed"_str);
     original.entries[usize(1)].source       = PathBuf::from("changed"_str);
     EXPECT_EQ(copied.alias, "vendor"_str);
@@ -98,21 +98,21 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
         lito::cpp::LanguageArgumentLayer::Cpp(rstd::move(parsed).unwrap());
     metadata->targets[usize {}].usage.link_requirements.posix_threads = true;
     metadata->targets[usize {}].usage.link_requirements.thread_sources.push(
-        String::make("static library usage"_str));
+        "static library usage"_Str);
     metadata->targets[usize {}].usage.link_requirements.system_libraries.push(
         lito::link::SystemLibraryRequirement {
-            .name   = String::make("platform-api"_str),
-            .source = String::make("static library usage"_str),
+            .name   = "platform-api"_Str,
+            .source = "static library usage"_Str,
         });
     metadata->targets[usize {}].usage.link_requirements.frameworks.push(
         lito::link::FrameworkRequirement {
-            .name   = String::make("CoreAudio"_str),
-            .source = String::make("static library usage"_str),
+            .name   = "CoreAudio"_Str,
+            .source = "static library usage"_Str,
         });
     metadata->targets[usize {}].external_dependencies[usize {}].link_requirements.frameworks.push(
         lito::link::FrameworkRequirement {
-            .name   = String::make("CoreAudio"_str),
-            .source = String::make("external static library usage"_str),
+            .name   = "CoreAudio"_Str,
+            .source = "external static library usage"_Str,
         });
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
@@ -152,15 +152,15 @@ TEST(DependencyUsage, SharedLibraryStopsPrivateNativeLinkClosure) {
 
     auto& library         = metadata->targets[usize {}];
     library.artifact_kind = lito::cpp::ArtifactKind::SharedLibrary;
-    library.usage.linker_options.push(String::make("-Wl,--version-script=library.map"_str));
+    library.usage.linker_options.push("-Wl,--version-script=library.map"_Str);
     library.usage.link_requirements.system_libraries.push(lito::link::SystemLibraryRequirement {
-        .name   = String::make("private-platform-api"_str),
-        .source = String::make("shared library usage"_str),
+        .name   = "private-platform-api"_Str,
+        .source = "shared library usage"_Str,
     });
     library.external_dependencies[usize {}].link_requirements.system_libraries.push(
         lito::link::SystemLibraryRequirement {
-            .name   = String::make("private-external-api"_str),
-            .source = String::make("shared library external usage"_str),
+            .name   = "private-external-api"_Str,
+            .source = "shared library external usage"_Str,
         });
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
@@ -205,8 +205,7 @@ TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
 
     metadata->profiles[usize {}].cpp.common.threading = lito::compiler::ThreadingModel::Posix;
     metadata->profiles[usize {}].cpp_link_requirements.posix_threads = true;
-    metadata->profiles[usize {}].cpp_link_requirements.thread_sources.push(
-        String::make("build.options"_str));
+    metadata->profiles[usize {}].cpp_link_requirements.thread_sources.push("build.options"_Str);
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
@@ -218,14 +217,14 @@ TEST(DependencyUsage, ExternalCompileOptionsResolveInTheConsumerLanguage) {
     ASSERT_TRUE(parser.is_ok());
     auto targets = Vec<lito::cpp::ExternalTargetUsage>::make();
     targets.push(lito::cpp::ExternalTargetUsage {
-        .name            = String::make("fixture"_str),
+        .name            = "fixture"_Str,
         .compile_options = strings("-fno-builtin"_str, "-pthread"_str, "-I/tmp/fixture"_str),
-        .compile_source  = String::make("external fixture"_str),
-        .identity        = String::make("external-fixture"_str),
+        .compile_source  = "external fixture"_Str,
+        .identity        = "external-fixture"_Str,
     });
     auto dependencies = Vec<lito::cpp::ExternalDependencyUsage>::make();
     dependencies.push(lito::cpp::ExternalDependencyUsage {
-        .alias   = String::make("fixture"_str),
+        .alias   = "fixture"_Str,
         .targets = rstd::move(targets),
     });
 
@@ -275,7 +274,7 @@ auto rust_runtime_dependency(ref<str> identity, ref<str> source)
     -> lito::cpp::ResolvedExternalDependency {
     return lito::cpp::ResolvedExternalDependency {
         .alias    = String::make(source),
-        .provider = String::make("cargo"_str),
+        .provider = "cargo"_Str,
         .link_arguments =
             lito::link::ArgumentSequence {
                 .tokens   = strings(rstd::format("/tmp/{}.a", identity).as_str()),

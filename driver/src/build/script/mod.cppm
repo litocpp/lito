@@ -139,7 +139,7 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
         if (! rstd_try(build_script_exists(owner.script.as_path()))) continue;
         workspace_script = true;
         invocations.push(BuildScriptInvocation {
-            .owner       = String::make("workspace"_str),
+            .owner       = "workspace"_Str,
             .owner_index = owner_index,
             .script      = owner.script.clone(),
             .root        = owner.root.clone(),

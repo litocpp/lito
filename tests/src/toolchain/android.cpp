@@ -79,7 +79,7 @@ protected:
 auto linux_x86_64_host() -> lito::system::HostInfo {
     return lito::system::HostInfo {
         .architecture = lito::system::require_architecture("x86_64"_str).unwrap(),
-        .os           = String::make("linux"_str),
+        .os           = "linux"_Str,
     };
 }
 
@@ -141,16 +141,13 @@ TEST_F(AndroidNdk, FourPublicAbisMapToCanonicalClangTargets) {
 
     auto below = lito::resolve_android_target(
         *opened,
-        lito::config::AndroidTargetRequest { .abi         = String::make("arm64-v8a"_str),
-                                             .minimum_api = u32(20) });
+        lito::config::AndroidTargetRequest { .abi = "arm64-v8a"_Str, .minimum_api = u32(20) });
     auto above = lito::resolve_android_target(
         *opened,
-        lito::config::AndroidTargetRequest { .abi         = String::make("arm64-v8a"_str),
-                                             .minimum_api = u32(36) });
+        lito::config::AndroidTargetRequest { .abi = "arm64-v8a"_Str, .minimum_api = u32(36) });
     auto unsupported = lito::resolve_android_target(
         *opened,
-        lito::config::AndroidTargetRequest { .abi         = String::make("riscv64"_str),
-                                             .minimum_api = u32(35) });
+        lito::config::AndroidTargetRequest { .abi = "riscv64"_Str, .minimum_api = u32(35) });
     EXPECT_TRUE(below.is_err());
     EXPECT_TRUE(above.is_err());
     EXPECT_TRUE(unsupported.is_err());
@@ -163,8 +160,7 @@ TEST_F(AndroidNdk, RuntimeAndCMakeProjectionShareResolvedTarget) {
     ASSERT_TRUE(opened.is_ok());
     auto dynamic = lito::resolve_android_toolchain(
         opened->clone(),
-        lito::config::AndroidTargetRequest { .abi         = String::make("arm64-v8a"_str),
-                                             .minimum_api = u32(24) },
+        lito::config::AndroidTargetRequest { .abi = "arm64-v8a"_Str, .minimum_api = u32(24) },
         lito::config::StandardLibraryRuntime::Dynamic);
     ASSERT_TRUE(dynamic.is_ok());
     EXPECT_EQ(dynamic->target.clang_target.as_str(), "aarch64-linux-android24"_str);
@@ -179,8 +175,7 @@ TEST_F(AndroidNdk, RuntimeAndCMakeProjectionShareResolvedTarget) {
 
     auto static_runtime = lito::resolve_android_toolchain(
         opened->clone(),
-        lito::config::AndroidTargetRequest { .abi         = String::make("arm64-v8a"_str),
-                                             .minimum_api = u32(24) },
+        lito::config::AndroidTargetRequest { .abi = "arm64-v8a"_Str, .minimum_api = u32(24) },
         lito::config::StandardLibraryRuntime::Static);
     ASSERT_TRUE(static_runtime.is_ok());
     EXPECT_EQ(static_runtime->cmake.standard_library.as_str(), "c++_static"_str);

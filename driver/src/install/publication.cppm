@@ -86,7 +86,7 @@ auto origin_text(const InstallEntryOrigin& origin) -> String {
                             lito::package::package_target_id_text(origin.as_PkgConfig().target),
                             origin.as_PkgConfig().module.as_str());
     }
-    return String::make("inventory"_str);
+    return "inventory"_Str;
 }
 
 auto normalize_binary_entries(InstallPackageRecord& package) -> InstallStoreResult<empty> {

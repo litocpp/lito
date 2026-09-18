@@ -68,13 +68,13 @@ auto external_git_graph(ref<str>                   url,
     -> lito::package::ResolvedPackageGraph {
     auto declarations = Vec<lito::dependency::CMakeDependencyRequirement>::make();
     declarations.push(lito::dependency::CMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("Fixture"_str),
-        .source  = Some(String::make("fixture"_str)),
+        .alias   = "fixture"_Str,
+        .package = "Fixture"_Str,
+        .source  = Some("fixture"_Str),
     });
     auto external_sources = Vec<lito::manifest::PackageExternalSourceDeclaration>::make();
     external_sources.push(lito::manifest::PackageExternalSourceDeclaration {
-        .name   = String::make("fixture"_str),
+        .name   = "fixture"_Str,
         .source = lito::dependency::ExternalSourceRequirement::Git(String::make(url),
                                                                    rstd::move(reference)),
     });
@@ -82,7 +82,7 @@ auto external_git_graph(ref<str>                   url,
     packages.push(lito::package::ResolvedPackage {
         .manifest =
             lito::manifest::PackageManifest {
-                .name                        = String::make("fixture-root"_str),
+                .name                        = "fixture-root"_Str,
                 .external_sources            = rstd::move(external_sources),
                 .cmake_external_dependencies = rstd::move(declarations),
             },

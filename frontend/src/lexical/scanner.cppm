@@ -140,8 +140,7 @@ public:
         -> Result<Option<ScannedToken>> {
         auto valid_symbols = ValidSymbols { valid_symbol_slice };
         if (! valid_symbols.belongs_to(language_)) {
-            return Err(Error::at(String::make("valid symbol belongs to another language"_str),
-                                 position()));
+            return Err(Error::at("valid symbol belongs to another language"_Str, position()));
         }
 
         auto cursor  = ScannerCursor { cursor_, source_.id };
@@ -151,20 +150,18 @@ public:
 
         auto symbol = **scanned;
         if (symbol.language() != language_) {
-            return Err(
-                Error::at(String::make("scanner returned a symbol from another language"_str),
-                          cursor.start_.location));
+            return Err(Error::at("scanner returned a symbol from another language"_Str,
+                                 cursor.start_.location));
         }
         if (! valid_symbols.contains(symbol)) {
-            return Err(Error::at(String::make("scanner returned a symbol that is not valid"_str),
+            return Err(Error::at("scanner returned a symbol that is not valid"_Str,
                                  cursor.start_.location));
         }
 
         auto end = cursor.selected_end();
         if (end.location.offset <= cursor.begin_.location.offset) {
-            return Err(
-                Error::at(String::make("scanner returned a token without consuming input"_str),
-                          cursor.start_.location));
+            return Err(Error::at("scanner returned a token without consuming input"_Str,
+                                 cursor.start_.location));
         }
 
         auto token = ScannedToken {

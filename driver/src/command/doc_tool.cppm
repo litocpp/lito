@@ -85,8 +85,8 @@ auto parse_capabilities(String                  text,
         ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(4)) ||
         ! json_feature_contains(*parsed, "embedded-default-frontend"_str) ||
         ! json_feature_contains(*parsed, "package-publications-v1"_str)) {
-        return Err(DocError::Protocol(PathBuf::from(executable),
-                                      String::make("unsupported litodoc capabilities"_str)));
+        return Err(
+            DocError::Protocol(PathBuf::from(executable), "unsupported litodoc capabilities"_Str));
     }
     if (! compiler.version.as_str().contains(*(**clang_build).as_str())) {
         return Err(
@@ -114,12 +114,12 @@ auto probe_doc_tool(ref<rstd::path::Path>             executable,
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable_text));
-    arguments.push(String::make("capabilities"_str));
-    arguments.push(String::make("--json"_str));
+    arguments.push("capabilities"_Str);
+    arguments.push("--json"_Str);
     auto executed = run_command(arguments, environment);
     if (executed.is_err()) return Err(rstd::into<DocError>(rstd::move(executed).unwrap_err()));
     if (executed->exit_code != i32 {}) {
-        return Err(DocError::Execution(String::make("litodoc capabilities"_str),
+        return Err(DocError::Execution("litodoc capabilities"_Str,
                                        PathBuf::from(executable),
                                        executed->exit_code,
                                        rstd::move(executed->standard_output),
@@ -257,14 +257,13 @@ auto write_tool_receipt(ref<rstd::path::Path>      path,
             rstd::format("litodoc executable '{}' is not valid UTF-8", executable));
     }
     auto root = JsonMap::make();
-    root.insert(String::make("format"_str), Json::String(String::make("lito-doc-tool"_str)));
-    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
-    root.insert(String::make("key"_str), Json::String(String::make(key)));
-    root.insert(String::make("source"_str), Json::String(String::make(source_identity)));
-    root.insert(String::make("executable"_str), Json::String(String::make(*executable_text)));
-    root.insert(String::make("executable_digest"_str),
-                Json::String(String::make(executable_digest)));
-    root.insert(String::make("capabilities"_str), Json::String(capabilities.json.clone()));
+    root.insert("format"_Str, Json::String("lito-doc-tool"_Str));
+    root.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(2))));
+    root.insert("key"_Str, Json::String(String::make(key)));
+    root.insert("source"_Str, Json::String(String::make(source_identity)));
+    root.insert("executable"_Str, Json::String(String::make(*executable_text)));
+    root.insert("executable_digest"_Str, Json::String(String::make(executable_digest)));
+    root.insert("capabilities"_Str, Json::String(capabilities.json.clone()));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(root)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
@@ -469,11 +468,11 @@ auto resolve_doc_tool(const BuildRequest&               request,
     emit_doc(observer, DocEventKind::ToolBuild, source->identity.as_str(), source->root.as_path());
     auto tool_request           = BuildRequest {};
     tool_request.selection.root = source->root.clone();
-    tool_request.selection.packages.push(String::make("litodoc"_str));
+    tool_request.selection.packages.push("litodoc"_Str);
     tool_request.exact_targets.push(lito::package::PackageTargetId {
-        .package = String::make("litodoc"_str),
+        .package = "litodoc"_Str,
         .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("litodoc"_str),
+        .name    = "litodoc"_Str,
     });
     tool_request.build_directory = tool_root->join(PathBuf::from("build"_str).as_path());
     tool_request.environment     = request.environment.clone();
@@ -489,9 +488,8 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.pkg_config             = request.pkg_config.clone();
     tool_request.cmake                  = request.cmake.clone();
     append_unique_path(tool_request.cmake.search_paths, sdk->cmake_search_path.as_path());
-    tool_request.profile =
-        Some(lito::manifest::BuildProfileName { .value = String::make("release"_str) });
-    tool_request.execution.scan    = request.execution.scan;
+    tool_request.profile        = Some(lito::manifest::BuildProfileName { .value = "release"_Str });
+    tool_request.execution.scan = request.execution.scan;
     tool_request.execution.compile = request.execution.compile;
     tool_request.observer          = request.observer;
     auto built                     = build_with_environment(tool_request, environment);

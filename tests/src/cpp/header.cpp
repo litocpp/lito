@@ -14,7 +14,7 @@ namespace
 
 auto target(ref<str> name) -> lito::package::PackageTargetId {
     return lito::package::PackageTargetId {
-        .package = String::make("fixture"_str),
+        .package = "fixture"_Str,
         .name    = String::make(name),
     };
 }
@@ -27,7 +27,7 @@ auto root(ref<rstd::path::Path> path, lito::cpp::HeaderOwner owner, lito::cpp::H
         .root       = canonical.is_ok() ? rstd::move(canonical).unwrap() : PathBuf::from(path),
         .owner      = rstd::move(owner),
         .access     = rstd::move(access),
-        .provenance = String::make("test"_str),
+        .provenance = "test"_Str,
     };
 }
 
@@ -44,11 +44,11 @@ TEST(HeaderOwnership, LongestRootControlsPrivateRetention) {
     ASSERT_TRUE(rstd::fs::write(header.as_path(), "#pragma once\n"_str.as_bytes()).is_ok());
     auto roots = Vec<lito::cpp::ResolvedHeaderRoot>::make();
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::ProjectPackage(String::make("package"_str)),
+                    lito::cpp::HeaderOwner::ProjectPackage("package"_Str),
                     lito::cpp::HeaderAccess::Public()));
     auto private_target = target("library"_str);
     roots.push(root(private_directory.as_path(),
-                    lito::cpp::HeaderOwner::ProjectPackage(String::make("package"_str)),
+                    lito::cpp::HeaderOwner::ProjectPackage("package"_Str),
                     lito::cpp::HeaderAccess::TargetPrivate(private_target.clone())));
     auto index          = lito::cpp::HeaderOwnershipIndex::make(rstd::move(roots));
     auto classification = index.classify(header.as_path());
@@ -69,10 +69,10 @@ TEST(HeaderOwnership, EqualOwnerClaimsBecomePublic) {
     ASSERT_TRUE(rstd::fs::write(header.as_path(), "#pragma once\n"_str.as_bytes()).is_ok());
     auto roots = Vec<lito::cpp::ResolvedHeaderRoot>::make();
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::ProjectPackage(String::make("package"_str)),
+                    lito::cpp::HeaderOwner::ProjectPackage("package"_Str),
                     lito::cpp::HeaderAccess::TargetPrivate(target("library"_str))));
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::ProjectPackage(String::make("package"_str)),
+                    lito::cpp::HeaderOwner::ProjectPackage("package"_Str),
                     lito::cpp::HeaderAccess::Public()));
     auto index          = lito::cpp::HeaderOwnershipIndex::make(rstd::move(roots));
     auto classification = index.classify(header.as_path());
@@ -89,10 +89,10 @@ TEST(HeaderOwnership, DuplicateGlobalClaimsRemainGlobal) {
     ASSERT_TRUE(rstd::fs::write(header.as_path(), "#pragma once\n"_str.as_bytes()).is_ok());
     auto roots = Vec<lito::cpp::ResolvedHeaderRoot>::make();
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::Toolchain(String::make("clang"_str)),
+                    lito::cpp::HeaderOwner::Toolchain("clang"_Str),
                     lito::cpp::HeaderAccess::Global()));
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::Toolchain(String::make("clang"_str)),
+                    lito::cpp::HeaderOwner::Toolchain("clang"_Str),
                     lito::cpp::HeaderAccess::Global()));
     auto index          = lito::cpp::HeaderOwnershipIndex::make(rstd::move(roots));
     auto classification = index.classify(header.as_path());
@@ -109,10 +109,10 @@ TEST(HeaderOwnership, ConflictingOwnersAreExplicitlyAmbiguous) {
     ASSERT_TRUE(rstd::fs::write(header.as_path(), "#pragma once\n"_str.as_bytes()).is_ok());
     auto roots = Vec<lito::cpp::ResolvedHeaderRoot>::make();
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::ProjectPackage(String::make("package"_str)),
+                    lito::cpp::HeaderOwner::ProjectPackage("package"_Str),
                     lito::cpp::HeaderAccess::Public()));
     roots.push(root(owner.path(),
-                    lito::cpp::HeaderOwner::ExternalTarget(String::make("external"_str)),
+                    lito::cpp::HeaderOwner::ExternalTarget("external"_Str),
                     lito::cpp::HeaderAccess::Public()));
     auto index          = lito::cpp::HeaderOwnershipIndex::make(rstd::move(roots));
     auto classification = index.classify(header.as_path());
@@ -128,7 +128,7 @@ TEST(HeaderOwnership, PhysicalClassificationConflictIsOrderIndependent) {
         .access = lito::cpp::HeaderAccess::Global(),
     };
     auto right = lito::cpp::HeaderClassification {
-        .owner  = lito::cpp::HeaderOwner::Toolchain(String::make("clang"_str)),
+        .owner  = lito::cpp::HeaderOwner::Toolchain("clang"_Str),
         .access = lito::cpp::HeaderAccess::Global(),
     };
     auto reversed_left  = as<Clone>(right).clone();

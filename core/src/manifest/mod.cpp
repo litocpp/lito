@@ -732,7 +732,7 @@ auto lito::manifest::add_registry_dependency(ref<rstd::path::Path> requested_dir
     }
     auto dependencies = owner->get_mut("dependencies"_str);
     if (dependencies.is_none()) {
-        owner->insert(String::make("dependencies"_str), Toml::Table(Table::make()));
+        owner->insert("dependencies"_Str, Toml::Table(Table::make()));
         dependencies = owner->get_mut("dependencies"_str);
     }
     auto dependency_table = (**dependencies).as_table_mut();
@@ -766,15 +766,13 @@ auto lito::manifest::add_registry_dependency(ref<rstd::path::Path> requested_dir
             "commit"_str, "builtin"_str, "workspace"_str, "version"_str, "registry"_str,
         };
         for (auto key : source_keys) (void)(**fields).remove(key);
-        (**fields).insert(String::make("version"_str),
-                          Toml::String(String::make(requirement.text())));
+        (**fields).insert("version"_Str, Toml::String(String::make(requirement.text())));
         if (registry.is_some()) {
             if (registry->is_empty()) {
                 return manifest_edit_failure<ManifestDependencyEdit>(
                     path.as_path(), "Registry name must not be empty"_str);
             }
-            (**fields).insert(String::make("registry"_str),
-                              Toml::String(rstd::move(registry).unwrap()));
+            (**fields).insert("registry"_Str, Toml::String(rstd::move(registry).unwrap()));
         }
     }
     auto validated = assemble_manifest_document(rstd::move(root), path.clone(), document.clone());
@@ -843,8 +841,8 @@ auto lito::manifest::load_package_manifest_from_source_tree_at(ref<str> source_i
         auto path = PathBuf::from("builtin/lito.toml"_str);
         return Err(ManifestError::File(ManifestFileError {
             .path  = rstd::move(path),
-            .cause = ManifestFileCause::Schema(ManifestSchemaError::Domain(
-                String::make("builtin source identity must not be empty"_str))),
+            .cause = ManifestFileCause::Schema(
+                ManifestSchemaError::Domain("builtin source identity must not be empty"_Str)),
         }));
     }
     const lito::source::SourceTreeEntry* manifest_entry = nullptr;
@@ -862,8 +860,7 @@ auto lito::manifest::load_package_manifest_from_source_tree_at(ref<str> source_i
             .path  = rstd::move(path),
             .cause = ManifestFileCause::Schema(
                 ManifestSchemaError::Parse(lito::parse::Error::MissingField(
-                    lito::parse::NodePath::root("builtin package source"_str),
-                    String::make("lito.toml"_str)))),
+                    lito::parse::NodePath::root("builtin package source"_str), "lito.toml"_Str))),
         }));
     }
     auto decoded = String::from_utf8(Vec<u8>::from(manifest_entry->contents()));

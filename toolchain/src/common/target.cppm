@@ -45,7 +45,7 @@ auto configured_target_candidate(const lito::config::ToolchainTargetSelection& s
     -> ToolchainResult<String> {
     if (! selection.is_Config()) {
         return Err(ToolchainError::Message(
-            String::make("configured target candidate requires a typed target selection"_str)));
+            "configured target candidate requires a typed target selection"_Str));
     }
     const auto& configured = selection.as_Config();
     auto        candidate  = lito::system::encode_target_candidate(

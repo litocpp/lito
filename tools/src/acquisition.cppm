@@ -135,8 +135,8 @@ template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::tools::acquisition::AcquisitionError> {
     static auto from(lito::system::SystemError error)
         -> lito::tools::acquisition::AcquisitionError {
-        return lito::tools::acquisition::AcquisitionError::System(
-            String::make("acquisition operation"_str), rstd::move(error));
+        return lito::tools::acquisition::AcquisitionError::System("acquisition operation"_Str,
+                                                                  rstd::move(error));
     }
 };
 
@@ -315,14 +315,14 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
     auto staging   = rstd_try(reserve_staging_path(bucket.as_path()));
     auto arguments = Vec<String>::make();
     rstd_try(process_path(arguments, curl));
-    arguments.push(String::make("--fail"_str));
-    arguments.push(String::make("--location"_str));
-    arguments.push(String::make("--silent"_str));
-    arguments.push(String::make("--show-error"_str));
-    arguments.push(String::make("--globoff"_str));
-    arguments.push(String::make("--output"_str));
+    arguments.push("--fail"_Str);
+    arguments.push("--location"_Str);
+    arguments.push("--silent"_Str);
+    arguments.push("--show-error"_Str);
+    arguments.push("--globoff"_Str);
+    arguments.push("--output"_Str);
     rstd_try(process_path(arguments, staging.as_path()));
-    arguments.push(String::make("--"_str));
+    arguments.push("--"_Str);
     arguments.push(String::make(request.url.as_str()));
     if (observer.notify != nullptr) {
         observer.notify(observer.context,
@@ -414,10 +414,10 @@ auto extractor_invocation(const ArchiveExtractor& extractor, ref<rstd::path::Pat
     auto arguments = Vec<String>::make();
     rstd_try(process_path(arguments, extractor.tool.executable.as_path()));
     if (extractor.kind == ArchiveExtractorKind::CMakeTar) {
-        arguments.push(String::make("-E"_str));
-        arguments.push(String::make("tar"_str));
+        arguments.push("-E"_Str);
+        arguments.push("tar"_Str);
     }
-    arguments.push(String::make("xvf"_str));
+    arguments.push("xvf"_Str);
     rstd_try(process_path(arguments, archive));
     return Ok(rstd::move(arguments));
 }
@@ -516,7 +516,7 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
             auto curl = resolver.require(lito::tools::Tool::Curl,
                                          requests[downloads[usize {}]].download_requirement);
             if (curl.is_err()) {
-                return Err(AcquisitionError::Tools(String::make("resolve curl executable"_str),
+                return Err(AcquisitionError::Tools("resolve curl executable"_Str,
                                                    rstd::move(curl).unwrap_err()));
             }
             const auto workers = jobs < downloads.len() ? jobs : downloads.len();
@@ -618,7 +618,7 @@ auto select_archive_extractor(lito::tools::ToolResolver&              resolver,
     }
     auto cmake = resolver.probe(lito::tools::Tool::CMake);
     if (cmake.is_err()) {
-        return Err(AcquisitionError::Tools(String::make("probe CMake archive extractor"_str),
+        return Err(AcquisitionError::Tools("probe CMake archive extractor"_Str,
                                            rstd::move(cmake).unwrap_err()));
     }
     if (cmake->is_some()) {
@@ -673,7 +673,7 @@ auto extract_verified_archive(VerifiedFile                      file,
     }
     if (status.is_err()) {
         (void)rstd::fs::remove_dir_all(destination);
-        return Err(AcquisitionError::System(String::make("extract verified archive"_str),
+        return Err(AcquisitionError::System("extract verified archive"_Str,
                                             rstd::move(status).unwrap_err()));
     }
     if (status->exit_code != i32 {}) {

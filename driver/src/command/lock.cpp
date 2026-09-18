@@ -57,10 +57,8 @@ auto attachment_path(ref<rstd::path::Path> root, ref<rstd::path::Path> requested
         requested.is_absolute() ? PathBuf::from(requested) : PathBuf::from(root).join(requested);
     auto metadata = rstd::fs::symlink_metadata(path.as_path());
     if (metadata.is_err()) {
-        return Err(
-            CommandError::System(SystemError::Io(String::make("inspect Cargo lock attachment"_str),
-                                                 path.clone(),
-                                                 rstd::move(metadata).unwrap_err())));
+        return Err(CommandError::System(SystemError::Io(
+            "inspect Cargo lock attachment"_Str, path.clone(), rstd::move(metadata).unwrap_err())));
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
         return Err(CommandError::Message(rstd::format(
@@ -68,10 +66,9 @@ auto attachment_path(ref<rstd::path::Path> root, ref<rstd::path::Path> requested
     }
     auto canonical = rstd::fs::canonicalize(path.as_path());
     if (canonical.is_err()) {
-        return Err(
-            CommandError::System(SystemError::Io(String::make("resolve Cargo lock attachment"_str),
-                                                 rstd::move(path),
-                                                 rstd::move(canonical).unwrap_err())));
+        return Err(CommandError::System(SystemError::Io("resolve Cargo lock attachment"_Str,
+                                                        rstd::move(path),
+                                                        rstd::move(canonical).unwrap_err())));
     }
     return Ok(rstd::move(canonical).unwrap());
 }
@@ -103,7 +100,7 @@ auto acquire_cargo_git_checkouts(const LockExportRequest&                  reque
     auto requests = Vec<lito::source::PackageSourceFetchRequest>::with_capacity(git_requests.len());
     for (const auto& git : git_requests) {
         requests.push(lito::source::PackageSourceFetchRequest {
-            .owner  = String::make("Cargo lock attachment"_str),
+            .owner  = "Cargo lock attachment"_Str,
             .name   = rstd::format("{}#{}", git.url.as_str(), git.commit.as_str()),
             .source = lito::source::PackageSourceRequirement::Git(
                 git.url.clone(),
@@ -131,7 +128,7 @@ auto acquire_cargo_git_checkouts(const LockExportRequest&                  reque
 
 auto export_lock_sources(const LockExportRequest& request) -> CommandResult<LockExportSummary> {
     if (request.format != lito::lock::LockExportFormat::FlatpakSources) {
-        return Err(CommandError::Message(String::make("unsupported lock export format"_str)));
+        return Err(CommandError::Message("unsupported lock export format"_Str));
     }
     auto locked = lito::lock::load_locked_project(request.root.as_path(), request.lock);
     if (locked.is_err()) {
@@ -142,7 +139,7 @@ auto export_lock_sources(const LockExportRequest& request) -> CommandResult<Lock
     if (has_registry_sources(*locked)) {
         if (request.registries.is_none()) {
             return Err(CommandError::Message(
-                String::make("Flatpak Registry source export has no Registry configuration"_str)));
+                "Flatpak Registry source export has no Registry configuration"_Str));
         }
         registry_resolver = Some(RegistryFlatpakResolver {
             .config = rstd::addressof(*request.registries),

@@ -164,10 +164,8 @@ auto prepare_external_source_task(ExternalSourceTask task)
         auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return Err(
-                lito::dependency::DependencyError::Io(String::make("resolve CMake adapter"_str),
-                                                      rstd::move(path),
-                                                      rstd::move(canonical).unwrap_err()));
+            return Err(lito::dependency::DependencyError::Io(
+                "resolve CMake adapter"_Str, rstd::move(path), rstd::move(canonical).unwrap_err()));
         }
         if (! canonical->as_path().starts_with(adapter_root)) {
             return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
@@ -177,9 +175,8 @@ auto prepare_external_source_task(ExternalSourceTask task)
         }
         auto contents = rstd::fs::read_to_string(canonical->as_path());
         if (contents.is_err()) {
-            return Err(lito::dependency::DependencyError::Io(String::make("read CMake adapter"_str),
-                                                             canonical->clone(),
-                                                             rstd::move(contents).unwrap_err()));
+            return Err(lito::dependency::DependencyError::Io(
+                "read CMake adapter"_Str, canonical->clone(), rstd::move(contents).unwrap_err()));
         }
         adapter_identity = rstd::format("{}\n{}", canonical->as_path(), contents->as_str());
         adapter          = Some(rstd::move(canonical).unwrap());
@@ -281,7 +278,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                                                                    tasks.len());
     if (created.is_err()) {
         return Err(lito::dependency::DependencyError::System(
-            SystemError::Io(String::make("create external source fetch executor"_str),
+            SystemError::Io("create external source fetch executor"_Str,
                             PathBuf::make(),
                             rstd::move(created).unwrap_err_unchecked())));
     }

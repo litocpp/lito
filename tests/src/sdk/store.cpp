@@ -24,92 +24,83 @@ auto installed_descriptor_with_files(ref<str>                      version,
                                      u64                           license_size,
                                      ref<str>                      license_sha256) -> String {
     auto host_value = JsonMap::make();
-    host_value.insert(String::make("os"_str), rstd::into<Json>(host.os.as_str()));
-    host_value.insert(String::make("architecture"_str),
+    host_value.insert("os"_Str, rstd::into<Json>(host.os.as_str()));
+    host_value.insert("architecture"_Str,
                       rstd::into<Json>(lito::system::architecture_name(host.architecture)));
 
     auto archive = JsonMap::make();
-    archive.insert(String::make("url"_str),
-                   rstd::into<Json>("https://example.test/llvm.tar.xz"_str));
+    archive.insert("url"_Str, rstd::into<Json>("https://example.test/llvm.tar.xz"_str));
     archive.insert(
-        String::make("sha256"_str),
+        "sha256"_Str,
         rstd::into<Json>("0000000000000000000000000000000000000000000000000000000000000000"_str));
-    archive.insert(String::make("size"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
+    archive.insert("size"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
 
     auto paths = JsonMap::make();
-    paths.insert(String::make("cc"_str), rstd::into<Json>("bin/clang"_str));
-    paths.insert(String::make("cxx"_str), rstd::into<Json>("bin/clang++"_str));
-    paths.insert(String::make("linker"_str), rstd::into<Json>("bin/ld.lld"_str));
-    paths.insert(String::make("archiver"_str), rstd::into<Json>("bin/llvm-ar"_str));
-    paths.insert(String::make("strip"_str), rstd::into<Json>("bin/llvm-strip"_str));
-    paths.insert(String::make("format"_str), rstd::into<Json>("bin/clang-format"_str));
-    paths.insert(String::make("llvm-config"_str), rstd::into<Json>("bin/llvm-config"_str));
-    paths.insert(String::make("cmake"_str), rstd::into<Json>("lib/cmake"_str));
-    paths.insert(String::make("clang-cpp"_str), rstd::into<Json>("lib/libclang-cpp.so"_str));
+    paths.insert("cc"_Str, rstd::into<Json>("bin/clang"_str));
+    paths.insert("cxx"_Str, rstd::into<Json>("bin/clang++"_str));
+    paths.insert("linker"_Str, rstd::into<Json>("bin/ld.lld"_str));
+    paths.insert("archiver"_Str, rstd::into<Json>("bin/llvm-ar"_str));
+    paths.insert("strip"_Str, rstd::into<Json>("bin/llvm-strip"_str));
+    paths.insert("format"_Str, rstd::into<Json>("bin/clang-format"_str));
+    paths.insert("llvm-config"_Str, rstd::into<Json>("bin/llvm-config"_str));
+    paths.insert("cmake"_Str, rstd::into<Json>("lib/cmake"_str));
+    paths.insert("clang-cpp"_Str, rstd::into<Json>("lib/libclang-cpp.so"_str));
 
     auto certification = JsonMap::make();
-    certification.insert(String::make("compiler-version"_str), rstd::into<Json>(version));
-    certification.insert(String::make("standard-library"_str), rstd::into<Json>("libstdc++"_str));
-    certification.insert(String::make("exceptions"_str), Json::Bool(true));
-    certification.insert(String::make("rtti"_str), Json::Bool(true));
+    certification.insert("compiler-version"_Str, rstd::into<Json>(version));
+    certification.insert("standard-library"_Str, rstd::into<Json>("libstdc++"_str));
+    certification.insert("exceptions"_Str, Json::Bool(true));
+    certification.insert("rtti"_Str, Json::Bool(true));
 
     auto runtime = JsonMap::make();
-    runtime.insert(String::make("path"_str), rstd::into<Json>("lib/libxml2.so.2.13.8"_str));
-    runtime.insert(String::make("size"_str),
-                   Json::Number(rstd::json::Number::from_u64(runtime_size)));
-    runtime.insert(String::make("sha256"_str), rstd::into<Json>(runtime_sha256));
+    runtime.insert("path"_Str, rstd::into<Json>("lib/libxml2.so.2.13.8"_str));
+    runtime.insert("size"_Str, Json::Number(rstd::json::Number::from_u64(runtime_size)));
+    runtime.insert("sha256"_Str, rstd::into<Json>(runtime_sha256));
     auto license = JsonMap::make();
-    license.insert(String::make("path"_str),
-                   rstd::into<Json>("share/licenses/libxml2/Copyright"_str));
-    license.insert(String::make("size"_str),
-                   Json::Number(rstd::json::Number::from_u64(license_size)));
-    license.insert(String::make("sha256"_str), rstd::into<Json>(license_sha256));
+    license.insert("path"_Str, rstd::into<Json>("share/licenses/libxml2/Copyright"_str));
+    license.insert("size"_Str, Json::Number(rstd::json::Number::from_u64(license_size)));
+    license.insert("sha256"_Str, rstd::into<Json>(license_sha256));
     auto link = JsonMap::make();
-    link.insert(String::make("path"_str), rstd::into<Json>("lib/libxml2.so.2"_str));
-    link.insert(String::make("target"_str), rstd::into<Json>("libxml2.so.2.13.8"_str));
+    link.insert("path"_Str, rstd::into<Json>("lib/libxml2.so.2"_str));
+    link.insert("target"_Str, rstd::into<Json>("libxml2.so.2.13.8"_str));
     auto links = JsonArray::make();
     links.push(Json::Object(rstd::move(link)));
     auto builder = JsonMap::make();
-    builder.insert(String::make("compiler-version"_str),
-                   rstd::into<Json>("clang version 22.1.8"_str));
-    builder.insert(String::make("compiler-target"_str),
-                   rstd::into<Json>("x86_64-unknown-linux-gnu"_str));
-    builder.insert(String::make("linker-family"_str), rstd::into<Json>("GNU ld"_str));
-    builder.insert(String::make("linker-version"_str),
-                   rstd::into<Json>("GNU ld (GNU Binutils) 2.47"_str));
-    builder.insert(String::make("archiver-version"_str),
-                   rstd::into<Json>("LLVM version 22.1.8"_str));
-    builder.insert(String::make("strip-version"_str), rstd::into<Json>("LLVM version 22.1.8"_str));
+    builder.insert("compiler-version"_Str, rstd::into<Json>("clang version 22.1.8"_str));
+    builder.insert("compiler-target"_Str, rstd::into<Json>("x86_64-unknown-linux-gnu"_str));
+    builder.insert("linker-family"_Str, rstd::into<Json>("GNU ld"_str));
+    builder.insert("linker-version"_Str, rstd::into<Json>("GNU ld (GNU Binutils) 2.47"_str));
+    builder.insert("archiver-version"_Str, rstd::into<Json>("LLVM version 22.1.8"_str));
+    builder.insert("strip-version"_Str, rstd::into<Json>("LLVM version 22.1.8"_str));
     builder.insert(
-        String::make("link-identity"_str),
+        "link-identity"_Str,
         rstd::into<Json>("0000000000000000000000000000000000000000000000000000000000000000"_str));
     auto component = JsonMap::make();
-    component.insert(String::make("name"_str), rstd::into<Json>("libxml2"_str));
-    component.insert(String::make("version"_str), rstd::into<Json>("2.13.8"_str));
-    component.insert(String::make("recipe"_str),
-                     rstd::into<Json>("libxml2-2.13.8-minimal-elf-v1"_str));
+    component.insert("name"_Str, rstd::into<Json>("libxml2"_str));
+    component.insert("version"_Str, rstd::into<Json>("2.13.8"_str));
+    component.insert("recipe"_Str, rstd::into<Json>("libxml2-2.13.8-minimal-elf-v1"_str));
     component.insert(
-        String::make("recipe-digest"_str),
+        "recipe-digest"_Str,
         rstd::into<Json>("0000000000000000000000000000000000000000000000000000000000000000"_str));
     component.insert(
-        String::make("source-identity"_str),
+        "source-identity"_Str,
         rstd::into<Json>("archive+https://example.test/libxml2.tar.xz#sha256:0000"_str));
-    component.insert(String::make("runtime"_str), Json::Object(rstd::move(runtime)));
-    component.insert(String::make("links"_str), Json::Array(rstd::move(links)));
-    component.insert(String::make("license"_str), Json::Object(rstd::move(license)));
-    component.insert(String::make("builder"_str), Json::Object(rstd::move(builder)));
+    component.insert("runtime"_Str, Json::Object(rstd::move(runtime)));
+    component.insert("links"_Str, Json::Array(rstd::move(links)));
+    component.insert("license"_Str, Json::Object(rstd::move(license)));
+    component.insert("builder"_Str, Json::Object(rstd::move(builder)));
     auto components = JsonArray::make();
     components.push(Json::Object(rstd::move(component)));
 
     auto root = JsonMap::make();
-    root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
-    root.insert(String::make("kind"_str), rstd::into<Json>("lito-llvm-sdk"_str));
-    root.insert(String::make("version"_str), rstd::into<Json>(version));
-    root.insert(String::make("host"_str), Json::Object(rstd::move(host_value)));
-    root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
-    root.insert(String::make("paths"_str), Json::Object(rstd::move(paths)));
-    root.insert(String::make("certification"_str), Json::Object(rstd::move(certification)));
-    root.insert(String::make("runtime-components"_str), Json::Array(rstd::move(components)));
+    root.insert("schema"_Str, Json::Number(rstd::json::Number::from_u64(u64(2))));
+    root.insert("kind"_Str, rstd::into<Json>("lito-llvm-sdk"_str));
+    root.insert("version"_Str, rstd::into<Json>(version));
+    root.insert("host"_Str, Json::Object(rstd::move(host_value)));
+    root.insert("archive"_Str, Json::Object(rstd::move(archive)));
+    root.insert("paths"_Str, Json::Object(rstd::move(paths)));
+    root.insert("certification"_Str, Json::Object(rstd::move(certification)));
+    root.insert("runtime-components"_Str, Json::Array(rstd::move(components)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
@@ -261,13 +252,13 @@ TEST_F(SdkStore, ActivateProvidesProjectDefaultsAndDeactivateKeepsExistingLeaseA
     ASSERT_TRUE(prefix.is_ok());
 
     auto activated = lito::activate_llvm_sdk(lito::SdkActivateRequest {
-        .version = String::make("21.0.0"_str),
+        .version = "21.0.0"_Str,
     });
     ASSERT_TRUE(activated.is_ok());
     EXPECT_FALSE(activated->unchanged);
     EXPECT_EQ(activated->prefix.as_path(), prefix->as_path());
     auto repeated = lito::activate_llvm_sdk(lito::SdkActivateRequest {
-        .version = String::make("21.0.0"_str),
+        .version = "21.0.0"_Str,
     });
     ASSERT_TRUE(repeated.is_ok());
     EXPECT_TRUE(repeated->unchanged);
@@ -321,7 +312,7 @@ TEST_F(SdkStore, ActivateProvidesProjectDefaultsAndDeactivateKeepsExistingLeaseA
     EXPECT_TRUE(repeated_deactivate->unchanged);
 
     ASSERT_TRUE(lito::activate_llvm_sdk(lito::SdkActivateRequest {
-                                            .version = String::make("21.0.0"_str),
+                                            .version = "21.0.0"_Str,
                                         })
                     .is_ok());
     auto descriptor = prefix->join(PathBuf::from("sdk.json"_str).as_path());
@@ -376,11 +367,11 @@ TEST_F(SdkStore, UninstallClearsActiveStateAndRemovesInvalidOwnedEntries) {
     auto prefix = materialize_installed_sdk(data_home.as_path(), "21.0.0"_str, *host);
     ASSERT_TRUE(prefix.is_ok());
     ASSERT_TRUE(lito::activate_llvm_sdk(lito::SdkActivateRequest {
-                                            .version = String::make("21.0.0"_str),
+                                            .version = "21.0.0"_Str,
                                         })
                     .is_ok());
     auto uninstalled = lito::uninstall_llvm_sdk(lito::SdkUninstallRequest {
-        .version = String::make("21.0.0"_str),
+        .version = "21.0.0"_Str,
     });
     ASSERT_TRUE(uninstalled.is_ok());
     EXPECT_TRUE(uninstalled->was_active);
@@ -394,7 +385,7 @@ TEST_F(SdkStore, UninstallClearsActiveStateAndRemovesInvalidOwnedEntries) {
                                 "partial"_str.as_bytes())
                     .is_ok());
     auto removed_invalid = lito::uninstall_llvm_sdk(lito::SdkUninstallRequest {
-        .version = String::make("20.0.0"_str),
+        .version = "20.0.0"_Str,
     });
     ASSERT_TRUE(removed_invalid.is_ok());
     EXPECT_TRUE(removed_invalid->invalid_entry);
@@ -405,7 +396,7 @@ TEST_F(SdkStore, UninstallClearsActiveStateAndRemovesInvalidOwnedEntries) {
     auto linked = data_home.join(PathBuf::from("lito/llvm/19.0.0"_str).as_path());
     ASSERT_TRUE(rstd::fs::soft_link(target.as_path(), linked.as_path()).is_ok());
     EXPECT_TRUE(lito::uninstall_llvm_sdk(lito::SdkUninstallRequest {
-                                             .version = String::make("19.0.0"_str),
+                                             .version = "19.0.0"_Str,
                                          })
                     .is_err());
     EXPECT_TRUE(rstd::fs::exists(target.as_path()).unwrap());
@@ -416,7 +407,7 @@ TEST_F(SdkStore, UninstallClearsActiveStateAndRemovesInvalidOwnedEntries) {
                                 "partial"_str.as_bytes())
                     .is_ok());
     auto recovered = lito::uninstall_llvm_sdk(lito::SdkUninstallRequest {
-        .version = String::make("18.0.0"_str),
+        .version = "18.0.0"_Str,
     });
     ASSERT_TRUE(recovered.is_ok());
     EXPECT_TRUE(recovered->recovered);
@@ -431,7 +422,7 @@ TEST_F(SdkStore, AndroidInstallRequiresLicenseAcceptanceBeforeStoreMutation) {
     EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
 
     auto rejected = lito::install_android_ndk(lito::AndroidNdkInstallRequest {
-        .version = String::make("29.0.14206865"_str),
+        .version = "29.0.14206865"_Str,
     });
     ASSERT_TRUE(rejected.is_err());
     EXPECT_TRUE(
@@ -453,7 +444,7 @@ TEST_F(SdkStore, AndroidUninstallOnlyRemovesOwnedStoreEntries) {
                                 "partial"_str.as_bytes())
                     .is_ok());
     auto removed = lito::uninstall_android_ndk(lito::SdkUninstallRequest {
-        .version = String::make("28.0.13004108"_str),
+        .version = "28.0.13004108"_Str,
     });
     ASSERT_TRUE(removed.is_ok());
     EXPECT_TRUE(removed->invalid_entry);
@@ -464,7 +455,7 @@ TEST_F(SdkStore, AndroidUninstallOnlyRemovesOwnedStoreEntries) {
     auto linked = data_home.join(PathBuf::from("lito/android-ndk/27.2.12479018"_str).as_path());
     ASSERT_TRUE(rstd::fs::soft_link(outside.as_path(), linked.as_path()).is_ok());
     EXPECT_TRUE(lito::uninstall_android_ndk(lito::SdkUninstallRequest {
-                                                .version = String::make("27.2.12479018"_str),
+                                                .version = "27.2.12479018"_Str,
                                             })
                     .is_err());
     EXPECT_TRUE(rstd::fs::exists(outside.as_path()).unwrap());
@@ -473,7 +464,7 @@ TEST_F(SdkStore, AndroidUninstallOnlyRemovesOwnedStoreEntries) {
         data_home.join(PathBuf::from("lito/android-ndk/.removing/26.1.10909125"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(tombstone.as_path()).is_ok());
     auto recovered = lito::uninstall_android_ndk(lito::SdkUninstallRequest {
-        .version = String::make("26.1.10909125"_str),
+        .version = "26.1.10909125"_Str,
     });
     ASSERT_TRUE(recovered.is_ok());
     EXPECT_TRUE(recovered->recovered);

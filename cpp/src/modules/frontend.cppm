@@ -57,7 +57,7 @@ auto project_frontend_analysis(frontend::FrontendAnalysis      analysis,
     if (language == lito::manifest::PackageLanguage::C) {
         if (facts.provided.is_some() || facts.implementation_module.is_some() ||
             ! facts.imports.is_empty()) {
-            return Err(String::make("C frontend result contains C++ module facts"_str));
+            return Err("C frontend result contains C++ module facts"_Str);
         }
         return Ok(SourceScanArtifact {
             .language         = LanguageScanResult::C(CScanResult { .common = rstd::move(common) }),

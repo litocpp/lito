@@ -90,7 +90,7 @@ auto source_identity(const Request& requirement) -> String {
     if (requirement.source.is_Directory()) {
         return requirement.source.as_Directory().identity.clone();
     }
-    return String::make("find"_str);
+    return "find"_Str;
 }
 
 auto cmake_path_literal(ref<rstd::path::Path> path, ref<str> context)
@@ -103,7 +103,7 @@ auto cmake_path_literal(ref<rstd::path::Path> path, ref<str> context)
         (! rstd::path::is_separator(U'\\') && value.contains("\\"_str))) {
         return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
     }
-    auto quoted = String::make("\""_str);
+    auto quoted = "\""_Str;
     for (auto character : value.chars()) {
         auto codepoint = static_cast<char32_t>(character.to_primitive());
         quoted.push(rstd::path::is_separator(codepoint) ? U'/' : codepoint);
@@ -261,7 +261,7 @@ auto cmake_package_path_component(ref<str> package) -> lito::tools::ToolResult<S
                  lower.as_str().starts_with(rstd::format("{}.", name).as_str());
     }
     if (unsafe) {
-        auto prefixed = String::make("cmake-"_str);
+        auto prefixed = "cmake-"_Str;
         prefixed.push_str(result.as_str());
         result = rstd::move(prefixed);
     }
@@ -283,7 +283,7 @@ auto work_area(const Request&                requirement,
                ref<str>                      effective_target,
                ref<rstd::path::Path> profile_cmake_root) -> lito::tools::ToolResult<CMakeWorkArea> {
     auto source_id = source_identity(requirement);
-    auto recipe    = String::make("lito-cmake-preparation-v7\n"_str);
+    auto recipe    = "lito-cmake-preparation-v7\n"_Str;
     append_identity(recipe, requirement.package.as_str());
     append_identity(recipe, source_id.as_str());
     append_identity(recipe,
@@ -341,7 +341,7 @@ auto work_area(const Request&                requirement,
         directory.push_str(source_key.as_str());
     }
     auto root         = PathBuf::from(profile_cmake_root).join(PathBuf::from(directory).as_path());
-    auto query_recipe = String::make("lito-cmake-query-v7\n"_str);
+    auto query_recipe = "lito-cmake-query-v7\n"_Str;
     append_identity(query_recipe, recipe.as_str());
     append_identity(query_recipe, requirement.package.as_str());
     for (const auto& component : requirement.components) {

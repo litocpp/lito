@@ -83,24 +83,22 @@ auto extraction_request_json(const BuildSummary&                 summary,
     auto working      = rstd_try(doc_path_text(unit.invocation.working_directory.as_path(),
                                                "documentation working directory"_str));
     auto package_json = JsonMap::make();
-    package_json.insert(String::make("name"_str), rstd::into<Json>(package.name.as_str()));
-    package_json.insert(String::make("version"_str),
+    package_json.insert("name"_Str, rstd::into<Json>(package.name.as_str()));
+    package_json.insert("version"_Str,
                         package.version.is_some() ? rstd::into<Json>(package.version->as_str())
                                                   : rstd::into<Json>(""_str));
-    package_json.insert(String::make("identity"_str),
-                        rstd::into<Json>(package.source_identity.as_str()));
+    package_json.insert("identity"_Str, rstd::into<Json>(package.source_identity.as_str()));
 
     auto target_json = JsonMap::make();
-    target_json.insert(String::make("name"_str), rstd::into<Json>(unit.target.name.as_str()));
-    target_json.insert(String::make("kind"_str), rstd::into<Json>("library"_str));
+    target_json.insert("name"_Str, rstd::into<Json>(unit.target.name.as_str()));
+    target_json.insert("kind"_Str, rstd::into<Json>("library"_str));
 
     auto unit_json = JsonMap::make();
-    unit_json.insert(String::make("identity"_str), rstd::into<Json>(unit.source_identity.as_str()));
-    unit_json.insert(String::make("kind"_str),
-                     rstd::into<Json>(rstd::format("{}", unit.kind).as_str()));
-    unit_json.insert(String::make("is_interface"_str), Json::Bool(unit.is_interface));
-    unit_json.insert(String::make("source"_str), Json::String(rstd::move(source)));
-    unit_json.insert(String::make("module"_str),
+    unit_json.insert("identity"_Str, rstd::into<Json>(unit.source_identity.as_str()));
+    unit_json.insert("kind"_Str, rstd::into<Json>(rstd::format("{}", unit.kind).as_str()));
+    unit_json.insert("is_interface"_Str, Json::Bool(unit.is_interface));
+    unit_json.insert("source"_Str, Json::String(rstd::move(source)));
+    unit_json.insert("module"_Str,
                      unit.logical_module.is_some() ? rstd::into<Json>(unit.logical_module->as_str())
                                                    : Json::Null());
 
@@ -110,36 +108,34 @@ auto extraction_request_json(const BuildSummary&                 summary,
                           })
                           .collect<JsonArray>();
     auto invocation = JsonMap::make();
-    invocation.insert(String::make("cwd"_str), Json::String(rstd::move(working)));
-    invocation.insert(String::make("arguments"_str), Json::Array(rstd::move(arguments)));
+    invocation.insert("cwd"_Str, Json::String(rstd::move(working)));
+    invocation.insert("arguments"_Str, Json::Array(rstd::move(arguments)));
 
     auto compiler = JsonMap::make();
-    compiler.insert(String::make("identity"_str),
-                    rstd::into<Json>(summary.compiler.build_identity.as_str()));
-    compiler.insert(String::make("target"_str), rstd::into<Json>(summary.compiler.target.as_str()));
+    compiler.insert("identity"_Str, rstd::into<Json>(summary.compiler.build_identity.as_str()));
+    compiler.insert("target"_Str, rstd::into<Json>(summary.compiler.target.as_str()));
 
     auto imported = JsonArray::with_capacity(unit.bmi_dependencies.len());
     for (const auto& dependency : unit.bmi_dependencies) {
         auto path = rstd_try(doc_path_text(dependency.path.as_path(), "imported BMI"_str));
         auto item = JsonMap::make();
-        item.insert(String::make("module"_str), rstd::into<Json>(dependency.logical_name.as_str()));
-        item.insert(String::make("path"_str), Json::String(rstd::move(path)));
-        item.insert(String::make("identity"_str),
-                    rstd::into<Json>(dependency.artifact_identity.as_str()));
+        item.insert("module"_Str, rstd::into<Json>(dependency.logical_name.as_str()));
+        item.insert("path"_Str, Json::String(rstd::move(path)));
+        item.insert("identity"_Str, rstd::into<Json>(dependency.artifact_identity.as_str()));
         imported.push(Json::Object(rstd::move(item)));
     }
 
     auto root = JsonMap::make();
-    root.insert(String::make("format"_str), rstd::into<Json>("litodoc-extract"_str));
-    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("request_id"_str), rstd::into<Json>(request_id));
-    root.insert(String::make("package"_str), Json::Object(rstd::move(package_json)));
-    root.insert(String::make("target"_str), Json::Object(rstd::move(target_json)));
-    root.insert(String::make("unit"_str), Json::Object(rstd::move(unit_json)));
-    root.insert(String::make("invocation"_str), Json::Object(rstd::move(invocation)));
-    root.insert(String::make("compiler"_str), Json::Object(rstd::move(compiler)));
-    root.insert(String::make("package_root"_str), Json::String(rstd::move(package_root)));
-    root.insert(String::make("imported_artifacts"_str), Json::Array(rstd::move(imported)));
+    root.insert("format"_Str, rstd::into<Json>("litodoc-extract"_str));
+    root.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert("request_id"_Str, rstd::into<Json>(request_id));
+    root.insert("package"_Str, Json::Object(rstd::move(package_json)));
+    root.insert("target"_Str, Json::Object(rstd::move(target_json)));
+    root.insert("unit"_Str, Json::Object(rstd::move(unit_json)));
+    root.insert("invocation"_Str, Json::Object(rstd::move(invocation)));
+    root.insert("compiler"_Str, Json::Object(rstd::move(compiler)));
+    root.insert("package_root"_Str, Json::String(rstd::move(package_root)));
+    root.insert("imported_artifacts"_Str, Json::Array(rstd::move(imported)));
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(root)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
@@ -234,10 +230,10 @@ auto run_extraction(ExtractionTask task) -> ExtractionCompletion {
     if (response.is_err())
         return { .plan = task.plan, .result = Err(rstd::move(response).unwrap_err()) };
     arguments.push(rstd::move(executable).unwrap());
-    arguments.push(String::make("extract"_str));
-    arguments.push(String::make("--request"_str));
+    arguments.push("extract"_Str);
+    arguments.push("--request"_Str);
     arguments.push(rstd::move(request).unwrap());
-    arguments.push(String::make("--response"_str));
+    arguments.push("--response"_Str);
     arguments.push(rstd::move(response).unwrap());
     auto executed =
         run_command(arguments, task.environment, Some(task.working_directory.as_path()));
@@ -248,7 +244,7 @@ auto run_extraction(ExtractionTask task) -> ExtractionCompletion {
     if (executed->exit_code != i32 {}) {
         return {
             .plan   = task.plan,
-            .result = Err(DocError::Execution(String::make("litodoc extract"_str),
+            .result = Err(DocError::Execution("litodoc extract"_Str,
                                               task.executable.clone(),
                                               executed->exit_code,
                                               rstd::move(executed->standard_output),
@@ -260,8 +256,8 @@ auto run_extraction(ExtractionTask task) -> ExtractionCompletion {
     if (! *valid) {
         return {
             .plan   = task.plan,
-            .result = Err(DocError::Protocol(task.response.clone(),
-                                             String::make("response does not match request"_str))),
+            .result = Err(
+                DocError::Protocol(task.response.clone(), "response does not match request"_Str)),
         };
     }
     return { .plan = task.plan, .result = Ok(empty {}) };
@@ -295,17 +291,17 @@ auto execute_extractions(const DocRequest&                 request,
     auto jobs = policy->jobs < pending.len() ? policy->jobs : pending.len();
     auto pool = rstd::thread::ThreadPoolBuilder::make()
                     .worker_count(jobs)
-                    .thread_name(String::make("lito-doc"_str))
+                    .thread_name("lito-doc"_Str)
                     .build();
     if (pool.is_err()) {
-        return Err(DocError::Io(String::make("create documentation worker pool"_str),
+        return Err(DocError::Io("create documentation worker pool"_Str,
                                 PathBuf::make(),
                                 rstd::move(pool).unwrap_err_unchecked()));
     }
     auto threads = rstd::move(pool).unwrap_unchecked();
     auto tasks = rstd::thread::BlockingTaskSet<ExtractionCompletion>::make(threads.handle(), jobs);
     if (tasks.is_err()) {
-        return Err(DocError::Io(String::make("create documentation task set"_str),
+        return Err(DocError::Io("create documentation task set"_Str,
                                 PathBuf::make(),
                                 rstd::move(tasks).unwrap_err_unchecked()));
     }
@@ -429,54 +425,48 @@ auto site_manifest_json(const BuildSummary&     summary,
         auto responses = JsonArray::with_capacity(package.responses.len());
         for (const auto& response : package.responses) {
             auto value = JsonMap::make();
-            value.insert(String::make("path"_str),
+            value.insert("path"_Str,
                          Json::String(rstd_try(doc_path_text(response.path.as_path(),
                                                              "documentation response"_str))));
-            value.insert(String::make("digest"_str), rstd::into<Json>(response.digest.as_str()));
+            value.insert("digest"_Str, rstd::into<Json>(response.digest.as_str()));
             responses.push(Json::Object(rstd::move(value)));
         }
         auto value = JsonMap::make();
-        value.insert(String::make("name"_str), rstd::into<Json>(package.package->name.as_str()));
-        value.insert(String::make("version"_str),
+        value.insert("name"_Str, rstd::into<Json>(package.package->name.as_str()));
+        value.insert("version"_Str,
                      package.package->version.is_some()
                          ? rstd::into<Json>(package.package->version->as_str())
                          : rstd::into<Json>(""_str));
-        value.insert(String::make("source_identity"_str),
+        value.insert("source_identity"_Str,
                      rstd::into<Json>(package.package->source_identity.as_str()));
-        value.insert(String::make("root_module"_str),
-                     rstd::into<Json>(package.root_module.as_str()));
-        value.insert(String::make("profile"_str),
-                     rstd::into<Json>(summary.product.profile.as_str()));
-        value.insert(String::make("root"_str), Json::String(rstd::move(root)));
-        value.insert(String::make("toolchain_version"_str),
-                     rstd::into<Json>(summary.compiler.version.as_str()));
-        value.insert(String::make("toolchain_target"_str),
-                     rstd::into<Json>(summary.compiler.target.as_str()));
-        value.insert(String::make("language_standard"_str),
-                     rstd::into<Json>(summary.language_standard.as_str()));
-        value.insert(String::make("responses"_str), Json::Array(rstd::move(responses)));
+        value.insert("root_module"_Str, rstd::into<Json>(package.root_module.as_str()));
+        value.insert("profile"_Str, rstd::into<Json>(summary.product.profile.as_str()));
+        value.insert("root"_Str, Json::String(rstd::move(root)));
+        value.insert("toolchain_version"_Str, rstd::into<Json>(summary.compiler.version.as_str()));
+        value.insert("toolchain_target"_Str, rstd::into<Json>(summary.compiler.target.as_str()));
+        value.insert("language_standard"_Str, rstd::into<Json>(summary.language_standard.as_str()));
+        value.insert("responses"_Str, Json::Array(rstd::move(responses)));
         package_values.push(Json::Object(rstd::move(value)));
     }
     auto output_text = rstd_try(doc_path_text(output, "documentation output"_str));
     auto data_text   = rstd_try(doc_path_text(data_output, "documentation data output"_str));
     auto root        = JsonMap::make();
-    root.insert(String::make("format"_str), rstd::into<Json>("litodoc-site"_str));
-    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("title"_str), rstd::into<Json>(summary.package.as_str()));
-    root.insert(String::make("output"_str), Json::String(rstd::move(output_text)));
-    root.insert(String::make("data_output"_str), Json::String(rstd::move(data_text)));
+    root.insert("format"_Str, rstd::into<Json>("litodoc-site"_str));
+    root.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert("title"_Str, rstd::into<Json>(summary.package.as_str()));
+    root.insert("output"_Str, Json::String(rstd::move(output_text)));
+    root.insert("data_output"_Str, Json::String(rstd::move(data_text)));
     if (frontend.is_some()) {
-        root.insert(String::make("frontend"_str),
+        root.insert("frontend"_Str,
                     Json::String(rstd_try(
                         doc_path_text(frontend->as_path(), "documentation frontend"_str))));
     }
-    root.insert(String::make("data_only"_str), Json::Bool(data_only));
-    root.insert(String::make("publication"_str),
+    root.insert("data_only"_Str, Json::Bool(data_only));
+    root.insert("publication"_Str,
                 rstd::into<Json>(package_publication ? "package-set"_str : "site"_str));
-    root.insert(String::make("data_api"_str), Json::Number(rstd::json::Number::from_u64(u64(4))));
-    root.insert(String::make("template_api"_str),
-                Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("packages"_str), Json::Array(rstd::move(package_values)));
+    root.insert("data_api"_Str, Json::Number(rstd::json::Number::from_u64(u64(4))));
+    root.insert("template_api"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert("packages"_Str, Json::Array(rstd::move(package_values)));
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(root)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
@@ -489,13 +479,13 @@ auto run_generate(const ResolvedDocTool&            tool,
     auto manifest_text = rstd_try(doc_path_text(manifest, "litodoc site manifest"_str));
     auto arguments     = Vec<String>::make();
     arguments.push(rstd::move(executable));
-    arguments.push(String::make("generate"_str));
-    arguments.push(String::make("--manifest"_str));
+    arguments.push("generate"_Str);
+    arguments.push("--manifest"_Str);
     arguments.push(rstd::move(manifest_text));
     auto executed = run_command(arguments, environment);
     if (executed.is_err()) return Err(rstd::into<DocError>(rstd::move(executed).unwrap_err()));
     if (executed->exit_code != i32 {}) {
-        return Err(DocError::Execution(String::make("litodoc generate"_str),
+        return Err(DocError::Execution("litodoc generate"_Str,
                                        tool.executable.clone(),
                                        executed->exit_code,
                                        rstd::move(executed->standard_output),

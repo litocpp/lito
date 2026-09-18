@@ -516,7 +516,7 @@ auto parse_platforms(ref<str> text, ref<rstd::path::Path> path)
 auto host_tag(const lito::system::HostInfo& host) -> AndroidNdkResult<String> {
     if (host.os.as_str() == "linux"_str &&
         host.architecture == lito::system::Architecture::X86_64) {
-        return Ok(String::make("linux-x86_64"_str));
+        return Ok("linux-x86_64"_Str);
     }
     return android_failure<String>(
         rstd::format("Android NDK is not certified for host '{}-{}'",
@@ -582,7 +582,7 @@ auto open_android_ndk(ref<rstd::path::Path> root, const lito::system::HostInfo& 
             "Android NDK source.properties is missing Pkg.Revision"_str);
     }
     auto release_name = property(source_text.as_str(), "Pkg.ReleaseName"_str);
-    if (release_name.is_none()) release_name = Some(String::make("unknown"_str));
+    if (release_name.is_none()) release_name = Some("unknown"_Str);
     auto revision = rstd_try(parse_android_ndk_revision(revision_text->as_str()));
     auto tag      = rstd_try(host_tag(host));
     auto prebuilt = canonical->join(PathBuf::from("toolchains/llvm/prebuilt"_str).as_path())
@@ -718,7 +718,7 @@ auto resolve_android_toolchain(AndroidNdkDistribution                    distrib
         rstd_try(
             append_file_identity(runtime_identity, "libc++_shared.so"_str, runtime_path.as_path()));
         shared_runtime = Some(AndroidRuntimeArtifact {
-            .name     = String::make("libc++_shared.so"_str),
+            .name     = "libc++_shared.so"_Str,
             .path     = rstd::move(runtime_path),
             .identity = licrypto::sha256_hex(runtime_identity.as_str()),
         });
@@ -753,7 +753,7 @@ auto resolve_android_build_platform(const lito::system::HostInfo&   host,
         .sysroot             = Some(target.sysroot.clone()),
         .android_abi         = Some(target.abi.clone()),
         .android_minimum_api = Some(u32(target.minimum_api.to_primitive())),
-        .sdk_kind            = Some(String::make("android-ndk"_str)),
+        .sdk_kind            = Some("android-ndk"_Str),
         .output_key          = target.output_key.clone(),
     };
 }

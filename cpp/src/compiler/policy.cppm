@@ -261,7 +261,7 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
             .argument   = CppCompilerArgument::IncludeDirectory(as<Clone>(include).clone()),
             .raw_tokens = Vec<String>::make(),
-            .source     = String::make("merged C++ context"_str),
+            .source     = "merged C++ context"_Str,
         });
     }
     for (const auto& macro : extra.preprocessor.macros) {

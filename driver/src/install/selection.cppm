@@ -462,7 +462,7 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&   requirem
                              lito::package::package_target_id_text(requirement.target),
                              rstd::move(runpath).unwrap_err()));
         }
-        auto identity = String::make("lito-install-link-v3\n"_str);
+        auto identity = "lito-install-link-v3\n"_Str;
         identity.push_str(lito::package::package_target_id_text(requirement.target).as_str());
         identity.push_ascii('\n');
         identity.push_str(rstd::format("package-source={}:{}\n",

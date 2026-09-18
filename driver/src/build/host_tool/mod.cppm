@@ -42,10 +42,9 @@ auto requested_package(const Vec<String>& packages, ref<str> name) noexcept -> b
 auto executable_digest(ref<rstd::path::Path> path) -> HostBuildToolResult<String> {
     auto data = rstd::fs::read(path);
     if (data.is_err()) {
-        return Err(HostBuildToolError::System(
-            SystemError::Io(String::make("read host build-tool executable"_str),
-                            PathBuf::from(path),
-                            rstd::move(data).unwrap_err())));
+        return Err(HostBuildToolError::System(SystemError::Io("read host build-tool executable"_Str,
+                                                              PathBuf::from(path),
+                                                              rstd::move(data).unwrap_err())));
     }
     return Ok(licrypto::sha256_hex(data->as_slice()));
 }
@@ -121,29 +120,24 @@ auto write_host_tool_receipt(ref<rstd::path::Path>                           rec
                              ref<str>                                        executable_digest,
                              ref<str> receipt_identity) -> HostBuildToolResult<empty> {
     auto document = rstd::json::Map::make();
-    document.insert(String::make("format"_str),
-                    Json::String(String::make("lito-host-build-tool"_str)));
-    document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(1))));
-    document.insert(String::make("package"_str), Json::String(owned.package.clone()));
-    document.insert(String::make("alias"_str), Json::String(owned.requirement.alias.clone()));
-    document.insert(String::make("declared_version"_str),
+    document.insert("format"_Str, Json::String("lito-host-build-tool"_Str));
+    document.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    document.insert("package"_Str, Json::String(owned.package.clone()));
+    document.insert("alias"_Str, Json::String(owned.requirement.alias.clone()));
+    document.insert("declared_version"_Str,
                     Json::String(owned.requirement.source.as_Archive().recipe.version.clone()));
-    document.insert(String::make("host_os"_str), Json::String(host.os.clone()));
-    document.insert(String::make("host_architecture"_str),
+    document.insert("host_os"_Str, Json::String(host.os.clone()));
+    document.insert("host_architecture"_Str,
                     Json::String(String::make(architecture_name(host.architecture))));
-    document.insert(String::make("url"_str), Json::String(String::make(archive.url.as_str())));
-    document.insert(String::make("archive_sha256"_str), Json::String(archive.sha256.to_hex()));
+    document.insert("url"_Str, Json::String(String::make(archive.url.as_str())));
+    document.insert("archive_sha256"_Str, Json::String(archive.sha256.to_hex()));
     document.insert(
-        String::make("executable"_str),
+        "executable"_Str,
         Json::String(
             owned.requirement.source.as_Archive().recipe.executable.as_path().to_string_lossy()));
-    document.insert(String::make("source_identity"_str),
-                    Json::String(String::make(source_identity)));
-    document.insert(String::make("executable_digest"_str),
-                    Json::String(String::make(executable_digest)));
-    document.insert(String::make("receipt_identity"_str),
-                    Json::String(String::make(receipt_identity)));
+    document.insert("source_identity"_Str, Json::String(String::make(source_identity)));
+    document.insert("executable_digest"_Str, Json::String(String::make(executable_digest)));
+    document.insert("receipt_identity"_Str, Json::String(String::make(receipt_identity)));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
@@ -451,7 +445,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
         }
         auto arguments = Vec<String>::make();
         arguments.push(String::make(*executable_text));
-        arguments.push(String::make("--version"_str));
+        arguments.push("--version"_Str);
         auto probed = rstd_try(run_command(arguments, environment));
         auto actual = String::make(probed.standard_output.as_str().trim_ascii());
         if (probed.exit_code != i32 {} ||

@@ -21,7 +21,7 @@ class PackageResolver : public ProjectFixture {};
 auto pmacro_source_options(ref<rstd::path::Path> support) -> lito::source::SourceResolutionOptions {
     auto options = lito::source::SourceResolutionOptions {};
     options.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {
-        .id     = String::make("pmacro"_str),
+        .id     = "pmacro"_Str,
         .source = lito::source::BuiltinPackageSource::Path(PathBuf::from(support)),
     });
     return options;
@@ -790,7 +790,7 @@ archive = "fixture-patched-registry-version-library"
     auto options            = lito::source::SourceResolutionOptions {};
     options.sources.network = lito::source::NetworkPolicy::Offline;
     options.sources.patches.push(lito::source::GitSourcePatch {
-        .git  = String::make("https://example.invalid/patched-registry-version.git"_str),
+        .git  = "https://example.invalid/patched-registry-version.git"_Str,
         .path = project->root.join(PathBuf::from("provider"_str).as_path()),
     });
     auto resolved =
@@ -898,7 +898,7 @@ TEST_F(PackageResolver, ResolvesBuiltinScriptPackagesThroughRequiredDependencies
             ++self.registry_calls;
             if (requirements.len() != usize(1) || self.resolved.is_none()) {
                 return Err(lito::registry::RegistryGraphError {
-                    .message = String::make("unexpected fixture Registry request"_str),
+                    .message = "unexpected fixture Registry request"_Str,
                 });
             }
             const auto& requirement = requirements[usize {}];

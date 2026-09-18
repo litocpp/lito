@@ -28,37 +28,37 @@ auto archive_receipt_json(const ArchiveCacheReceipt& receipt) -> Json {
     auto inputs = JsonArray::with_capacity(receipt.inputs.len());
     for (const auto& input : receipt.inputs) {
         auto value = JsonMap::make();
-        value.insert(String::make("content"_str), cache_string(input.content.as_str()));
-        value.insert(String::make("recipe"_str), cache_string(input.recipe.as_str()));
+        value.insert("content"_Str, cache_string(input.content.as_str()));
+        value.insert("recipe"_Str, cache_string(input.recipe.as_str()));
         inputs.push(Json::Object(rstd::move(value)));
     }
     auto output = JsonMap::make();
-    output.insert(String::make("kind"_str), cache_string("archive"_str));
-    output.insert(String::make("path"_str), cache_string(receipt.output.as_str()));
-    output.insert(String::make("recipe"_str), cache_string(receipt.artifact.as_str()));
+    output.insert("kind"_Str, cache_string("archive"_str));
+    output.insert("path"_Str, cache_string(receipt.output.as_str()));
+    output.insert("recipe"_Str, cache_string(receipt.artifact.as_str()));
     auto outputs = JsonMap::make();
-    outputs.insert(String::make("archive"_str), Json::Object(rstd::move(output)));
+    outputs.insert("archive"_Str, Json::Object(rstd::move(output)));
 
     auto complete = JsonMap::make();
-    complete.insert(String::make("artifact"_str), cache_string(receipt.artifact.as_str()));
-    complete.insert(String::make("command"_str), cache_string(receipt.command.as_str()));
-    complete.insert(String::make("environment"_str), cache_string(receipt.environment.as_str()));
-    complete.insert(String::make("inputs"_str), Json::Array(rstd::move(inputs)));
-    complete.insert(String::make("outputs"_str), Json::Object(rstd::move(outputs)));
-    complete.insert(String::make("state"_str), cache_string("complete"_str));
-    complete.insert(String::make("target"_str), cache_string(receipt.target.as_str()));
-    complete.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+    complete.insert("artifact"_Str, cache_string(receipt.artifact.as_str()));
+    complete.insert("command"_Str, cache_string(receipt.command.as_str()));
+    complete.insert("environment"_Str, cache_string(receipt.environment.as_str()));
+    complete.insert("inputs"_Str, Json::Array(rstd::move(inputs)));
+    complete.insert("outputs"_Str, Json::Object(rstd::move(outputs)));
+    complete.insert("state"_Str, cache_string("complete"_str));
+    complete.insert("target"_Str, cache_string(receipt.target.as_str()));
+    complete.insert("version"_Str, cache_u64(CACHE_VERSION));
     return Json::Object(rstd::move(complete));
 }
 
 auto archive_building_receipt_json(const ArchiveCacheReceipt& receipt) -> Json {
     auto building = JsonMap::make();
-    building.insert(String::make("artifact"_str), cache_string(receipt.artifact.as_str()));
-    building.insert(String::make("command"_str), cache_string(receipt.command.as_str()));
-    building.insert(String::make("environment"_str), cache_string(receipt.environment.as_str()));
-    building.insert(String::make("state"_str), cache_string("building"_str));
-    building.insert(String::make("target"_str), cache_string(receipt.target.as_str()));
-    building.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
+    building.insert("artifact"_Str, cache_string(receipt.artifact.as_str()));
+    building.insert("command"_Str, cache_string(receipt.command.as_str()));
+    building.insert("environment"_Str, cache_string(receipt.environment.as_str()));
+    building.insert("state"_Str, cache_string("building"_str));
+    building.insert("target"_Str, cache_string(receipt.target.as_str()));
+    building.insert("version"_Str, cache_u64(CACHE_VERSION));
     return Json::Object(rstd::move(building));
 }
 
@@ -223,12 +223,11 @@ public:
         auto complete_object = complete.as_object_mut();
         if (complete_object.is_none()) {
             return cache_failure<CachedArtifactIdentity>(
-                String::make("archive cache receipt is not an object"_str));
+                "archive cache receipt is not an object"_Str);
         }
         auto digests = JsonMap::make();
-        digests.insert(String::make("archive"_str), cache_string(digest->as_str()));
-        (**complete_object)
-            .insert(String::make("content-digests"_str), Json::Object(rstd::move(digests)));
+        digests.insert("archive"_Str, cache_string(digest->as_str()));
+        (**complete_object).insert("content-digests"_Str, Json::Object(rstd::move(digests)));
         for (const auto& output : decision.stale_outputs_) {
             auto removed = remove_owned_output(output.as_path(), owner_root_.as_path());
             if (removed.is_err()) return Err(rstd::move(removed).unwrap_err());

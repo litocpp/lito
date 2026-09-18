@@ -323,15 +323,15 @@ auto dependency_json(const RegistryDependencyProjection& dependency) -> Json {
     auto features = rstd::json::Array::make();
     for (const auto& feature : dependency.features) features.push(string_json(feature.as_str()));
     auto value = JsonMap::make();
-    value.insert(String::make("alias"_str), string_json(dependency.alias.as_str()));
-    value.insert(String::make("registry"_str), string_json(dependency.package.registry.as_str()));
-    value.insert(String::make("package"_str), string_json(dependency.package.name.as_str()));
-    value.insert(String::make("requirement"_str), string_json(dependency.requirement.text()));
-    value.insert(String::make("kind"_str), string_json(dependency_kind_text(dependency.kind)));
-    value.insert(String::make("pub"_str), Json::Bool(dependency.consumption.is_public));
-    value.insert(String::make("usage"_str), dependency_usage_json(dependency.consumption.usage));
-    value.insert(String::make("features"_str), Json::Array(rstd::move(features)));
-    value.insert(String::make("default_features"_str), Json::Bool(dependency.default_features));
+    value.insert("alias"_Str, string_json(dependency.alias.as_str()));
+    value.insert("registry"_Str, string_json(dependency.package.registry.as_str()));
+    value.insert("package"_Str, string_json(dependency.package.name.as_str()));
+    value.insert("requirement"_Str, string_json(dependency.requirement.text()));
+    value.insert("kind"_Str, string_json(dependency_kind_text(dependency.kind)));
+    value.insert("pub"_Str, Json::Bool(dependency.consumption.is_public));
+    value.insert("usage"_Str, dependency_usage_json(dependency.consumption.usage));
+    value.insert("features"_Str, Json::Array(rstd::move(features)));
+    value.insert("default_features"_Str, Json::Bool(dependency.default_features));
     return Json::Object(rstd::move(value));
 }
 
@@ -416,7 +416,7 @@ auto candidate_metadata_json(const RegistryPackageMetadata& metadata) -> Json {
     auto authors = rstd::json::Array::make();
     for (const auto& author : metadata.authors) authors.push(string_json(author.as_str()));
     auto value = JsonMap::make();
-    value.insert(String::make("authors"_str), Json::Array(rstd::move(authors)));
+    value.insert("authors"_Str, Json::Array(rstd::move(authors)));
     const auto insert_optional = [&](ref<str> key, const Option<String>& item) {
         if (item.is_some()) value.insert(String::make(key), string_json(item->as_str()));
     };
@@ -426,14 +426,11 @@ auto candidate_metadata_json(const RegistryPackageMetadata& metadata) -> Json {
     insert_optional("documentation"_str, metadata.documentation);
     if (metadata.readme.is_some()) {
         auto readme = JsonMap::make();
-        readme.insert(String::make("file"_str), string_json(metadata.readme->path.as_str()));
-        readme.insert(String::make("contents"_str),
-                      string_json(metadata.readme->contents.as_str()));
-        readme.insert(String::make("sha256"_str),
-                      string_json(metadata.readme->checksum.to_hex().as_str()));
-        readme.insert(String::make("size"_str),
-                      string_json(rstd::format("{}", metadata.readme->size).as_str()));
-        value.insert(String::make("readme"_str), Json::Object(rstd::move(readme)));
+        readme.insert("file"_Str, string_json(metadata.readme->path.as_str()));
+        readme.insert("contents"_Str, string_json(metadata.readme->contents.as_str()));
+        readme.insert("sha256"_Str, string_json(metadata.readme->checksum.to_hex().as_str()));
+        readme.insert("size"_Str, string_json(rstd::format("{}", metadata.readme->size).as_str()));
+        value.insert("readme"_Str, Json::Object(rstd::move(readme)));
     }
     return Json::Object(rstd::move(value));
 }
@@ -446,10 +443,9 @@ auto lito::registry::registry_inspector_capabilities_json() -> String {
     auto formats = rstd::json::Array::make();
     formats.push(string_json(RegistryArchiveFormat::TAR_ZSTD_V1));
     auto root = JsonMap::make();
-    root.insert(String::make("schema"_str),
-                string_json("lito.registry.inspector-capabilities.v5"_str));
-    root.insert(String::make("protocols"_str), Json::Array(rstd::move(protocols)));
-    root.insert(String::make("archive_formats"_str), Json::Array(rstd::move(formats)));
+    root.insert("schema"_Str, string_json("lito.registry.inspector-capabilities.v5"_str));
+    root.insert("protocols"_Str, Json::Array(rstd::move(protocols)));
+    root.insert("archive_formats"_Str, Json::Array(rstd::move(formats)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
@@ -649,35 +645,33 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
         dependencies.push(dependency_json(dependency));
     }
     auto archive = JsonMap::make();
-    archive.insert(String::make("checksum"_str),
-                   string_json(inspected.archive.checksum.text().as_str()));
-    archive.insert(String::make("size"_str), string_json(inspected.archive.size.text().as_str()));
-    archive.insert(String::make("format"_str), string_json(inspected.archive.format.as_str()));
+    archive.insert("checksum"_Str, string_json(inspected.archive.checksum.text().as_str()));
+    archive.insert("size"_Str, string_json(inspected.archive.size.text().as_str()));
+    archive.insert("format"_Str, string_json(inspected.archive.format.as_str()));
 
     auto root = JsonMap::make();
-    root.insert(String::make("schema"_str), string_json(REGISTRY_INSPECTION_CANDIDATE_SCHEMA));
-    root.insert(String::make("protocol"_str), string_json(REGISTRY_INSPECTION_PROTOCOL));
-    root.insert(String::make("registry"_str), string_json(candidate.package.registry.as_str()));
-    root.insert(String::make("package"_str), string_json(candidate.package.name.as_str()));
-    root.insert(String::make("version"_str), string_json(candidate.version.text().as_str()));
-    root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
-    root.insert(String::make("dependencies"_str), Json::Array(rstd::move(dependencies)));
-    root.insert(String::make("metadata"_str), candidate_metadata_json(candidate.metadata));
-    root.insert(String::make("file_count"_str),
-                string_json(rstd::format("{}", candidate.file_count).as_str()));
-    root.insert(String::make("unpacked_size"_str),
+    root.insert("schema"_Str, string_json(REGISTRY_INSPECTION_CANDIDATE_SCHEMA));
+    root.insert("protocol"_Str, string_json(REGISTRY_INSPECTION_PROTOCOL));
+    root.insert("registry"_Str, string_json(candidate.package.registry.as_str()));
+    root.insert("package"_Str, string_json(candidate.package.name.as_str()));
+    root.insert("version"_Str, string_json(candidate.version.text().as_str()));
+    root.insert("archive"_Str, Json::Object(rstd::move(archive)));
+    root.insert("dependencies"_Str, Json::Array(rstd::move(dependencies)));
+    root.insert("metadata"_Str, candidate_metadata_json(candidate.metadata));
+    root.insert("file_count"_Str, string_json(rstd::format("{}", candidate.file_count).as_str()));
+    root.insert("unpacked_size"_Str,
                 string_json(rstd::format("{}", candidate.unpacked_size).as_str()));
-    root.insert(String::make("receipt"_str), string_json(REGISTRY_INSPECTOR_RECEIPT));
+    root.insert("receipt"_Str, string_json(REGISTRY_INSPECTOR_RECEIPT));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
 auto lito::registry::serialize_registry_inspection_failure(const RegistryArtifactError& error)
     -> String {
     auto root = JsonMap::make();
-    root.insert(String::make("schema"_str), string_json(REGISTRY_INSPECTION_FAILURE_SCHEMA));
-    root.insert(String::make("protocol"_str), string_json(REGISTRY_INSPECTION_PROTOCOL));
-    root.insert(String::make("code"_str), string_json(failure_code_text(error.code)));
-    root.insert(String::make("message"_str), string_json(error.message.as_str()));
-    root.insert(String::make("receipt"_str), string_json(REGISTRY_INSPECTOR_RECEIPT));
+    root.insert("schema"_Str, string_json(REGISTRY_INSPECTION_FAILURE_SCHEMA));
+    root.insert("protocol"_Str, string_json(REGISTRY_INSPECTION_PROTOCOL));
+    root.insert("code"_Str, string_json(failure_code_text(error.code)));
+    root.insert("message"_Str, string_json(error.message.as_str()));
+    root.insert("receipt"_Str, string_json(REGISTRY_INSPECTOR_RECEIPT));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }

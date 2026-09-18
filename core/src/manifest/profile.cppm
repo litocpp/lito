@@ -45,7 +45,7 @@ enum class Lto
 };
 
 struct BuildProfileName {
-    String value { String::make("debug"_str) };
+    String value { "debug"_Str };
 
     auto as_str() const noexcept -> ref<str> { return value.as_str(); }
 
@@ -245,7 +245,7 @@ auto is_builtin_profile(ref<str> name) noexcept -> bool {
 auto inherited_cycle(const Vec<String>& path, ref<str> name) -> Option<String> {
     auto cycle = false;
     auto first = true;
-    auto text  = String::make("build profile inheritance cycle: "_str);
+    auto text  = "build profile inheritance cycle: "_Str;
     for (const auto& item : path) {
         if (item.as_str() == name) cycle = true;
         if (! cycle) continue;
@@ -294,8 +294,8 @@ auto resolve_base_profile(const ProjectProfile& project) -> ResolvedBaseProfile 
 auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> path)
     -> BuildProfileResult<ResolvedBuildProfile> {
     if (name == "base"_str) {
-        return build_profile_failure<ResolvedBuildProfile>(String::make(
-            "profile 'base' is the common profile root and cannot be selected or inherited"_str));
+        return build_profile_failure<ResolvedBuildProfile>(
+            "profile 'base' is the common profile root and cannot be selected or inherited"_Str);
     }
     auto cycle = inherited_cycle(path, name);
     if (cycle.is_some())
@@ -365,8 +365,8 @@ struct Impl<convert::TryFrom<ref<str>>, lito::manifest::BuildProfileName> {
 
     static auto try_from(ref<str> name) -> Result<lito::manifest::BuildProfileName, Error> {
         if (name == "base"_str) {
-            return Err(lito::manifest::BuildProfileError::Message(String::make(
-                "profile 'base' is the common profile root and cannot be selected"_str)));
+            return Err(lito::manifest::BuildProfileError::Message(
+                "profile 'base' is the common profile root and cannot be selected"_Str));
         }
         if (! lito::manifest::valid_build_profile_name(name)) {
             return Err(lito::manifest::BuildProfileError::Message(rstd::format(
@@ -422,7 +422,7 @@ auto resolve_build_profile(const ProjectProfile& project, const BuildProfileName
     -> BuildProfileResult<ResolvedBuildProfile> {
     if (name.as_str() == "base"_str) {
         return build_profile_failure<ResolvedBuildProfile>(
-            String::make("profile 'base' is the common profile root and cannot be selected"_str));
+            "profile 'base' is the common profile root and cannot be selected"_Str);
     }
     rstd_try(validate_build_profiles(project));
     return resolve_profile(project, name.as_str(), Vec<String>::make());

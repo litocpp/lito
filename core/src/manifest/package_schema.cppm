@@ -202,7 +202,7 @@ auto parse_package_readme(Option<wire::Inherited<wire::ReadmeValue>> declared,
     return Ok(PackageReadme {
         .source       = PackageReadmeSource::Explicit,
         .path         = Some(PathBuf::from(root).join(PathBuf::from("README.md"_str).as_path())),
-        .archive_path = Some(String::make("README.md"_str)),
+        .archive_path = Some("README.md"_Str),
     });
 }
 

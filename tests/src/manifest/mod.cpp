@@ -858,11 +858,11 @@ builtin = "qt"
     auto community = lito::registry::RegistryId::parse("https://community.example/"_str).unwrap();
     auto aliases   = Vec<lito::manifest::StandaloneRegistryAlias>::make();
     aliases.push(lito::manifest::StandaloneRegistryAlias {
-        .name     = String::make("litocpp"_str),
+        .name     = "litocpp"_Str,
         .identity = rstd::move(primary),
     });
     aliases.push(lito::manifest::StandaloneRegistryAlias {
-        .name     = String::make("community"_str),
+        .name     = "community"_Str,
         .identity = rstd::move(community),
     });
     auto serialized = lito::manifest::serialize_standalone_package_manifest(
@@ -2253,7 +2253,7 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
         tool,
         lito::system::HostInfo {
             .architecture = lito::system::Architecture::Aarch64,
-            .os           = String::make("linux"_str),
+            .os           = "linux"_Str,
         });
     ASSERT_TRUE(selected.is_ok());
     EXPECT_EQ((**selected).sha256.to_hex().as_str(),
@@ -2263,12 +2263,12 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
         lito::select_host_build_tool_archive(tool,
                                              lito::system::HostInfo {
                                                  .architecture = lito::system::Architecture::X86_64,
-                                                 .os           = String::make("windows"_str),
+                                                 .os           = "windows"_Str,
                                              });
     ASSERT_TRUE(unsupported.is_err());
     EXPECT_TRUE(unsupported.unwrap_err().is_UnsupportedHost());
     loaded->build_tools.push(lito::manifest::BuildToolRequirement {
-        .alias  = String::make("local"_str),
+        .alias  = "local"_Str,
         .source = lito::manifest::BuildToolSource::Path(PathBuf::from("missing-local-tool"_str)),
     });
     auto graph = lito::package::ResolvedPackageGraph {};
@@ -2277,7 +2277,7 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
     });
     auto host = lito::system::HostInfo {
         .architecture = lito::system::Architecture::X86_64,
-        .os           = String::make("linux"_str),
+        .os           = "linux"_Str,
     };
     auto requests =
         lito::resolve_host_build_tool_archives(graph, strings("build-tool-valid"_str), host);
@@ -2286,7 +2286,7 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
     EXPECT_EQ((*requests)[usize {}].name.as_str(), "generator"_str);
     graph.packages[usize {}].manifest.build_tools.clear();
     graph.packages[usize {}].manifest.build_tools.push(lito::manifest::BuildToolRequirement {
-        .alias  = String::make("local"_str),
+        .alias  = "local"_Str,
         .source = lito::manifest::BuildToolSource::Path(PathBuf::from("missing-local-tool"_str)),
     });
     auto local_only =
@@ -2441,7 +2441,7 @@ pub = true
     ASSERT_TRUE(package.is_ok());
     ASSERT_TRUE(requirement.is_ok());
     auto edited = lito::manifest::add_registry_dependency(
-        project->root.as_path(), *package, *requirement, Some(String::make("litocpp"_str)));
+        project->root.as_path(), *package, *requirement, Some("litocpp"_Str));
     ASSERT_TRUE(edited.is_ok());
 
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -2494,7 +2494,7 @@ link-stdlib = false
     EXPECT_TRUE(contents->as_str().contains("sample = \"^0.5\""_str));
 
     auto promoted = lito::manifest::add_registry_dependency(
-        project->root.as_path(), *package, *updated_requirement, Some(String::make("litocpp"_str)));
+        project->root.as_path(), *package, *updated_requirement, Some("litocpp"_Str));
     ASSERT_TRUE(promoted.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
@@ -2532,8 +2532,8 @@ TEST_F(Manifest, ProjectInitializationCreatesALoadableBinaryPackage) {
 TEST_F(Manifest, ProjectInitializationAcceptsAnEmptyDirectoryAndRejectsContent) {
     auto empty = source_root("invalid.directory"_str);
     ASSERT_TRUE(rstd::fs::create_dir(empty.as_path()).is_ok());
-    auto initialized = lito::manifest::initialize_project(empty.as_path(),
-                                                          Some(String::make("explicit-name"_str)));
+    auto initialized =
+        lito::manifest::initialize_project(empty.as_path(), Some("explicit-name"_Str));
     ASSERT_TRUE(initialized.is_ok());
     EXPECT_EQ(initialized->package.as_str(), "explicit-name"_str);
 

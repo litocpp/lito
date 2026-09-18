@@ -669,7 +669,7 @@ private:
         auto fields = state_->lock().unwrap_unchecked();
         auto found  = fields->identity_entries.get_mut(key);
         if (found.is_some() && (**found).domain != domain) {
-            (**found).domain = String::make(""_str);
+            (**found).domain = ""_Str;
         }
         return entry(*fields, fields->identity_entries, domain, String::make(key));
     }
@@ -805,7 +805,7 @@ public:
         auto canonical_key       = String::make(*canonical_text);
         auto source_entry_option = store_.source(domain, canonical_key.as_str());
         if (source_entry_option.is_none()) {
-            return Err(lexical::Error::make(String::make("source store is closed"_str)));
+            return Err(lexical::Error::make("source store is closed"_Str));
         }
         auto source_entry = rstd::move(source_entry_option).unwrap();
         if (source_entry.existing) ++statistics_.source_hits;
@@ -843,8 +843,7 @@ public:
                                                       timestamp.nanoseconds);
             auto identity_entry_option = store_.identity(domain, identity.as_str());
             if (identity_entry_option.is_none()) {
-                return share_error(
-                    lexical::Error::make(String::make("source store is closed"_str)));
+                return share_error(lexical::Error::make("source store is closed"_Str));
             }
             auto identity_entry = rstd::move(identity_entry_option).unwrap();
             if (identity_entry.existing) ++statistics_.source_hits;
@@ -936,7 +935,7 @@ private:
         -> FrontendSourceStore::LoadResult {
         auto load = store_.begin_load();
         if (load.is_none()) {
-            return share_error(lexical::Error::make(String::make("source store is closed"_str)));
+            return share_error(lexical::Error::make("source store is closed"_Str));
         }
         auto allocator = load->allocator();
         auto contents  = [&] {

@@ -202,20 +202,20 @@ auto validate_description(const lito::manifest::PackageMetadata& value,
         return inspection_failure<Option<String>>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("standalone Registry manifest must not inherit package.description"_str));
+            "standalone Registry manifest must not inherit package.description"_Str);
     }
     if (value.value.is_none()) return Ok(None());
     if (value.value->as_str().trim_ascii().is_empty()) {
         return inspection_failure<Option<String>>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("package.description must contain non-whitespace text"_str));
+            "package.description must contain non-whitespace text"_Str);
     }
     if (value.value->len() > usize(512)) {
         return inspection_failure<Option<String>>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("package.description must not exceed 512 UTF-8 bytes"_str));
+            "package.description must not exceed 512 UTF-8 bytes"_Str);
     }
     for (auto byte : value.value->as_str().as_bytes()) {
         const auto raw = byte.to_primitive();
@@ -223,7 +223,7 @@ auto validate_description(const lito::manifest::PackageMetadata& value,
             return inspection_failure<Option<String>>(
                 RegistryArtifactErrorKind::Manifest,
                 package,
-                String::make("package.description must not contain control characters"_str));
+                "package.description must not contain control characters"_Str);
         }
     }
     return Ok(Some(value.value->clone()));
@@ -265,7 +265,7 @@ auto inspect_readme(const lito::manifest::PackageManifest& manifest,
         return inspection_failure<Option<RegistryReadmeMetadata>>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("standalone Registry manifest must not inherit package.readme"_str));
+            "standalone Registry manifest must not inherit package.readme"_Str);
     }
     if (manifest.readme.archive_path.is_none()) return Ok(None());
     const lito::source::SourceTreeEntry* readme = nullptr;
@@ -287,14 +287,14 @@ auto inspect_readme(const lito::manifest::PackageManifest& manifest,
         return inspection_failure<Option<RegistryReadmeMetadata>>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("package.readme must not exceed 256 KiB"_str));
+            "package.readme must not exceed 256 KiB"_Str);
     }
     auto contents = String::from_utf8(Vec<u8>::from(readme->contents()));
     if (contents.is_err()) {
         return inspection_failure<Option<RegistryReadmeMetadata>>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("package.readme must contain valid UTF-8"_str));
+            "package.readme must contain valid UTF-8"_Str);
     }
     auto size = as_cast<u64>(readme->contents().len());
     return Ok(Some(RegistryReadmeMetadata {
@@ -314,7 +314,7 @@ auto inspect_package_metadata(const lito::manifest::PackageManifest& manifest,
         return inspection_failure<RegistryPackageMetadata>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            String::make("standalone Registry manifest must not inherit package metadata"_str));
+            "standalone Registry manifest must not inherit package metadata"_Str);
     }
     return Ok(RegistryPackageMetadata {
         .authors     = manifest.authors.values.clone(),
@@ -346,7 +346,7 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
             return inspection_failure<VerifiedRegistrySourceCandidate>(
                 RegistryArtifactErrorKind::Archive,
                 expected_package,
-                String::make("Registry source size exceeds the protocol range"_str));
+                "Registry source size exceeds the protocol range"_Str);
         }
         unpacked_size += length;
         if (entry.path().as_str() == "lito.toml"_str) manifest_entry = rstd::addressof(entry);
@@ -355,7 +355,7 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
         return inspection_failure<VerifiedRegistrySourceCandidate>(
             RegistryArtifactErrorKind::Manifest,
             expected_package,
-            String::make("Registry source has no standalone lito.toml"_str));
+            "Registry source has no standalone lito.toml"_Str);
     }
     auto source_identity = rstd::format("registry:{}:{}:{}",
                                         expected_package.registry.as_str(),
@@ -384,14 +384,14 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
         return inspection_failure<VerifiedRegistrySourceCandidate>(
             RegistryArtifactErrorKind::Manifest,
             expected_package,
-            String::make("standalone Registry manifest package name/version does not match"_str));
+            "standalone Registry manifest package name/version does not match"_Str);
     }
     auto parsed_version = SemanticVersion::parse(manifest.version.value->as_str());
     if (parsed_version.is_err() || ! (*parsed_version == expected_version)) {
         return inspection_failure<VerifiedRegistrySourceCandidate>(
             RegistryArtifactErrorKind::Manifest,
             expected_package,
-            String::make("standalone Registry manifest version is not the requested SemVer"_str));
+            "standalone Registry manifest version is not the requested SemVer"_Str);
     }
     if (! manifest.workspace_dependencies.is_empty() ||
         ! manifest.workspace_dev_dependencies.is_empty() ||
@@ -399,8 +399,7 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
         return inspection_failure<VerifiedRegistrySourceCandidate>(
             RegistryArtifactErrorKind::Manifest,
             expected_package,
-            String::make(
-                "standalone Registry manifest must not inherit workspace dependencies"_str));
+            "standalone Registry manifest must not inherit workspace dependencies"_Str);
     }
     auto dependencies = Vec<RegistryDependencyProjection>::make();
     for (const auto& dependency : manifest.dependencies) {

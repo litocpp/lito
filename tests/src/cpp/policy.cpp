@@ -53,9 +53,8 @@ TEST(C, MaterializesTypedCommonOptions) {
             .argument = c::CCompilerArgument::Common(rstd::move(argument)),
         });
     };
-    push_common(compiler::CommonCompilerArgument::Target(String::make("aarch64-linux-gnu"_str)));
-    push_common(
-        compiler::CommonCompilerArgument::Sysroot(String::make("/opt/aarch64-sysroot"_str)));
+    push_common(compiler::CommonCompilerArgument::Target("aarch64-linux-gnu"_Str));
+    push_common(compiler::CommonCompilerArgument::Sysroot("/opt/aarch64-sysroot"_Str));
     push_common(compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
     push_common(compiler::CommonCompilerArgument::PositionIndependentCode(false));
     push_common(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {

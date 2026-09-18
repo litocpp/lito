@@ -111,7 +111,7 @@ auto display_duration(rstd::time::Duration duration) -> String {
 }
 
 auto display_share(rstd::time::Duration value, rstd::time::Duration total) -> String {
-    if (total.is_zero()) return String::make("0.0%"_str);
+    if (total.is_zero()) return "0.0%"_Str;
     return rstd::format("{:.1}%", f64(value.as_secs_f64() / total.as_secs_f64() * 100.0));
 }
 
@@ -594,16 +594,15 @@ auto write_details(ref<rstd::path::Path> path, const BuildSummary& summary) -> O
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return Err(OutputError::Io(String::make("create timing report directory"_str),
+        return Err(OutputError::Io("create timing report directory"_Str,
                                    PathBuf::from(*parent),
                                    rstd::move(created).unwrap_err()));
     }
     auto report  = detailed_report(summary);
     auto written = rstd::fs::write_atomic(path, report.as_str().as_bytes());
     if (written.is_err()) {
-        return Err(OutputError::Io(String::make("write timing report"_str),
-                                   PathBuf::from(path),
-                                   rstd::move(written).unwrap_err()));
+        return Err(OutputError::Io(
+            "write timing report"_Str, PathBuf::from(path), rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }

@@ -197,7 +197,7 @@ struct BuiltProcMacroProducts {
 
 auto proc_macro_aggregate_identity(const Vec<cpp::ProcMacroDependencySpec>& dependencies)
     -> String {
-    auto identity = String::make("lito-proc-macro-aggregate-v4\ncontract:cpp2\n"_str);
+    auto identity = "lito-proc-macro-aggregate-v4\ncontract:cpp2\n"_Str;
     for (const auto& dependency : dependencies) {
         identity.push_str(
             rstd::format("{}:{}\n", dependency.package.size(), dependency.package.as_str())

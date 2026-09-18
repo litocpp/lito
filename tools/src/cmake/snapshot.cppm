@@ -30,8 +30,8 @@ auto json_strings(const Vec<String>& values) -> Json {
 
 auto snapshot_json(const CMakeTargetUsageSnapshot& snapshot) -> Json {
     auto result = JsonMap::make();
-    result.insert(String::make("compile"_str), json_strings(snapshot.compile));
-    result.insert(String::make("link"_str), json_strings(snapshot.link));
+    result.insert("compile"_Str, json_strings(snapshot.compile));
+    result.insert("link"_Str, json_strings(snapshot.link));
     return Json::Object(rstd::move(result));
 }
 
@@ -42,41 +42,38 @@ auto usage_snapshot_json(const CMakeUsageSnapshot& snapshot) -> Json {
                         })
                         .collect<JsonArray>();
     auto document = JsonMap::make();
-    document.insert(String::make("version"_str), Json::String(snapshot.version.clone()));
-    document.insert(String::make("targets"_str), Json::Array(rstd::move(targets)));
-    document.insert(String::make("combined"_str), snapshot_json(snapshot.combined));
+    document.insert("version"_Str, Json::String(snapshot.version.clone()));
+    document.insert("targets"_Str, Json::Array(rstd::move(targets)));
+    document.insert("combined"_Str, snapshot_json(snapshot.combined));
     auto host_tools = JsonArray::with_capacity(snapshot.host_tools.len());
     for (const auto& tool : snapshot.host_tools) {
         auto item = JsonMap::make();
-        item.insert(String::make("digest"_str), Json::String(tool.digest.clone()));
-        item.insert(String::make("name"_str), Json::String(tool.name.clone()));
-        item.insert(String::make("path"_str),
-                    Json::String(tool.executable.as_path().to_string_lossy()));
-        item.insert(String::make("target"_str), Json::String(tool.target.clone()));
+        item.insert("digest"_Str, Json::String(tool.digest.clone()));
+        item.insert("name"_Str, Json::String(tool.name.clone()));
+        item.insert("path"_Str, Json::String(tool.executable.as_path().to_string_lossy()));
+        item.insert("target"_Str, Json::String(tool.target.clone()));
         host_tools.push(Json::Object(rstd::move(item)));
     }
-    document.insert(String::make("host-tools"_str), Json::Array(rstd::move(host_tools)));
+    document.insert("host-tools"_Str, Json::Array(rstd::move(host_tools)));
     auto assets = JsonArray::with_capacity(snapshot.assets.len());
     for (const auto& set : snapshot.assets) {
         auto entries = JsonArray::with_capacity(set.entries.len());
         for (const auto& entry : set.entries) {
             auto item = JsonMap::make();
-            item.insert(String::make("path"_str),
-                        Json::String(entry.logical_path.as_path().to_string_lossy()));
-            item.insert(String::make("source"_str),
-                        Json::String(entry.source.as_path().to_string_lossy()));
+            item.insert("path"_Str, Json::String(entry.logical_path.as_path().to_string_lossy()));
+            item.insert("source"_Str, Json::String(entry.source.as_path().to_string_lossy()));
             entries.push(Json::Object(rstd::move(item)));
         }
         auto item = JsonMap::make();
-        item.insert(String::make("name"_str), Json::String(set.name.clone()));
-        item.insert(String::make("disposition"_str),
+        item.insert("name"_Str, Json::String(set.name.clone()));
+        item.insert("disposition"_Str,
                     Json::String(String::make(set.disposition == ExternalAssetDisposition::Provided
                                                   ? "provided"_str
                                                   : "materialized"_str)));
-        item.insert(String::make("entries"_str), Json::Array(rstd::move(entries)));
+        item.insert("entries"_Str, Json::Array(rstd::move(entries)));
         assets.push(Json::Object(rstd::move(item)));
     }
-    document.insert(String::make("assets"_str), Json::Array(rstd::move(assets)));
+    document.insert("assets"_Str, Json::Array(rstd::move(assets)));
     return Json::Object(rstd::move(document));
 }
 
@@ -213,15 +210,13 @@ auto write_cmake_state(const CMakeWorkArea&  area,
                        const Option<String>& install,
                        Option<Json>          query) -> lito::tools::ToolResult<empty> {
     auto document = JsonMap::make();
-    document.insert(String::make("schema"_str),
-                    Json::String(String::make("lito-cmake-package-state-v1"_str)));
-    document.insert(String::make("package"_str), Json::String(requirement.package.clone()));
-    document.insert(String::make("source"_str), Json::String(area.source_identity.clone()));
-    document.insert(String::make("cacheable"_str), Json::Bool(source_cacheable(requirement)));
-    document.insert(String::make("install"_str),
+    document.insert("schema"_Str, Json::String("lito-cmake-package-state-v1"_Str));
+    document.insert("package"_Str, Json::String(requirement.package.clone()));
+    document.insert("source"_Str, Json::String(area.source_identity.clone()));
+    document.insert("cacheable"_Str, Json::Bool(source_cacheable(requirement)));
+    document.insert("install"_Str,
                     install.is_some() ? Json::String(install->clone()) : Json::Null());
-    document.insert(String::make("query"_str),
-                    query.is_some() ? rstd::move(query).unwrap() : Json::Null());
+    document.insert("query"_Str, query.is_some() ? rstd::move(query).unwrap() : Json::Null());
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
@@ -434,8 +429,8 @@ auto write_usage_snapshot(const CMakeWorkArea&      area,
                           const CMakeUsageSnapshot& snapshot) -> lito::tools::ToolResult<empty> {
     auto state = rstd_try(read_cmake_state_header(area, requirement));
     auto query = JsonMap::make();
-    query.insert(String::make("contract"_str), Json::String(area.query_identity.clone()));
-    query.insert(String::make("usage"_str), usage_snapshot_json(snapshot));
+    query.insert("contract"_Str, Json::String(area.query_identity.clone()));
+    query.insert("usage"_Str, usage_snapshot_json(snapshot));
     return write_cmake_state(
         area, requirement, state.install, Some(Json::Object(rstd::move(query))));
 }
@@ -448,7 +443,7 @@ auto target_snapshot_identity(const Provider&                 provider,
                               ref<str> effective_target) -> lito::tools::ToolResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
-    auto result = String::make("lito-cmake-dependency-v1\n"_str);
+    auto result = "lito-cmake-dependency-v1\n"_Str;
     append_identity(result, executable->as_str());
     append_identity(result, provider.identity.as_str());
     append_identity(result, provider.generator.as_str());
@@ -472,7 +467,7 @@ auto dependency_identity(const Provider&           provider,
                          ref<str> effective_target) -> lito::tools::ToolResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
-    auto result = String::make("lito-cmake-declaration-v1\n"_str);
+    auto result = "lito-cmake-declaration-v1\n"_Str;
     append_identity(result, executable->as_str());
     append_identity(result, provider.identity.as_str());
     append_identity(result, provider.generator.as_str());

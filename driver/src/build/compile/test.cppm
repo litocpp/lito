@@ -39,7 +39,7 @@ auto evaluate_compile_test(ref<str>                            package,
                                      output.exit_code));
     } else if (test.outcome == lito::manifest::CompileTestOutcome::Failure &&
                output.exit_code == i32 {}) {
-        mismatch = Some(String::make("expected compilation to fail, but clang succeeded"_str));
+        mismatch = Some("expected compilation to fail, but clang succeeded"_Str);
     }
     if (mismatch.is_none() && output.exit_code != i32 {}) {
         for (const auto& required : test.diagnostic_contains) {
@@ -58,8 +58,7 @@ auto evaluate_compile_test(ref<str>                            package,
                 }
             }
             if (! matched) {
-                mismatch =
-                    Some(String::make("none of the alternative diagnostics were present"_str));
+                mismatch = Some("none of the alternative diagnostics were present"_Str);
             }
         }
     }

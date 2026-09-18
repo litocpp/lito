@@ -210,15 +210,13 @@ auto encode_receipt(const Vec<OwnedOutput>& outputs) -> String {
     auto array = rstd::json::Array::with_capacity(outputs.len());
     for (const auto& output : outputs) {
         auto object = rstd::json::Map::make();
-        object.insert(String::make("package"_str), Json::String(output.package.clone()));
-        object.insert(String::make("path"_str),
-                      Json::String(output.relative.as_path().to_string_lossy()));
+        object.insert("package"_Str, Json::String(output.package.clone()));
+        object.insert("path"_Str, Json::String(output.relative.as_path().to_string_lossy()));
         array.push(Json::Object(rstd::move(object)));
     }
     auto document = rstd::json::Map::make();
-    document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_i64(i64(1))));
-    document.insert(String::make("outputs"_str), Json::Array(rstd::move(array)));
+    document.insert("version"_Str, Json::Number(rstd::json::Number::from_i64(i64(1))));
+    document.insert("outputs"_Str, Json::Array(rstd::move(array)));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });

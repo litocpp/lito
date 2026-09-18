@@ -562,8 +562,8 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     EXPECT_TRUE(error_chain_text(provider_error).as_str().contains("lito-fixture"_str));
 
     config                                    = fixture_pkg_config();
-    declarations[usize {}].alias              = String::make("missing-module"_str);
-    declarations[usize {}].requirement.module = String::make("lito-module-does-not-exist"_str);
+    declarations[usize {}].alias              = "missing-module"_Str;
+    declarations[usize {}].requirement.module = "lito-module-does-not-exist"_Str;
     auto missing_module = lito::resolve_external_dependencies(declarations,
                                                               config,
                                                               fixture_cmake(),

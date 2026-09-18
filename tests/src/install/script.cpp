@@ -109,9 +109,9 @@ lito.install({
     ASSERT_TRUE(manifest->install_script.is_some());
     auto recipe = lito::execute_install_script(install_script_input(*manifest),
                                                lito::InstallScriptContext {
-                                                   .profile = String::make("release"_str),
-                                                   .target  = String::make("x86_64-test-linux"_str),
-                                                   .target_arch = String::make("x86_64"_str),
+                                                   .profile     = "release"_Str,
+                                                   .target      = "x86_64-test-linux"_Str,
+                                                   .target_arch = "x86_64"_Str,
                                                });
     ASSERT_TRUE(recipe.is_ok());
     EXPECT_EQ(recipe->owner.as_str(), "fixture-install-script"_str);
@@ -231,13 +231,12 @@ lito.install({
         ASSERT_TRUE(invalid_project.is_ok());
         auto invalid = lito::manifest::load_package_manifest(invalid_project->root.as_path());
         ASSERT_TRUE(invalid.is_ok());
-        auto executed =
-            lito::execute_install_script(install_script_input(*invalid),
-                                         lito::InstallScriptContext {
-                                             .profile     = String::make("release"_str),
-                                             .target      = String::make("x86_64-test-linux"_str),
-                                             .target_arch = String::make("x86_64"_str),
-                                         });
+        auto executed = lito::execute_install_script(install_script_input(*invalid),
+                                                     lito::InstallScriptContext {
+                                                         .profile     = "release"_Str,
+                                                         .target      = "x86_64-test-linux"_Str,
+                                                         .target_arch = "x86_64"_Str,
+                                                     });
         ASSERT_TRUE(executed.is_err());
         EXPECT_TRUE(executed.unwrap_err().is_Binding());
     }
@@ -251,13 +250,12 @@ lito.install({
     ASSERT_TRUE(missing_project.is_ok());
     auto missing = lito::manifest::load_package_manifest(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_ok());
-    auto unregistered =
-        lito::execute_install_script(install_script_input(*missing),
-                                     lito::InstallScriptContext {
-                                         .profile     = String::make("release"_str),
-                                         .target      = String::make("x86_64-test-linux"_str),
-                                         .target_arch = String::make("x86_64"_str),
-                                     });
+    auto unregistered = lito::execute_install_script(install_script_input(*missing),
+                                                     lito::InstallScriptContext {
+                                                         .profile     = "release"_Str,
+                                                         .target      = "x86_64-test-linux"_Str,
+                                                         .target_arch = "x86_64"_Str,
+                                                     });
     ASSERT_TRUE(unregistered.is_err());
     EXPECT_TRUE(unregistered.unwrap_err().is_Message());
 }

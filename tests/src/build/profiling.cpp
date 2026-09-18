@@ -60,13 +60,13 @@ auto run_profiling_test() -> int {
     auto frames = Vec<lito::ScanSourceFrame>::make();
     frames.push(lito::ScanSourceFrame {
         .id     = u64(1),
-        .target = String::make("first"_str),
+        .target = "first"_Str,
         .source = rstd::path::PathBuf::from("/first.cppm"_str),
         .origin = lito::ScanSourceOrigin::Discovery,
     });
     frames.push(lito::ScanSourceFrame {
         .id     = u64(2),
-        .target = String::make("second"_str),
+        .target = "second"_Str,
         .source = rstd::path::PathBuf::from("/second.cpp"_str),
         .origin = lito::ScanSourceOrigin::Classify,
     });

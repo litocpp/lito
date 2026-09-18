@@ -182,7 +182,7 @@ TEST_F(Lock, BuiltinPackagesAreNotWritten) {
     ASSERT_TRUE(session.is_ok());
     auto options = session->take_resolution_options();
     options.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {
-        .id     = String::make("fixture"_str),
+        .id     = "fixture"_Str,
         .source = lito::source::BuiltinPackageSource::Path(
             fixture->root.join(PathBuf::from("dependency"_str).as_path())),
     });

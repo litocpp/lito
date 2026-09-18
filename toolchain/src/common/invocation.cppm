@@ -40,7 +40,7 @@ struct CompileInvocation {
     }
 
     auto identity() const -> String {
-        auto result = String::make("lito-clang-compile-invocation-v1\n"_str);
+        auto result = "lito-clang-compile-invocation-v1\n"_Str;
         result.push_str(rstd::format("{}:{}\n",
                                      identity_working_directory.size(),
                                      identity_working_directory.as_str())

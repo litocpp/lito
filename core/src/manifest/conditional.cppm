@@ -28,7 +28,7 @@ struct FeatureDeclaration {
 };
 
 auto normalized_feature_macro(ref<str> feature) -> String {
-    auto result = String::make("LITO_FEAT_"_str);
+    auto result = "LITO_FEAT_"_Str;
     for (auto byte : feature.as_bytes()) {
         if (byte == u8('-')) byte = u8('_');
         if (byte >= u8('a') && byte <= u8('z')) {

@@ -787,7 +787,7 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
 
     auto c_layer = lito::c::CArgumentLayer {};
     if (selected.ndebug.fixed.is_some() && *selected.ndebug.fixed) {
-        c_layer.definitions.push(String::make("NDEBUG"_str));
+        c_layer.definitions.push("NDEBUG"_Str);
     }
     c_layer.occurrences = rstd::move(c_arguments.occurrences);
     auto c_common       = lito::compiler::CommonCompileOptions {
@@ -806,7 +806,7 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
 
     auto cpp_layer = CppOptionLayer {};
     if (selected.ndebug.fixed.is_some() && *selected.ndebug.fixed) {
-        cpp_layer.definitions.push(String::make("NDEBUG"_str));
+        cpp_layer.definitions.push("NDEBUG"_Str);
     }
     cpp_layer.arguments = rstd::move(cpp_arguments);
     auto cpp_result     = make_cpp_options(configuration.language_standard.as_str(),

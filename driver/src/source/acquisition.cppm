@@ -289,7 +289,7 @@ auto materialize_archive(lito::tools::acquisition::VerifiedFile            file,
         return source_failure<AcquiredSource>(
             rstd::format("archive root '{}' is not valid UTF-8", extracted->root.as_path()));
     }
-    auto receipt_text = String::make("lito-archive-materialization-v2\n"_str);
+    auto receipt_text = "lito-archive-materialization-v2\n"_Str;
     receipt_text.push_str(relative_text);
     receipt_text.push('\n');
     auto written =
@@ -469,8 +469,8 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                     worker_count, extraction_files.len());
             if (created.is_err()) {
                 return Err(SourceError::System(
-                    String::make("create archive materialization executor"_str),
-                    SystemError::Io(String::make("create archive materialization executor"_str),
+                    "create archive materialization executor"_Str,
+                    SystemError::Io("create archive materialization executor"_Str,
                                     PathBuf::make(),
                                     rstd::move(created).unwrap_err_unchecked())));
             }

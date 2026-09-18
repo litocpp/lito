@@ -46,8 +46,8 @@ TEST(FormatExecution, OverlapsBoundedWorkAndKeepsResultOrder) {
                 while (entered.load() < 4) {
                     if (started.elapsed() > rstd::time::Duration::from_secs(rstd::u64(30))) {
                         active.fetch_sub(1);
-                        return Err(lito::CommandError::Message(
-                            String::make("concurrency barrier timed out"_str)));
+                        return Err(
+                            lito::CommandError::Message("concurrency barrier timed out"_Str));
                     }
                     rstd::thread::yield_now();
                 }
@@ -75,8 +75,7 @@ TEST(FormatExecution, DrainsSubmittedTasksAndChoosesEarliestError) {
                 auto started = rstd::time::Instant::now();
                 while (! later_failed.load()) {
                     if (started.elapsed() > rstd::time::Duration::from_secs(rstd::u64(30))) {
-                        return Err(lito::CommandError::Message(
-                            String::make("error barrier timed out"_str)));
+                        return Err(lito::CommandError::Message("error barrier timed out"_Str));
                     }
                     rstd::thread::yield_now();
                 }
@@ -97,8 +96,7 @@ TEST(FormatExecution, SingleWorkerStopsAtFailure) {
     auto result = lito::format_execution::run(
         usize(8), usize(1), [&](usize index) -> lito::CommandResult<bool> {
             ++calls;
-            if (index == usize(2))
-                return Err(lito::CommandError::Message(String::make("failed"_str)));
+            if (index == usize(2)) return Err(lito::CommandError::Message("failed"_Str));
             return Ok(false);
         });
     EXPECT_TRUE(result.is_err());
@@ -113,8 +111,7 @@ TEST(FormatExecution, ReordersCompletionsByInputIndex) {
                 auto started = rstd::time::Instant::now();
                 while (! replenished.load()) {
                     if (started.elapsed() > rstd::time::Duration::from_secs(rstd::u64(30))) {
-                        return Err(lito::CommandError::Message(
-                            String::make("completion barrier timed out"_str)));
+                        return Err(lito::CommandError::Message("completion barrier timed out"_Str));
                     }
                     rstd::thread::yield_now();
                 }

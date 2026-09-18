@@ -37,7 +37,7 @@ struct ArchiveInvocation {
     String      archiver_identity;
 
     auto identity() const -> String {
-        auto result = String::make("lito-archive-invocation-v1\n"_str);
+        auto result = "lito-archive-invocation-v1\n"_Str;
         result.push_str(
             rstd::format("{}:{}\n", archiver_identity.size(), archiver_identity.as_str()).as_str());
         auto working = working_directory.as_path().to_string_lossy();
@@ -63,13 +63,12 @@ auto probe_archiver(ref<rstd::path::Path> executable, const ResolvedProcessEnvir
     }
     auto metadata = rstd::fs::metadata(executable);
     if (metadata.is_err()) {
-        return Err(ToolchainError::Io(String::make("inspect archiver"_str),
-                                      PathBuf::from(executable),
-                                      rstd::move(metadata).unwrap_err()));
+        return Err(ToolchainError::Io(
+            "inspect archiver"_Str, PathBuf::from(executable), rstd::move(metadata).unwrap_err()));
     }
     auto modified = metadata->modified();
     if (modified.is_err()) {
-        return Err(ToolchainError::Io(String::make("read archiver modification time"_str),
+        return Err(ToolchainError::Io("read archiver modification time"_Str,
                                       PathBuf::from(executable),
                                       rstd::move(modified).unwrap_err()));
     }

@@ -87,7 +87,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     auto canonical_source = rstd::fs::canonicalize(requested_source.as_path());
     if (canonical_source.is_err()) {
         return Err(
-            CommandError::System(SystemError::Io(String::make("resolve scan source"_str),
+            CommandError::System(SystemError::Io("resolve scan source"_Str,
                                                  requested_source.clone(),
                                                  rstd::move(canonical_source).unwrap_err())));
     }
@@ -194,11 +194,10 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     auto provides = JsonArray::make();
     if (cpp_facts != nullptr && cpp_facts->provided.is_some()) {
         auto provided = JsonMap::make();
-        provided.insert(String::make("logical-name"_str),
+        provided.insert("logical-name"_Str,
                         rstd::into<Json>(cpp_facts->provided->logical_name.as_str()));
-        provided.insert(String::make("is-interface"_str),
-                        Json::Bool(cpp_facts->provided->is_interface));
-        provided.insert(String::make("source-path"_str), rstd::into<Json>(source->as_str()));
+        provided.insert("is-interface"_Str, Json::Bool(cpp_facts->provided->is_interface));
+        provided.insert("source-path"_Str, rstd::into<Json>(source->as_str()));
         provides.push(Json::Object(rstd::move(provided)));
     }
 
@@ -211,13 +210,13 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
             }
             for (const auto& location : imported.import_locations) {
                 auto required = JsonMap::make();
-                required.insert(String::make("logical-name"_str),
+                required.insert("logical-name"_Str,
                                 rstd::into<Json>(imported.logical_name.as_str()));
-                required.insert(String::make("exported"_str), Json::Bool(imported.exported));
+                required.insert("exported"_Str, Json::Bool(imported.exported));
                 auto path = json_path(location.path.as_path());
                 if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-                required.insert(String::make("source-path"_str), rstd::move(path).unwrap());
-                required.insert(String::make("line"_str), json_usize(location.line));
+                required.insert("source-path"_Str, rstd::move(path).unwrap());
+                required.insert("line"_Str, json_usize(location.line));
                 required_modules.push(Json::Object(rstd::move(required)));
             }
         }
@@ -235,12 +234,11 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         auto path = json_path(input.path.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         auto value = JsonMap::make();
-        value.insert(String::make("digest"_str), rstd::into<Json>(input.digest.as_str()));
-        value.insert(String::make("length"_str), json_usize(input.length));
-        value.insert(String::make("offset"_str), json_usize(input.offset));
-        value.insert(String::make("path"_str), rstd::move(path).unwrap());
-        value.insert(String::make("size"_str),
-                     Json::Number(rstd::json::Number::from_u64(input.size)));
+        value.insert("digest"_Str, rstd::into<Json>(input.digest.as_str()));
+        value.insert("length"_Str, json_usize(input.length));
+        value.insert("offset"_Str, json_usize(input.offset));
+        value.insert("path"_Str, rstd::move(path).unwrap());
+        value.insert("size"_Str, Json::Number(rstd::json::Number::from_u64(input.size)));
         embedded.push(Json::Object(rstd::move(value)));
     }
 
@@ -256,35 +254,32 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         if (macro.compiler_definition.is_some()) {
             definition = rstd::into<Json>(macro.compiler_definition->as_str());
         }
-        value.insert(String::make("compiler-definition"_str), rstd::move(definition));
-        value.insert(String::make("dependency-key"_str),
-                     rstd::into<Json>(macro.dependency_key.as_str()));
-        value.insert(String::make("name"_str), rstd::into<Json>(macro.name.as_str()));
-        value.insert(String::make("state"_str),
+        value.insert("compiler-definition"_Str, rstd::move(definition));
+        value.insert("dependency-key"_Str, rstd::into<Json>(macro.dependency_key.as_str()));
+        value.insert("name"_Str, rstd::into<Json>(macro.name.as_str()));
+        value.insert("state"_Str,
                      rstd::into<Json>(macro.state == frontend::ExternalMacroState::Defined
                                           ? "defined"_str
                                           : "undefined"_str));
-        value.insert(String::make("value-identity"_str),
-                     rstd::into<Json>(macro.value_identity.as_str()));
+        value.insert("value-identity"_Str, rstd::into<Json>(macro.value_identity.as_str()));
         external_macros.push(Json::Object(rstd::move(value)));
     }
 
     auto document = JsonMap::make();
-    document.insert(String::make("format"_str), rstd::into<Json>("lito-scan"_str));
-    document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(4))));
-    document.insert(String::make("target"_str), rstd::into<Json>(report.target.as_str()));
-    document.insert(String::make("profile"_str), rstd::into<Json>(report.profile.as_str()));
-    document.insert(String::make("source"_str), Json::String(rstd::move(source).unwrap()));
-    document.insert(String::make("provides"_str), Json::Array(rstd::move(provides)));
-    document.insert(String::make("implementation-module"_str), rstd::move(implementation));
-    document.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
-    document.insert(String::make("headers"_str), Json::Array(rstd::move(headers)));
-    document.insert(String::make("embedded-resources"_str), Json::Array(rstd::move(embedded)));
-    document.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
-    document.insert(String::make("preprocessor-environment"_str),
+    document.insert("format"_Str, rstd::into<Json>("lito-scan"_str));
+    document.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(4))));
+    document.insert("target"_Str, rstd::into<Json>(report.target.as_str()));
+    document.insert("profile"_Str, rstd::into<Json>(report.profile.as_str()));
+    document.insert("source"_Str, Json::String(rstd::move(source).unwrap()));
+    document.insert("provides"_Str, Json::Array(rstd::move(provides)));
+    document.insert("implementation-module"_Str, rstd::move(implementation));
+    document.insert("requires"_Str, Json::Array(rstd::move(required_modules)));
+    document.insert("headers"_Str, Json::Array(rstd::move(headers)));
+    document.insert("embedded-resources"_Str, Json::Array(rstd::move(embedded)));
+    document.insert("external-macros"_Str, Json::Array(rstd::move(external_macros)));
+    document.insert("preprocessor-environment"_Str,
                     rstd::into<Json>(common.preprocessor_environment.as_str()));
-    document.insert(String::make("input-bytes"_str), json_usize(common.input_bytes));
+    document.insert("input-bytes"_Str, json_usize(common.input_bytes));
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
@@ -301,18 +296,17 @@ auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
 
     auto rule = JsonMap::make();
-    rule.insert(String::make("primary-output"_str), rstd::move(primary_output).unwrap());
+    rule.insert("primary-output"_Str, rstd::move(primary_output).unwrap());
 
     if (cpp_facts != nullptr && cpp_facts->provided.is_some()) {
         auto provided = JsonMap::make();
-        provided.insert(String::make("logical-name"_str),
+        provided.insert("logical-name"_Str,
                         rstd::into<Json>(cpp_facts->provided->logical_name.as_str()));
-        provided.insert(String::make("source-path"_str), rstd::move(source).unwrap());
-        provided.insert(String::make("is-interface"_str),
-                        Json::Bool(cpp_facts->provided->is_interface));
+        provided.insert("source-path"_Str, rstd::move(source).unwrap());
+        provided.insert("is-interface"_Str, Json::Bool(cpp_facts->provided->is_interface));
         auto provides = JsonArray::make();
         provides.push(Json::Object(rstd::move(provided)));
-        rule.insert(String::make("provides"_str), Json::Array(rstd::move(provides)));
+        rule.insert("provides"_Str, Json::Array(rstd::move(provides)));
     }
 
     auto required_names = Vec<String>::make();
@@ -332,20 +326,18 @@ auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         auto required_modules = JsonArray::with_capacity(required_names.len());
         for (const auto& name : required_names) {
             auto required = JsonMap::make();
-            required.insert(String::make("logical-name"_str), rstd::into<Json>(name.as_str()));
+            required.insert("logical-name"_Str, rstd::into<Json>(name.as_str()));
             required_modules.push(Json::Object(rstd::move(required)));
         }
-        rule.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
+        rule.insert("requires"_Str, Json::Array(rstd::move(required_modules)));
     }
 
     auto rules = JsonArray::with_capacity(usize(1));
     rules.push(Json::Object(rstd::move(rule)));
     auto document = JsonMap::make();
-    document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(1))));
-    document.insert(String::make("revision"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64 {})));
-    document.insert(String::make("rules"_str), Json::Array(rstd::move(rules)));
+    document.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    document.insert("revision"_Str, Json::Number(rstd::json::Number::from_u64(u64 {})));
+    document.insert("rules"_Str, Json::Array(rstd::move(rules)));
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));

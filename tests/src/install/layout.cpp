@@ -46,16 +46,16 @@ TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
             .origin  = lito::InstallEntryOrigin::BuildArtifact(lito::package::PackageTargetId {
-                .package = String::make("fixture-layout"_str),
+                .package = "fixture-layout"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("tool"_str),
+                .name    = "tool"_Str,
             }),
             .payload = lito::InstallEntryPayload::CopyFile(tool.clone()),
             .relative_destination = PathBuf::from("bin/nested/tool"_str),
         });
         if (isolated) {
             entries.push(lito::InstallEntry {
-                .origin  = lito::InstallEntryOrigin::PackageFile(String::make("fixture-layout"_str),
+                .origin  = lito::InstallEntryOrigin::PackageFile("fixture-layout"_Str,
                                                                  PathBuf::from("resource.txt"_str)),
                 .payload = lito::InstallEntryPayload::CopyFile(resource.clone()),
                 .relative_destination = PathBuf::from("share/fixture/resource.txt"_str),
@@ -63,10 +63,10 @@ TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
         }
         auto packages = Vec<lito::InstallPackageRecord>::make();
         packages.push(lito::InstallPackageRecord {
-            .name       = String::make("fixture-layout"_str),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .name       = "fixture-layout"_Str,
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .entries    = rstd::move(entries),
             .provenance = local_provenance(source_directory.as_path()),
         });
@@ -154,31 +154,31 @@ TEST_F(InstallLayout, PrefixInstallPublishesAnUntrackedLogicalTree) {
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
             .origin  = lito::InstallEntryOrigin::BuildArtifact(lito::package::PackageTargetId {
-                .package = String::make("fixture-prefix"_str),
+                .package = "fixture-prefix"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("tool"_str),
+                .name    = "tool"_Str,
             }),
             .payload = lito::InstallEntryPayload::CopyFile(tool.clone()),
             .relative_destination = PathBuf::from("bin/tool"_str),
         });
         entries.push(lito::InstallEntry {
-            .origin  = lito::InstallEntryOrigin::PackageFile(String::make("fixture-prefix"_str),
+            .origin  = lito::InstallEntryOrigin::PackageFile("fixture-prefix"_Str,
                                                              PathBuf::from("resource.txt"_str)),
             .payload = lito::InstallEntryPayload::CopyFile(resource.clone()),
             .relative_destination = PathBuf::from("share/fixture/resource.txt"_str),
         });
         auto packages = Vec<lito::InstallPackageRecord>::make();
         auto package  = lito::InstallPackageRecord {
-            .name       = String::make("fixture-prefix"_str),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .name       = "fixture-prefix"_Str,
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .entries    = rstd::move(entries),
             .provenance = local_provenance(source_directory.as_path()),
         };
         package.runtime_dependencies.push(lito::InstallRuntimeDependency {
-            .name            = String::make("not-installed"_str),
-            .source_identity = String::make("path+/not-installed"_str),
+            .name            = "not-installed"_Str,
+            .source_identity = "path+/not-installed"_Str,
         });
         packages.push(rstd::move(package));
         return lito::install_artifacts(lito::InstallStoreRequest {
@@ -243,18 +243,18 @@ TEST_F(InstallLayout, ManagedInstallRecoversPreparedTransactionsBeforeCatalogLoa
         binaries.push(lito::InstallBinary {
             .target =
                 lito::package::PackageTargetId {
-                    .package = String::make("fixture-recovery"_str),
+                    .package = "fixture-recovery"_Str,
                     .kind    = lito::package::PackageTargetKind::Binary,
-                    .name    = String::make("tool"_str),
+                    .name    = "tool"_Str,
                 },
             .source = source.clone(),
         });
         auto packages = Vec<lito::InstallPackageRecord>::make();
         packages.push(lito::InstallPackageRecord {
-            .name       = String::make("fixture-recovery"_str),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .name       = "fixture-recovery"_Str,
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .binaries   = rstd::move(binaries),
             .provenance = local_provenance(source_directory.as_path()),
         });
@@ -302,18 +302,18 @@ TEST_F(InstallLayout, ManagedCatalogRejectsInvalidPackageInfo) {
     binaries.push(lito::InstallBinary {
         .target =
             lito::package::PackageTargetId {
-                .package = String::make("fixture-invalid-info"_str),
+                .package = "fixture-invalid-info"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("tool"_str),
+                .name    = "tool"_Str,
             },
         .source = source.clone(),
     });
     auto packages = Vec<lito::InstallPackageRecord>::make();
     packages.push(lito::InstallPackageRecord {
-        .name       = String::make("fixture-invalid-info"_str),
-        .version    = String::make("1.0.0"_str),
-        .profile    = String::make("release"_str),
-        .target     = String::make("x86_64-test"_str),
+        .name       = "fixture-invalid-info"_Str,
+        .version    = "1.0.0"_Str,
+        .profile    = "release"_Str,
+        .target     = "x86_64-test"_Str,
         .binaries   = rstd::move(binaries),
         .provenance = local_provenance(source_directory.as_path()),
     });

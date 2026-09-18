@@ -50,16 +50,16 @@ public:
 
     static auto create(usize jobs, usize max_in_flight) -> BuildResult<FrontendScanExecutor> {
         if (jobs == usize {} || max_in_flight == usize {}) {
-            return Err(BuildError::Message(
-                String::make("scan execution requires non-zero jobs and capacity"_str)));
+            return Err(
+                BuildError::Message("scan execution requires non-zero jobs and capacity"_Str));
         }
         auto pool = rstd::thread::ThreadPoolBuilder::make()
                         .worker_count(jobs)
-                        .thread_name(String::make("lito-scan"_str))
+                        .thread_name("lito-scan"_Str)
                         .build();
         if (pool.is_err()) {
             return Err(
-                BuildError::System(SystemError::Io(String::make("create scan worker pool"_str),
+                BuildError::System(SystemError::Io("create scan worker pool"_Str,
                                                    PathBuf::make(),
                                                    rstd::move(pool).unwrap_err_unchecked())));
         }
@@ -68,7 +68,7 @@ public:
                                                                                  max_in_flight);
         if (tasks.is_err()) {
             return Err(
-                BuildError::System(SystemError::Io(String::make("create scan task set"_str),
+                BuildError::System(SystemError::Io("create scan task set"_Str,
                                                    PathBuf::make(),
                                                    rstd::move(tasks).unwrap_err_unchecked())));
         }
@@ -111,12 +111,12 @@ public:
         if (submitted.is_ok()) return Ok(empty {});
         auto error = rstd::move(submitted).unwrap_err_unchecked();
         if (error == rstd::thread::BlockingTaskSetSubmitError::Full) {
-            return Err(BuildError::Message(String::make("scan task set is full"_str)));
+            return Err(BuildError::Message("scan task set is full"_Str));
         }
         if (error == rstd::thread::BlockingTaskSetSubmitError::Cancelled) {
-            return Err(BuildError::Message(String::make("scan task set is cancelled"_str)));
+            return Err(BuildError::Message("scan task set is cancelled"_Str));
         }
-        return Err(BuildError::Message(String::make("scan task set is closed"_str)));
+        return Err(BuildError::Message("scan task set is closed"_Str));
     }
 
     auto recv() -> BuildResult<FrontendScanTaskResult> {
@@ -128,17 +128,15 @@ public:
                 fields->statistics.completion_wait.saturating_add(started.elapsed());
         }
         if (completion.is_none()) {
-            return Err(BuildError::Message(
-                String::make("scan task set closed before a completion arrived"_str)));
+            return Err(BuildError::Message("scan task set closed before a completion arrived"_Str));
         }
         auto value = rstd::move(completion).unwrap_unchecked();
         if (value.is_cancelled()) {
-            return Err(BuildError::Message(String::make("scan task was cancelled"_str)));
+            return Err(BuildError::Message("scan task was cancelled"_Str));
         }
         auto result = rstd::move(value).into_value();
         if (result.is_none()) {
-            return Err(
-                BuildError::Message(String::make("scan task completed without a result"_str)));
+            return Err(BuildError::Message("scan task completed without a result"_Str));
         }
         return Ok(rstd::move(result).unwrap_unchecked());
     }
@@ -195,16 +193,15 @@ public:
 
     static auto create(usize jobs, usize max_in_flight) -> BuildResult<FrontendScanExecution> {
         if (jobs == usize {} || max_in_flight == usize {}) {
-            return Err(BuildError::Message(
-                String::make("scan execution requires non-zero jobs and capacity"_str)));
+            return Err(
+                BuildError::Message("scan execution requires non-zero jobs and capacity"_Str));
         }
         return Ok(FrontendScanExecution(jobs, max_in_flight));
     }
 
     auto prepare(usize ready) -> BuildResult<empty> {
         if (ready == usize {}) {
-            return Err(BuildError::Message(
-                String::make("scan execution cannot prepare an empty frontier"_str)));
+            return Err(BuildError::Message("scan execution cannot prepare an empty frontier"_Str));
         }
         auto jobs          = requested_jobs_ < ready ? requested_jobs_ : ready;
         auto max_in_flight = requested_max_in_flight_ < ready ? requested_max_in_flight_ : ready;
@@ -223,16 +220,14 @@ public:
 
     auto submit(usize node, FrontendAnalysisTask task) -> BuildResult<empty> {
         if (executor_.is_none()) {
-            return Err(
-                BuildError::Message(String::make("scan execution has no prepared frontier"_str)));
+            return Err(BuildError::Message("scan execution has no prepared frontier"_Str));
         }
         return (**executor_).submit(node, rstd::move(task));
     }
 
     auto recv() -> BuildResult<FrontendScanTaskResult> {
         if (executor_.is_none()) {
-            return Err(
-                BuildError::Message(String::make("scan execution has no prepared frontier"_str)));
+            return Err(BuildError::Message("scan execution has no prepared frontier"_Str));
         }
         return (**executor_).recv();
     }

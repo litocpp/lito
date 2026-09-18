@@ -55,7 +55,7 @@ auto vendor_semantic_identity(const Vec<CppVendorOption>& options) -> String {
 }
 
 auto option_text(const Option<String>& value) -> String {
-    return value.is_some() ? value->clone() : String::make("<default>"_str);
+    return value.is_some() ? value->clone() : "<default>"_Str;
 }
 
 } // namespace lito::cpp

@@ -281,7 +281,7 @@ auto validate_associated_catalog(const WorkspaceCatalog&        primary,
                                  const WorkspaceCatalog&        associated,
                                  lito::package::ProjectRootRole role) -> WorkspaceResult<empty> {
     if (role != lito::package::ProjectRootRole::AssociatedTest) {
-        return catalog_failure<empty>(String::make("invalid associated catalog role"_str));
+        return catalog_failure<empty>("invalid associated catalog role"_Str);
     }
     const auto kind = role;
     if (associated.profile_declared_) {
@@ -373,8 +373,8 @@ auto try_load_associated_catalog(const WorkspaceCatalog&        primary,
         return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
     }
     auto loaded  = rstd::move(document).unwrap();
-    auto catalog = WorkspaceResult<WorkspaceCatalog>(Err(WorkspaceError::Message(
-        String::make("associated manifest has no package or workspace"_str))));
+    auto catalog = WorkspaceResult<WorkspaceCatalog>(
+        Err(WorkspaceError::Message("associated manifest has no package or workspace"_Str)));
     if (loaded.kind == lito::manifest::ManifestKind::Workspace && loaded.workspace.is_some()) {
         catalog = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
     } else if (loaded.kind == lito::manifest::ManifestKind::Package && loaded.package.is_some()) {
@@ -437,7 +437,7 @@ auto resolve_project_entry(ref<rstd::path::Path> requested_root)
     }
     if (document.kind != lito::manifest::ManifestKind::Package || document.package.is_none()) {
         return catalog_failure<ResolvedProjectEntry>(
-            String::make("project manifest has no package or workspace"_str));
+            "project manifest has no package or workspace"_Str);
     }
     auto package   = rstd::move(document.package).unwrap();
     auto workspace = rstd_try(try_containing_workspace(package));

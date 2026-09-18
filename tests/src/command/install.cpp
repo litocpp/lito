@@ -191,11 +191,11 @@ version = "1.0.0"
                                build_profile("plain"_str));
     build.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g1"_str, "-flto=thin"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build.configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str, "-Wl,--strip-debug"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto request = lito::InstallRequest {
         .source = rstd::move(source).unwrap(),
@@ -369,7 +369,7 @@ sources = ["src/extra.cpp"]
     request.build.configuration.toolchain.cxx = missing.clone();
     request.build.configuration.toolchain.ld  = missing.clone();
     request.build.configuration.toolchain.ar  = rstd::move(missing);
-    request.binaries.push(String::make("fixture-no-build"_str));
+    request.binaries.push("fixture-no-build"_Str);
     auto installed = lito::install(rstd::move(request));
     if (installed.is_err()) {
         rstd::io::eprintln("{}", error_chain_text(installed.unwrap_err()));
@@ -456,7 +456,7 @@ sources = ["src/extra.cpp"]
         reused.build.configuration.toolchain.cxx = unavailable.clone();
         reused.build.configuration.toolchain.ld  = unavailable.clone();
         reused.build.configuration.toolchain.ar  = rstd::move(unavailable);
-        reused.binaries.push(String::make("fixture-no-build"_str));
+        reused.binaries.push("fixture-no-build"_Str);
         return reused;
     };
 
@@ -558,9 +558,9 @@ TEST_F(InstallCommand, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
         auto packages = Vec<lito::InstallPackageRecord>::make();
         packages.push(lito::InstallPackageRecord {
             .name       = String::make(package_name),
-            .version    = String::make("1.0.0"_str),
-            .profile    = String::make("release"_str),
-            .target     = String::make("x86_64-test"_str),
+            .version    = "1.0.0"_Str,
+            .profile    = "release"_Str,
+            .target     = "x86_64-test"_Str,
             .binaries   = rstd::move(binaries),
             .provenance = local_provenance(source_directory.as_path()),
         });
@@ -629,7 +629,7 @@ TEST_F(InstallCommand, InstallRequiresEveryExplicitPackageToMatchTheBinaryFilter
                                 build_profile("release"_str)),
         .destination = managed_destination(install.as_path()),
     };
-    request.binaries.push(String::make("tool"_str));
+    request.binaries.push("tool"_Str);
     auto result = lito::install(rstd::move(request));
     ASSERT_TRUE(result.is_err());
     auto error = rstd::move(result).unwrap_err();

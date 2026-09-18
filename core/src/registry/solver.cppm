@@ -215,7 +215,7 @@ class Solver {
             return Err(RegistrySolverError::Provider(RegistryIndexError {
                 .kind    = RegistryIndexErrorKind::Network,
                 .package = package.clone(),
-                .message = String::make("Registry index provider is not configured"_str),
+                .message = "Registry index provider is not configured"_Str,
             }));
         }
         auto loaded = provider_.load(provider_.context, package);
@@ -227,7 +227,7 @@ class Solver {
             return Err(RegistrySolverError::Provider(RegistryIndexError {
                 .kind    = RegistryIndexErrorKind::ContextMismatch,
                 .package = package.clone(),
-                .message = String::make("Registry index provider returned another package"_str),
+                .message = "Registry index provider returned another package"_Str,
             }));
         }
         auto position = indices_.len();
@@ -308,8 +308,7 @@ class Solver {
         auto position = state_position(states, package.name);
         if (position.is_none()) {
             if (states.len() >= usize(1024)) {
-                return Err(RegistrySolverError::Limit(
-                    String::make("Registry solve exceeds 1024 packages"_str)));
+                return Err(RegistrySolverError::Limit("Registry solve exceeds 1024 packages"_Str));
             }
             auto constraints = Vec<PackageConstraint>::make();
             constraints.push(PackageConstraint {
@@ -391,7 +390,7 @@ class Solver {
         for (const auto& state : states) {
             if (state.selected_release.is_none()) {
                 return Err(RegistrySolverError::Limit(
-                    String::make("Registry solver reached an incomplete assignment"_str)));
+                    "Registry solver reached an incomplete assignment"_Str));
             }
             auto index_position = rstd_try(ensure_index(state.package));
             packages.push(ResolvedRegistryPackage {
@@ -412,7 +411,7 @@ class Solver {
         -> RegistrySolverResult<ResolvedRegistryGraph> {
         if (depth > usize(1024)) {
             return Err(RegistrySolverError::Limit(
-                String::make("Registry solve recursion exceeds 1024 assignments"_str)));
+                "Registry solve recursion exceeds 1024 assignments"_Str));
         }
         rstd_try(validate_selected(states));
 
@@ -473,7 +472,7 @@ public:
         }
         if (states.is_empty()) {
             return Err(RegistrySolverError::Limit(
-                String::make("Registry solve requires at least one root requirement"_str)));
+                "Registry solve requires at least one root requirement"_Str));
         }
         return search(rstd::move(states), usize {});
     }

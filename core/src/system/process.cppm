@@ -96,7 +96,7 @@ auto run_command(const Vec<String>&                arguments,
                  Option<ref<CommandEnvironment>>   overrides         = None())
     -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
-        return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
+        return Err(SystemError::InvalidCommand("empty command"_Str));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
@@ -118,9 +118,8 @@ auto run_command(const Vec<String>&                arguments,
     auto output  = command.output();
     auto elapsed = started.elapsed();
     if (output.is_err()) {
-        return Err(SystemError::Io(String::make("failed to execute"_str),
-                                   rstd::move(program),
-                                   rstd::move(output).unwrap_err()));
+        return Err(SystemError::Io(
+            "failed to execute"_Str, rstd::move(program), rstd::move(output).unwrap_err()));
     }
 
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
@@ -133,7 +132,7 @@ auto run_command_observed(const Vec<String>&                arguments,
                           Option<ref<CommandEnvironment>>   overrides         = None())
     -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
-        return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
+        return Err(SystemError::InvalidCommand("empty command"_Str));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
@@ -152,9 +151,8 @@ auto run_command_observed(const Vec<String>&                arguments,
     auto output  = command.output(observer);
     auto elapsed = started.elapsed();
     if (output.is_err()) {
-        return Err(SystemError::Io(String::make("failed to execute"_str),
-                                   rstd::move(program),
-                                   rstd::move(output).unwrap_err()));
+        return Err(SystemError::Io(
+            "failed to execute"_Str, rstd::move(program), rstd::move(output).unwrap_err()));
     }
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
 }
@@ -166,7 +164,7 @@ auto run_command_with_input(const Vec<String>&                arguments,
                             Option<ref<CommandEnvironment>>   overrides         = None())
     -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
-        return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
+        return Err(SystemError::InvalidCommand("empty command"_Str));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
@@ -187,27 +185,25 @@ auto run_command_with_input(const Vec<String>&                arguments,
     auto started = rstd::time::Instant::now();
     auto spawned = command.spawn();
     if (spawned.is_err()) {
-        return Err(SystemError::Io(String::make("failed to execute"_str),
-                                   rstd::move(program),
-                                   rstd::move(spawned).unwrap_err()));
+        return Err(SystemError::Io(
+            "failed to execute"_Str, rstd::move(program), rstd::move(spawned).unwrap_err()));
     }
     auto child = rstd::move(spawned).unwrap();
     {
         auto input = child.take_stdin();
         if (input.is_none()) {
-            return Err(
-                SystemError::InvalidCommand(String::make("command stdin pipe is unavailable"_str)));
+            return Err(SystemError::InvalidCommand("command stdin pipe is unavailable"_Str));
         }
         auto written = rstd::io::write_all(*input, standard_input.as_bytes());
         if (written.is_err()) {
-            return Err(SystemError::Io(String::make("failed to write command stdin"_str),
+            return Err(SystemError::Io("failed to write command stdin"_Str,
                                        PathBuf::make(),
                                        rstd::move(written).unwrap_err()));
         }
     }
     auto output = child.wait_with_output();
     if (output.is_err()) {
-        return Err(SystemError::Io(String::make("failed to collect command output"_str),
+        return Err(SystemError::Io("failed to collect command output"_Str,
                                    PathBuf::make(),
                                    rstd::move(output).unwrap_err()));
     }
@@ -244,8 +240,7 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
     auto word_active = false;
     for (auto byte : input.as_bytes()) {
         if (byte == u8()) {
-            return Err(
-                SystemError::Fragment(String::make(context), String::make("contains NUL"_str)));
+            return Err(SystemError::Fragment(String::make(context), "contains NUL"_Str));
         }
         if (escaping) {
             if (quote == FragmentQuote::Double && byte != u8('"') && byte != u8('\\') &&
@@ -301,12 +296,10 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
         }
     }
     if (escaping) {
-        return Err(
-            SystemError::Fragment(String::make(context), String::make("ends with an escape"_str)));
+        return Err(SystemError::Fragment(String::make(context), "ends with an escape"_Str));
     }
     if (quote != FragmentQuote::None) {
-        return Err(SystemError::Fragment(String::make(context),
-                                         String::make("contains an unclosed quote"_str)));
+        return Err(SystemError::Fragment(String::make(context), "contains an unclosed quote"_Str));
     }
     if (word_active) {
         auto pushed = push_fragment_word(result, current, context);
@@ -326,8 +319,7 @@ auto tokenize_windows_command_fragments(ref<str> input, ref<str> context)
     while (index < bytes.len()) {
         auto value = bytes[index];
         if (value == u8()) {
-            return Err(
-                SystemError::Fragment(String::make(context), String::make("contains NUL"_str)));
+            return Err(SystemError::Fragment(String::make(context), "contains NUL"_Str));
         }
         if (value == u8('\\')) {
             auto slashes = usize {};
@@ -372,8 +364,7 @@ auto tokenize_windows_command_fragments(ref<str> input, ref<str> context)
         ++index;
     }
     if (quoted) {
-        return Err(SystemError::Fragment(String::make(context),
-                                         String::make("contains an unclosed quote"_str)));
+        return Err(SystemError::Fragment(String::make(context), "contains an unclosed quote"_Str));
     }
     if (word_active) {
         auto pushed = push_fragment_word(result, current, context);

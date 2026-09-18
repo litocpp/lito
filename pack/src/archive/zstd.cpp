@@ -85,7 +85,7 @@ auto ZstdReader::open(ref<rstd::path::Path> path, u64 maximum_decoded_size)
     if (context == nullptr) {
         return Err(ArchiveError {
             .kind    = ArchiveErrorKind::Zstd,
-            .message = String::make("cannot allocate zstd decoder"_str),
+            .message = "cannot allocate zstd decoder"_Str,
         });
     }
     auto configured = ZSTD_DCtx_setParameter(context, ZSTD_d_windowLogMax, 27);
@@ -101,7 +101,7 @@ auto ZstdReader::verify_frame_end() -> ArchiveResult<empty> {
     if (input_position_ != input_size_) {
         return Err(ArchiveError {
             .kind    = ArchiveErrorKind::Zstd,
-            .message = String::make("zstd input contains a second frame or trailing bytes"_str),
+            .message = "zstd input contains a second frame or trailing bytes"_Str,
         });
     }
     auto trailing = array<u8, 1> {};
@@ -112,7 +112,7 @@ auto ZstdReader::verify_frame_end() -> ArchiveResult<empty> {
     if (*read != usize {}) {
         return Err(ArchiveError {
             .kind    = ArchiveErrorKind::Zstd,
-            .message = String::make("zstd input contains a second frame or trailing bytes"_str),
+            .message = "zstd input contains a second frame or trailing bytes"_Str,
         });
     }
     source_eof_ = true;
@@ -139,7 +139,7 @@ auto ZstdReader::read(mut_ref<u8[]> output) -> ArchiveResult<usize> {
         if (input_position_ == input_size_ && source_eof_) {
             return Err(ArchiveError {
                 .kind    = ArchiveErrorKind::Zstd,
-                .message = String::make("zstd frame is truncated"_str),
+                .message = "zstd frame is truncated"_Str,
             });
         }
         auto encoded = ZSTD_inBuffer {
@@ -162,7 +162,7 @@ auto ZstdReader::read(mut_ref<u8[]> output) -> ArchiveResult<usize> {
         if (decoded.pos == before && encoded.pos == 0 && source_eof_) {
             return Err(ArchiveError {
                 .kind    = ArchiveErrorKind::Zstd,
-                .message = String::make("zstd decoder made no progress"_str),
+                .message = "zstd decoder made no progress"_Str,
             });
         }
     }
@@ -170,7 +170,7 @@ auto ZstdReader::read(mut_ref<u8[]> output) -> ArchiveResult<usize> {
     if (produced > maximum_decoded_size_ - decoded_size_) {
         return Err(ArchiveError {
             .kind    = ArchiveErrorKind::Limit,
-            .message = String::make("zstd stream exceeds the decoded size limit"_str),
+            .message = "zstd stream exceeds the decoded size limit"_Str,
         });
     }
     decoded_size_ += produced;
@@ -223,7 +223,7 @@ auto ZstdWriter::create(ref<rstd::path::Path> path) -> ArchiveResult<ZstdWriter>
     if (context == nullptr) {
         return Err(ArchiveError {
             .kind    = ArchiveErrorKind::Zstd,
-            .message = String::make("cannot allocate zstd encoder"_str),
+            .message = "cannot allocate zstd encoder"_Str,
         });
     }
     auto configure = [&](ZSTD_cParameter parameter, int value) -> ArchiveResult<empty> {

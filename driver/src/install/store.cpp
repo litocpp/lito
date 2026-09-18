@@ -218,7 +218,7 @@ auto install_entry_origin_text(const InstallEntryOrigin& origin) -> String {
                             lito::package::package_target_id_text(origin.as_PkgConfig().target),
                             origin.as_PkgConfig().module.as_str());
     }
-    return String::make("inventory"_str);
+    return "inventory"_Str;
 }
 
 auto apply_entry_transforms(const InstallEntry&                 entry,
@@ -248,7 +248,7 @@ auto apply_entry_transforms(const InstallEntry&                 entry,
             return Err(InstallStoreError::Cause(
                 InstallStoreCause::Transform(String::make(package),
                                              install_entry_origin_text(entry.origin),
-                                             String::make("strip"_str),
+                                             "strip"_Str,
                                              rstd::move(applied).unwrap_err())));
         }
     }
@@ -364,7 +364,7 @@ auto rollback_transaction(ref<rstd::path::Path>       root,
                 if (! cause.is_Io()) continue;
                 auto io = rstd::move(cause).as_Io();
                 failures.push(InstallRollbackFailure {
-                    .operation = String::make("inspect backup"_str),
+                    .operation = "inspect backup"_Str,
                     .path      = backup.clone(),
                     .source    = rstd::move(io.source),
                 });
@@ -380,7 +380,7 @@ auto rollback_transaction(ref<rstd::path::Path>       root,
                     if (! cause.is_Io()) continue;
                     auto io = rstd::move(cause).as_Io();
                     failures.push(InstallRollbackFailure {
-                        .operation = String::make("remove published entry"_str),
+                        .operation = "remove published entry"_Str,
                         .path      = destination.clone(),
                         .source    = rstd::move(io.source),
                     });
@@ -392,7 +392,7 @@ auto rollback_transaction(ref<rstd::path::Path>       root,
             auto restored = rstd::fs::rename(backup.as_path(), destination.as_path());
             if (restored.is_err()) {
                 failures.push(InstallRollbackFailure {
-                    .operation = String::make("restore installed entry"_str),
+                    .operation = "restore installed entry"_Str,
                     .path      = destination.clone(),
                     .source    = rstd::move(restored).unwrap_err(),
                 });
@@ -410,7 +410,7 @@ auto rollback_transaction(ref<rstd::path::Path>       root,
                         if (! cause.is_Io()) continue;
                         auto io = rstd::move(cause).as_Io();
                         failures.push(InstallRollbackFailure {
-                            .operation = String::make("remove published entry"_str),
+                            .operation = "remove published entry"_Str,
                             .path      = destination.clone(),
                             .source    = rstd::move(io.source),
                         });
@@ -429,7 +429,7 @@ void rollback_created_directories(const Vec<PathBuf>&          created,
         auto        removed = rstd::fs::remove_dir(path.as_path());
         if (removed.is_err()) {
             failures.push(InstallRollbackFailure {
-                .operation = String::make("remove created directory"_str),
+                .operation = "remove created directory"_Str,
                 .path      = path.clone(),
                 .source    = rstd::move(removed).unwrap_err(),
             });
@@ -456,15 +456,14 @@ auto transaction_journal(const Vec<TransactionItem>& items) -> String {
     auto values = JsonArray::with_capacity(items.len());
     for (const auto& item : items) {
         auto value = JsonMap::make();
-        value.insert(String::make("path"_str),
-                     Json::String(item.relative.as_path().to_string_lossy()));
-        value.insert(String::make("had-existing"_str), Json::Bool(item.had_existing));
-        value.insert(String::make("publish"_str), Json::Bool(item.publish));
+        value.insert("path"_Str, Json::String(item.relative.as_path().to_string_lossy()));
+        value.insert("had-existing"_Str, Json::Bool(item.had_existing));
+        value.insert("publish"_Str, Json::Bool(item.publish));
         values.push(Json::Object(rstd::move(value)));
     }
     auto root = JsonMap::make();
-    root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("items"_str), Json::Array(rstd::move(values)));
+    root.insert("schema"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert("items"_Str, Json::Array(rstd::move(values)));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(root)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
@@ -593,9 +592,9 @@ auto recover_managed_transactions(const InstallLayout& layout) -> InstallStoreRe
         auto failures = rollback_transaction(layout.root.path.as_path(), path.as_path(), items);
         if (! failures.is_empty()) {
             return Err(InstallStoreError::Transaction(
-                String::make("install transaction recovery"_str),
+                "install transaction recovery"_Str,
                 Box<InstallStoreError>::make(InstallStoreError::Cause(InstallStoreCause::Message(
-                    String::make("cannot recover interrupted install transaction"_str)))),
+                    "cannot recover interrupted install transaction"_Str))),
                 rstd::move(failures)));
         }
         auto removed = rstd::fs::remove_dir_all(path.as_path());
@@ -668,10 +667,10 @@ auto execute_transaction(ref<rstd::path::Path>       root,
         }
         auto moved = rstd::fs::rename(destination.as_path(), backup.as_path());
         if (moved.is_err()) {
-            auto error = InstallStoreError::Cause(
-                InstallStoreCause::Io(String::make("back up install destination"_str),
-                                      destination.clone(),
-                                      rstd::move(moved).unwrap_err()));
+            auto error =
+                InstallStoreError::Cause(InstallStoreCause::Io("back up install destination"_Str,
+                                                               destination.clone(),
+                                                               rstd::move(moved).unwrap_err()));
             return Err(transaction_failure(
                 "install backup"_str, rstd::move(error), root, transaction, items));
         }
@@ -694,10 +693,8 @@ auto execute_transaction(ref<rstd::path::Path>       root,
         }
         auto moved = rstd::fs::rename(staged.as_path(), destination.as_path());
         if (moved.is_err()) {
-            auto error = InstallStoreError::Cause(
-                InstallStoreCause::Io(String::make("publish install entry"_str),
-                                      destination.clone(),
-                                      rstd::move(moved).unwrap_err()));
+            auto error = InstallStoreError::Cause(InstallStoreCause::Io(
+                "publish install entry"_Str, destination.clone(), rstd::move(moved).unwrap_err()));
             return Err(transaction_failure("install publish"_str,
                                            rstd::move(error),
                                            root,
@@ -709,10 +706,8 @@ auto execute_transaction(ref<rstd::path::Path>       root,
     auto committed = PathBuf::from(transaction).join(PathBuf::from("committed"_str).as_path());
     written        = rstd::fs::write_atomic(committed.as_path(), "committed\n"_str.as_bytes());
     if (written.is_err()) {
-        auto error = InstallStoreError::Cause(
-            InstallStoreCause::Io(String::make("commit install transaction"_str),
-                                  committed.clone(),
-                                  rstd::move(written).unwrap_err()));
+        auto error = InstallStoreError::Cause(InstallStoreCause::Io(
+            "commit install transaction"_Str, committed.clone(), rstd::move(written).unwrap_err()));
         return Err(transaction_failure("install commit"_str,
                                        rstd::move(error),
                                        root,

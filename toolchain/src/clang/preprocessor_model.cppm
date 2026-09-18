@@ -145,18 +145,18 @@ class PackageMacroCatalog {
 public:
     static auto system() -> PackageMacroCatalog {
         return PackageMacroCatalog(Vec<PackageMacroEntry>::make(),
-                                   String::make("lito-system-macro-catalog-v1"_str));
+                                   "lito-system-macro-catalog-v1"_Str);
     }
 
     static auto make(const cpp::PackageCompileMetadata& metadata) -> PackageMacroCatalog {
         auto entries = Vec<PackageMacroEntry>::with_capacity(metadata.features.len() + usize(1));
         auto raw_version        = metadata.version.is_some() ? metadata.version->as_str() : ""_str;
         auto literal            = string_literal(raw_version);
-        auto version_definition = String::make("LITO_PKG_VERSION="_str);
+        auto version_definition = "LITO_PKG_VERSION="_Str;
         version_definition.push_str(literal.as_str());
         entries.push(PackageMacroEntry {
-            .name                = String::make("LITO_PKG_VERSION"_str),
-            .dependency_key      = String::make("lito.package.version"_str),
+            .name                = "LITO_PKG_VERSION"_Str,
+            .dependency_key      = "lito.package.version"_Str,
             .value_identity      = value_identity("lito-package-version-v1"_str, raw_version),
             .state               = frontend::ExternalMacroState::Defined,
             .compiler_definition = Some(rstd::move(version_definition)),
@@ -165,7 +165,7 @@ public:
                                                      literal.as_str())),
         });
         for (const auto& feature : metadata.features) {
-            auto dependency_key = String::make("lito.package.feature:"_str);
+            auto dependency_key = "lito.package.feature:"_Str;
             dependency_key.push_str(feature.name.as_str());
             auto identity_value = String::make(feature.name.as_str());
             identity_value.push_ascii('=');
@@ -195,7 +195,7 @@ public:
             [](const PackageMacroEntry& left, const PackageMacroEntry& right) {
                 return left.name < right.name.as_str();
             });
-        auto schema = String::make("lito-package-macro-catalog-v1\n"_str);
+        auto schema = "lito-package-macro-catalog-v1\n"_Str;
         for (const auto& entry : entries) {
             schema.push_str(
                 rstd::format("{}:{}\n", entry.name.len(), entry.name.as_str()).as_str());

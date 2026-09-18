@@ -41,7 +41,7 @@ auto create_parent(ref<rstd::path::Path> path) -> BuildResult<empty> {
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
         return Err(BuildError::System(
-            lito::system::SystemError::Io(String::make("create proc-macro artifact directory"_str),
+            lito::system::SystemError::Io("create proc-macro artifact directory"_Str,
                                           PathBuf::from(*parent),
                                           rstd::move(created).unwrap_err())));
     }
@@ -53,7 +53,7 @@ auto write_source(ref<rstd::path::Path> path, ref<str> source) -> BuildResult<em
     auto written = rstd::fs::write_atomic(path, source.as_bytes());
     if (written.is_err()) {
         return Err(BuildError::System(
-            lito::system::SystemError::Io(String::make("write proc-macro generated source"_str),
+            lito::system::SystemError::Io("write proc-macro generated source"_Str,
                                           PathBuf::from(path),
                                           rstd::move(written).unwrap_err())));
     }
@@ -203,7 +203,7 @@ auto json_string(ref<rstd::path::Path> path) -> BuildResult<String> {
         return proc_macro_failure<String>(
             rstd::format("proc-macro source path '{}' is not valid UTF-8", path));
     }
-    auto output = String::make("\""_str);
+    auto output = "\""_Str;
     for (auto byte : *text) {
         if (byte == u8('\\') || byte == u8('"')) output.push_ascii('\\');
         output.push_ascii(static_cast<char>(byte.to_primitive()));
@@ -250,7 +250,7 @@ auto proc_macro_transform_identity(ref<str>                       selection_iden
                                    const ClangToolchain&          toolchain,
                                    const cpp::CompileContext&     context,
                                    ref<str>                       original_digest) -> String {
-    auto producer = String::make("lito-proc-macro-transform-v5\n"_str);
+    auto producer = "lito-proc-macro-transform-v5\n"_Str;
     producer.push_str(
         "contract:cpp2\nspelling:attr-derive-v1\ntrace:kind-v1\nrecursion-limit:16\n"_str);
     producer.push_str(selection_identity);
@@ -307,13 +307,13 @@ auto transform_proc_macro_provider_sources(const BuildLayout&              layou
             const auto unit     = target_units[provider][index];
             auto       original = rstd::fs::read_to_string(source.path.as_path());
             if (original.is_err()) {
-                return Err(BuildError::System(lito::system::SystemError::Io(
-                    String::make("read proc-macro provider source"_str),
-                    source.path.clone(),
-                    rstd::move(original).unwrap_err())));
+                return Err(BuildError::System(
+                    lito::system::SystemError::Io("read proc-macro provider source"_Str,
+                                                  source.path.clone(),
+                                                  rstd::move(original).unwrap_err())));
             }
             auto original_digest = licrypto::sha256_hex(original->as_str());
-            auto identity        = String::make("lito-pmacro-provider-transform-v1\n"_str);
+            auto identity        = "lito-pmacro-provider-transform-v1\n"_Str;
             identity.push_str(support->identity.as_str());
             identity.push_ascii('\n');
             identity.push_str(support->content_identity.as_str());
@@ -338,7 +338,7 @@ auto transform_proc_macro_provider_sources(const BuildLayout&              layou
             }
             rstd_try(create_parent(output->as_path()));
             auto arguments = Vec<String>::make();
-            arguments.push(String::make("mode=define"_str));
+            arguments.push("mode=define"_Str);
             arguments.push(rstd::format("output={}", output->as_path()));
             arguments.push(rstd::format("provider={}", target.id.package.as_str()));
             auto dependencies = module_dependencies(units, Some(cpp::UnitId(unit)));
@@ -452,7 +452,7 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
             auto original = rstd::fs::read_to_string(source.path.as_path());
             if (original.is_err()) {
                 return Err(BuildError::System(
-                    lito::system::SystemError::Io(String::make("read proc-macro input source"_str),
+                    lito::system::SystemError::Io("read proc-macro input source"_Str,
                                                   source.path.clone(),
                                                   rstd::move(original).unwrap_err())));
             }
@@ -495,7 +495,7 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
             auto stable          = false;
             for (auto iteration = usize {}; iteration < usize(16); ++iteration) {
                 auto arguments = Vec<String>::make();
-                arguments.push(String::make("mode=expand"_str));
+                arguments.push("mode=expand"_Str);
                 arguments.push(rstd::format("output={}", output->as_path()));
                 arguments.push(rstd::format("trace={}", trace->as_path()));
                 arguments.push(rstd::format("status={}", status->as_path()));
@@ -518,19 +518,19 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                 }
                 auto expansion_trace = rstd::fs::read_to_string(trace->as_path());
                 if (expansion_trace.is_err()) {
-                    return Err(BuildError::System(lito::system::SystemError::Io(
-                        String::make("read proc-macro expansion trace"_str),
-                        trace->clone(),
-                        rstd::move(expansion_trace).unwrap_err())));
+                    return Err(BuildError::System(
+                        lito::system::SystemError::Io("read proc-macro expansion trace"_Str,
+                                                      trace->clone(),
+                                                      rstd::move(expansion_trace).unwrap_err())));
                 }
                 const auto had_expansions = ! expansion_trace->as_str().trim_ascii().is_empty();
                 append_expansion_trace(expansion_stack, expansion_trace->as_str());
                 auto expansion_status = rstd::fs::read_to_string(status->as_path());
                 if (expansion_status.is_err()) {
-                    return Err(BuildError::System(lito::system::SystemError::Io(
-                        String::make("read proc-macro expansion status"_str),
-                        status->clone(),
-                        rstd::move(expansion_status).unwrap_err())));
+                    return Err(BuildError::System(
+                        lito::system::SystemError::Io("read proc-macro expansion status"_Str,
+                                                      status->clone(),
+                                                      rstd::move(expansion_status).unwrap_err())));
                 }
                 const auto pending = expansion_status->as_str().trim_ascii();
                 if (pending != "pending"_str && pending != "complete"_str) {
@@ -539,10 +539,10 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                 }
                 auto current = rstd::fs::read_to_string(output->as_path());
                 if (current.is_err()) {
-                    return Err(BuildError::System(lito::system::SystemError::Io(
-                        String::make("read proc-macro transformed source"_str),
-                        output->clone(),
-                        rstd::move(current).unwrap_err())));
+                    return Err(BuildError::System(
+                        lito::system::SystemError::Io("read proc-macro transformed source"_Str,
+                                                      output->clone(),
+                                                      rstd::move(current).unwrap_err())));
                 }
                 if (pending == "complete"_str ||
                     (! had_expansions && current->as_str() == previous.as_str())) {
@@ -676,7 +676,7 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
         rstd_try(append_link_inputs(inputs, support_target, package, plan, libraries));
 
         auto aggregate_identity_source =
-            String::make("lito-proc-macro-aggregate-product-v4\ncontract:cpp2\n"_str);
+            "lito-proc-macro-aggregate-product-v4\ncontract:cpp2\n"_Str;
         aggregate_identity_source.push_str(request.identity.as_str());
         aggregate_identity_source.push_ascii('\n');
         aggregate_identity_source.push_str(support_content_identity.as_str());

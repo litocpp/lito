@@ -272,13 +272,12 @@ auto write_cached_index(ref<rstd::path::Path>    record,
                          rstd::move(created).unwrap_err()));
     }
     auto document = JsonMap::make();
-    document.insert(String::make("schema"_str), rstd::into<Json>(INDEX_CACHE_SCHEMA));
-    document.insert(String::make("registry"_str), rstd::into<Json>(package.registry.as_str()));
-    document.insert(String::make("package"_str), rstd::into<Json>(package.name.as_str()));
-    document.insert(String::make("endpoint"_str), rstd::into<Json>(endpoint));
-    document.insert(String::make("etag"_str),
-                    etag.is_some() ? rstd::into<Json>(etag->as_str()) : Json::Null());
-    document.insert(String::make("body"_str), rstd::into<Json>(body));
+    document.insert("schema"_Str, rstd::into<Json>(INDEX_CACHE_SCHEMA));
+    document.insert("registry"_Str, rstd::into<Json>(package.registry.as_str()));
+    document.insert("package"_Str, rstd::into<Json>(package.name.as_str()));
+    document.insert("endpoint"_Str, rstd::into<Json>(endpoint));
+    document.insert("etag"_Str, etag.is_some() ? rstd::into<Json>(etag->as_str()) : Json::Null());
+    document.insert("body"_Str, rstd::into<Json>(body));
     auto text = rstd::json::to_string(Json::Object(rstd::move(document)));
     text.push_ascii(u8('\n'));
     auto written = rstd::fs::write_atomic(record, text.as_str().as_bytes());

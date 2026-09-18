@@ -31,30 +31,28 @@ auto make_package_condition_context(const lito::package::ResolvedPackage& packag
                                     const ProfileSpec&                    profile,
                                     const BuildPlatform& platform) -> lito::condition::Context {
     auto context = lito::condition::Context {};
-    context.set_string(String::make("target.os"_str),
-                       String::make(platform.effective_target.platform_name()));
-    context.set_string(String::make("target.vendor"_str), platform.effective_target.vendor.clone());
-    context.set_string(String::make("target.family"_str),
-                       String::make(platform.effective_target.family_name()));
-    context.set_string(String::make("target.environment"_str),
+    context.set_string("target.os"_Str, String::make(platform.effective_target.platform_name()));
+    context.set_string("target.vendor"_Str, platform.effective_target.vendor.clone());
+    context.set_string("target.family"_Str, String::make(platform.effective_target.family_name()));
+    context.set_string("target.environment"_Str,
                        String::make(platform.effective_target.environment_name()));
-    context.set_string(String::make("target.arch"_str),
+    context.set_string("target.arch"_Str,
                        String::make(architecture_name(platform.effective_target.architecture)));
-    context.set_string(String::make("target.triple"_str), platform.effective_target.triple.clone());
-    context.set_string(String::make("host.os"_str), platform.host.os.clone());
-    context.set_string(String::make("host.arch"_str),
+    context.set_string("target.triple"_Str, platform.effective_target.triple.clone());
+    context.set_string("host.os"_Str, platform.host.os.clone());
+    context.set_string("host.arch"_Str,
                        String::make(architecture_name(platform.host.architecture)));
-    context.set_bool(String::make("build.cross"_str), platform.cross);
-    context.set_string(String::make("profile.name"_str), profile.name.clone());
-    context.set_string(String::make("toolchain.compiler"_str), String::make("clang"_str));
+    context.set_bool("build.cross"_Str, platform.cross);
+    context.set_string("profile.name"_Str, profile.name.clone());
+    context.set_string("toolchain.compiler"_Str, "clang"_Str);
     context.set_string(
-        String::make("toolchain.stdlib"_str),
+        "toolchain.stdlib"_Str,
         String::make(lito::config::standard_library_name(configuration.standard_library)));
-    context.set_string(String::make("toolchain.stdlib-runtime"_str),
+    context.set_string("toolchain.stdlib-runtime"_Str,
                        String::make(lito::config::standard_library_runtime_name(
                            configuration.standard_library_runtime)));
     for (const auto& feature : package.features) {
-        auto key = String::make("feature."_str);
+        auto key = "feature."_Str;
         key.push_str(feature.name.as_str());
         context.set_bool(rstd::move(key), feature.enabled);
     }
@@ -1125,7 +1123,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         configuration.toolchain.cxx.is_empty() || configuration.toolchain.ld.is_empty() ||
         configuration.toolchain.ar.is_empty()) {
         return adapter_failure<PackageMetadata>(
-            String::make("invalid build configuration for package graph"_str));
+            "invalid build configuration for package graph"_Str);
     }
     auto libraries = library_targets(graph);
 
@@ -1173,7 +1171,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     }
     if (! external_usage.all_consumed()) {
         return adapter_failure<PackageMetadata>(
-            String::make("external usage catalog contains an unselected package"_str));
+            "external usage catalog contains an unselected package"_Str);
     }
 
     for (const auto& package : graph.packages) {
@@ -1669,7 +1667,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         build_scripts.push(BuildScriptOwner {
             .kind            = BuildScriptOwnerKind::Workspace,
             .package         = None(),
-            .source_identity = String::make("workspace"_str),
+            .source_identity = "workspace"_Str,
             .root            = graph.root_directory.clone(),
             .script          = graph.root_directory.join(PathBuf::from("build.lua"_str).as_path()),
             .script_packages = clone_script_packages(),

@@ -215,21 +215,19 @@ auto CompilerArgumentSchema::add(CompilerArgumentDefinition definition) -> usize
 auto CompilerArgumentSchema::build() && -> CompilerArgumentResult<CompilerArgumentParser> {
     for (auto definition = usize {}; definition < definitions_.len(); ++definition) {
         if (definitions_[definition].name.is_empty()) {
-            return Err(CompilerArgumentError::InvalidDefinition(
-                String::make("<unnamed>"_str), String::make("name must not be empty"_str)));
+            return Err(CompilerArgumentError::InvalidDefinition("<unnamed>"_Str,
+                                                                "name must not be empty"_Str));
         }
         if (definitions_[definition].spellings.is_empty()) {
             return Err(CompilerArgumentError::InvalidDefinition(
-                definitions_[definition].name.clone(),
-                String::make("at least one spelling is required"_str)));
+                definitions_[definition].name.clone(), "at least one spelling is required"_Str));
         }
         for (auto spelling = usize {}; spelling < definitions_[definition].spellings.len();
              ++spelling) {
             auto value = definitions_[definition].spellings[spelling].value.as_str();
             if (value.is_empty()) {
                 return Err(CompilerArgumentError::InvalidDefinition(
-                    definitions_[definition].name.clone(),
-                    String::make("spelling must not be empty"_str)));
+                    definitions_[definition].name.clone(), "spelling must not be empty"_Str));
             }
             for (auto candidate_definition = usize {}; candidate_definition <= definition;
                  ++candidate_definition) {

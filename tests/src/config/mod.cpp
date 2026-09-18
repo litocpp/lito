@@ -84,14 +84,14 @@ protected:
 TEST(Config, BuildOptionClonePreservesOrderAndOwnership) {
     auto original = lito::config::ProjectBuildOptions {};
     original.cpp.push(lito::config::BuildOptionInput {
-        .arguments = strings("-Wall"_str, "-Wextra"_str), .source = String::make("first"_str) });
-    original.cpp.push(lito::config::BuildOptionInput { .arguments = strings("-O2"_str),
-                                                       .source    = String::make("second"_str) });
-    original.linker.push(lito::config::BuildOptionInput { .arguments = strings("-s"_str),
-                                                          .source    = String::make("link"_str) });
+        .arguments = strings("-Wall"_str, "-Wextra"_str), .source = "first"_Str });
+    original.cpp.push(
+        lito::config::BuildOptionInput { .arguments = strings("-O2"_str), .source = "second"_Str });
+    original.linker.push(
+        lito::config::BuildOptionInput { .arguments = strings("-s"_str), .source = "link"_Str });
     auto copied                                = original.clone();
-    original.cpp[usize {}].arguments[usize {}] = String::make("changed"_str);
-    original.cpp[usize(1)].source              = String::make("changed"_str);
+    original.cpp[usize {}].arguments[usize {}] = "changed"_Str;
+    original.cpp[usize(1)].source              = "changed"_Str;
     original.linker[usize {}].arguments.clear();
     ASSERT_EQ(copied.cpp.len(), usize(2));
     ASSERT_EQ(copied.cpp[usize {}].arguments.len(), usize(2));
@@ -498,8 +498,8 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Strip));
 
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("toolchain.ld=lld"_str));
-    overrides.push(String::make("tools.strip=runtime-strip"_str));
+    overrides.push("toolchain.ld=lld"_Str);
+    overrides.push("tools.strip=runtime-strip"_Str);
     auto overridden = lito::config::load_project_config(project->root.as_path(),
                                                         lito::config::ProjectConfigRequest {
                                                             .overrides = rstd::move(overrides),
@@ -654,7 +654,7 @@ TEST_F(Config, ProjectConfigResolvesLitodocSourcePath) {
     auto project = empty_project("litodoc-source"_str);
     ASSERT_TRUE(project.is_ok());
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("doc.litodoc-path=."_str));
+    overrides.push("doc.litodoc-path=."_Str);
     auto loaded = lito::config::load_project_config(
         project->root.as_path(),
         lito::config::ProjectConfigRequest { .overrides = rstd::move(overrides) });
@@ -745,7 +745,7 @@ TEST_F(Config, CMakeBuildOverridesBelongToLocalAndInvocationConfiguration) {
     auto invocation_project = empty_project("cmake-build-override-invocation"_str);
     ASSERT_TRUE(invocation_project.is_ok());
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("tools.cmake.overrides.LitoFixture.source=\"installed\""_str));
+    overrides.push("tools.cmake.overrides.LitoFixture.source=\"installed\""_Str);
     auto invocation =
         lito::config::load_project_config(invocation_project->root.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -810,20 +810,20 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
                     .is_ok());
 
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
-    overrides.push(String::make("toolchain.cc=generic-cc"_str));
-    overrides.push(String::make("toolchain.os=linux"_str));
-    overrides.push(String::make("toolchain.arch=x86_64"_str));
-    overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
-    overrides.push(String::make("toolchain.stdlib-runtime=dynamic"_str));
-    overrides.push(String::make("build.options=[\"-pthread\"]"_str));
-    overrides.push(String::make("build.c.options=[\"-Wstrict-prototypes\"]"_str));
-    overrides.push(String::make("build.linker-options=[\"-Wl,--as-needed\"]"_str));
-    overrides.push(String::make("tools.cmake=runtime-cmake"_str));
-    overrides.push(String::make("tools.cmake={generator=\"Unix Makefiles\"}"_str));
-    overrides.push(String::make("tools.cmake.search-path=[\".\"]"_str));
-    overrides.push(String::make("tools.pkg-config.library-path=[\".\"]"_str));
-    overrides.push(String::make("tools.pkg-config=runtime-pkg-config"_str));
+    overrides.push("toolchain.cxx=generic-cxx"_Str);
+    overrides.push("toolchain.cc=generic-cc"_Str);
+    overrides.push("toolchain.os=linux"_Str);
+    overrides.push("toolchain.arch=x86_64"_Str);
+    overrides.push("toolchain.stdlib=libstdc++"_Str);
+    overrides.push("toolchain.stdlib-runtime=dynamic"_Str);
+    overrides.push("build.options=[\"-pthread\"]"_Str);
+    overrides.push("build.c.options=[\"-Wstrict-prototypes\"]"_Str);
+    overrides.push("build.linker-options=[\"-Wl,--as-needed\"]"_Str);
+    overrides.push("tools.cmake=runtime-cmake"_Str);
+    overrides.push("tools.cmake={generator=\"Unix Makefiles\"}"_Str);
+    overrides.push("tools.cmake.search-path=[\".\"]"_Str);
+    overrides.push("tools.pkg-config.library-path=[\".\"]"_Str);
+    overrides.push("tools.pkg-config=runtime-pkg-config"_Str);
     auto loaded = lito::config::load_project_config(directory.as_path(),
                                                     lito::config::ProjectConfigRequest {
                                                         .overrides = rstd::move(overrides),
@@ -856,8 +856,8 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(loaded->pkg_config.library_paths[usize {}].as_path(), directory.as_path());
 
     auto disabled_overrides = Vec<String>::make();
-    disabled_overrides.push(String::make("toolchain.cxx=no-config-cxx"_str));
-    disabled_overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
+    disabled_overrides.push("toolchain.cxx=no-config-cxx"_Str);
+    disabled_overrides.push("toolchain.stdlib=libstdc++"_Str);
     auto disabled =
         lito::config::load_project_config(directory.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -869,7 +869,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(disabled->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
 
     auto invalid_standard_library = Vec<String>::make();
-    invalid_standard_library.push(String::make("toolchain.stdlib=unknown"_str));
+    invalid_standard_library.push("toolchain.stdlib=unknown"_Str);
     auto invalid =
         lito::config::load_project_config(directory.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -879,7 +879,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_TRUE(invalid.is_err());
 
     auto incomplete_target = Vec<String>::make();
-    incomplete_target.push(String::make("toolchain.os=linux"_str));
+    incomplete_target.push("toolchain.os=linux"_Str);
     auto incomplete =
         lito::config::load_project_config(directory.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -889,7 +889,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_TRUE(incomplete.is_err());
 
     auto msvc_standard_library = Vec<String>::make();
-    msvc_standard_library.push(String::make("toolchain.stdlib=msvc"_str));
+    msvc_standard_library.push("toolchain.stdlib=msvc"_Str);
     auto msvc =
         lito::config::load_project_config(directory.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -900,7 +900,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(msvc->standard_library, lito::config::StandardLibrarySelection::Msvc);
 
     auto static_runtime = Vec<String>::make();
-    static_runtime.push(String::make("toolchain.stdlib-runtime=static"_str));
+    static_runtime.push("toolchain.stdlib-runtime=static"_Str);
     auto unsupported =
         lito::config::load_project_config(directory.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -1054,7 +1054,7 @@ TEST_F(Config, RuntimeOverridesReplaceScalarWithTable) {
                     .as_str()
                     .contains("type mismatch: expected map, found string at $.toolchain"_str));
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("toolchain.cxx=clang++"_str));
+    overrides.push("toolchain.cxx=clang++"_Str);
     auto loaded = lito::config::load_project_config(directory.as_path(),
                                                     lito::config::ProjectConfigRequest {
                                                         .overrides = rstd::move(overrides),
@@ -1079,8 +1079,7 @@ TEST_F(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
     ASSERT_TRUE(set.is_ok());
     EXPECT_EQ(set->key.as_str(), "lock.path"_str);
 
-    auto get = lito::config::get_persisted_config(directory.as_path(),
-                                                  Some(String::make("lock.path"_str)));
+    auto get = lito::config::get_persisted_config(directory.as_path(), Some("lock.path"_Str));
     ASSERT_TRUE(get.is_ok());
     EXPECT_EQ(get->output.as_str(), "\".lito/lito.lock\"\n"_str);
 
@@ -1112,8 +1111,7 @@ TEST_F(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
     ASSERT_TRUE(whole.is_ok());
     EXPECT_EQ(whole->output.as_str(), "\n"_str);
 
-    auto missing = lito::config::get_persisted_config(directory.as_path(),
-                                                      Some(String::make("lock.path"_str)));
+    auto missing = lito::config::get_persisted_config(directory.as_path(), Some("lock.path"_Str));
     EXPECT_TRUE(missing.is_err());
 }
 

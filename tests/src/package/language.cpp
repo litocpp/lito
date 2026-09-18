@@ -58,7 +58,7 @@ TEST(PackageLanguage, RejectsCDependencyOnCppPackage) {
     auto dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
     dependencies.push(
         lito::package::ResolvedRequiredDependency::Cpp(lito::package::ResolvedCppDependency {
-            .name = String::make("cpp-provider"_str),
+            .name = "cpp-provider"_Str,
         }));
     auto packages = Vec<lito::package::ResolvedPackage>::make();
     packages.push(language_package(

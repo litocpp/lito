@@ -19,8 +19,8 @@ auto git_command(ref<rstd::path::Path> executable) -> ToolResult<Vec<String>> {
     auto arguments = Vec<String>::make();
     rstd_try(command::push_path(arguments, executable));
 #if defined(_WIN32)
-    arguments.push(String::make("-c"_str));
-    arguments.push(String::make("core.longPaths=true"_str));
+    arguments.push("-c"_Str);
+    arguments.push("core.longPaths=true"_Str);
 #endif
     return Ok(rstd::move(arguments));
 }
@@ -71,22 +71,22 @@ public:
 
     auto head(ref<rstd::path::Path> worktree, ref<str> operation) const -> ToolResult<String> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("-C"_str));
+        arguments.push("-C"_Str);
         rstd_try(command::push_path(arguments, worktree));
-        arguments.push(String::make("rev-parse"_str));
-        arguments.push(String::make("--verify"_str));
-        arguments.push(String::make("HEAD"_str));
+        arguments.push("rev-parse"_Str);
+        arguments.push("--verify"_Str);
+        arguments.push("HEAD"_Str);
         return git_output(rstd::move(arguments), operation, *environment_);
     }
 
     auto try_head(ref<rstd::path::Path> worktree, ref<str> operation) const
         -> ToolResult<Option<String>> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("-C"_str));
+        arguments.push("-C"_Str);
         rstd_try(command::push_path(arguments, worktree));
-        arguments.push(String::make("rev-parse"_str));
-        arguments.push(String::make("--verify"_str));
-        arguments.push(String::make("HEAD"_str));
+        arguments.push("rev-parse"_Str);
+        arguments.push("--verify"_Str);
+        arguments.push("HEAD"_Str);
         auto output = rstd_try(git_run(rstd::move(arguments), operation, *environment_));
         if (output.exit_code != i32 {}) return Ok(Option<String> {});
         return Ok(Some(trim_ascii(rstd::move(output.standard_output))));
@@ -94,19 +94,19 @@ public:
 
     auto initialize_bare(ref<rstd::path::Path> repository) const -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("init"_str));
-        arguments.push(String::make("--bare"_str));
+        arguments.push("init"_Str);
+        arguments.push("--bare"_Str);
         rstd_try(command::push_path(arguments, repository));
         return git_status(rstd::move(arguments), "Git cache initialization"_str, *environment_);
     }
 
     auto remote_origin(ref<rstd::path::Path> repository) const -> ToolResult<Option<String>> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("--git-dir"_str));
+        arguments.push("--git-dir"_Str);
         rstd_try(command::push_path(arguments, repository));
-        arguments.push(String::make("config"_str));
-        arguments.push(String::make("--get"_str));
-        arguments.push(String::make("remote.origin.url"_str));
+        arguments.push("config"_Str);
+        arguments.push("--get"_Str);
+        arguments.push("remote.origin.url"_Str);
         auto output = rstd_try(
             git_run(rstd::move(arguments), "Git cache remote inspection"_str, *environment_));
         if (output.exit_code != i32 {}) return Ok(Option<String> {});
@@ -116,10 +116,10 @@ public:
     auto set_remote_origin(ref<rstd::path::Path> repository, ref<str> url) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("--git-dir"_str));
+        arguments.push("--git-dir"_Str);
         rstd_try(command::push_path(arguments, repository));
-        arguments.push(String::make("config"_str));
-        arguments.push(String::make("remote.origin.url"_str));
+        arguments.push("config"_Str);
+        arguments.push("remote.origin.url"_Str);
         arguments.push(String::make(url));
         return git_status(
             rstd::move(arguments), "Git cache remote configuration"_str, *environment_);
@@ -128,10 +128,10 @@ public:
     auto commit_exists(ref<rstd::path::Path> repository, ref<str> commit) const
         -> ToolResult<bool> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("--git-dir"_str));
+        arguments.push("--git-dir"_Str);
         rstd_try(command::push_path(arguments, repository));
-        arguments.push(String::make("cat-file"_str));
-        arguments.push(String::make("-e"_str));
+        arguments.push("cat-file"_Str);
+        arguments.push("-e"_Str);
         arguments.push(rstd::format("{}^{{commit}}", commit));
         auto output =
             rstd_try(git_run(rstd::move(arguments), "Git object inspection"_str, *environment_));
@@ -141,12 +141,12 @@ public:
     auto fetch(ref<rstd::path::Path> repository, ref<str> revision, ref<str> local_reference) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("--git-dir"_str));
+        arguments.push("--git-dir"_Str);
         rstd_try(command::push_path(arguments, repository));
-        arguments.push(String::make("fetch"_str));
-        arguments.push(String::make("--force"_str));
-        arguments.push(String::make("--no-tags"_str));
-        arguments.push(String::make("origin"_str));
+        arguments.push("fetch"_Str);
+        arguments.push("--force"_Str);
+        arguments.push("--no-tags"_Str);
+        arguments.push("origin"_Str);
         arguments.push(rstd::format("{}:{}", revision, local_reference));
         return git_status(rstd::move(arguments), "Git source fetch"_str, *environment_);
     }
@@ -154,10 +154,10 @@ public:
     auto rev_parse_commit(ref<rstd::path::Path> repository, ref<str> revision) const
         -> ToolResult<String> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("--git-dir"_str));
+        arguments.push("--git-dir"_Str);
         rstd_try(command::push_path(arguments, repository));
-        arguments.push(String::make("rev-parse"_str));
-        arguments.push(String::make("--verify"_str));
+        arguments.push("rev-parse"_Str);
+        arguments.push("--verify"_Str);
         arguments.push(rstd::format("{}^{{commit}}", revision));
         auto commit = rstd_try(
             git_output(rstd::move(arguments), "Git source revision resolution"_str, *environment_));
@@ -171,9 +171,9 @@ public:
     auto clone_shared(ref<rstd::path::Path> repository, ref<rstd::path::Path> checkout) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("clone"_str));
-        arguments.push(String::make("--no-checkout"_str));
-        arguments.push(String::make("--shared"_str));
+        arguments.push("clone"_Str);
+        arguments.push("--no-checkout"_Str);
+        arguments.push("--shared"_Str);
         rstd_try(command::push_path(arguments, repository));
         rstd_try(command::push_path(arguments, checkout));
         return git_status(rstd::move(arguments), "Git source checkout creation"_str, *environment_);
@@ -183,9 +183,9 @@ public:
                          ref<rstd::path::Path> destination,
                          ref<str>              commit) const -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("clone"_str));
-        arguments.push(String::make("--no-checkout"_str));
-        arguments.push(String::make("--no-hardlinks"_str));
+        arguments.push("clone"_Str);
+        arguments.push("--no-checkout"_Str);
+        arguments.push("--no-hardlinks"_Str);
         rstd_try(command::push_path(arguments, source));
         rstd_try(command::push_path(arguments, destination));
         rstd_try(git_status(rstd::move(arguments), "Git source bundle export"_str, *environment_));
@@ -195,11 +195,11 @@ public:
     auto set_worktree_remote_origin(ref<rstd::path::Path> worktree, ref<str> url) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("-C"_str));
+        arguments.push("-C"_Str);
         rstd_try(command::push_path(arguments, worktree));
-        arguments.push(String::make("remote"_str));
-        arguments.push(String::make("set-url"_str));
-        arguments.push(String::make("origin"_str));
+        arguments.push("remote"_Str);
+        arguments.push("set-url"_Str);
+        arguments.push("origin"_Str);
         arguments.push(String::make(url));
         return git_status(
             rstd::move(arguments), "Git worktree remote configuration"_str, *environment_);
@@ -208,10 +208,10 @@ public:
     auto checkout_detached(ref<rstd::path::Path> checkout, ref<str> commit) const
         -> ToolResult<empty> {
         auto arguments = rstd_try(git_command(executable_.as_path()));
-        arguments.push(String::make("-C"_str));
+        arguments.push("-C"_Str);
         rstd_try(command::push_path(arguments, checkout));
-        arguments.push(String::make("checkout"_str));
-        arguments.push(String::make("--detach"_str));
+        arguments.push("checkout"_Str);
+        arguments.push("--detach"_Str);
         arguments.push(String::make(commit));
         return git_status(rstd::move(arguments), "Git source checkout"_str, *environment_);
     }

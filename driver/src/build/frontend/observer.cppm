@@ -90,12 +90,12 @@ public:
     auto end(frontend::preprocessor::PreprocessorActivity activity) -> void {
         auto current = active_.pop();
         if (current.is_none()) {
-            remember(String::make("preprocessor profiling activity stack is empty"_str));
+            remember("preprocessor profiling activity stack is empty"_Str);
             return;
         }
         auto value = rstd::move(current).unwrap_unchecked();
         if (value.activity != activity) {
-            remember(String::make("preprocessor profiling activities ended out of order"_str));
+            remember("preprocessor profiling activities ended out of order"_Str);
         }
         auto completed = profiler_->complete(value.span);
         if (completed.is_err()) {
@@ -110,7 +110,7 @@ public:
 
     auto finish() -> Result<empty, String> {
         if (! active_.is_empty()) {
-            return Err(String::make("preprocessor profiling activities remain active"_str));
+            return Err("preprocessor profiling activities remain active"_Str);
         }
         if (error_.is_some()) return Err(rstd::move(error_).unwrap_unchecked());
         return Ok(empty {});

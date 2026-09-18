@@ -68,7 +68,7 @@ public:
         }
         if (backends.is_empty()) {
             return Err(ToolchainError::Message(
-                String::make("clang++ --print-targets returned no registered targets"_str)));
+                "clang++ --print-targets returned no registered targets"_Str));
         }
         return Ok(ClangSupportedTargets(rstd::move(backends), licrypto::sha256_hex(output)));
     }

@@ -59,8 +59,8 @@ auto primary_module(ref<str> declared) -> String {
 auto normalized_import(ref<str> imported, ref<str> declared) -> lexical::Result<String> {
     if (imported.is_empty() || imported[usize {}] != u8(':')) return Ok(String::make(imported));
     if (declared.is_empty()) {
-        return frontend_failure<String>(String::make(
-            "relative partition import appears before a named module declaration"_str));
+        return frontend_failure<String>(
+            "relative partition import appears before a named module declaration"_Str);
     }
     auto result = primary_module(declared);
     result.push_str(imported);
@@ -84,8 +84,7 @@ public:
     auto consume(slice<lexical::Token> tokens) -> lexical::Result<empty> {
         for (const auto& token : tokens) {
             if (token.kind == lexical::TokenKind::Identifier && token.text.utf8().is_err())
-                return Err(lexical::Error::at(String::make("invalid UTF-8 identifier"_str),
-                                              token.expansion));
+                return Err(lexical::Error::at("invalid UTF-8 identifier"_Str, token.expansion));
             while (states_.len() <= token.expansion.source) states_.emplace_back();
             while (attribute_states_.len() <= token.expansion.source) {
                 attribute_states_.emplace_back();
@@ -302,8 +301,7 @@ private:
         if (keyword == "import"_str && exported &&
             (provided_.is_none() || ! provided_->is_interface)) {
             return Err(lexical::Error::at(
-                String::make(
-                    "export import declaration can only be used within a module interface unit"_str),
+                "export import declaration can only be used within a module interface unit"_Str,
                 candidate[usize {}].expansion));
         }
         auto name_start = declaration + usize(1);

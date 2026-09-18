@@ -179,13 +179,13 @@ auto is_cpp_standard_library_mode_macro(ref<str> definition) -> bool {
 }
 
 auto cpp_standard_library_modes_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-stdlib-modes-v1\n"_str);
+    auto result = "lito-cpp-stdlib-modes-v1\n"_Str;
     result.push_str(standard_library_macro_identity(options, false).as_str());
     return result;
 }
 
 auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-abi-compatibility-v2\n"_str);
+    auto result = "lito-cpp-abi-compatibility-v2\n"_Str;
     push_identity(
         result, "stdlib"_str, lito::config::standard_library_name(options.abi.standard_library));
     push_identity(result,
@@ -286,7 +286,7 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
 }
 
 auto cpp_compile_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-compile-context-v5\n"_str);
+    auto result = "lito-cpp-compile-context-v5\n"_Str;
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.common.codegen.optimization));
@@ -339,7 +339,7 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_scan_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-scan-context-v4\n"_str);
+    auto result = "lito-cpp-scan-context-v4\n"_Str;
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.common.codegen.optimization));
@@ -376,7 +376,7 @@ auto cpp_scan_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-bmi-compatibility-v3\n"_str);
+    auto result = "lito-cpp-bmi-compatibility-v3\n"_Str;
     append_semantic_identity(result, options);
     for (const auto& value : options.vendor) {
         if (value.effect == CppVendorOptionEffect::Language ||
@@ -390,7 +390,7 @@ auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String 
 }
 
 auto cpp_public_requirements_identity(const CppPublicRequirements& requirements) -> String {
-    auto result = String::make("lito-cpp-public-requirements-v2\n"_str);
+    auto result = "lito-cpp-public-requirements-v2\n"_Str;
     for (const auto& include : requirements.include_directories) {
         auto text = include.path.as_path().to_str();
         push_identity(result,

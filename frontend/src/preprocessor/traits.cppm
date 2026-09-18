@@ -195,8 +195,8 @@ struct EmbedResolver {
 class UnsupportedEmbedResolver {
 public:
     auto resolve(const EmbedRequest& request) -> Result<Option<EmbedResolution>> {
-        return Err(Error::at(String::make("#embed is not supported by this frontend context"_str),
-                             request.location));
+        return Err(
+            Error::at("#embed is not supported by this frontend context"_Str, request.location));
     }
 };
 

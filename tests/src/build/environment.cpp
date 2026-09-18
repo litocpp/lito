@@ -40,7 +40,7 @@ TEST_F(BuildEnvironment, PathBuildToolsUseOwnerAndEffectivePathIdentity) {
             .root    = owner.clone(),
             .requirement =
                 lito::manifest::BuildToolRequirement {
-                    .alias  = String::make("generator"_str),
+                    .alias  = "generator"_Str,
                     .source = lito::manifest::BuildToolSource::Path(PathBuf::from(requested)),
                 },
         });
@@ -49,7 +49,7 @@ TEST_F(BuildEnvironment, PathBuildToolsUseOwnerAndEffectivePathIdentity) {
     add("second-owner"_str, "tools/generate"_str);
     auto host = lito::system::HostInfo {
         .architecture = lito::system::Architecture::X86_64,
-        .os           = String::make("linux"_str),
+        .os           = "linux"_Str,
     };
     auto layout = lito::BuildLayout::resolve(
         project->root.as_path(), build_root("path-tool-resolution"_str).as_path(), "release"_str);
@@ -153,15 +153,15 @@ extern "C" auto fixture_environment_two() -> int {
         build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str));
     request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-DFIXTURE_CPP=1"_str),
-        .source    = String::make("config.build.options"_str),
+        .source    = "config.build.options"_Str,
     });
     request.configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-DFIXTURE_C=1"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     request.configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-Wl,--as-needed"_str),
-        .source    = String::make("config.build.linker-options"_str),
+        .source    = "config.build.linker-options"_Str,
     });
     request.execution.scan.jobs    = Some(usize(2));
     request.execution.compile.jobs = Some(usize(2));
@@ -297,7 +297,7 @@ auto main() -> int {
     auto include = project->root.join(PathBuf::from("include"_str).as_path());
     request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings(rstd::format("-I{}", include.as_path()).as_str()),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto summary = lito::build(request);
 

@@ -261,9 +261,9 @@ auto parse_artifact_file_role(ref<str> value) -> BuildProductResult<ArtifactFile
 
 auto target_json(const lito::package::PackageTargetId& target) -> Json {
     auto result = JsonMap::make();
-    result.insert(String::make("package"_str), product_string(target.package.as_str()));
-    result.insert(String::make("kind"_str), product_string(package_target_kind_text(target.kind)));
-    result.insert(String::make("name"_str), product_string(target.name.as_str()));
+    result.insert("package"_Str, product_string(target.package.as_str()));
+    result.insert("kind"_Str, product_string(package_target_kind_text(target.kind)));
+    result.insert("name"_Str, product_string(target.name.as_str()));
     return Json::Object(rstd::move(result));
 }
 
@@ -322,13 +322,11 @@ auto artifact_file_json(const CompletedBuildProduct& product,
                         const BuiltArtifactFile&     file,
                         ref<str>                     context) -> BuildProductResult<Json> {
     auto result = JsonMap::make();
-    result.insert(String::make("role"_str), product_string(artifact_file_role_name(file.role)));
-    result.insert(String::make("path"_str),
-                  rstd_try(product_build_path(product, file.path.as_path(), context)));
-    result.insert(String::make("content-type"_str), product_string(file.content_type.as_str()));
-    result.insert(String::make("content-identity"_str),
-                  product_string(file.content_identity.as_str()));
-    result.insert(String::make("publish"_str), Json::Bool(file.publish));
+    result.insert("role"_Str, product_string(artifact_file_role_name(file.role)));
+    result.insert("path"_Str, rstd_try(product_build_path(product, file.path.as_path(), context)));
+    result.insert("content-type"_Str, product_string(file.content_type.as_str()));
+    result.insert("content-identity"_Str, product_string(file.content_identity.as_str()));
+    result.insert("publish"_Str, Json::Bool(file.publish));
     return Ok(Json::Object(rstd::move(result)));
 }
 
@@ -357,11 +355,10 @@ auto parse_artifact_file(const Json& value, ref<rstd::path::Path> base, ref<str>
 auto artifact_json(const CompletedBuildProduct& product, const BuiltArtifact& artifact)
     -> BuildProductResult<Json> {
     auto result = JsonMap::make();
-    result.insert(String::make("target"_str), target_json(artifact.target));
-    result.insert(String::make("kind"_str), product_string(artifact_kind_text(artifact.kind)));
-    result.insert(String::make("format"_str),
-                  product_string(lito::artifact::format_name(artifact.format)));
-    result.insert(String::make("primary"_str),
+    result.insert("target"_Str, target_json(artifact.target));
+    result.insert("kind"_Str, product_string(artifact_kind_text(artifact.kind)));
+    result.insert("format"_Str, product_string(lito::artifact::format_name(artifact.format)));
+    result.insert("primary"_Str,
                   rstd_try(artifact_file_json(
                       product, artifact.primary, "build product artifact primary"_str)));
     auto companions = JsonArray::with_capacity(artifact.companions.len());
@@ -369,18 +366,15 @@ auto artifact_json(const CompletedBuildProduct& product, const BuiltArtifact& ar
         companions.push(
             rstd_try(artifact_file_json(product, file, "build product artifact companion"_str)));
     }
-    result.insert(String::make("companions"_str), Json::Array(rstd::move(companions)));
-    result.insert(String::make("package-root"_str),
-                  rstd_try(product_path(artifact.package_root.as_path())));
-    result.insert(String::make("link-identity"_str),
-                  product_string(artifact.link_identity.as_str()));
+    result.insert("companions"_Str, Json::Array(rstd::move(companions)));
+    result.insert("package-root"_Str, rstd_try(product_path(artifact.package_root.as_path())));
+    result.insert("link-identity"_Str, product_string(artifact.link_identity.as_str()));
     if (artifact.install_link.is_some()) {
         auto link = JsonMap::make();
-        link.insert(String::make("identity"_str),
-                    product_string(artifact.install_link->identity.as_str()));
-        link.insert(String::make("runtime-search"_str),
+        link.insert("identity"_Str, product_string(artifact.install_link->identity.as_str()));
+        link.insert("runtime-search"_Str,
                     rstd_try(runpath_json(artifact.install_link->runtime_search)));
-        result.insert(String::make("install-link"_str), Json::Object(rstd::move(link)));
+        result.insert("install-link"_Str, Json::Object(rstd::move(link)));
     }
     return Ok(Json::Object(rstd::move(result)));
 }
@@ -438,17 +432,16 @@ auto parse_artifact(const Json& value, ref<rstd::path::Path> base, ref<str> cont
 auto compiler_plugin_json(const CompletedBuildProduct& product, const BuiltCompilerPlugin& plugin)
     -> BuildProductResult<Json> {
     auto result = JsonMap::make();
-    result.insert(String::make("target"_str), target_json(plugin.target));
-    result.insert(String::make("support-archive"_str),
+    result.insert("target"_Str, target_json(plugin.target));
+    result.insert("support-archive"_Str,
                   rstd_try(product_build_path(product,
                                               plugin.support_archive.as_path(),
                                               "compiler plugin support archive"_str)));
-    result.insert(String::make("plugin"_str),
+    result.insert("plugin"_Str,
                   rstd_try(product_build_path(
                       product, plugin.plugin.as_path(), "compiler plugin shared object"_str)));
-    result.insert(String::make("identity"_str), product_string(plugin.identity.as_str()));
-    result.insert(String::make("content-identity"_str),
-                  product_string(plugin.content_identity.as_str()));
+    result.insert("identity"_Str, product_string(plugin.identity.as_str()));
+    result.insert("content-identity"_Str, product_string(plugin.content_identity.as_str()));
     return Ok(Json::Object(rstd::move(result)));
 }
 
@@ -476,11 +469,11 @@ auto parse_compiler_plugin(const Json& value, ref<rstd::path::Path> base, ref<st
 auto proc_macro_provider_json(const CompletedBuildProduct&  product,
                               const BuiltProcMacroProvider& provider) -> BuildProductResult<Json> {
     auto result = JsonMap::make();
-    result.insert(String::make("target"_str), target_json(provider.target));
-    result.insert(String::make("archive"_str),
+    result.insert("target"_Str, target_json(provider.target));
+    result.insert("archive"_Str,
                   rstd_try(product_build_path(
                       product, provider.archive.as_path(), "proc-macro provider archive"_str)));
-    result.insert(String::make("identity"_str), product_string(provider.identity.as_str()));
+    result.insert("identity"_Str, product_string(provider.identity.as_str()));
     return Ok(Json::Object(rstd::move(result)));
 }
 
@@ -499,21 +492,19 @@ auto proc_macro_aggregate_json(const CompletedBuildProduct&   product,
                                const BuiltProcMacroAggregate& aggregate)
     -> BuildProductResult<Json> {
     auto result = JsonMap::make();
-    result.insert(String::make("selection-identity"_str),
-                  product_string(aggregate.selection_identity.as_str()));
-    result.insert(String::make("identity"_str), product_string(aggregate.identity.as_str()));
-    result.insert(String::make("content-identity"_str),
-                  product_string(aggregate.content_identity.as_str()));
-    result.insert(String::make("plugin"_str),
+    result.insert("selection-identity"_Str, product_string(aggregate.selection_identity.as_str()));
+    result.insert("identity"_Str, product_string(aggregate.identity.as_str()));
+    result.insert("content-identity"_Str, product_string(aggregate.content_identity.as_str()));
+    result.insert("plugin"_Str,
                   rstd_try(product_build_path(
                       product, aggregate.plugin.as_path(), "proc-macro aggregate plugin"_str)));
     auto providers = JsonArray::with_capacity(aggregate.providers.len());
     for (const auto& provider : aggregate.providers) {
         auto value = JsonMap::make();
-        value.insert(String::make("package"_str), product_string(provider.package.as_str()));
+        value.insert("package"_Str, product_string(provider.package.as_str()));
         providers.push(Json::Object(rstd::move(value)));
     }
-    result.insert(String::make("providers"_str), Json::Array(rstd::move(providers)));
+    result.insert("providers"_Str, Json::Array(rstd::move(providers)));
     return Ok(Json::Object(rstd::move(result)));
 }
 
@@ -547,9 +538,9 @@ auto parse_proc_macro_aggregate(const Json& value, ref<rstd::path::Path> base, r
 
 auto target_runtime_json(const BuiltTargetRuntime& runtime) -> BuildProductResult<Json> {
     auto result = JsonMap::make();
-    result.insert(String::make("name"_str), product_string(runtime.name.as_str()));
-    result.insert(String::make("path"_str), rstd_try(product_path(runtime.path.as_path())));
-    result.insert(String::make("identity"_str), product_string(runtime.identity.as_str()));
+    result.insert("name"_Str, product_string(runtime.name.as_str()));
+    result.insert("path"_Str, rstd_try(product_path(runtime.path.as_path())));
+    result.insert("identity"_Str, product_string(runtime.identity.as_str()));
     return Ok(Json::Object(rstd::move(result)));
 }
 
@@ -568,18 +559,17 @@ auto external_assets_json(const CompletedBuildProduct& product, const ExternalAs
     auto sets = JsonArray::with_capacity(catalog.sets.len());
     for (const auto& set : catalog.sets) {
         auto value = JsonMap::make();
-        value.insert(String::make("alias"_str), product_string(set.alias.as_str()));
-        value.insert(String::make("name"_str), product_string(set.name.as_str()));
-        value.insert(String::make("disposition"_str),
+        value.insert("alias"_Str, product_string(set.alias.as_str()));
+        value.insert("name"_Str, product_string(set.name.as_str()));
+        value.insert("disposition"_Str,
                      product_string(set.disposition == ExternalAssetDisposition::Materialized
                                         ? "materialized"_str
                                         : "provided"_str));
         auto entries = JsonArray::with_capacity(set.entries.len());
         for (const auto& entry : set.entries) {
             auto item = JsonMap::make();
-            item.insert(String::make("logical-path"_str),
-                        rstd_try(product_path(entry.logical_path.as_path())));
-            item.insert(String::make("source"_str),
+            item.insert("logical-path"_Str, rstd_try(product_path(entry.logical_path.as_path())));
+            item.insert("source"_Str,
                         set.disposition == ExternalAssetDisposition::Materialized
                             ? rstd_try(product_build_path(product,
                                                           entry.source.as_path(),
@@ -587,7 +577,7 @@ auto external_assets_json(const CompletedBuildProduct& product, const ExternalAs
                             : rstd_try(product_path(entry.source.as_path())));
             entries.push(Json::Object(rstd::move(item)));
         }
-        value.insert(String::make("entries"_str), Json::Array(rstd::move(entries)));
+        value.insert("entries"_Str, Json::Array(rstd::move(entries)));
         sets.push(Json::Object(rstd::move(value)));
     }
     return Ok(Json::Array(rstd::move(sets)));
@@ -649,19 +639,19 @@ auto file_stamp_json(const CompletedBuildProduct& product, const BuildProductFil
     -> BuildProductResult<Json> {
     auto result = JsonMap::make();
     if (file.path.as_path().strip_prefix(product.base_directory.as_path()).is_some()) {
-        result.insert(String::make("owner"_str), product_string("build"_str));
+        result.insert("owner"_Str, product_string("build"_str));
         result.insert(
-            String::make("path"_str),
+            "path"_Str,
             rstd_try(product_build_path(product, file.path.as_path(), "build product file"_str)));
     } else {
-        result.insert(String::make("owner"_str), product_string("external"_str));
-        result.insert(String::make("path"_str), rstd_try(product_path(file.path.as_path())));
+        result.insert("owner"_Str, product_string("external"_str));
+        result.insert("path"_Str, rstd_try(product_path(file.path.as_path())));
     }
-    result.insert(String::make("size"_str), Json::Number(rstd::json::Number::from_u64(file.size)));
-    result.insert(String::make("modified-seconds"_str),
+    result.insert("size"_Str, Json::Number(rstd::json::Number::from_u64(file.size)));
+    result.insert("modified-seconds"_Str,
                   Json::Number(rstd::json::Number::from_i64(file.modified_seconds)));
     result.insert(
-        String::make("modified-nanoseconds"_str),
+        "modified-nanoseconds"_Str,
         Json::Number(rstd::json::Number::from_u64(rstd::as_cast<u64>(file.modified_nanoseconds))));
     return Ok(Json::Object(rstd::move(result)));
 }
@@ -717,14 +707,14 @@ auto parse_file_stamp(const Json& value, ref<rstd::path::Path> base, ref<str> co
 
 auto product_payload_json(const CompletedBuildProduct& product) -> BuildProductResult<Json> {
     auto root = JsonMap::make();
-    root.insert(String::make("profile"_str), product_string(product.profile.as_str()));
-    root.insert(String::make("target"_str), product_string(product.target.as_str()));
-    root.insert(String::make("target-kind"_str), product_string(product.target_kind.as_str()));
-    root.insert(String::make("android-abi"_str), product_string(product.android_abi.as_str()));
-    root.insert(String::make("android-minimum-api"_str),
+    root.insert("profile"_Str, product_string(product.profile.as_str()));
+    root.insert("target"_Str, product_string(product.target.as_str()));
+    root.insert("target-kind"_Str, product_string(product.target_kind.as_str()));
+    root.insert("android-abi"_Str, product_string(product.android_abi.as_str()));
+    root.insert("android-minimum-api"_Str,
                 Json::Number(
                     rstd::json::Number::from_u64(rstd::as_cast<u64>(product.android_minimum_api))));
-    root.insert(String::make("build-directory"_str),
+    root.insert("build-directory"_Str,
                 rstd_try(product_build_path(
                     product, product.build_directory.as_path(), "build product directory"_str)));
 
@@ -732,41 +722,39 @@ auto product_payload_json(const CompletedBuildProduct& product) -> BuildProductR
     for (const auto& artifact : product.artifacts) {
         artifacts.push(rstd_try(artifact_json(product, artifact)));
     }
-    root.insert(String::make("artifacts"_str), Json::Array(rstd::move(artifacts)));
+    root.insert("artifacts"_Str, Json::Array(rstd::move(artifacts)));
 
     auto compiler_plugins = JsonArray::with_capacity(product.compiler_plugins.len());
     for (const auto& plugin : product.compiler_plugins) {
         compiler_plugins.push(rstd_try(compiler_plugin_json(product, plugin)));
     }
-    root.insert(String::make("compiler-plugins"_str), Json::Array(rstd::move(compiler_plugins)));
+    root.insert("compiler-plugins"_Str, Json::Array(rstd::move(compiler_plugins)));
 
     auto proc_macro_providers = JsonArray::with_capacity(product.proc_macro_providers.len());
     for (const auto& provider : product.proc_macro_providers) {
         proc_macro_providers.push(rstd_try(proc_macro_provider_json(product, provider)));
     }
-    root.insert(String::make("proc-macro-providers"_str),
-                Json::Array(rstd::move(proc_macro_providers)));
+    root.insert("proc-macro-providers"_Str, Json::Array(rstd::move(proc_macro_providers)));
 
     auto proc_macro_aggregates = JsonArray::with_capacity(product.proc_macro_aggregates.len());
     for (const auto& aggregate : product.proc_macro_aggregates) {
         proc_macro_aggregates.push(rstd_try(proc_macro_aggregate_json(product, aggregate)));
     }
-    root.insert(String::make("proc-macro-aggregates"_str),
-                Json::Array(rstd::move(proc_macro_aggregates)));
+    root.insert("proc-macro-aggregates"_Str, Json::Array(rstd::move(proc_macro_aggregates)));
 
     auto runtimes = JsonArray::with_capacity(product.target_runtimes.len());
     for (const auto& runtime : product.target_runtimes) {
         runtimes.push(rstd_try(target_runtime_json(runtime)));
     }
-    root.insert(String::make("target-runtimes"_str), Json::Array(rstd::move(runtimes)));
-    root.insert(String::make("external-assets"_str),
+    root.insert("target-runtimes"_Str, Json::Array(rstd::move(runtimes)));
+    root.insert("external-assets"_Str,
                 rstd_try(external_assets_json(product, product.external_assets)));
 
     auto files = JsonArray::with_capacity(product.install_files.len());
     for (const auto& file : product.install_files) {
         files.push(rstd_try(file_stamp_json(product, file)));
     }
-    root.insert(String::make("install-files"_str), Json::Array(rstd::move(files)));
+    root.insert("install-files"_Str, Json::Array(rstd::move(files)));
     return Ok(Json::Object(rstd::move(root)));
 }
 
@@ -1205,10 +1193,9 @@ auto begin_build_product_publication(ref<rstd::path::Path> project_root,
     auto time       = rstd::time::SystemTime::now().as_unix_time();
     auto generation = rstd::format("{}-{}-{}", rstd::process::id(), time.seconds, time.nanoseconds);
     auto state      = JsonMap::make();
-    state.insert(String::make("schema"_str),
-                 Json::Number(rstd::json::Number::from_u64(BUILD_PRODUCT_SCHEMA)));
-    state.insert(String::make("state"_str), product_string("building"_str));
-    state.insert(String::make("generation"_str), product_string(generation.as_str()));
+    state.insert("schema"_Str, Json::Number(rstd::json::Number::from_u64(BUILD_PRODUCT_SCHEMA)));
+    state.insert("state"_Str, product_string("building"_str));
+    state.insert("generation"_Str, product_string(generation.as_str()));
     rstd_try(write_product_state(layout.state.as_path(), Json::Object(rstd::move(state))));
     return Ok(BuildProductPublication {
         .base_directory = rstd::move(layout.base),
@@ -1316,11 +1303,10 @@ auto complete_build_product_publication(const BuildProductPublication& publicati
                          publication.base_directory.as_path()));
     }
     auto state = JsonMap::make();
-    state.insert(String::make("schema"_str),
-                 Json::Number(rstd::json::Number::from_u64(BUILD_PRODUCT_SCHEMA)));
-    state.insert(String::make("state"_str), product_string("complete"_str));
-    state.insert(String::make("generation"_str), product_string(generation.as_str()));
-    state.insert(String::make("product"_str), rstd_try(product_json(product)));
+    state.insert("schema"_Str, Json::Number(rstd::json::Number::from_u64(BUILD_PRODUCT_SCHEMA)));
+    state.insert("state"_Str, product_string("complete"_str));
+    state.insert("generation"_Str, product_string(generation.as_str()));
+    state.insert("product"_Str, rstd_try(product_json(product)));
     return write_product_state(publication.state.as_path(), Json::Object(rstd::move(state)));
 }
 

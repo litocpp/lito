@@ -409,7 +409,7 @@ auto build_configuration(lito::config::ToolchainSpec            toolchain,
         .standard_library         = standard_library,
         .standard_library_runtime = standard_library_runtime,
         .bmi_mode                 = lito::cpp::BmiMode::Reduced,
-        .language_standard        = String::make("c++20"_str),
+        .language_standard        = "c++20"_Str,
         .global_options           = rstd::move(options),
         .target                   = rstd::move(target),
     };
@@ -507,7 +507,7 @@ auto read_inspector_standard_input() -> Result<String, InspectorInputError> {
         if (*read == usize {}) break;
         if (bytes.len() > maximum_size - *read) {
             return Err(InspectorInputError {
-                .message = String::make("inspection request exceeds 1 MiB"_str),
+                .message = "inspection request exceeds 1 MiB"_Str,
             });
         }
         bytes.extend_from_slice(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
@@ -515,7 +515,7 @@ auto read_inspector_standard_input() -> Result<String, InspectorInputError> {
     auto text = String::from_utf8(rstd::move(bytes));
     if (text.is_err()) {
         return Err(InspectorInputError {
-            .message = String::make("inspection request is not UTF-8"_str),
+            .message = "inspection request is not UTF-8"_Str,
         });
     }
     return Ok(rstd::move(text).unwrap());
@@ -536,7 +536,7 @@ auto read_inspector_request(ref<str> source, ref<rstd::path::Path> root)
     }
     if (text->len() > usize(1024 * 1024)) {
         return Err(InspectorInputError {
-            .message = String::make("inspection request exceeds 1 MiB"_str),
+            .message = "inspection request exceeds 1 MiB"_Str,
         });
     }
     return Ok(rstd::move(text).unwrap());

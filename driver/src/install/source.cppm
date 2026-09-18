@@ -153,7 +153,7 @@ auto lito::RegistryInstallGraphSeed::resolve(
     auto& self = *static_cast<RegistryInstallGraphSeed*>(raw);
     if (self.consumed) {
         return Err(lito::registry::RegistryGraphError {
-            .message = String::make("Registry install graph seed was already consumed"_str),
+            .message = "Registry install graph seed was already consumed"_Str,
         });
     }
     for (const auto& requirement : requirements) {
@@ -211,8 +211,7 @@ auto resolve_install_destination(ref<rstd::path::Path>              invocation_r
 auto resolve_install_source(InstallSourceRequirement requirement)
     -> InstallSourceResult<ResolvedInstallSource> {
     if (! requirement.is_LocalProject()) {
-        return Err(InstallSourceError::Message(
-            String::make("unsupported install source requirement"_str)));
+        return Err(InstallSourceError::Message("unsupported install source requirement"_Str));
     }
     auto project = rstd_try(lito::workspace::resolve_project_entry(
         requirement.as_LocalProject().requested_root.as_path()));
@@ -356,28 +355,27 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
     -> InstallSourceResult<Json> {
     auto identity = rstd_try(install_source_identity(provenance));
     auto source   = JsonMap::make();
-    source.insert(String::make("identity"_str), Json::String(rstd::move(identity)));
+    source.insert("identity"_Str, Json::String(rstd::move(identity)));
     if (provenance.is_Registry()) {
         const auto& registry = provenance.as_Registry();
-        source.insert(String::make("checksum"_str), Json::String(registry.pin.checksum.text()));
-        source.insert(String::make("kind"_str), Json::String(String::make("registry"_str)));
-        source.insert(String::make("package"_str),
+        source.insert("checksum"_Str, Json::String(registry.pin.checksum.text()));
+        source.insert("kind"_Str, Json::String("registry"_Str));
+        source.insert("package"_Str,
                       Json::String(String::make(registry.pin.release.package.name.as_str())));
-        source.insert(String::make("registry"_str),
+        source.insert("registry"_Str,
                       Json::String(String::make(registry.pin.release.package.registry.as_str())));
-        source.insert(String::make("version"_str),
-                      Json::String(registry.pin.release.version.text()));
+        source.insert("version"_Str, Json::String(registry.pin.release.version.text()));
         return Ok(Json::Object(rstd::move(source)));
     }
     if (provenance.is_Git()) {
         const auto& git = provenance.as_Git();
-        source.insert(String::make("commit"_str), Json::String(git.commit.clone()));
-        source.insert(String::make("kind"_str), Json::String(String::make("git"_str)));
-        source.insert(String::make("reference"_str), Json::String(git.reference.value.clone()));
+        source.insert("commit"_Str, Json::String(git.commit.clone()));
+        source.insert("kind"_Str, Json::String("git"_Str));
+        source.insert("reference"_Str, Json::String(git.reference.value.clone()));
         source.insert(
-            String::make("reference-kind"_str),
+            "reference-kind"_Str,
             Json::String(String::make(lito::source::git_reference_kind_name(git.reference.kind))));
-        source.insert(String::make("url"_str), Json::String(git.url.clone()));
+        source.insert("url"_Str, Json::String(git.url.clone()));
         return Ok(Json::Object(rstd::move(source)));
     }
     const auto& root = provenance.as_Local().root;
@@ -386,8 +384,8 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
         return install_source_failure<Json>(
             rstd::format("install source path '{}' is not valid UTF-8", root.as_path()));
     }
-    source.insert(String::make("kind"_str), Json::String(String::make("path"_str)));
-    source.insert(String::make("path"_str), Json::String(String::make(*path)));
+    source.insert("kind"_Str, Json::String("path"_Str));
+    source.insert("path"_Str, Json::String(String::make(*path)));
     return Ok(Json::Object(rstd::move(source)));
 }
 

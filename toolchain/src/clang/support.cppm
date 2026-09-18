@@ -195,7 +195,7 @@ auto append_typed_options(Vec<String>&                  command,
                                   lito::compiler::microsoft_runtime_library_name(
                                       *options.common.microsoft_runtime_library)));
     }
-    if (compiler::uses_posix_threads(options.common)) command.push(String::make("-pthread"_str));
+    if (compiler::uses_posix_threads(options.common)) command.push("-pthread"_Str);
     for (const auto& option : options.target.features) command.push(option.value.clone());
     for (const auto& option : options.codegen.modes) command.push(option.value.clone());
     for (const auto& option : options.codegen.instrumentation) command.push(option.clone());

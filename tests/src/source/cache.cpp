@@ -153,7 +153,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     auto archive_bytes = rstd::fs::read(archive.as_path());
     ASSERT_TRUE(archive_bytes.is_ok());
     auto digest   = licrypto::sha256_digest(archive_bytes->as_slice());
-    auto url_text = String::make("file://"_str);
+    auto url_text = "file://"_Str;
     for (const auto byte : archive.as_path().as_os_str().as_encoded_bytes()) {
         if (byte == u8(' ')) {
             url_text.push_str("%20"_str);
@@ -313,8 +313,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         lito::BuildLayout::create(directory.as_path(), fallback_output.as_path(), "fallback"_str);
     ASSERT_TRUE(fallback_layout.is_ok());
     requests.push(lito::source::ArchiveSourceFetchRequest {
-        .owner  = String::make("fixture"_str),
-        .name   = String::make("archive"_str),
+        .owner  = "fixture"_Str,
+        .name   = "archive"_Str,
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
@@ -352,8 +352,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         directory.as_path(), explicit_tar_output.as_path(), "explicit-tar"_str);
     ASSERT_TRUE(explicit_tar_layout.is_ok());
     requests.push(lito::source::ArchiveSourceFetchRequest {
-        .owner  = String::make("fixture"_str),
-        .name   = String::make("archive"_str),
+        .owner  = "fixture"_Str,
+        .name   = "archive"_Str,
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
@@ -384,8 +384,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         lito::BuildLayout::create(directory.as_path(), missing_output.as_path(), "missing"_str);
     ASSERT_TRUE(missing_layout.is_ok());
     requests.push(lito::source::ArchiveSourceFetchRequest {
-        .owner  = String::make("fixture"_str),
-        .name   = String::make("archive"_str),
+        .owner  = "fixture"_Str,
+        .name   = "archive"_Str,
         .url    = rstd::move(url),
         .sha256 = rstd::move(digest),
     });
@@ -410,8 +410,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_TRUE(unavailable_message.as_str().contains("lito-missing-cmake"_str));
 
     requests.push(lito::source::ArchiveSourceFetchRequest {
-        .owner  = String::make("fixture"_str),
-        .name   = String::make("offline"_str),
+        .owner  = "fixture"_Str,
+        .name   = "offline"_Str,
         .url    = lito::parse::FetchUrl::parse("https://example.invalid/offline.tar"_str).unwrap(),
         .sha256 = licrypto::Sha256Digest::parse_hex(
                       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)

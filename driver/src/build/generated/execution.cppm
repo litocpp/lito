@@ -182,7 +182,7 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
     auto worker_count = jobs < published.len() ? jobs : published.len();
     auto pool         = rstd::thread::ThreadPoolBuilder::make()
                             .worker_count(worker_count)
-                            .thread_name(String::make("lito-generate"_str))
+                            .thread_name("lito-generate"_Str)
                             .build();
     if (pool.is_err()) {
         return build_script_io_failure<empty>("create generated action worker pool"_str,
@@ -309,7 +309,7 @@ auto ToolActionSession::current_action_dependencies(const RegisteredAction& acti
         auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
         if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
             return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(), String::make("path is not a regular file"_str)));
+                canonical->clone(), "path is not a regular file"_Str));
         }
         result.push(ActionDependency {
             .path   = rstd::move(canonical).unwrap(),
@@ -482,7 +482,7 @@ auto ToolActionSession::transform_action_staging(const RegisteredAction& action,
     if (preamble.is_empty() || ! has_code) {
         return action_failure<empty>(BuildToolActionError::InvalidOutput(
             action.inputs[usize {}].path.clone(),
-            String::make("generated C++ file has no separable leading preamble"_str)));
+            "generated C++ file has no separable leading preamble"_Str));
     }
     ref<str> values[] = { preamble.as_str(), implementation.as_str() };
     for (usize index {}; index < action.outputs.len(); ++index) {
@@ -612,7 +612,7 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
     }
     if (! outputs_match) {
         return action_failure<empty>(BuildToolActionError::InvalidOutput(
-            staging.clone(), String::make("produced files do not match the declared set"_str)));
+            staging.clone(), "produced files do not match the declared set"_Str));
     }
 
     auto dependencies = rstd_try(current_action_dependencies(action));

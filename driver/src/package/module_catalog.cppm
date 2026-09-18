@@ -110,7 +110,7 @@ auto ScriptModuleCatalog::make(ref<rstd::path::Path>            root,
 auto ScriptModuleCatalog::load(usize owner, ref<str> path, ref<str> logical_name)
     -> luato::Result<luato::LuaModuleSource> {
     if (owner >= owners_.len()) {
-        return catalog_failure(logical_name, String::make("invalid Lua source owner"_str));
+        return catalog_failure(logical_name, "invalid Lua source owner"_Str);
     }
     const auto& source_owner = owners_[owner];
     auto        bytes        = Vec<u8>::make();

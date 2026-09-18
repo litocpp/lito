@@ -56,8 +56,7 @@ export namespace rstd
 template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::source::SourceError> {
     static auto from(lito::system::SystemError error) -> lito::source::SourceError {
-        return lito::source::SourceError::System(String::make("source operation"_str),
-                                                 rstd::move(error));
+        return lito::source::SourceError::System("source operation"_Str, rstd::move(error));
     }
 };
 

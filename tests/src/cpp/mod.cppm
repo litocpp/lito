@@ -52,10 +52,10 @@ auto cpp_options(ref<str>                     standard,
 
 auto format(ref<str> build = "clang-build-a"_str) -> cpp::BmiFormatIdentity {
     return cpp::BmiFormatIdentity {
-        .family               = String::make("clang"_str),
+        .family               = "clang"_Str,
         .compiler_build       = String::make(build),
-        .target               = String::make("x86_64-unknown-linux-gnu"_str),
-        .resource_environment = String::make("resource-a"_str),
+        .target               = "x86_64-unknown-linux-gnu"_Str,
+        .resource_environment = "resource-a"_Str,
     };
 }
 
@@ -66,7 +66,7 @@ auto artifact_key(cpp::BmiRepresentation        representation,
     auto dependencies = Vec<cpp::BmiRecipeDependency>::make();
     if (! dependency.is_empty()) {
         dependencies.push(cpp::BmiRecipeDependency {
-            .logical_name = String::make("dependency"_str),
+            .logical_name = "dependency"_Str,
             .artifact_key = String::make(dependency),
         });
     }
@@ -76,13 +76,13 @@ auto artifact_key(cpp::BmiRepresentation        representation,
                 .representation   = representation,
                 .source_embedding = embedding,
             },
-        .logical_name                 = String::make("sample"_str),
-        .provider_identity            = String::make("package:source.cppm"_str),
-        .source_identity              = String::make("/source/source.cppm"_str),
+        .logical_name                 = "sample"_Str,
+        .provider_identity            = "package:source.cppm"_Str,
+        .source_identity              = "/source/source.cppm"_Str,
         .source_content_identity      = String::make(source_content),
-        .cpp_context_identity         = String::make("cpp-context"_str),
-        .public_requirements_identity = String::make("public-requirements"_str),
-        .format_identity              = String::make("clang-format"_str),
+        .cpp_context_identity         = "cpp-context"_Str,
+        .public_requirements_identity = "public-requirements"_Str,
+        .format_identity              = "clang-format"_Str,
         .direct_dependencies          = rstd::move(dependencies),
     });
 }

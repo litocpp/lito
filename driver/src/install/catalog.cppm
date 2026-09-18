@@ -71,31 +71,28 @@ auto relative_link_target_is_valid(ref<rstd::path::Path> path) -> bool {
 auto production_json(const InstallOwnedProduction& production) -> Json {
     auto value = JsonMap::make();
     if (production.kind == InstallOwnedProductionKind::Copy) {
-        value.insert(String::make("kind"_str), rstd::into<Json>("copy"_str));
+        value.insert("kind"_Str, rstd::into<Json>("copy"_str));
         return Json::Object(rstd::move(value));
     }
     if (production.kind == InstallOwnedProductionKind::Link) {
-        value.insert(String::make("kind"_str), rstd::into<Json>("link"_str));
+        value.insert("kind"_Str, rstd::into<Json>("link"_str));
         return Json::Object(rstd::move(value));
     }
-    value.insert(String::make("kind"_str), rstd::into<Json>("lito-link"_str));
-    value.insert(String::make("variant"_str), rstd::into<Json>("install"_str));
-    value.insert(String::make("variant-identity"_str),
-                 rstd::into<Json>(production.variant_identity.as_str()));
-    value.insert(String::make("link-identity"_str),
-                 rstd::into<Json>(production.link_identity.as_str()));
+    value.insert("kind"_Str, rstd::into<Json>("lito-link"_str));
+    value.insert("variant"_Str, rstd::into<Json>("install"_str));
+    value.insert("variant-identity"_Str, rstd::into<Json>(production.variant_identity.as_str()));
+    value.insert("link-identity"_Str, rstd::into<Json>(production.link_identity.as_str()));
     auto runtime_search = JsonArray::make();
     if (production.runtime_search.is_some()) {
         runtime_search.reserve(production.runtime_search->paths.len());
         for (const auto& path : production.runtime_search->paths) {
             auto item = JsonMap::make();
-            item.insert(String::make("anchor"_str), rstd::into<Json>("origin"_str));
-            item.insert(String::make("path"_str),
-                        Json::String(path.path.as_path().to_string_lossy()));
+            item.insert("anchor"_Str, rstd::into<Json>("origin"_str));
+            item.insert("path"_Str, Json::String(path.path.as_path().to_string_lossy()));
             runtime_search.push(Json::Object(rstd::move(item)));
         }
     }
-    value.insert(String::make("runtime-search"_str), Json::Array(rstd::move(runtime_search)));
+    value.insert("runtime-search"_Str, Json::Array(rstd::move(runtime_search)));
     return Json::Object(rstd::move(value));
 }
 
@@ -103,8 +100,8 @@ auto transforms_json(const Vec<lito::artifact::StripMode>& transforms) -> Json {
     auto values = JsonArray::with_capacity(transforms.len());
     for (auto mode : transforms) {
         auto value = JsonMap::make();
-        value.insert(String::make("kind"_str), rstd::into<Json>("strip"_str));
-        value.insert(String::make("mode"_str),
+        value.insert("kind"_Str, rstd::into<Json>("strip"_str));
+        value.insert("mode"_Str,
                      rstd::into<Json>(mode == lito::artifact::StripMode::DebugInfo
                                           ? "debuginfo"_str
                                           : "symbols"_str));
@@ -115,29 +112,28 @@ auto transforms_json(const Vec<lito::artifact::StripMode>& transforms) -> Json {
 
 auto package_info_json(const InstallPackageInfo& info) -> InstallStoreResult<Json> {
     auto package = JsonMap::make();
-    package.insert(String::make("id"_str), rstd::into<Json>(info.identity.id.as_str()));
-    package.insert(String::make("name"_str), rstd::into<Json>(info.identity.name.as_str()));
-    package.insert(String::make("version"_str), rstd::into<Json>(info.version.as_str()));
-    package.insert(String::make("source"_str),
-                   rstd_try(serialize_install_source_provenance(info.provenance)));
-    package.insert(String::make("profile"_str), rstd::into<Json>(info.profile.as_str()));
-    package.insert(String::make("target"_str), rstd::into<Json>(info.target.as_str()));
+    package.insert("id"_Str, rstd::into<Json>(info.identity.id.as_str()));
+    package.insert("name"_Str, rstd::into<Json>(info.identity.name.as_str()));
+    package.insert("version"_Str, rstd::into<Json>(info.version.as_str()));
+    package.insert("source"_Str, rstd_try(serialize_install_source_provenance(info.provenance)));
+    package.insert("profile"_Str, rstd::into<Json>(info.profile.as_str()));
+    package.insert("target"_Str, rstd::into<Json>(info.target.as_str()));
 
     auto entries = JsonArray::with_capacity(info.entries.len());
     for (const auto& entry : info.entries) {
         auto item = JsonMap::make();
-        item.insert(String::make("logical"_str),
+        item.insert("logical"_Str,
                     Json::String(entry.logical_destination.as_path().to_string_lossy()));
-        item.insert(String::make("physical"_str),
+        item.insert("physical"_Str,
                     Json::String(entry.physical_destination.as_path().to_string_lossy()));
-        item.insert(String::make("kind"_str),
+        item.insert("kind"_Str,
                     rstd::into<Json>(entry.kind == InstallOwnedEntryKind::File ? "file"_str
                                                                                : "soft-link"_str));
-        item.insert(String::make("origin"_str), rstd::into<Json>(entry.origin.as_str()));
-        item.insert(String::make("production"_str), production_json(entry.production));
-        item.insert(String::make("transforms"_str), transforms_json(entry.transforms));
+        item.insert("origin"_Str, rstd::into<Json>(entry.origin.as_str()));
+        item.insert("production"_Str, production_json(entry.production));
+        item.insert("transforms"_Str, transforms_json(entry.transforms));
         if (entry.link_target.is_some()) {
-            item.insert(String::make("link-target"_str),
+            item.insert("link-target"_Str,
                         Json::String(entry.link_target->as_path().to_string_lossy()));
         }
         entries.push(Json::Object(rstd::move(item)));
@@ -146,24 +142,22 @@ auto package_info_json(const InstallPackageInfo& info) -> InstallStoreResult<Jso
     auto dependencies = JsonArray::with_capacity(info.runtime_dependencies.len());
     for (const auto& dependency : info.runtime_dependencies) {
         auto item = JsonMap::make();
-        item.insert(String::make("package-id"_str),
-                    rstd::into<Json>(dependency.package_id.as_str()));
-        item.insert(String::make("name"_str), rstd::into<Json>(dependency.name.as_str()));
-        item.insert(String::make("source"_str),
-                    rstd::into<Json>(dependency.source_identity.as_str()));
+        item.insert("package-id"_Str, rstd::into<Json>(dependency.package_id.as_str()));
+        item.insert("name"_Str, rstd::into<Json>(dependency.name.as_str()));
+        item.insert("source"_Str, rstd::into<Json>(dependency.source_identity.as_str()));
         dependencies.push(Json::Object(rstd::move(item)));
     }
 
     auto root = JsonMap::make();
-    root.insert(String::make("schema"_str),
+    root.insert("schema"_Str,
                 Json::Number(rstd::json::Number::from_u64(INSTALL_PACKAGE_INFO_SCHEMA)));
-    root.insert(String::make("package"_str), Json::Object(rstd::move(package)));
-    root.insert(String::make("layout"_str),
+    root.insert("package"_Str, Json::Object(rstd::move(package)));
+    root.insert("layout"_Str,
                 rstd::into<Json>(info.layout == InstallManagedPackageLayout::DirectBin
                                      ? "direct-bin"_str
                                      : "isolated-prefix"_str));
-    root.insert(String::make("entries"_str), Json::Array(rstd::move(entries)));
-    root.insert(String::make("runtime-dependencies"_str), Json::Array(rstd::move(dependencies)));
+    root.insert("entries"_Str, Json::Array(rstd::move(entries)));
+    root.insert("runtime-dependencies"_Str, Json::Array(rstd::move(dependencies)));
     return Ok(Json::Object(rstd::move(root)));
 }
 

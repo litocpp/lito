@@ -139,7 +139,7 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
         auto created = rstd::fs::create_dir_all(*parent);
         if (created.is_err()) {
             return Err(BuildError::System(
-                lito::system::SystemError::Io(String::make("create compiler plugin directory"_str),
+                lito::system::SystemError::Io("create compiler plugin directory"_Str,
                                               PathBuf::from(*parent),
                                               rstd::move(created).unwrap_err())));
         }
@@ -163,7 +163,7 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
             libraries[target]->as_path(), "read compiler plugin support archive"_str));
         auto content_identity = rstd_try(
             plugin_file_digest(output.as_path(), "read compiler plugin shared object"_str));
-        auto identity_source = String::make("lito-compiler-plugin-v2\n"_str);
+        auto identity_source = "lito-compiler-plugin-v2\n"_Str;
         identity_source.push_str(lito::package::package_target_id_text(spec.id).as_str());
         identity_source.push_ascii('\n');
         identity_source.push_str(archive_identity.as_str());

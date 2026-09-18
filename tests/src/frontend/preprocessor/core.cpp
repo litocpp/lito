@@ -126,10 +126,10 @@ public:
         if (name == "LITO_PKG_VERSION"_str) {
             ++version_queries;
             return Ok(Some(ExternalMacroResolution {
-                .dependency_key      = String::make("package.version"_str),
-                .value_identity      = String::make("1.2.3"_str),
+                .dependency_key      = "package.version"_Str,
+                .value_identity      = "1.2.3"_Str,
                 .state               = lito::frontend::ExternalMacroState::Defined,
-                .compiler_definition = Some(String::make("LITO_PKG_VERSION=\"1.2.3\""_str)),
+                .compiler_definition = Some("LITO_PKG_VERSION=\"1.2.3\""_Str),
                 .definition =
                     Some(external_object_macro(name, TokenKind::StringLiteral, "\"1.2.3\""_str)),
             }));
@@ -137,18 +137,18 @@ public:
         if (name == "LITO_FEAT_ON"_str) {
             ++enabled_queries;
             return Ok(Some(ExternalMacroResolution {
-                .dependency_key      = String::make("package.feature:on"_str),
-                .value_identity      = String::make("on"_str),
+                .dependency_key      = "package.feature:on"_Str,
+                .value_identity      = "on"_Str,
                 .state               = lito::frontend::ExternalMacroState::Defined,
-                .compiler_definition = Some(String::make("LITO_FEAT_ON=1"_str)),
+                .compiler_definition = Some("LITO_FEAT_ON=1"_Str),
                 .definition = Some(external_object_macro(name, TokenKind::PpNumber, "1"_str)),
             }));
         }
         if (name == "LITO_FEAT_OFF"_str) {
             ++disabled_queries;
             return Ok(Some(ExternalMacroResolution {
-                .dependency_key = String::make("package.feature:off"_str),
-                .value_identity = String::make("off"_str),
+                .dependency_key = "package.feature:off"_Str,
+                .value_identity = "off"_Str,
                 .state          = lito::frontend::ExternalMacroState::Undefined,
             }));
         }
@@ -252,7 +252,7 @@ TEST(Preprocessor, IncludeAndProbeShareOrderedContextsAndPopFrames) {
     auto result      = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.cpp"_str),
-            .environment_identity = String::make("include-contexts"_str),
+            .environment_identity = "include-contexts"_Str,
         },
         sources,
         includes,
@@ -295,7 +295,7 @@ TEST(Preprocessor, PreservesByteCommentsLiteralsAndMacroSpelling) {
     auto result      = preprocess(
         PreprocessRequest {
             .source                 = rstd::path::PathBuf::from("/main.cpp"_str),
-            .environment_identity   = String::make("byte-source"_str),
+            .environment_identity   = "byte-source"_Str,
             .retain_active_comments = true,
         },
         sources,
@@ -345,7 +345,7 @@ TEST(Preprocessor, RejectsInvalidUtf8AtSemanticBoundaries) {
         auto result      = preprocess(
             PreprocessRequest {
                 .source               = rstd::path::PathBuf::from("/main.cpp"_str),
-                .environment_identity = String::make("invalid-byte-source"_str),
+                .environment_identity = "invalid-byte-source"_Str,
             },
             sources,
             includes,
@@ -371,7 +371,7 @@ TEST(Preprocessor, EscapesRawDiagnosticBytesWithoutChangingDirectiveMeaning) {
         auto result      = preprocess(
             PreprocessRequest {
                 .source               = rstd::path::PathBuf::from("/main.cpp"_str),
-                .environment_identity = String::make("byte-diagnostic"_str),
+                .environment_identity = "byte-diagnostic"_Str,
             },
             sources,
             includes,
@@ -403,7 +403,7 @@ TEST(Preprocessor, ImportIncludesEachHeaderOnceAcrossIncludeDirectives) {
     auto result      = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.mm"_str),
-            .environment_identity = String::make("import-once"_str),
+            .environment_identity = "import-once"_Str,
         },
         sources,
         includes,
@@ -519,7 +519,7 @@ auto run_preprocessor_test() -> int {
     auto result      = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.cppm"_str),
-            .environment_identity = String::make("memory-v1"_str),
+            .environment_identity = "memory-v1"_Str,
         },
         sources,
         includes,
@@ -601,7 +601,7 @@ auto run_preprocessor_test() -> int {
     auto streamed        = preprocess_to(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.cppm"_str),
-            .environment_identity = String::make("memory-v1"_str),
+            .environment_identity = "memory-v1"_Str,
         },
         sources,
         includes,
@@ -778,7 +778,7 @@ TEST(PreprocessorMacro, OwnsParsedSourceAndCompilesCommandLineReplacement) {
     auto retained = []() -> Option<SharedMacroDefinition> {
         auto parsed = parse_macro_source(SourceBuffer {
             .path     = rstd::path::PathBuf::from("/predefined.txt"_str),
-            .contents = String::make("#define LITO_RETAINED(value) value + 17\n"_str),
+            .contents = "#define LITO_RETAINED(value) value + 17\n"_Str,
         });
         if (parsed.is_err() || parsed->definitions.len() != usize(1)) return None();
         return Some(parsed->definitions[usize {}].clone());
@@ -851,7 +851,7 @@ TEST(Preprocessor, LazilyMaterializesExternalMacros) {
     auto result      = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.cpp"_str),
-            .environment_identity = String::make("external-v1"_str),
+            .environment_identity = "external-v1"_Str,
         },
         sources,
         includes,
@@ -884,7 +884,7 @@ TEST(Preprocessor, LazilyMaterializesExternalMacros) {
     auto invalid           = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/invalid.cpp"_str),
-            .environment_identity = String::make("external-v1"_str),
+            .environment_identity = "external-v1"_Str,
         },
         invalid_sources,
         invalid_includes,
@@ -910,7 +910,7 @@ TEST(Preprocessor, ValidatesExternalMacrosInModuleNames) {
     auto defined     = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/defined.cppm"_str),
-            .environment_identity = String::make("external-v1"_str),
+            .environment_identity = "external-v1"_Str,
         },
         sources,
         includes,
@@ -933,7 +933,7 @@ TEST(Preprocessor, ValidatesExternalMacrosInModuleNames) {
     auto disabled           = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/disabled.cppm"_str),
-            .environment_identity = String::make("external-v1"_str),
+            .environment_identity = "external-v1"_Str,
         },
         disabled_sources,
         disabled_includes,
@@ -988,7 +988,7 @@ TEST(BuiltinQuery, TargetQueriesRequireOneUnexpandedIdentifier) {
     auto result      = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/target.cpp"_str),
-            .environment_identity = String::make("target-builtin-v1"_str),
+            .environment_identity = "target-builtin-v1"_Str,
         },
         sources,
         includes,
@@ -1015,7 +1015,7 @@ TEST(BuiltinQuery, TargetQueriesRequireOneUnexpandedIdentifier) {
         return preprocess(
             PreprocessRequest {
                 .source               = rstd::path::PathBuf::from("/invalid-target.cpp"_str),
-                .environment_identity = String::make("invalid-target-builtin-v1"_str),
+                .environment_identity = "invalid-target-builtin-v1"_Str,
             },
             rejected_sources,
             rejected_includes,

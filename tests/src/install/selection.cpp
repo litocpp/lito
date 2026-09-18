@@ -275,29 +275,29 @@ sources = ["main.cpp"]
     ASSERT_NE(app, nullptr);
     auto recipes = Vec<lito::InstallRecipe>::make();
     auto recipe  = lito::InstallRecipe {
-        .owner   = String::make("fixture-runtime-app"_str),
-        .version = String::make("1.0.0"_str),
+        .owner   = "fixture-runtime-app"_Str,
+        .version = "1.0.0"_Str,
         .root    = app->manifest.root.clone(),
         .source  = app->source.clone(),
     };
     auto runtime_search = Vec<lito::InstallArtifactRecipe::RuntimeSearchReference>::make();
     runtime_search.push(lito::InstallArtifactRecipe::RuntimeSearchReference {
-        .dependency = String::make("cef"_str),
-        .set        = String::make("runtime"_str),
+        .dependency = "cef"_Str,
+        .set        = "runtime"_Str,
     });
     recipe.artifacts.push(lito::InstallArtifactRecipe {
         .target =
             lito::package::PackageTargetId {
-                .package = String::make("fixture-runtime-app"_str),
+                .package = "fixture-runtime-app"_Str,
                 .kind    = lito::package::PackageTargetKind::Binary,
-                .name    = String::make("runtime-app"_str),
+                .name    = "runtime-app"_Str,
             },
         .destination    = PathBuf::from("bin/tools/runtime-app"_str),
         .runtime_search = rstd::move(runtime_search),
     });
     recipe.external_assets.push(lito::InstallExternalAssetRecipe {
-        .dependency  = String::make("cef"_str),
-        .set         = String::make("runtime"_str),
+        .dependency  = "cef"_Str,
+        .set         = "runtime"_Str,
         .destination = PathBuf::from("lib/cef"_str),
     });
     recipes.push(rstd::move(recipe));
@@ -308,8 +308,8 @@ sources = ["main.cpp"]
     EXPECT_TRUE(requirements->artifact_link_variants.is_empty());
     auto assets = lito::ExternalAssetCatalog {};
     assets.sets.push(lito::ExternalAssetSet {
-        .alias = String::make("cef"_str),
-        .name  = String::make("runtime"_str),
+        .alias = "cef"_Str,
+        .name  = "runtime"_Str,
     });
     ASSERT_TRUE(lito::resolve_install_artifact_link_variants(*requirements, assets).is_ok());
     ASSERT_EQ(requirements->artifact_link_variants.len(), usize(1));
@@ -325,8 +325,8 @@ sources = ["main.cpp"]
     ASSERT_TRUE(provided.is_ok());
     auto provided_assets = lito::ExternalAssetCatalog {};
     provided_assets.sets.push(lito::ExternalAssetSet {
-        .alias       = String::make("cef"_str),
-        .name        = String::make("runtime"_str),
+        .alias       = "cef"_Str,
+        .name        = "runtime"_Str,
         .disposition = lito::ExternalAssetDisposition::Provided,
     });
     ASSERT_TRUE(lito::resolve_install_artifact_link_variants(*provided, provided_assets).is_ok());
@@ -371,9 +371,9 @@ usage = "compile"
     const auto& owner = selection->graph.packages[usize {}];
 
     auto target = lito::package::PackageTargetId {
-        .package = String::make("fixture-pkg-config-export"_str),
+        .package = "fixture-pkg-config-export"_Str,
         .kind    = lito::package::PackageTargetKind::Library,
-        .name    = String::make("fixture-pkg-config-export"_str),
+        .name    = "fixture-pkg-config-export"_Str,
     };
     auto recipe = lito::InstallRecipe {
         .owner   = owner.manifest.name.clone(),
@@ -387,7 +387,7 @@ usage = "compile"
     });
     recipe.pkg_config.push(lito::InstallPkgConfigRecipe {
         .target            = rstd::move(target),
-        .description       = String::make("Fixture exported library"_str),
+        .description       = "Fixture exported library"_Str,
         .include_directory = Some(PathBuf::from("include"_str)),
         .dependencies      = strings("public-api"_str, "private-api"_str),
     });

@@ -110,7 +110,7 @@ auto bmi_supports_use(BmiRepresentation representation, BmiUse use) noexcept -> 
 }
 
 auto bmi_format_identity(const BmiFormatIdentity& format) -> String {
-    auto result = String::make("lito-bmi-format-v1\n"_str);
+    auto result = "lito-bmi-format-v1\n"_Str;
     append_bmi_identity_value(result, "family"_str, format.family.as_str());
     append_bmi_identity_value(result, "compiler-build"_str, format.compiler_build.as_str());
     append_bmi_identity_value(result, "target"_str, format.target.as_str());

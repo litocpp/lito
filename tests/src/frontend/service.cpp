@@ -148,7 +148,7 @@ TEST(FrontendSourceStore, ReleasesOnlyTheRequestedHeaderDomain) {
     auto owner   = rstd::move(temporary).unwrap();
     auto source  = source_fixture(owner.path());
     auto store   = FrontendSourceStore::make();
-    auto domain  = HeaderDomain { .value = String::make("target:fixture"_str) };
+    auto domain  = HeaderDomain { .value = "target:fixture"_Str };
     auto service = FrontendService::with_store(store,
                                                None(),
                                                Some(FrontendHeaderClassifier {
@@ -323,8 +323,8 @@ TEST(FrontendSourceStore, PromotesConflictingPhysicalDomainsToSessionRetention) 
     auto store   = FrontendSourceStore::make();
     auto domains = HeaderDomains {
         .first         = source.clone(),
-        .first_domain  = String::make("target:first"_str),
-        .second_domain = String::make("target:second"_str),
+        .first_domain  = "target:first"_Str,
+        .second_domain = "target:second"_Str,
     };
     auto service = FrontendService::with_store(store,
                                                None(),

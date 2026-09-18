@@ -446,20 +446,20 @@ auto lito::registry::CurlRegistryBlobTransport::download(const RegistryBlobDownl
     }
     auto arguments = Vec<String>::make();
     rstd_try(push_path(arguments, executable_.as_path(), request.package));
-    arguments.push(String::make("--fail"_str));
-    arguments.push(String::make("--silent"_str));
-    arguments.push(String::make("--show-error"_str));
-    arguments.push(String::make("--location"_str));
-    arguments.push(String::make("--globoff"_str));
-    arguments.push(String::make("--proto"_str));
-    arguments.push(String::make("=https"_str));
-    arguments.push(String::make("--proto-redir"_str));
-    arguments.push(String::make("=https"_str));
-    arguments.push(String::make("--connect-timeout"_str));
-    arguments.push(String::make("30"_str));
-    arguments.push(String::make("--output"_str));
+    arguments.push("--fail"_Str);
+    arguments.push("--silent"_Str);
+    arguments.push("--show-error"_Str);
+    arguments.push("--location"_Str);
+    arguments.push("--globoff"_Str);
+    arguments.push("--proto"_Str);
+    arguments.push("=https"_Str);
+    arguments.push("--proto-redir"_Str);
+    arguments.push("=https"_Str);
+    arguments.push("--connect-timeout"_Str);
+    arguments.push("30"_Str);
+    arguments.push("--output"_Str);
     rstd_try(push_path(arguments, request.destination.as_path(), request.package));
-    arguments.push(String::make("--"_str));
+    arguments.push("--"_Str);
     arguments.push(request.url.clone());
     auto executed = lito::system::run_command(arguments, *environment_);
     if (executed.is_err()) {

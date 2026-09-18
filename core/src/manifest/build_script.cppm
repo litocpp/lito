@@ -28,7 +28,7 @@ auto lito::manifest::script_host_kind_name(ScriptHostKind kind) noexcept -> ref<
 }
 
 auto lito::manifest::script_require_name(ref<str> package) -> String {
-    auto result = String::make("@"_str);
+    auto result = "@"_Str;
     for (auto byte : package) result.push_ascii(byte == u8('-') ? '.' : char(byte.to_primitive()));
     return result;
 }

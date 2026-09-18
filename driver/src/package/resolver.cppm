@@ -237,7 +237,7 @@ class PackageGraphResolver {
             return package_resolution_failure<Option<PathBuf>>(
                 registry.registry.is_some()
                     ? rstd::format("Registry '{}' is not configured", registry.registry->as_str())
-                    : String::make("default Registry is not configured"_str));
+                    : "default Registry is not configured"_Str);
         }
         for (const auto& patch : registry_patches_) {
             if (patch.package == package && patch.registry == **selected) {
@@ -676,11 +676,10 @@ class PackageGraphResolver {
             }
         }
         return Ok(Some(lito::manifest::DeclaredDependency {
-            .name = String::make("pmacro"_str),
+            .name = "pmacro"_Str,
             .source =
                 lito::manifest::PackageDependencySource {
-                    .resolution =
-                        lito::source::PackageSourceRequirement::Builtin(String::make("pmacro"_str)),
+                    .resolution  = lito::source::PackageSourceRequirement::Builtin("pmacro"_Str),
                     .publication = None(),
                 },
             .usage            = None(),
@@ -1187,14 +1186,13 @@ auto resolve_package_graph_with_environment_impl(
     lito::registry::RegistryGraphProvider registry = {}) -> PackageResult<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return package_resolution_failure<ResolvedPackageGraph>(
-            String::make("source fetch jobs must be greater than zero"_str));
+            "source fetch jobs must be greater than zero"_Str);
     }
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
-        return Err(
-            PackageError::System(SystemError::Io(String::make("resolve package graph root"_str),
-                                                 PathBuf::from(requested_root),
-                                                 rstd::move(canonical).unwrap_err())));
+        return Err(PackageError::System(SystemError::Io("resolve package graph root"_Str,
+                                                        PathBuf::from(requested_root),
+                                                        rstd::move(canonical).unwrap_err())));
     }
     auto root     = rstd::move(canonical).unwrap();
     auto resolver = PackageGraphResolver(

@@ -183,8 +183,7 @@ auto run(Options options) -> Result<empty, String> {
         return Err(pack_error_text(error));
     }
     auto package = rstd::move(packed).unwrap();
-    if (package.artifact.is_none())
-        return Err(String::make("package archive was not produced"_str));
+    if (package.artifact.is_none()) return Err("package archive was not produced"_Str);
     auto descriptor = lito::registry::serialize_verified_publish_candidate(*package.artifact);
     descriptor.push_ascii(u8('\n'));
     auto depfile = rstd_try(make_depfile(options, package));

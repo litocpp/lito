@@ -18,14 +18,14 @@ using PathBuf = rstd::path::PathBuf;
 TEST(Install, InstallTransactionKeepsPrimaryAndRollbackFailuresDistinct) {
     auto rollback = Vec<lito::InstallRollbackFailure>::make();
     rollback.push(lito::InstallRollbackFailure {
-        .operation = String::make("restore binary"_str),
+        .operation = "restore binary"_Str,
         .path      = PathBuf::from("/tmp/lito-tool"_str),
         .source    = rstd::io::error::Error::from_raw_os_error(i32(5)),
     });
     auto error = lito::InstallStoreError::Transaction(
-        String::make("install publish"_str),
+        "install publish"_Str,
         Box<lito::InstallStoreError>::make(lito::InstallStoreError::Cause(
-            lito::InstallStoreCause::Message(String::make("primary failure"_str)))),
+            lito::InstallStoreCause::Message("primary failure"_Str))),
         rstd::move(rollback));
 
     ASSERT_TRUE(error.is_Transaction());

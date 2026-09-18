@@ -245,7 +245,7 @@ auto project_flatpak_sources(const LockedProject&           project,
             lito::flatpak::Source::File(String::make(source.url.as_str()),
                                         source.sha256.clone(),
                                         PathBuf::from(destination.as_path().parent().unwrap()),
-                                        String::make("source.archive"_str),
+                                        "source.archive"_Str,
                                         rstd::move(architectures)));
     }
     auto registry_blobs  = rstd::collections::BTreeMap<String, empty>::make();

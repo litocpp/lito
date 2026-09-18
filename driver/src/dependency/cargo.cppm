@@ -136,7 +136,7 @@ auto resolve_cargo_profile_configuration(
     };
     auto projection = lito::tools::cargo::profile_configuration_identity(result);
     auto digest     = licrypto::sha256_hex(projection.as_str());
-    auto selected   = String::make("lito-"_str);
+    auto selected   = "lito-"_Str;
     selected.push_str(digest.as_str().get(usize {}, usize(16)).unwrap());
     result.selected = lito::dependency::CargoProfileName { .value = rstd::move(selected) };
     return Ok(rstd::move(result));
@@ -207,10 +207,10 @@ auto cargo_bundle_config(const lito::source::PackageSourceConfig& source_config,
                              .cargo_config(source.identity.as_str(), manifest, target);
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
-            return Err(lito::dependency::DependencyError::Io(
-                String::make("inspect Cargo source bundle config"_str),
-                candidate.clone(),
-                rstd::move(exists).unwrap_err()));
+            return Err(
+                lito::dependency::DependencyError::Io("inspect Cargo source bundle config"_Str,
+                                                      candidate.clone(),
+                                                      rstd::move(exists).unwrap_err()));
         }
         if (! *exists) continue;
         auto validated = lito::tools::cargo::validate_vendor_config(candidate.as_path());
@@ -232,11 +232,10 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
                             ref<str> target) -> lito::dependency::DependencyResult<String> {
     auto lock = rstd::fs::read(metadata.lock_file.as_path());
     if (lock.is_err()) {
-        return Err(lito::dependency::DependencyError::Io(String::make("read Cargo lock file"_str),
-                                                         metadata.lock_file.clone(),
-                                                         rstd::move(lock).unwrap_err()));
+        return Err(lito::dependency::DependencyError::Io(
+            "read Cargo lock file"_Str, metadata.lock_file.clone(), rstd::move(lock).unwrap_err()));
     }
-    auto       text   = String::make("lito-cargo-request-v3\n"_str);
+    auto       text   = "lito-cargo-request-v3\n"_Str;
     const auto append = [&](ref<str> value) {
         text.push_str(rstd::format("{}:{}\n", value.len(), value).as_str());
     };
@@ -429,7 +428,7 @@ auto resolve_cargo_dependencies(
         });
         result.usage.push(cpp::ExternalDependencyUsage {
             .alias    = declaration.alias.clone(),
-            .provider = String::make("cargo"_str),
+            .provider = "cargo"_Str,
             .version  = snapshot->package.version.clone(),
             .targets  = rstd::move(targets),
             .link_arguments =

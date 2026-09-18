@@ -390,8 +390,8 @@ public:
         }
         auto text = event.path->as_path().to_str();
         if (text.is_none()) {
-            return Err(preprocessor::Error::at(
-                String::make("resolved include path is not valid UTF-8"_str), event.location));
+            return Err(preprocessor::Error::at("resolved include path is not valid UTF-8"_Str,
+                                               event.location));
         }
         if (! paths_.contains_key(*text)) {
             paths_.insert(String::make(*text), empty {});

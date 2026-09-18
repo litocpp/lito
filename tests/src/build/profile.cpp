@@ -315,7 +315,7 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-pthread"_str),
-        .source    = String::make("config.build.options"_str),
+        .source    = "config.build.options"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -337,7 +337,7 @@ TEST_F(BuildProfile, GlobalVendorOptionsRemainInTheCppLanguageDomain) {
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-fno-builtin"_str),
-        .source    = String::make("config.build.options"_str),
+        .source    = "config.build.options"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -355,7 +355,7 @@ TEST_F(BuildProfile, GlobalCOptionsRemainInTheCLanguageDomain) {
     auto build_configuration = configuration();
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-pthread"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -383,16 +383,16 @@ TEST_F(BuildProfile, HostProjectionKeepsOnlyProfileOwnedOptions) {
                              "-fno-rtti"_str,
                              "--target=x86_64-unknown-linux-gnu"_str,
                              "-fno-builtin"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     options.c.push(lito::config::BuildOptionInput {
         .arguments = strings(
             "-O1"_str, "-DNDEBUG"_str, "--target=x86_64-unknown-linux-gnu"_str, "-fno-builtin"_str),
-        .source = String::make("CFLAGS"_str),
+        .source = "CFLAGS"_Str,
     });
     options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=auto"_str, "-Wl,--strip-debug"_str, "-Wl,--as-needed"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
 
     auto projected = lito::cpp::project_host_profile_options(options, *parser);
@@ -419,7 +419,7 @@ TEST_F(BuildProfile, ExceptionFlagsRespectLanguageOwnership) {
     auto equivalent = configuration();
     equivalent.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-fexceptions"_str, "-frtti"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto equivalent_profile = lito::cpp::make_profile_spec(
         equivalent, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
@@ -430,7 +430,7 @@ TEST_F(BuildProfile, ExceptionFlagsRespectLanguageOwnership) {
     auto conflicting = configuration();
     conflicting.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-fno-exceptions"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto conflicting_profile = lito::cpp::make_profile_spec(
         conflicting, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
@@ -450,7 +450,7 @@ TEST_F(BuildProfile, ExceptionFlagsRespectLanguageOwnership) {
     auto plain_override = configuration();
     plain_override.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-fexceptions"_str, "-frtti"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto plain_profile = lito::cpp::make_profile_spec(
         plain_override, plain_project, build_profile("plain"_str), *parser);
@@ -463,7 +463,7 @@ TEST_F(BuildProfile, ExceptionFlagsRespectLanguageOwnership) {
     auto c_flags = configuration();
     c_flags.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-fexceptions"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto c_profile = lito::cpp::make_profile_spec(
         c_flags, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
@@ -483,7 +483,7 @@ TEST_F(BuildProfile, GlobalLanguageAndLinkOptionsHaveIndependentIdentities) {
     auto cpp_configuration = configuration();
     cpp_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-DCPP_IDENTITY=1"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto cpp = lito::cpp::make_profile_spec(
         cpp_configuration, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
@@ -498,7 +498,7 @@ TEST_F(BuildProfile, GlobalLanguageAndLinkOptionsHaveIndependentIdentities) {
     auto c_configuration = configuration();
     c_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-DC_IDENTITY=1"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto c = lito::cpp::make_profile_spec(
         c_configuration, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
@@ -513,7 +513,7 @@ TEST_F(BuildProfile, GlobalLanguageAndLinkOptionsHaveIndependentIdentities) {
     auto link_configuration = configuration();
     link_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-Wl,--as-needed"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto link = lito::cpp::make_profile_spec(
         link_configuration, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
@@ -576,11 +576,11 @@ TEST_F(BuildProfile, PlainProfileAcceptsTypedGlobalCodegenIndependentlyByLanguag
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g"_str, "-flto=auto"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-O3"_str, "-g0"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -619,7 +619,7 @@ TEST_F(BuildProfile, PlainProfileKeepsUnspecifiedDistinctFromExplicitDisabledCod
     auto explicit_configuration = configuration();
     explicit_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O0"_str, "-g0"_str, "-fno-lto"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto explicit_profile = lito::cpp::make_profile_spec(explicit_configuration,
                                                          lito::manifest::ProjectProfile {},
@@ -636,7 +636,7 @@ TEST_F(BuildProfile, FixedProfilesDeduplicateEqualCodegenAndRejectDifferentValue
     auto equal_configuration = configuration();
     equal_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O0"_str, "-g2"_str, "-fno-lto"_str, "-UNDEBUG"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto equal = lito::cpp::make_profile_spec(equal_configuration,
                                               lito::manifest::ProjectProfile {},
@@ -648,7 +648,7 @@ TEST_F(BuildProfile, FixedProfilesDeduplicateEqualCodegenAndRejectDifferentValue
     auto conflicting_configuration = configuration();
     conflicting_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     auto conflicting = lito::cpp::make_profile_spec(conflicting_configuration,
                                                     lito::manifest::ProjectProfile {},
@@ -667,7 +667,7 @@ TEST_F(BuildProfile, FixedProfilesDeduplicateEqualCodegenAndRejectDifferentValue
     auto link_configuration = configuration();
     link_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str, "-Wl,-s,--as-needed"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto equal_link = lito::cpp::make_profile_spec(
         link_configuration, graph->profile, build_profile("codegen-variant"_str), *parser);
@@ -692,7 +692,7 @@ TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
     inherited_base.build_profiles.push(lito::manifest::BuildProfileDefinition {
         .name     = build_profile("base-child"_str),
         .inherits = Some(lito::manifest::BuildProfileName {
-            .value = String::make("base"_str),
+            .value = "base"_Str,
         }),
     });
     auto inherited_base_result = lito::manifest::validate_build_profiles(inherited_base);
@@ -791,11 +791,11 @@ TEST_F(BuildProfile, CMakeProfileProjectionContainsOnlyLitoOwnedFlags) {
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-O2"_str, "-g"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-O3"_str, "-g0"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -833,11 +833,11 @@ TEST_F(BuildProfile, ProjectsMicrosoftRuntimeToCMakeConfiguration) {
     build_configuration.standard_library = lito::config::StandardLibrary::Msvc;
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-fms-runtime-lib=dll_dbg"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build_configuration.global_options.c.push(lito::config::BuildOptionInput {
         .arguments = strings("-fms-runtime-lib=dll_dbg"_str),
-        .source    = String::make("CFLAGS"_str),
+        .source    = "CFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -858,7 +858,7 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto compiler_configuration = configuration();
     compiler_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str),
-        .source    = String::make("config.build.options"_str),
+        .source    = "config.build.options"_Str,
     });
     auto compiler = lito::cpp::make_profile_spec(compiler_configuration,
                                                  lito::manifest::ProjectProfile {},
@@ -872,7 +872,7 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto linker_configuration = configuration();
     linker_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-Wl,--strip-debug"_str),
-        .source    = String::make("config.build.linker-options"_str),
+        .source    = "config.build.linker-options"_Str,
     });
     auto linker = lito::cpp::make_profile_spec(linker_configuration,
                                                lito::manifest::ProjectProfile {},
@@ -886,7 +886,7 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto stdlib_configuration = configuration();
     stdlib_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-nostdlib++"_str),
-        .source    = String::make("config.build.linker-options"_str),
+        .source    = "config.build.linker-options"_Str,
     });
     auto stdlib = lito::cpp::make_profile_spec(stdlib_configuration,
                                                lito::manifest::ProjectProfile {},
@@ -900,7 +900,7 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto pthread_configuration = configuration();
     pthread_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-pthread"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto pthread = lito::cpp::make_profile_spec(pthread_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -918,11 +918,11 @@ TEST_F(BuildProfile, PlainProfileOwnsTypedLinkLtoAndStripFacts) {
     auto build_configuration = configuration();
     build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str, "-Wl,--strip-debug"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
@@ -940,11 +940,11 @@ TEST_F(BuildProfile, PlainProfileOwnsTypedLinkLtoAndStripFacts) {
     auto conflicting_configuration = configuration();
     conflicting_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=thin"_str),
-        .source    = String::make("CXXFLAGS"_str),
+        .source    = "CXXFLAGS"_Str,
     });
     conflicting_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-flto=full"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto conflicting = lito::cpp::make_profile_spec(conflicting_configuration,
                                                     lito::manifest::ProjectProfile {},
@@ -979,11 +979,11 @@ linker-options = ["-Wl,--pop-state"]
     auto build_configuration = configuration();
     build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-Wl,--push-state"_str, "-Wl,--as-needed"_str),
-        .source    = String::make("config.build.linker-options"_str),
+        .source    = "config.build.linker-options"_Str,
     });
     build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
         .arguments = strings("-Wl,--as-needed"_str),
-        .source    = String::make("LDFLAGS"_str),
+        .source    = "LDFLAGS"_Str,
     });
     auto profile = lito::cpp::make_profile_spec(
         build_configuration, graph->profile, build_profile("debug"_str), *parser);
@@ -991,13 +991,13 @@ linker-options = ["-Wl,--pop-state"]
     auto packages = strings("fixture-linker-option-order"_str);
     auto targets  = Vec<lito::package::PackageTargetId>::make();
     targets.push(lito::package::PackageTargetId {
-        .package = String::make("fixture-linker-option-order"_str),
+        .package = "fixture-linker-option-order"_Str,
         .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("linker-option-order"_str),
+        .name    = "linker-option-order"_Str,
     });
     auto external_usage = lito::cpp::ExternalUsageCatalog {};
     external_usage.packages.push(lito::cpp::ExternalPackageUsage {
-        .package = String::make("fixture-linker-option-order"_str),
+        .package = "fixture-linker-option-order"_Str,
     });
     auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                             packages,
@@ -1043,9 +1043,9 @@ options = ["-O2"]
     auto packages = strings("fixture-profile-owned_option"_str);
     auto targets  = Vec<lito::package::PackageTargetId>::make();
     targets.push(lito::package::PackageTargetId {
-        .package = String::make("fixture-profile-owned_option"_str),
+        .package = "fixture-profile-owned_option"_Str,
         .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("profile-owned-option"_str),
+        .name    = "profile-owned-option"_Str,
     });
     auto build_configuration = configuration();
     auto build_arguments     = lito::cpp::parse_build_arguments(build_configuration, *parser);
@@ -1057,7 +1057,7 @@ options = ["-O2"]
     ASSERT_TRUE(profile.is_ok());
     auto external_usage = lito::cpp::ExternalUsageCatalog {};
     external_usage.packages.push(lito::cpp::ExternalPackageUsage {
-        .package = String::make("fixture-profile-owned_option"_str),
+        .package = "fixture-profile-owned_option"_Str,
     });
     auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                             packages,
@@ -1097,13 +1097,13 @@ options = ["-O2"]
     auto c_packages = strings("fixture-profile-owned-c-option"_str);
     auto c_targets  = Vec<lito::package::PackageTargetId>::make();
     c_targets.push(lito::package::PackageTargetId {
-        .package = String::make("fixture-profile-owned-c-option"_str),
+        .package = "fixture-profile-owned-c-option"_Str,
         .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("profile-owned-c-option"_str),
+        .name    = "profile-owned-c-option"_Str,
     });
     auto c_external_usage = lito::cpp::ExternalUsageCatalog {};
     c_external_usage.packages.push(lito::cpp::ExternalPackageUsage {
-        .package = String::make("fixture-profile-owned-c-option"_str),
+        .package = "fixture-profile-owned-c-option"_Str,
     });
     auto c_metadata =
         lito::cpp::adapt_package_graph_metadata(rstd::move(c_graph).unwrap(),

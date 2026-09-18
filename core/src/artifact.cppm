@@ -112,27 +112,26 @@ using ElfRunpathResult                = Result<ElfRunpath, String>;
 
 auto make_origin_relative_runtime_path(PathBuf path) -> OriginRelativeRuntimePathResult {
     if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) {
-        return Err(String::make("runtime search path must be a non-empty relative path"_str));
+        return Err("runtime search path must be a non-empty relative path"_Str);
     }
     auto text = path.as_path().to_str();
     if (text.is_none()) {
-        return Err(String::make("runtime search path must be valid UTF-8"_str));
+        return Err("runtime search path must be valid UTF-8"_Str);
     }
     if (text->contains(":"_str) || text->contains("$"_str)) {
-        return Err(
-            String::make("runtime search path may not contain ':' or loader substitutions"_str));
+        return Err("runtime search path may not contain ':' or loader substitutions"_Str);
     }
     auto components = path.as_path().components();
     for (auto component = components.next(); component.is_some(); component = components.next()) {
         if (component->is_normal() || component->is_parent_dir()) continue;
         if (component->is_cur_dir() && *text == "."_str && components.next().is_none()) continue;
-        return Err(String::make("runtime search path is not lexically normalized"_str));
+        return Err("runtime search path is not lexically normalized"_Str);
     }
     return Ok(OriginRelativeRuntimePath { .path = rstd::move(path) });
 }
 
 auto make_elf_runpath(Vec<OriginRelativeRuntimePath> paths) -> ElfRunpathResult {
-    if (paths.is_empty()) return Err(String::make("ELF RUNPATH must not be empty"_str));
+    if (paths.is_empty()) return Err("ELF RUNPATH must not be empty"_Str);
     for (usize index {}; index < paths.len(); ++index) {
         for (usize prior {}; prior < index; ++prior) {
             if (paths[prior] == paths[index]) {
@@ -144,7 +143,7 @@ auto make_elf_runpath(Vec<OriginRelativeRuntimePath> paths) -> ElfRunpathResult 
 }
 
 auto elf_runpath_identity(const ElfRunpath& runpath) -> String {
-    auto result = String::make("lito-elf-runpath-v1\n"_str);
+    auto result = "lito-elf-runpath-v1\n"_Str;
     for (const auto& path : runpath.paths) {
         result.push_str("origin-relative="_str);
         result.push_str(path.path.as_path().to_string_lossy().as_str());

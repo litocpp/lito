@@ -214,7 +214,7 @@ class SourceManager {
             auto resolved = resolver_->require(lito::tools::Tool::Git, requirement);
             if (resolved.is_err()) {
                 return Err(SourceError::Operation(
-                    String::make("resolve Git executable"_str),
+                    "resolve Git executable"_Str,
                     Box<dyn<rstd::error::Error>>::make(rstd::move(resolved).unwrap_err())));
             }
             git_ = Some(rstd::move(resolved).unwrap().executable);
@@ -558,7 +558,7 @@ class SourceManager {
             prefix.push_ascii(safe ? static_cast<char>(ascii) : '-');
         }
         if (prefix.is_empty() || prefix.as_str() == "-"_str) {
-            prefix = String::make("repository"_str);
+            prefix = "repository"_Str;
         }
         prefix.push('-');
         prefix.push_str(licrypto::sha256_hex(url).as_str());
@@ -641,7 +641,7 @@ class SourceManager {
             return rev_parse(repository, (*locked)->commit.as_str());
         }
 
-        auto revision = String::make("HEAD"_str);
+        auto revision = "HEAD"_Str;
         if (reference.kind == GitReferenceKind::Branch) {
             revision = rstd::format("refs/heads/{}", reference.value.as_str());
         } else if (reference.kind == GitReferenceKind::Tag) {
@@ -1098,11 +1098,11 @@ public:
             rstd::thread::BlockingTaskGroup<SourceResult<Vec<FetchedPackageSource>>>::make(
                 worker_count, work_groups.len());
         if (created.is_err()) {
-            return Err(SourceError::System(
-                String::make("create package source fetch executor"_str),
-                SystemError::Io(String::make("create package source fetch executor"_str),
-                                PathBuf::make(),
-                                rstd::move(created).unwrap_err_unchecked())));
+            return Err(
+                SourceError::System("create package source fetch executor"_Str,
+                                    SystemError::Io("create package source fetch executor"_Str,
+                                                    PathBuf::make(),
+                                                    rstd::move(created).unwrap_err_unchecked())));
         }
         auto group = rstd::move(created).unwrap_unchecked();
         for (auto& indices : work_groups) {
@@ -1227,11 +1227,11 @@ public:
             rstd::thread::BlockingTaskGroup<SourceResult<Vec<FetchedExternalSource>>>::make(
                 worker_count, work_groups.len());
         if (created.is_err()) {
-            return Err(SourceError::System(
-                String::make("create external source fetch executor"_str),
-                SystemError::Io(String::make("create external source fetch executor"_str),
-                                PathBuf::make(),
-                                rstd::move(created).unwrap_err_unchecked())));
+            return Err(
+                SourceError::System("create external source fetch executor"_Str,
+                                    SystemError::Io("create external source fetch executor"_Str,
+                                                    PathBuf::make(),
+                                                    rstd::move(created).unwrap_err_unchecked())));
         }
         auto group = rstd::move(created).unwrap_unchecked();
         for (auto& indices : work_groups) {

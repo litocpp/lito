@@ -46,8 +46,7 @@ private:
         auto arguments = Vec<String>::make();
         rstd_try(toolchain::command::push_path(arguments, executable_.as_path()));
         if (mode == lito::artifact::StripMode::None) {
-            return Err(ToolchainError::Message(
-                String::make("llvm-strip requires a non-empty strip policy"_str)));
+            return Err(ToolchainError::Message("llvm-strip requires a non-empty strip policy"_Str));
         }
         toolchain::command::push_option(
             arguments,

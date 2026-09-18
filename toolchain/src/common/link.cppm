@@ -155,13 +155,12 @@ auto probe_linker(ref<rstd::path::Path>                           executable,
 
     auto metadata = rstd::fs::metadata(executable);
     if (metadata.is_err()) {
-        return Err(ToolchainError::Io(String::make("inspect linker"_str),
-                                      PathBuf::from(executable),
-                                      rstd::move(metadata).unwrap_err()));
+        return Err(ToolchainError::Io(
+            "inspect linker"_Str, PathBuf::from(executable), rstd::move(metadata).unwrap_err()));
     }
     auto modified = metadata->modified();
     if (modified.is_err()) {
-        return Err(ToolchainError::Io(String::make("read linker modification time"_str),
+        return Err(ToolchainError::Io("read linker modification time"_Str,
                                       PathBuf::from(executable),
                                       rstd::move(modified).unwrap_err()));
     }

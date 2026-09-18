@@ -129,9 +129,9 @@ auto add_generated_source(ResolvedTarget&             target,
     auto sources = Vec<PathBuf>::make();
     sources.push(rstd::move(source));
     target.source_groups.push(ResolvedSourceGroup {
-        .name         = String::make("build-script"_str),
+        .name         = "build-script"_Str,
         .root         = target.root.clone(),
-        .identity     = String::make("build-script-generated"_str),
+        .identity     = "build-script-generated"_Str,
         .sources      = rstd::move(sources),
         .generated    = true,
         .availability = availability,

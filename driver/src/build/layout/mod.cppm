@@ -435,7 +435,7 @@ public:
 
     auto test_attachment_archive(const cpp::TestAttachmentTarget& attachment,
                                  ref<str>                         archive_stem) const -> PathBuf {
-        auto filename = String::make("lib"_str);
+        auto filename = "lib"_Str;
         filename.push_str(archive_stem);
         filename.push_str(".test.a"_str);
         return test_attachment_directory(attachment)

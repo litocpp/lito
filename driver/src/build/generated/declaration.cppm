@@ -110,7 +110,7 @@ auto ToolActionSession::external_source_file(BuildScriptHandle source_handle, St
     auto inspected = rstd::fs::symlink_metadata(requested.as_path());
     if (inspected.is_err() || inspected->is_symlink() || ! inspected->is_file()) {
         return action_failure<BuildScriptHandle>(BuildToolActionError::InvalidInput(
-            rstd::move(requested), String::make("external source path is not a regular file"_str)));
+            rstd::move(requested), "external source path is not a regular file"_Str));
     }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
@@ -120,7 +120,7 @@ auto ToolActionSession::external_source_file(BuildScriptHandle source_handle, St
     }
     if (canonical->as_path().strip_prefix(source_root->as_path()).is_none()) {
         return action_failure<BuildScriptHandle>(BuildToolActionError::InvalidInput(
-            canonical->clone(), String::make("external source path escapes source root"_str)));
+            canonical->clone(), "external source path escapes source root"_Str));
     }
     auto owned  = Box<ResolvedExternalSourceFile>::make(ResolvedExternalSourceFile {
         .source   = source,
@@ -409,7 +409,7 @@ auto ToolActionSession::write(WriteScriptRequest request) -> BuildScriptResult<T
         .kind              = RegisteredActionKind::Write,
         .package           = package->clone(),
         .identity          = identity.clone(),
-        .label             = String::make("lito.write"_str),
+        .label             = "lito.write"_Str,
         .working_directory = PathBuf::from(*package_root),
         .inputs            = rstd::move(input_records),
         .outputs           = outputs.clone(),
@@ -459,7 +459,7 @@ auto ToolActionSession::copy(CopyScriptRequest request) -> BuildScriptResult<Too
         .kind              = RegisteredActionKind::Copy,
         .package           = package->clone(),
         .identity          = identity.clone(),
-        .label             = String::make("lito.copy"_str),
+        .label             = "lito.copy"_Str,
         .working_directory = PathBuf::from(*package_root),
         .inputs            = rstd::move(inputs),
         .outputs           = outputs.clone(),
@@ -530,7 +530,7 @@ auto ToolActionSession::transform(TransformScriptRequest request)
         .kind              = RegisteredActionKind::CppLeadingPreamble,
         .package           = package->clone(),
         .identity          = identity.clone(),
-        .label             = String::make("lito.transform"_str),
+        .label             = "lito.transform"_Str,
         .working_directory = PathBuf::from(*find_package_root(*metadata_, package->as_str())),
         .inputs            = rstd::move(inputs),
         .outputs           = output_paths.clone(),
@@ -541,7 +541,7 @@ auto ToolActionSession::transform(TransformScriptRequest request)
 }
 
 auto ToolActionSession::finalize_module_identity() -> BuildScriptResult<empty> {
-    auto closure = String::make("lito-module-closure-v2"_str);
+    auto closure = "lito-module-closure-v2"_Str;
     closure.push_str("\nentry:"_str);
     closure.push_str(rstd_try(action_file_digest(script_.as_path())).as_str());
     closure.push_str("\nhost:"_str);
@@ -596,7 +596,7 @@ auto ToolActionSession::validate_action_schedule() const -> BuildScriptResult<em
 
 auto ToolActionSession::bind_host_tools(const ResolvedPackageHostTools& tools)
     -> BuildScriptResult<empty> {
-    auto       closure = String::make("lito-package-host-tools-v1"_str);
+    auto       closure = "lito-package-host-tools-v1"_Str;
     const auto bind    = [&tools, &closure](ResolvedActionTool& tool) -> BuildScriptResult<empty> {
         if (tool.target.is_none()) return Ok(empty {});
         auto artifact = tools.get(*tool.target);
@@ -695,7 +695,7 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         auto inspected = rstd::fs::symlink_metadata(canonical->as_path());
         if (inspected.is_err() || ! inspected->is_dir()) {
             return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidInput(
-                canonical->clone(), String::make("build-tool input root is not a directory"_str)));
+                canonical->clone(), "build-tool input root is not a directory"_Str));
         }
         input_roots.push(ResolvedActionInputRoot {
             .source = source,
@@ -748,7 +748,7 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         for (const auto& existing : output_paths) {
             if (existing.as_path() == relative.as_path()) {
                 return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidOutput(
-                    relative.clone(), String::make("path is declared more than once"_str)));
+                    relative.clone(), "path is declared more than once"_Str));
             }
         }
         rstd_try(
@@ -801,7 +801,7 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
             auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
             if (metadata.is_err() || ! metadata->is_dir()) {
                 return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidInput(
-                    canonical->clone(), String::make("depfile root is not a directory"_str)));
+                    canonical->clone(), "depfile root is not a directory"_Str));
             }
             depfile_roots.push(rstd::move(canonical).unwrap());
         }
@@ -1056,7 +1056,7 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
         auto package_root = find_package_root(*metadata_, package);
         if (package_root.is_none() || resolved->as_path().strip_prefix(*package_root).is_none()) {
             return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
-                requested.clone(), String::make("path escapes package root"_str)));
+                requested.clone(), "path escapes package root"_Str));
         }
         canonical = rstd::move(resolved).unwrap();
     } else if (input.handle.identity != nullptr) {
@@ -1073,8 +1073,7 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
             auto metadata = rstd::fs::symlink_metadata(file->path.as_path());
             if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
                 return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
-                    file->path.clone(),
-                    String::make("external source path is not a regular file"_str)));
+                    file->path.clone(), "external source path is not a regular file"_Str));
             }
             auto file_digest = rstd_try(action_file_digest(file->path.as_path()));
             return Ok(ResolvedActionInput {
@@ -1113,7 +1112,7 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
     auto metadata = rstd::fs::symlink_metadata(canonical.as_path());
     if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
         return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
-            canonical.clone(), String::make("path is not a regular file"_str)));
+            canonical.clone(), "path is not a regular file"_Str));
     }
     digest = rstd_try(action_file_digest(canonical.as_path()));
     return Ok(ResolvedActionInput {

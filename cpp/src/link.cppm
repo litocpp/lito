@@ -216,12 +216,12 @@ auto validate_runtime_search(ref<str> value, ref<str> source, ref<str> token)
     -> ArgumentResult<empty> {
     if (value.is_empty()) {
         return Err(ArgumentError::InvalidRuntimeSearchPath(
-            String::make(source), String::make(token), String::make("path is empty"_str)));
+            String::make(source), String::make(token), "path is empty"_Str));
     }
     for (auto byte : value.as_bytes()) {
         if (byte == u8 {}) {
             return Err(ArgumentError::InvalidRuntimeSearchPath(
-                String::make(source), String::make(token), String::make("path contains NUL"_str)));
+                String::make(source), String::make(token), "path contains NUL"_Str));
         }
     }
     return Ok(empty {});
@@ -242,7 +242,7 @@ auto append_runtime_search(Requirements& output, ref<str> value, ref<str> source
 }
 
 auto requirements_identity(const Requirements& requirements) -> String {
-    auto result = String::make("lito-link-requirements-v2\n"_str);
+    auto result = "lito-link-requirements-v2\n"_Str;
     result.push_str(requirements.posix_threads ? "posix-threads=true\n"_str
                                                : "posix-threads=false\n"_str);
     for (const auto& requirement : requirements.system_libraries) {
@@ -351,7 +351,7 @@ auto normalize_arguments(ArgumentSequence input) -> ArgumentResult<NormalizedArg
         if (token == "-ldl"_str || (token == "-l"_str && index + usize(1) < input.tokens.len() &&
                                     input.tokens[index + usize(1)].as_str() == "dl"_str)) {
             requirements.system_libraries.push(SystemLibraryRequirement {
-                .name   = String::make("dl"_str),
+                .name   = "dl"_Str,
                 .source = input.source.clone(),
             });
             if (token == "-l"_str) ++index;
@@ -449,7 +449,7 @@ auto replace_runtime_search_paths(Requirements&                     output,
                                   ref<str>                          source) -> void {
     output.runtime_search_paths.clear();
     for (const auto& path : runpath.paths) {
-        auto value = String::make("$ORIGIN"_str);
+        auto value = "$ORIGIN"_Str;
         auto text  = path.path.as_path().to_string_lossy();
         if (text.as_str() != "."_str) {
             value.push_ascii('/');

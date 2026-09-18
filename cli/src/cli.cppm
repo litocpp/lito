@@ -1694,8 +1694,8 @@ auto decode_features(const Matches&        matches,
             if (cursor != value.len() && value.as_str().as_bytes()[cursor] != u8(',')) continue;
             auto item = value.as_str().get(begin, cursor);
             if (item.is_none() || item->is_empty()) {
-                return Err(CliDecodeError::InvalidUsage(
-                    String::make("--features contains an empty feature name"_str)));
+                return Err(
+                    CliDecodeError::InvalidUsage("--features contains an empty feature name"_Str));
             }
             auto duplicate = false;
             for (const auto& existing : enabled) {
@@ -1801,7 +1801,7 @@ auto InstallSchema::decode(const Matches& matches) const -> Result<InstallOption
     auto registry       = rstd_try(optional_string(matches, this->registry));
     if (registry.is_some() && install_source.is_none()) {
         return Err(CliDecodeError::InvalidUsage(
-            String::make("install --registry requires a Registry package argument"_str)));
+            "install --registry requires a Registry package argument"_Str));
     }
     auto destination = prefix.is_some()
                            ? InstallDestinationRequirement::Prefix(rstd::move(prefix).unwrap())
@@ -1979,7 +1979,7 @@ auto LockExportSchema::decode(const Matches& matches) const
     -> Result<LockExportOptions, CliDecodeError> {
     auto format_value = rstd_try(optional_value(matches, format));
     if (format_value.is_none()) {
-        return Err(CliDecodeError::MissingValue(String::make("format"_str)));
+        return Err(CliDecodeError::MissingValue("format"_Str));
     }
     auto output_value = rstd_try(required_string(matches, output, "output"_str));
     return Ok(LockExportOptions {
@@ -1995,7 +1995,7 @@ auto LockSchema::decode(const Matches& matches) const -> Result<LockCommand, Cli
         auto options = rstd_try(export_command.decode(**export_matches));
         return Ok(LockCommand::Export(rstd::move(options)));
     }
-    return Err(CliDecodeError::CommandMismatch(String::make("lock"_str)));
+    return Err(CliDecodeError::CommandMismatch("lock"_Str));
 }
 
 auto ConfigGetSchema::decode(const Matches& matches) const
@@ -2032,7 +2032,7 @@ auto ConfigSchema::decode(const Matches& matches) const -> Result<ConfigCommand,
     if (auto child = matches.subcommand_matches(unset.command); child.is_some()) {
         return Ok(ConfigCommand::Unset(rstd_try(unset.decode(**child))));
     }
-    return Err(CliDecodeError::CommandMismatch(String::make("config"_str)));
+    return Err(CliDecodeError::CommandMismatch("config"_Str));
 }
 
 auto SdkListSchema::decode(const Matches&) const -> Result<SdkListOptions, CliDecodeError> {
@@ -2085,7 +2085,7 @@ auto SdkKindSchema::decode(const Matches& matches) const
     if (auto child = matches.subcommand_matches(uninstall.command); child.is_some()) {
         return Ok(SdkActionCommand::Uninstall(rstd_try(uninstall.decode(**child))));
     }
-    return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
+    return Err(CliDecodeError::CommandMismatch("sdk"_Str));
 }
 
 auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError> {
@@ -2095,7 +2095,7 @@ auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDe
     if (auto child = matches.subcommand_matches(android_ndk.command); child.is_some()) {
         return Ok(SdkCommand::AndroidNdk(rstd_try(android_ndk.decode(**child))));
     }
-    return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
+    return Err(CliDecodeError::CommandMismatch("sdk"_Str));
 }
 
 auto RegistryInspectSchema::decode(const Matches& matches) const
@@ -2103,20 +2103,19 @@ auto RegistryInspectSchema::decode(const Matches& matches) const
     auto reports_capabilities = rstd_try(flag_value(matches, capabilities));
     auto emits_json           = rstd_try(flag_value(matches, json));
     if (! emits_json) {
-        return Err(
-            CliDecodeError::InvalidUsage(String::make("registry inspect requires --json"_str)));
+        return Err(CliDecodeError::InvalidUsage("registry inspect requires --json"_Str));
     }
     auto selected_protocol = rstd_try(optional_value(matches, protocol));
     auto archive_path      = rstd_try(optional_value(matches, archive));
     auto request           = rstd_try(optional_value(matches, request_json));
     if (reports_capabilities) {
         if (selected_protocol.is_some() || archive_path.is_some() || request.is_some()) {
-            return Err(CliDecodeError::InvalidUsage(String::make(
-                "registry inspect --capabilities conflicts with archive inspection options"_str)));
+            return Err(CliDecodeError::InvalidUsage(
+                "registry inspect --capabilities conflicts with archive inspection options"_Str));
         }
     } else if (selected_protocol.is_none() || archive_path.is_none() || request.is_none()) {
-        return Err(CliDecodeError::InvalidUsage(String::make(
-            "registry inspect requires --protocol, --archive, and --request-json"_str)));
+        return Err(CliDecodeError::InvalidUsage(
+            "registry inspect requires --protocol, --archive, and --request-json"_Str));
     }
     return Ok(RegistryInspectOptions {
         .capabilities = reports_capabilities,
@@ -2129,8 +2128,7 @@ auto RegistryInspectSchema::decode(const Matches& matches) const
 auto RegistryMaterializeSchema::decode(const Matches& matches) const
     -> Result<RegistryMaterializeOptions, CliDecodeError> {
     if (! rstd_try(flag_value(matches, json))) {
-        return Err(
-            CliDecodeError::InvalidUsage(String::make("registry materialize requires --json"_str)));
+        return Err(CliDecodeError::InvalidUsage("registry materialize requires --json"_Str));
     }
     return Ok(RegistryMaterializeOptions {
         .protocol     = rstd_try(required_string(matches, protocol, "--protocol"_str)),
@@ -2148,7 +2146,7 @@ auto RegistrySchema::decode(const Matches& matches) const
     if (auto child = matches.subcommand_matches(materialize.command); child.is_some()) {
         return Ok(RegistryCommand::Materialize(rstd_try(materialize.decode(**child))));
     }
-    return Err(CliDecodeError::CommandMismatch(String::make("registry"_str)));
+    return Err(CliDecodeError::CommandMismatch("registry"_Str));
 }
 
 auto decode_command(const CliSchema& schema, const Matches& matches)
@@ -2225,7 +2223,7 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         auto command = rstd_try(schema.registry.decode(**child));
         return Ok(CliCommand::Registry(rstd::move(command)));
     }
-    return Err(CliDecodeError::CommandMismatch(String::make("lito"_str)));
+    return Err(CliDecodeError::CommandMismatch("lito"_Str));
 }
 
 struct CliInvocation {
@@ -2247,24 +2245,24 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
                                         command.is_Test() || command.is_Bench() ||
                                         command.is_Doc() || command.is_Scan() || command.is_Fetch();
     if (use_env_flags && ! consumes_build_options) {
-        return Err(CliDecodeError::InvalidUsage(String::make(
-            "--use-env-flags is only valid for build, install, test, bench, doc, scan, and fetch"_str)));
+        return Err(CliDecodeError::InvalidUsage(
+            "--use-env-flags is only valid for build, install, test, bench, doc, scan, and fetch"_Str));
     }
     if (use_env_flags && command.is_Install() && command.as_Install().options.no_build) {
-        return Err(CliDecodeError::InvalidUsage(
-            String::make("--use-env-flags conflicts with install --no-build"_str)));
+        return Err(
+            CliDecodeError::InvalidUsage("--use-env-flags conflicts with install --no-build"_Str));
     }
     if (command.is_Config() && (no_config || ! overrides.is_empty())) {
-        return Err(CliDecodeError::InvalidUsage(String::make(
-            "the config command cannot be combined with --no-config or --config"_str)));
+        return Err(CliDecodeError::InvalidUsage(
+            "the config command cannot be combined with --no-config or --config"_Str));
     }
     if (command.is_Registry() && (no_config || ! overrides.is_empty())) {
-        return Err(CliDecodeError::InvalidUsage(String::make(
-            "the registry command cannot be combined with --no-config or --config"_str)));
+        return Err(CliDecodeError::InvalidUsage(
+            "the registry command cannot be combined with --no-config or --config"_Str));
     }
     if ((command.is_Pack() || command.is_Publish()) && ! overrides.is_empty()) {
         return Err(CliDecodeError::InvalidUsage(
-            String::make("pack and publish do not accept project --config overrides"_str)));
+            "pack and publish do not accept project --config overrides"_Str));
     }
     return Ok(CliInvocation {
         .working_directory = PathBuf::from(rstd::move(directory)),

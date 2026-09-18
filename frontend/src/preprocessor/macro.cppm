@@ -269,13 +269,11 @@ auto parse_macro_definition(const Vec<Token, Allocator>& line, MacroDefinition m
     -> lexical::Result<MacroDefinition> {
     if (line.is_empty() || line[usize {}].kind != TokenKind::Identifier) {
         auto location = line.is_empty() ? SourceLocation {} : line[usize {}].expansion;
-        return Err(
-            lexical::Error::at(String::make("#define requires an identifier"_str), location));
+        return Err(lexical::Error::at("#define requires an identifier"_Str, location));
     }
     for (const auto& token : line) {
         if (token.kind == TokenKind::Identifier && token.text.utf8().is_err())
-            return Err(
-                lexical::Error::at(String::make("invalid UTF-8 identifier"_str), token.expansion));
+            return Err(lexical::Error::at("invalid UTF-8 identifier"_Str, token.expansion));
     }
     macro.set_name(String::make(line[usize {}].text.utf8().unwrap()));
     macro.location = line[usize {}].expansion;
@@ -289,13 +287,13 @@ auto parse_macro_definition(const Vec<Token, Allocator>& line, MacroDefinition m
             while (index < line.len()) {
                 if (line[index].text == "..."_str) {
                     macro.variadic      = true;
-                    macro.variadic_name = String::make("__VA_ARGS__"_str);
+                    macro.variadic_name = "__VA_ARGS__"_Str;
                     ++index;
                     break;
                 }
                 if (line[index].kind != TokenKind::Identifier) {
-                    return Err(lexical::Error::at(String::make("invalid macro parameter"_str),
-                                                  line[index].expansion));
+                    return Err(
+                        lexical::Error::at("invalid macro parameter"_Str, line[index].expansion));
                 }
                 auto name = String::make(line[index].text.utf8().unwrap());
                 ++index;
@@ -314,8 +312,7 @@ auto parse_macro_definition(const Vec<Token, Allocator>& line, MacroDefinition m
             }
             if (index >= line.len() || line[index].text != ")"_str) {
                 auto location = index < line.len() ? line[index].expansion : macro.location;
-                return Err(lexical::Error::at(String::make("unterminated macro parameter list"_str),
-                                              location));
+                return Err(lexical::Error::at("unterminated macro parameter list"_Str, location));
             }
             ++index;
         }
@@ -348,9 +345,8 @@ auto parse_macro_source(SourceBuffer buffer) -> lexical::Result<ParsedMacroSourc
         }
         if (cursor + usize(2) > end || (*tokens)[cursor].text != "#"_str ||
             (*tokens)[cursor + usize(1)].text != "define"_str) {
-            return Err(
-                lexical::Error::at(String::make("macro source contains a non-define directive"_str),
-                                   (*tokens)[cursor].expansion));
+            return Err(lexical::Error::at("macro source contains a non-define directive"_Str,
+                                          (*tokens)[cursor].expansion));
         }
         auto line = Vec<Token>::with_capacity(end - cursor - usize(2));
         for (auto index = cursor + usize(2); index < end; ++index) {
@@ -379,7 +375,7 @@ auto parse_command_line_macro_definition(ref<str> value) -> lexical::Result<Macr
     auto tokens = lex_preprocessing_fragment(String::make(*signature), SourceLocation {});
     if (tokens.is_err()) return Err(rstd::move(tokens).unwrap_err());
 
-    auto replacement = String::make("1"_str);
+    auto replacement = "1"_Str;
     if (equal < bytes.len()) {
         auto text = value.get(equal + usize(1), bytes.len());
         if (text.is_none()) {

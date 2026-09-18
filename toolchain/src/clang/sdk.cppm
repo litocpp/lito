@@ -129,7 +129,7 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
                        const ResolvedProcessEnvironment& environment) -> ToolchainResult<ClangSdk> {
     auto canonical_prefix = rstd::fs::canonicalize(prefix);
     if (canonical_prefix.is_err()) {
-        return Err(ToolchainError::Io(String::make("resolve Clang SDK prefix"_str),
+        return Err(ToolchainError::Io("resolve Clang SDK prefix"_Str,
                                       PathBuf::from(prefix),
                                       rstd::move(canonical_prefix).unwrap_err()));
     }
@@ -195,7 +195,7 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
         ! cxxflags.as_str().contains("-fno-rtti"_str) && ! cxxflags.as_str().contains("/GR-"_str);
     auto library_metadata = rstd::fs::metadata(clang_cpp.as_path());
     if (library_metadata.is_err()) {
-        return Err(ToolchainError::Io(String::make("inspect libclang-cpp identity"_str),
+        return Err(ToolchainError::Io("inspect libclang-cpp identity"_Str,
                                       clang_cpp.clone(),
                                       rstd::move(library_metadata).unwrap_err()));
     }
@@ -264,7 +264,7 @@ auto clang_plugin_sdk_header_root(const ClangSdk& sdk, const lito::package::Pack
         .owner      = cpp::HeaderOwner::Toolchain(sdk.identity.clone()),
         .access     = cpp::HeaderAccess::TargetPrivate(target.clone()),
         .kind       = cpp::HeaderIncludeKind::System,
-        .provenance = String::make("Clang compiler plugin SDK"_str),
+        .provenance = "Clang compiler plugin SDK"_Str,
     };
 }
 
@@ -328,7 +328,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     }
     auto canonical_prefix = rstd::fs::canonicalize(prefix);
     if (canonical_prefix.is_err()) {
-        return Err(ToolchainError::Io(String::make("resolve LLVM SDK prefix"_str),
+        return Err(ToolchainError::Io("resolve LLVM SDK prefix"_Str,
                                       PathBuf::from(prefix),
                                       rstd::move(canonical_prefix).unwrap_err()));
     }
@@ -414,7 +414,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     }
     auto probe_directory = rstd::fs::TempDir::make("lito-llvm-sdk-certify"_str);
     if (probe_directory.is_err()) {
-        return Err(ToolchainError::Io(String::make("create LLVM SDK certification directory"_str),
+        return Err(ToolchainError::Io("create LLVM SDK certification directory"_Str,
                                       rstd::env::temp_dir(),
                                       rstd::move(probe_directory).unwrap_err()));
     }
@@ -437,7 +437,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                                          Some(probe_directory->path()));
     if (linked.is_err()) return Err(rstd::into<ToolchainError>(rstd::move(linked).unwrap_err()));
     if (linked->exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make("LLVM SDK host executable link"_str),
+        return Err(ToolchainError::Execution("LLVM SDK host executable link"_Str,
                                              linked->exit_code,
                                              rstd::move(linked->standard_output),
                                              rstd::move(linked->standard_error)));
@@ -450,7 +450,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         return Err(rstd::into<ToolchainError>(rstd::move(executed).unwrap_err()));
     }
     if (executed->exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make("LLVM SDK host executable probe"_str),
+        return Err(ToolchainError::Execution("LLVM SDK host executable probe"_Str,
                                              executed->exit_code,
                                              rstd::move(executed->standard_output),
                                              rstd::move(executed->standard_error)));
@@ -458,7 +458,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     auto probe_path = PathBuf::from(probe_directory->path());
     auto closed     = probe_directory->close();
     if (closed.is_err()) {
-        return Err(ToolchainError::Io(String::make("remove LLVM SDK certification directory"_str),
+        return Err(ToolchainError::Io("remove LLVM SDK certification directory"_Str,
                                       rstd::move(probe_path),
                                       rstd::move(closed).unwrap_err()));
     }
