@@ -20,16 +20,6 @@ using namespace lito;
 
 using namespace lito::package;
 
-template<typename T>
-auto package_resolution_failure(String message) -> PackageResult<T> {
-    return Err(PackageError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto package_resolution_failure(ref<str> message) -> PackageResult<T> {
-    return Err(PackageError::Message(String::make(message)));
-}
-
 struct PackageCoordinate {
     Option<String> version;
     String         source_identity;
@@ -88,8 +78,7 @@ auto load_package_catalog(ref<rstd::path::Path> root)
         return Ok(rstd::move(catalog).unwrap());
     }
     if (loaded.kind != lito::manifest::ManifestKind::Package || loaded.package.is_none()) {
-        return package_resolution_failure<lito::workspace::WorkspaceCatalog>(
-            "source manifest has no package or workspace"_str);
+        return Err(PackageError::Message("source manifest has no package or workspace"_Str));
     }
     auto package    = rstd::move(loaded.package).unwrap();
     auto containing = lito::workspace::try_containing_workspace(package);
@@ -114,8 +103,8 @@ auto load_package_catalog(ref<rstd::path::Path> root)
 auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<PackageCoordinate> {
     if (selected.package.version.source == lito::manifest::PackageVersionSource::Workspace &&
         selected.package.version.value.is_none()) {
-        return package_resolution_failure<PackageCoordinate>(rstd::format(
-            "package '{}' has an unresolved workspace version", selected.package.name.as_str()));
+        return Err(PackageError::Message(rstd::format(
+            "package '{}' has an unresolved workspace version", selected.package.name.as_str())));
     }
     auto requires_version = selected.package.script.is_some();
     for (const auto& target : selected.package.targets) {
@@ -128,8 +117,8 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<
         }
     }
     if (selected.package.version.value.is_none() && requires_version) {
-        return package_resolution_failure<PackageCoordinate>(
-            rstd::format("package '{}' has no version", selected.package.name.as_str()));
+        return Err(PackageError::Message(
+            rstd::format("package '{}' has no version", selected.package.name.as_str())));
     }
     return Ok(PackageCoordinate {
         .version         = selected.package.version.value.clone(),
@@ -177,32 +166,32 @@ class PackageGraphResolver {
         for (const auto& patch : *sources_.package_patches()) {
             if (registry_.resolve_registry == nullptr) {
                 if (lito::registry::RegistryPackageName::parse(patch.source.as_str()).is_ok()) {
-                    return package_resolution_failure<empty>(
-                        "Registry package patches require configured Registry resolution"_str);
+                    return Err(PackageError::Message(
+                        "Registry package patches require configured Registry resolution"_Str));
                 }
                 continue;
             }
             auto resolved =
                 registry_.resolve_registry(registry_.context, Some(patch.source.as_str()));
             if (resolved.is_err()) {
-                return package_resolution_failure<empty>(rstd::move(resolved).unwrap_err().message);
+                return Err(PackageError::Message(rstd::move(resolved).unwrap_err().message));
             }
             if (resolved->is_none()) {
                 auto registry_name =
                     lito::registry::RegistryPackageName::parse(patch.source.as_str());
                 if (registry_name.is_ok()) {
-                    return package_resolution_failure<empty>(rstd::format(
-                        "patch source '{}' is not a configured Registry", patch.source));
+                    return Err(PackageError::Message(rstd::format(
+                        "patch source '{}' is not a configured Registry", patch.source)));
                 }
                 continue;
             }
             for (const auto& existing : registry_patches_) {
                 if (existing.registry == **resolved && existing.package == patch.package) {
-                    return package_resolution_failure<empty>(rstd::format(
+                    return Err(PackageError::Message(rstd::format(
                         "source configuration contains more than one patch for Registry package "
                         "'{}' from '{}'",
                         patch.package,
-                        (**resolved).as_str()));
+                        (**resolved).as_str())));
                 }
             }
             registry_patches_.push(PreparedRegistryPatch {
@@ -222,22 +211,21 @@ class PackageGraphResolver {
         }
         if (! has_candidate) return Ok(Option<PathBuf> {});
         if (registry_.resolve_registry == nullptr) {
-            return package_resolution_failure<Option<PathBuf>>(
-                "Registry package patches require configured Registry resolution"_str);
+            return Err(PackageError::Message(
+                "Registry package patches require configured Registry resolution"_Str));
         }
         const auto& registry = source.as_Registry();
         auto        selected = registry_.resolve_registry(
             registry_.context,
             registry.registry.is_some() ? Some(registry.registry->as_str()) : Option<ref<str>> {});
         if (selected.is_err()) {
-            return package_resolution_failure<Option<PathBuf>>(
-                rstd::move(selected).unwrap_err().message);
+            return Err(PackageError::Message(rstd::move(selected).unwrap_err().message));
         }
         if (selected->is_none()) {
-            return package_resolution_failure<Option<PathBuf>>(
+            return Err(PackageError::Message(
                 registry.registry.is_some()
                     ? rstd::format("Registry '{}' is not configured", registry.registry->as_str())
-                    : "default Registry is not configured"_Str);
+                    : "default Registry is not configured"_Str));
         }
         for (const auto& patch : registry_patches_) {
             if (patch.package == package && patch.registry == **selected) {
@@ -264,11 +252,11 @@ class PackageGraphResolver {
         if (override.is_some() && (*override)->is_Registry()) {
             auto package = lito::registry::RegistryPackageName::parse(expected_name);
             if (package.is_err()) {
-                return package_resolution_failure<lito::source::PackageSourceRequirement>(
+                return Err(PackageError::Message(
                     rstd::format("builtin package '{}' has invalid Registry package name '{}': {}",
                                  id,
                                  expected_name,
-                                 rstd::move(package).unwrap_err()));
+                                 rstd::move(package).unwrap_err())));
             }
             return Ok(lito::source::PackageSourceRequirement::Registry(
                 (*override)->as_Registry().registry.clone(),
@@ -284,26 +272,25 @@ class PackageGraphResolver {
                 lito::source::PackageSourceRequirement::Path((*override)->as_Path().path.clone()));
         }
         if (registry_.resolve_builtin == nullptr) {
-            return package_resolution_failure<lito::source::PackageSourceRequirement>(
-                rstd::format("builtin package '{}' has no configured provider", id));
+            return Err(PackageError::Message(
+                rstd::format("builtin package '{}' has no configured provider", id)));
         }
         auto definition = registry_.resolve_builtin(registry_.context, id);
         if (definition.is_err()) {
-            return package_resolution_failure<lito::source::PackageSourceRequirement>(
-                rstd::move(definition).unwrap_err().message);
+            return Err(PackageError::Message(rstd::move(definition).unwrap_err().message));
         }
         if (definition->release.package.name.as_str() != expected_name) {
-            return package_resolution_failure<lito::source::PackageSourceRequirement>(
+            return Err(PackageError::Message(
                 rstd::format("dependency '{}' resolves builtin '{}' as package '{}'",
                              expected_name,
                              id,
-                             definition->release.package.name.as_str()));
+                             definition->release.package.name.as_str())));
         }
         auto requirement = lito::registry::VersionRequirement::parse(
             rstd::format("={}", definition->release.version.text()).as_str());
         if (requirement.is_err()) {
-            return package_resolution_failure<lito::source::PackageSourceRequirement>(
-                rstd::format("builtin package '{}' has an invalid embedded version", id));
+            return Err(PackageError::Message(
+                rstd::format("builtin package '{}' has an invalid embedded version", id)));
         }
         return Ok(lito::source::PackageSourceRequirement::Registry(
             Some(String::make(definition->release.package.registry.as_str())),
@@ -353,10 +340,10 @@ class PackageGraphResolver {
         auto resolved = sources_.resolved_source(source);
         if (resolved.kind == lito::source::PackageSourceKind::Git &&
             ! same_source_root(catalog->root(), root.as_path())) {
-            return package_resolution_failure<empty>(
+            return Err(PackageError::Message(
                 rstd::format("Git source manifest root '{}' does not match checkout root '{}'",
                              catalog->root(),
-                             root.as_path()));
+                             root.as_path())));
         }
         store_catalog(source, rstd::move(catalog).unwrap());
         return Ok(empty {});
@@ -388,34 +375,33 @@ class PackageGraphResolver {
         for (usize index {}; index < requests.len(); ++index) {
             auto& request = requests[index];
             if (request.source.is_Builtin()) {
-                return package_resolution_failure<Vec<AcquiredDependencySource>>(
-                    "builtin dependency was not projected to an effective source"_str);
+                return Err(PackageError::Message(
+                    "builtin dependency was not projected to an effective source"_Str));
             }
             if (request.source.is_Registry()) {
                 auto prepared_registry = registry_sources_.get(request.name.as_str());
                 if (prepared_registry.is_none()) {
-                    return package_resolution_failure<Vec<AcquiredDependencySource>>(rstd::format(
+                    return Err(PackageError::Message(rstd::format(
                         "Registry dependency '{}' was not selected by the Registry graph resolver",
-                        request.name.as_str()));
+                        request.name.as_str())));
                 }
                 const auto& selected = **prepared_registry;
                 const auto& declared = request.source.as_Registry();
                 if (selected.package.name != declared.package ||
                     ! declared.requirement.matches(selected.version)) {
-                    return package_resolution_failure<Vec<AcquiredDependencySource>>(rstd::format(
+                    return Err(PackageError::Message(rstd::format(
                         "Registry dependency '{}' does not accept selected version '{}'",
                         request.name.as_str(),
-                        selected.version.text()));
+                        selected.version.text())));
                 }
                 if (declared.registry.is_some()) {
                     auto identity = lito::registry::RegistryId::parse(declared.registry->as_str());
                     if (identity.is_ok() && ! (*identity == selected.package.registry)) {
-                        return package_resolution_failure<Vec<AcquiredDependencySource>>(
-                            rstd::format(
-                                "Registry dependency '{}' selected Registry '{}' instead of '{}'",
-                                request.name.as_str(),
-                                selected.package.registry.as_str(),
-                                declared.registry->as_str()));
+                        return Err(PackageError::Message(rstd::format(
+                            "Registry dependency '{}' selected Registry '{}' instead of '{}'",
+                            request.name.as_str(),
+                            selected.package.registry.as_str(),
+                            declared.registry->as_str())));
                     }
                 }
                 result[index] = Some(AcquiredDependencySource {
@@ -460,8 +446,8 @@ class PackageGraphResolver {
         auto completed = Vec<AcquiredDependencySource>::with_capacity(result.len());
         for (auto& item : result) {
             if (item.is_none()) {
-                return package_resolution_failure<Vec<AcquiredDependencySource>>(
-                    "dependency source acquisition result is missing"_str);
+                return Err(
+                    PackageError::Message("dependency source acquisition result is missing"_Str));
             }
             completed.push(rstd::move(item).unwrap());
         }
@@ -514,10 +500,10 @@ class PackageGraphResolver {
             auto child_key = rstd::format("{}\n{}", sources_.source_identity(source), names[index]);
             auto child     = catalog(source).package(names[index].as_str());
             if (child.is_none()) {
-                return package_resolution_failure<empty>(
-                    rstd::format("source '{}' has no package named '{}'",
-                                 sources_.source_identity(source),
-                                 names[index].as_str()));
+                return Err(
+                    PackageError::Message(rstd::format("source '{}' has no package named '{}'",
+                                                       sources_.source_identity(source),
+                                                       names[index].as_str())));
             }
             rstd_try(discover_dependencies(child_key.as_str(), **child));
         }
@@ -530,10 +516,10 @@ class PackageGraphResolver {
             auto key     = rstd::format("{}\n{}", sources_.source_identity(source), name.as_str());
             auto package = catalog(source).package(name.as_str());
             if (package.is_none()) {
-                return package_resolution_failure<empty>(
-                    rstd::format("source '{}' has no package named '{}'",
-                                 sources_.source_identity(source),
-                                 name.as_str()));
+                return Err(
+                    PackageError::Message(rstd::format("source '{}' has no package named '{}'",
+                                                       sources_.source_identity(source),
+                                                       name.as_str())));
             }
             rstd_try(discover_dependencies(key.as_str(), **package));
         }
@@ -546,24 +532,25 @@ class PackageGraphResolver {
         if (roots.tests.is_some()) rstd_try(discover_source(*roots.tests));
         if (registry_requirements_.is_empty()) return Ok(empty {});
         if (registry_.resolve == nullptr) {
-            return package_resolution_failure<empty>(
-                "Registry dependencies require configured Registry resolution"_str);
+            return Err(PackageError::Message(
+                "Registry dependencies require configured Registry resolution"_Str));
         }
         auto resolved = registry_.resolve(registry_.context, registry_requirements_.as_slice());
         if (resolved.is_err()) {
-            return package_resolution_failure<empty>(rstd::move(resolved).unwrap_err().message);
+            return Err(PackageError::Message(rstd::move(resolved).unwrap_err().message));
         }
         for (auto& selected : rstd::move(resolved).unwrap()) {
             auto name = String::make(selected.package.name.as_str());
             if (registry_sources_.contains_key(name.as_str())) {
-                return package_resolution_failure<empty>(rstd::format(
-                    "Registry graph resolver returned package '{}' more than once", name.as_str()));
+                return Err(PackageError::Message(
+                    rstd::format("Registry graph resolver returned package '{}' more than once",
+                                 name.as_str())));
             }
             if (! same_source_root(selected.catalog.root(),
                                    selected.source.root_directory.as_path())) {
-                return package_resolution_failure<empty>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "Registry package '{}' catalog root does not match its materialized source",
-                    name.as_str()));
+                    name.as_str())));
             }
             auto version = selected.version.clone();
             auto package = selected.package.clone();
@@ -581,9 +568,9 @@ class PackageGraphResolver {
         }
         for (const auto& requirement : registry_requirements_) {
             if (! registry_sources_.contains_key(requirement.package.as_str())) {
-                return package_resolution_failure<empty>(
+                return Err(PackageError::Message(
                     rstd::format("Registry graph resolver omitted required package '{}'",
-                                 requirement.package.as_str()));
+                                 requirement.package.as_str())));
             }
         }
         return Ok(empty {});
@@ -593,23 +580,23 @@ class PackageGraphResolver {
         auto manifest = catalog(source).take_package(name);
         if (manifest.is_none()) {
             if (catalog(source).names().len() == usize(1)) {
-                return package_resolution_failure<SelectedSourcePackage>(
+                return Err(PackageError::Message(
                     rstd::format("dependency '{}' resolves to package '{}' from source '{}'",
                                  name,
                                  catalog(source).names()[usize {}].as_str(),
-                                 sources_.source_identity(source)));
+                                 sources_.source_identity(source))));
             }
-            return package_resolution_failure<SelectedSourcePackage>(rstd::format(
-                "source '{}' has no package named '{}'", sources_.source_identity(source), name));
+            return Err(PackageError::Message(rstd::format(
+                "source '{}' has no package named '{}'", sources_.source_identity(source), name)));
         }
         auto package     = rstd::move(manifest).unwrap();
         auto source_root = sources_.source_root(source);
         auto relative    = package.manifest_path.as_path().strip_prefix(source_root.as_path());
         if (relative.is_none()) {
-            return package_resolution_failure<SelectedSourcePackage>(
-                rstd::format("package manifest '{}' is outside source '{}'",
-                             package.manifest_path.as_path(),
-                             sources_.source_identity(source)));
+            return Err(
+                PackageError::Message(rstd::format("package manifest '{}' is outside source '{}'",
+                                                   package.manifest_path.as_path(),
+                                                   sources_.source_identity(source))));
         }
         return Ok(SelectedSourcePackage {
             .source_identity = String::make(sources_.source_identity(source)),
@@ -647,9 +634,9 @@ class PackageGraphResolver {
             return Ok(empty {});
         }
         if (package_has_plugin(provider)) return Ok(empty {});
-        return package_resolution_failure<empty>(
+        return Err(PackageError::Message(
             rstd::format("builtin package 'pmacro' at '{}' must provide [plugin]",
-                         provider.manifest_path.as_path()));
+                         provider.manifest_path.as_path())));
     }
 
     auto pmacro_support_dependency(const lito::manifest::PackageManifest& package)
@@ -659,20 +646,18 @@ class PackageGraphResolver {
         }
         for (const auto& dependency : package.dependencies) {
             if (dependency.name == "pmacro"_str) {
-                return package_resolution_failure<
-                    Option<lito::manifest::DeclaredDependency>>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "pmacro package '{}' must not declare the compiler-support package 'pmacro'; "
                     "configure builtin package 'pmacro' instead",
-                    package.name.as_str()));
+                    package.name.as_str())));
             }
         }
         for (const auto& dependency : package.dev_dependencies) {
             if (dependency.name == "pmacro"_str) {
-                return package_resolution_failure<
-                    Option<lito::manifest::DeclaredDependency>>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "pmacro package '{}' must not declare the compiler-support package 'pmacro'; "
                     "configure builtin package 'pmacro' instead",
-                    package.name.as_str()));
+                    package.name.as_str())));
             }
         }
         return Ok(Some(lito::manifest::DeclaredDependency {
@@ -697,24 +682,24 @@ class PackageGraphResolver {
         if (declaration.publication.is_none()) return Ok(empty {});
         const auto* provider = resolved_package(dependency_name);
         if (provider == nullptr) {
-            return package_resolution_failure<empty>(rstd::format(
+            return Err(PackageError::Message(rstd::format(
                 "resolved dependency '{}' of package '{}' is missing from the package graph",
                 dependency_name,
-                dependent_name));
+                dependent_name)));
         }
         if (provider->manifest.version.value.is_none()) {
-            return package_resolution_failure<empty>(rstd::format(
+            return Err(PackageError::Message(rstd::format(
                 "dependency '{}' of package '{}' declares Registry version '{}' but local package "
                 "at '{}' has no version",
                 dependency_name,
                 dependent_name,
                 declaration.publication->requirement.text(),
-                provider->manifest.manifest_path.as_path()));
+                provider->manifest.manifest_path.as_path())));
         }
         auto version =
             lito::registry::SemanticVersion::parse(provider->manifest.version.value->as_str());
         if (version.is_err()) {
-            return package_resolution_failure<empty>(rstd::format(
+            return Err(PackageError::Message(rstd::format(
                 "dependency '{}' of package '{}' declares Registry version '{}' but local package "
                 "at '{}' has invalid semantic version '{}': {}",
                 dependency_name,
@@ -722,17 +707,17 @@ class PackageGraphResolver {
                 declaration.publication->requirement.text(),
                 provider->manifest.manifest_path.as_path(),
                 provider->manifest.version.value->as_str(),
-                rstd::move(version).unwrap_err()));
+                rstd::move(version).unwrap_err())));
         }
         if (! declaration.publication->requirement.matches(*version)) {
-            return package_resolution_failure<empty>(rstd::format(
+            return Err(PackageError::Message(rstd::format(
                 "dependency '{}' of package '{}' requires Registry version '{}' but local package "
                 "at '{}' has version '{}'",
                 dependency_name,
                 dependent_name,
                 declaration.publication->requirement.text(),
                 provider->manifest.manifest_path.as_path(),
-                version->text()));
+                version->text())));
         }
         return Ok(empty {});
     }
@@ -752,16 +737,16 @@ class PackageGraphResolver {
         -> PackageResult<ResolvedRequiredDependency> {
         const auto* provider = resolved_package(declaration.name.as_str());
         if (provider == nullptr) {
-            return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
-                "resolved dependency '{}' is missing from the package graph", declaration.name));
+            return Err(PackageError::Message(rstd::format(
+                "resolved dependency '{}' is missing from the package graph", declaration.name)));
         }
         rstd_try(validate_pmacro_support_contract(declaration, provider->manifest));
         if (provider->manifest.script.is_some()) {
             if (kind == PackageDependencyKind::Development) {
-                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "development dependency '{}' resolves to a script package, but development "
                     "Lua hosts are not supported",
-                    declaration.name.as_str()));
+                    declaration.name.as_str())));
             }
             auto       fields = String::make();
             const auto append = [&](ref<str> name) -> void {
@@ -773,19 +758,19 @@ class PackageGraphResolver {
             if (declaration.features.is_some()) append("features"_str);
             if (declaration.default_features.is_some()) append("default-features"_str);
             if (! fields.is_empty()) {
-                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "dependency '{}' resolves to script package '{}', so C++ fields {} are not "
                     "allowed",
                     declaration.name.as_str(),
                     provider->manifest.manifest_path.as_path(),
-                    fields.as_str()));
+                    fields.as_str())));
             }
             auto require_name =
                 lito::manifest::script_require_name(provider->manifest.name.as_str());
             if (require_name == "@lito"_str) {
-                return package_resolution_failure<ResolvedRequiredDependency>(
+                return Err(PackageError::Message(
                     rstd::format("script package '{}' uses reserved require name '@lito'",
-                                 provider->manifest.name.as_str()));
+                                 provider->manifest.name.as_str())));
             }
             return Ok(ResolvedRequiredDependency::Script(ResolvedScriptDependency {
                 .name            = provider->manifest.name.clone(),
@@ -796,11 +781,11 @@ class PackageGraphResolver {
         }
         if (package_has_plugin(provider->manifest)) {
             if (declaration.usage.is_some() || declaration.is_public.is_some()) {
-                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "dependency '{}' resolves to plugin package '{}', so usage and pub are not "
                     "allowed",
                     declaration.name.as_str(),
-                    provider->manifest.manifest_path.as_path()));
+                    provider->manifest.manifest_path.as_path())));
             }
             auto features = declaration.features.is_some() ? declaration.features->clone()
                                                            : Vec<String>::make();
@@ -813,11 +798,11 @@ class PackageGraphResolver {
         }
         if (package_has_proc_macro(provider->manifest)) {
             if (declaration.usage.is_some() || declaration.is_public.is_some()) {
-                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "dependency '{}' resolves to pmacro package '{}', so usage and pub are not "
                     "allowed",
                     declaration.name.as_str(),
-                    provider->manifest.manifest_path.as_path()));
+                    provider->manifest.manifest_path.as_path())));
             }
             auto features = declaration.features.is_some() ? declaration.features->clone()
                                                            : Vec<String>::make();
@@ -830,28 +815,28 @@ class PackageGraphResolver {
         }
         if (! lito::manifest::package_has_library_target(provider->manifest) &&
             ! lito::manifest::package_has_host_tool_target(provider->manifest)) {
-            return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+            return Err(PackageError::Message(rstd::format(
                 "dependency '{}' resolves to package '{}' which exposes neither a C/C++ library "
                 "nor a host tool, script, plugin or pmacro contract",
                 declaration.name.as_str(),
-                provider->manifest.manifest_path.as_path()));
+                provider->manifest.manifest_path.as_path())));
         }
         auto features =
             declaration.features.is_some() ? declaration.features->clone() : Vec<String>::make();
         auto consumption = lito::dependency::DependencyConsumption {};
         if (declaration.usage.is_some()) consumption.usage = *declaration.usage;
         if (consumption.usage.uses_runtime()) {
-            return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+            return Err(PackageError::Message(rstd::format(
                 "dependency '{}' resolves to C/C++ package '{}', so runtime usage is not allowed",
                 declaration.name.as_str(),
-                provider->manifest.manifest_path.as_path()));
+                provider->manifest.manifest_path.as_path())));
         }
         consumption.is_public = declaration.is_public.is_some() && *declaration.is_public;
         if (kind == PackageDependencyKind::Development && consumption.is_public) {
-            return package_resolution_failure<ResolvedRequiredDependency>(
+            return Err(PackageError::Message(
                 rstd::format("development dependency '{}' of package '{}' cannot be public",
                              declaration.name.as_str(),
-                             provider->manifest.name.as_str()));
+                             provider->manifest.name.as_str())));
         }
         return Ok(ResolvedRequiredDependency::Cpp(ResolvedCppDependency {
             .name        = provider->manifest.name.clone(),
@@ -976,11 +961,11 @@ public:
         }
         auto loaded = rstd::move(selected).unwrap();
         if (loaded.package.name.as_str() != expected_name) {
-            return package_resolution_failure<String>(
+            return Err(PackageError::Message(
                 rstd::format("dependency '{}' resolves to package '{}' from source '{}'",
                              expected_name,
                              loaded.package.name.as_str(),
-                             source_identity.as_str()));
+                             source_identity.as_str())));
         }
         auto pmacro_support = rstd_try(pmacro_support_dependency(loaded.package));
         if (pmacro_support.is_some()) {
@@ -1060,10 +1045,10 @@ public:
         if (package_has_plugin(loaded.package)) {
             for (const auto& dependency : dependencies) {
                 if (! dependency.is_Plugin()) continue;
-                return package_resolution_failure<String>(
+                return Err(PackageError::Message(
                     rstd::format("plugin package '{}' cannot depend on plugin package '{}'",
                                  loaded.package.name.as_str(),
-                                 dependency.as_Plugin().value.name.as_str()));
+                                 dependency.as_Plugin().value.name.as_str())));
             }
         }
         for (usize index {}; index < dependencies.len(); ++index) {
@@ -1073,13 +1058,13 @@ public:
                 const auto& left  = dependencies[index].as_Script().value;
                 const auto& right = dependencies[other].as_Script().value;
                 if (left.require_name != right.require_name.as_str()) continue;
-                return package_resolution_failure<String>(rstd::format(
+                return Err(PackageError::Message(rstd::format(
                     "dependencies '{}' and '{}' of package '{}' normalize to the same Lua require "
                     "name '{}'",
                     left.name.as_str(),
                     right.name.as_str(),
                     loaded.package.name.as_str(),
-                    left.require_name.as_str()));
+                    left.require_name.as_str())));
             }
         }
 
@@ -1185,8 +1170,7 @@ auto resolve_package_graph_with_environment_impl(
     Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
     lito::registry::RegistryGraphProvider registry = {}) -> PackageResult<ResolvedPackageGraph> {
     if (jobs == usize {}) {
-        return package_resolution_failure<ResolvedPackageGraph>(
-            "source fetch jobs must be greater than zero"_Str);
+        return Err(PackageError::Message("source fetch jobs must be greater than zero"_Str));
     }
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {

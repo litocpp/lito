@@ -90,7 +90,7 @@ auto succeed_node(cpp::UnitId                  unit,
     for (auto dependent : dependents[unit]) {
         if (runtime[dependent].status == CompileNodeStatus::Blocked) continue;
         if (runtime[dependent].remaining == usize {}) {
-            return compile_failure<empty>("compile DAG prerequisite underflow"_str);
+            return Err(BuildError::Message("compile DAG prerequisite underflow"_Str));
         }
         --runtime[dependent].remaining;
         if (runtime[dependent].remaining == usize {}) {
@@ -198,8 +198,7 @@ auto materialize_documentation_units(const cpp::PackageSpec&               packa
                                      slice<lito::package::PackageTargetId> selected_targets)
     -> BuildResult<Vec<DocumentationBuildUnit>> {
     if (units.len() != scans.len() || units.len() != plan.nodes.len()) {
-        return compile_failure<Vec<DocumentationBuildUnit>>(
-            "documentation view inputs have inconsistent lengths"_str);
+        return Err(BuildError::Message("documentation view inputs have inconsistent lengths"_Str));
     }
     auto result = Vec<DocumentationBuildUnit>::with_capacity(units.len());
     for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit) {
@@ -214,8 +213,8 @@ auto materialize_documentation_units(const cpp::PackageSpec&               packa
         }
         if (! selected) continue;
         if (plan.nodes[unit].invocation.is_none()) {
-            return compile_failure<Vec<DocumentationBuildUnit>>(
-                "documentation view received an unmaterialized invocation"_str);
+            return Err(BuildError::Message(
+                "documentation view received an unmaterialized invocation"_Str));
         }
         auto logical_module = Option<String> {};
         auto is_interface   = false;
@@ -267,7 +266,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
         semantics.public_inputs.len() != units.len() ||
         semantics.compile_order.len() != units.len() ||
         semantics.c_units.len() + semantics.cpp_units.len() != units.len()) {
-        return compile_failure<CompilePlan>("compile plan inputs have inconsistent lengths"_str);
+        return Err(BuildError::Message("compile plan inputs have inconsistent lengths"_Str));
     }
 
     auto invocations  = Vec<Option<CompileInvocation>>::with_capacity(units.len());
@@ -281,7 +280,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
     for (auto consumer = cpp::UnitId {}; consumer < units.len(); ++consumer) {
         for (auto provider : semantics.direct_inputs[consumer]) {
             if (provider >= units.len()) {
-                return compile_failure<CompilePlan>("compile DAG contains an invalid provider"_str);
+                return Err(BuildError::Message("compile DAG contains an invalid provider"_Str));
             }
             dependents[provider].emplace_back(consumer);
         }
@@ -291,7 +290,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
     auto format_key      = cpp::bmi_format_key(bmi_format);
     for (auto unit : semantics.compile_order) {
         if (unit >= units.len()) {
-            return compile_failure<CompilePlan>("compile order contains an invalid unit"_str);
+            return Err(BuildError::Message("compile order contains an invalid unit"_Str));
         }
         auto direct_artifacts    = Vec<DependencyArtifact>::make();
         auto recipe_dependencies = Vec<cpp::BmiRecipeDependency>::make();
@@ -299,9 +298,9 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
             const auto* input_bmi = cpp::unit_bmi(units[input].unit);
             if (! scans[input].language.is_Cpp() ||
                 scans[input].language.as_Cpp().facts.provided.is_none() || input_bmi == nullptr) {
-                return compile_failure<CompilePlan>(
+                return Err(BuildError::Message(
                     rstd::format("module dependency '{}' has no resolved BMI artifact",
-                                 units[input].unit.source.as_path()));
+                                 units[input].unit.source.as_path())));
             }
             const auto& artifact = *input_bmi;
             direct_artifacts.push(DependencyArtifact {
@@ -320,13 +319,13 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
                                    : nullptr;
         if (scan_cpp != nullptr && scan_cpp->provided.is_some()) {
             if (! units[unit].unit.context->language.is_Cpp()) {
-                return compile_failure<CompilePlan>("C source unexpectedly provided a BMI"_str);
+                return Err(BuildError::Message("C source unexpectedly provided a BMI"_Str));
             }
             const auto& cpp_context       = units[unit].unit.context->language.as_Cpp();
             auto        source_identity   = units[unit].unit.source.as_path().to_str();
             auto        relative_identity = units[unit].unit.relative_source.as_path().to_str();
             if (source_identity.is_none() || relative_identity.is_none()) {
-                return compile_failure<CompilePlan>("BMI provider path is not valid UTF-8"_str);
+                return Err(BuildError::Message("BMI provider path is not valid UTF-8"_Str));
             }
             auto target = cpp::project_target(units[unit].unit);
             auto provider_identity =
@@ -378,7 +377,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
                                                             : Option<PathBuf> {},
                 });
             if (! assigned) {
-                return compile_failure<CompilePlan>("C source unexpectedly provided a BMI"_str);
+                return Err(BuildError::Message("C source unexpectedly provided a BMI"_Str));
             }
         }
 
@@ -387,9 +386,9 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
             const auto* input_bmi = cpp::unit_bmi(units[input].unit);
             if (! scans[input].language.is_Cpp() ||
                 scans[input].language.as_Cpp().facts.provided.is_none() || input_bmi == nullptr) {
-                return compile_failure<CompilePlan>(
+                return Err(BuildError::Message(
                     rstd::format("module dependency '{}' has no resolved BMI artifact",
-                                 units[input].unit.source.as_path()));
+                                 units[input].unit.source.as_path())));
             }
             const auto& artifact = *input_bmi;
             module_dependencies.push(cpp::ModuleArtifactDependency {
@@ -416,16 +415,16 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
     for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit) {
         if (units[unit].unit.compile_test == nullptr) continue;
         if (! dependents[unit].is_empty()) {
-            return compile_failure<CompilePlan>(
+            return Err(BuildError::Message(
                 rstd::format("compile-test source '{}' cannot provide an imported artifact",
-                             units[unit].unit.source.as_path()));
+                             units[unit].unit.source.as_path())));
         }
     }
 
     auto nodes = Vec<CompileNodePlan>::with_capacity(units.len());
     for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit) {
         if (invocations[unit].is_none() || dependencies[unit].is_none()) {
-            return compile_failure<CompilePlan>("compile plan left a unit unmaterialized"_str);
+            return Err(BuildError::Message("compile plan left a unit unmaterialized"_Str));
         }
         auto invocation = rstd::move(invocations[unit]).unwrap_unchecked();
         nodes.push(CompileNodePlan {
@@ -611,8 +610,8 @@ public:
                        ResolvedCompileExecution             policy,
                        CompileProgressTracker& progress) -> BuildResult<CompileActionSession> {
         if (selection.len() != plan.nodes.len() || object_identities.len() != plan.nodes.len()) {
-            return compile_failure<CompileActionSession>(
-                "compile action session inputs have inconsistent lengths"_str);
+            return Err(
+                BuildError::Message("compile action session inputs have inconsistent lengths"_Str));
         }
         auto selected_nodes = usize {};
         for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit)
@@ -644,8 +643,8 @@ public:
         for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
             if (selection[unit] == u8 {}) continue;
             if (plan.nodes[unit].invocation.is_none()) {
-                return compile_failure<CompileActionSession>(
-                    "compile action session contains an invocation that was already consumed"_str);
+                return Err(BuildError::Message(
+                    "compile action session contains an invocation that was already consumed"_Str));
             }
             auto started = rstd::time::Instant::now();
             auto target  = cpp::project_target(units[unit].unit);
@@ -702,8 +701,7 @@ public:
     auto submit(cpp::UnitId unit) -> BuildResult<CompileActionSubmission> {
         if (! has_capacity() || unit >= plan_->nodes.len() || decisions_[unit].is_none() ||
             plan_->nodes[unit].invocation.is_none()) {
-            return compile_failure<CompileActionSubmission>(
-                "compile action is not available for submission"_str);
+            return Err(BuildError::Message("compile action is not available for submission"_Str));
         }
         auto        started        = rstd::time::Instant::now();
         auto        cache_decision = rstd::move(decisions_[unit]).unwrap_unchecked();
@@ -766,8 +764,7 @@ public:
 
     auto recv() -> BuildResult<CompileActionCompletion> {
         if (! has_in_flight()) {
-            return compile_failure<CompileActionCompletion>(
-                "compile action session has no task in flight"_str);
+            return Err(BuildError::Message("compile action session has no task in flight"_Str));
         }
         auto task = executor_.recv();
         if (task.is_err()) return Err(rstd::move(task).unwrap_err());
@@ -775,8 +772,8 @@ public:
         auto completed = rstd::move(task).unwrap();
         auto unit      = completed.node;
         if (unit >= plan_->nodes.len() || decisions_[unit].is_none()) {
-            return compile_failure<CompileActionCompletion>(
-                "compile task completion does not match a submitted action"_str);
+            return Err(BuildError::Message(
+                "compile task completion does not match a submitted action"_Str));
         }
         auto started = rstd::time::Instant::now();
         if (completed.outcome.is_err()) {
@@ -842,8 +839,7 @@ public:
 
     auto finish() -> BuildResult<CompileActionSessionResult> {
         if (has_in_flight()) {
-            return compile_failure<CompileActionSessionResult>(
-                "compile action session still has tasks in flight"_str);
+            return Err(BuildError::Message("compile action session still has tasks in flight"_Str));
         }
         auto executor_statistics = executor_.statistics();
         executor_.finish();
@@ -874,8 +870,7 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
                                     ResolvedCompileExecution            policy)
     -> BuildResult<CompileExecutionResult> {
     if (selection.len() != plan.nodes.len() || object_identities.len() != plan.nodes.len()) {
-        return compile_failure<CompileExecutionResult>(
-            "compile selection inputs have inconsistent lengths"_str);
+        return Err(BuildError::Message("compile selection inputs have inconsistent lengths"_Str));
     }
     auto result = CompileExecutionResult {
         .object_identities = rstd::move(object_identities),
@@ -962,8 +957,8 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
             if (completed.is_err()) return Err(rstd::move(completed).unwrap_err());
             if (completed->unit >= runtime.len() ||
                 runtime[completed->unit].status != CompileNodeStatus::Running) {
-                return compile_failure<CompileExecutionResult>(
-                    "compile action completion does not match a running node"_str);
+                return Err(BuildError::Message(
+                    "compile action completion does not match a running node"_Str));
             }
             if (completed->error.is_some()) {
                 fail_node(completed->unit,
@@ -980,8 +975,8 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
             continue;
         }
         if (terminal != selected_nodes) {
-            return compile_failure<CompileExecutionResult>(
-                "compile DAG has pending nodes without a ready frontier"_str);
+            return Err(
+                BuildError::Message("compile DAG has pending nodes without a ready frontier"_Str));
         }
     }
 

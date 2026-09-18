@@ -22,23 +22,6 @@ auto runnable_target(lito::package::PackageTargetKind kind) -> bool {
            kind == lito::package::PackageTargetKind::Benchmark;
 }
 
-template<typename T>
-auto convention_failure(String message) -> ModuleResult<T> {
-    return Err(ModuleError::Convention(rstd::move(message)));
-}
-
-template<typename T>
-auto convention_failure(ref<str> message) -> ModuleResult<T> {
-    return Err(ModuleError::Convention(String::make(message)));
-}
-
-template<typename T>
-auto convention_io_failure(ref<str>               operation,
-                           ref<rstd::path::Path>  path,
-                           rstd::io::error::Error source) -> ModuleResult<T> {
-    return Err(ModuleError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
     return left.starts_with(right) && right.starts_with(left);
 }
@@ -63,12 +46,12 @@ auto relative_module_path(ref<str> logical_name, usize start) -> ModuleResult<St
         const auto value = logical_name[index];
         if (value == u8('.') || value == u8(':')) {
             if (value == u8(':') && partition) {
-                return convention_failure<String>(rstd::format(
-                    "module '{}' contains multiple partition separators", logical_name));
+                return Err(ModuleError::Convention(rstd::format(
+                    "module '{}' contains multiple partition separators", logical_name)));
             }
             if (! valid_segment(segment.as_str())) {
-                return convention_failure<String>(
-                    rstd::format("module '{}' contains an invalid path segment", logical_name));
+                return Err(ModuleError::Convention(
+                    rstd::format("module '{}' contains an invalid path segment", logical_name)));
             }
             if (! relative.is_empty()) relative.push_ascii('/');
             relative.push_str(segment.as_str());
@@ -79,8 +62,8 @@ auto relative_module_path(ref<str> logical_name, usize start) -> ModuleResult<St
         }
     }
     if (! valid_segment(segment.as_str())) {
-        return convention_failure<String>(
-            rstd::format("module '{}' contains an invalid path segment", logical_name));
+        return Err(ModuleError::Convention(
+            rstd::format("module '{}' contains an invalid path segment", logical_name)));
     }
     if (! relative.is_empty()) relative.push_ascii('/');
     relative.push_str(segment.as_str());
@@ -91,14 +74,15 @@ auto canonical_source_root(ref<rstd::path::Path> package_source_root) -> ModuleR
     auto requested = PathBuf::from(package_source_root).join(PathBuf::from("src"_str).as_path());
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return convention_io_failure<PathBuf>(
-            "resolve source root"_str, requested.as_path(), rstd::move(canonical).unwrap_err());
+        return Err(ModuleError::Io("resolve source root"_Str,
+                                   PathBuf::from(requested.as_path()),
+                                   rstd::move(canonical).unwrap_err()));
     }
     auto root     = rstd::move(canonical).unwrap();
     auto metadata = rstd::fs::metadata(root.as_path());
     if (metadata.is_err() || ! metadata->is_dir()) {
-        return convention_failure<PathBuf>(
-            rstd::format("module source root '{}' is not a directory", root.as_path()));
+        return Err(ModuleError::Convention(
+            rstd::format("module source root '{}' is not a directory", root.as_path())));
     }
     return Ok(rstd::move(root));
 }
@@ -109,24 +93,26 @@ auto canonical_candidate(ref<rstd::path::Path> package_source_root,
                          Option<String>        expected) -> ModuleResult<ResolvedSource> {
     auto canonical = rstd::fs::canonicalize(requested);
     if (canonical.is_err()) {
-        return convention_io_failure<ResolvedSource>(
-            "resolve convention source"_str, requested, rstd::move(canonical).unwrap_err());
+        return Err(ModuleError::Io("resolve convention source"_Str,
+                                   PathBuf::from(requested),
+                                   rstd::move(canonical).unwrap_err()));
     }
     auto resolved         = rstd::move(canonical).unwrap();
     auto source_relative  = resolved.as_path().strip_prefix(source_root);
     auto package_relative = resolved.as_path().strip_prefix(package_source_root);
     if (source_relative.is_none() || package_relative.is_none() || (*source_relative).is_empty()) {
-        return convention_failure<ResolvedSource>(rstd::format(
-            "module convention source '{}' resolves outside package source root", requested));
+        return Err(ModuleError::Convention(rstd::format(
+            "module convention source '{}' resolves outside package source root", requested)));
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
-        return convention_io_failure<ResolvedSource>(
-            "inspect convention source"_str, resolved.as_path(), rstd::move(metadata).unwrap_err());
+        return Err(ModuleError::Io("inspect convention source"_Str,
+                                   PathBuf::from(resolved.as_path()),
+                                   rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file()) {
-        return convention_failure<ResolvedSource>(
-            rstd::format("module convention source '{}' is not a file", resolved.as_path()));
+        return Err(ModuleError::Convention(
+            rstd::format("module convention source '{}' is not a file", resolved.as_path())));
     }
     return Ok(ResolvedSource {
         .relative_path   = PathBuf::from(*package_relative),
@@ -141,21 +127,22 @@ auto canonical_candidate(ref<rstd::path::Path> package_source_root,
 auto file_exists(ref<rstd::path::Path> path) -> ModuleResult<bool> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return convention_io_failure<bool>(
-            "inspect convention source"_str, path, rstd::move(exists).unwrap_err());
+        return Err(ModuleError::Io(
+            "inspect convention source"_Str, PathBuf::from(path), rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(false);
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
-        return convention_io_failure<bool>(
-            "inspect convention source"_str, path, rstd::move(metadata).unwrap_err());
+        return Err(ModuleError::Io("inspect convention source"_Str,
+                                   PathBuf::from(path),
+                                   rstd::move(metadata).unwrap_err()));
     }
     return Ok(metadata->is_file());
 }
 
 auto root_module_source(const ResolvedTarget& target) -> ModuleResult<ResolvedSource> {
     if (target.source.module.is_none()) {
-        return convention_failure<ResolvedSource>("module discovery requires target.module"_str);
+        return Err(ModuleError::Convention("module discovery requires target.module"_Str));
     }
     auto source_root_result = canonical_source_root(target.source_root.as_path());
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
@@ -180,8 +167,8 @@ auto namespace_relative_path(ref<str> root_module, ref<str> logical_name) -> Mod
     }
     if (namespace_size == usize {} || logical_name.size() <= namespace_size || ! same_namespace ||
         (logical_name[namespace_size] != u8('.') && logical_name[namespace_size] != u8(':'))) {
-        return convention_failure<String>(
-            rstd::format("module '{}' is outside namespace '{}'", logical_name, root_module));
+        return Err(ModuleError::Convention(
+            rstd::format("module '{}' is outside namespace '{}'", logical_name, root_module)));
     }
     return relative_module_path(logical_name, namespace_size + usize(1));
 }
@@ -337,10 +324,9 @@ auto module_source_exists(const ResolvedTarget& target, ref<str> logical_name)
 auto module_source(const ResolvedTarget& target, ref<str> logical_name)
     -> ModuleResult<ResolvedSource> {
     if (target.source.module.is_none()) {
-        return convention_failure<ResolvedSource>(
-            rstd::format("target '{}::{}' does not declare a module",
-                         target.id.package.as_str(),
-                         target.id.name.as_str()));
+        return Err(ModuleError::Convention(rstd::format("target '{}::{}' does not declare a module",
+                                                        target.id.package.as_str(),
+                                                        target.id.name.as_str())));
     }
     if (logical_name == target.source.module->as_str()) return root_module_source(target);
 
@@ -364,19 +350,19 @@ auto module_source(const ResolvedTarget& target, ref<str> logical_name)
             if (source->is_some()) return Ok(rstd::move(**source));
         }
     }
-    return convention_failure<ResolvedSource>(
+    return Err(ModuleError::Convention(
         rstd::format("module '{}' has no convention source in target '{}::{}'",
                      logical_name,
                      target.id.package.as_str(),
-                     target.id.name.as_str()));
+                     target.id.name.as_str())));
 }
 
 auto module_companion_source(const ResolvedTarget& target, const ResolvedSource& source)
     -> ModuleResult<Option<ResolvedSource>> {
     auto relative = source.relative_path.as_path().to_str();
     if (relative.is_none()) {
-        return convention_failure<Option<ResolvedSource>>(
-            rstd::format("module source '{}' is not valid UTF-8", source.relative_path.as_path()));
+        return Err(ModuleError::Convention(
+            rstd::format("module source '{}' is not valid UTF-8", source.relative_path.as_path())));
     }
     if (! relative->ends_with(".cppm"_str)) return Ok(None());
 
@@ -402,8 +388,8 @@ auto validate_module_conventions(const PackageSpec&       package,
                                  const Vec<PreparedUnit>& units,
                                  const Vec<ScanResult>&   scans) -> ModuleResult<empty> {
     if (units.len() != scans.len()) {
-        return convention_failure<empty>(
-            "module convention received mismatched units and scan results"_str);
+        return Err(ModuleError::Convention(
+            "module convention received mismatched units and scan results"_Str));
     }
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         const auto& specification = package.targets[target];
@@ -420,29 +406,29 @@ auto validate_module_conventions(const PackageSpec&       package,
                 }
             }
             if (actual == nullptr) {
-                return convention_failure<empty>(rstd::format(
-                    "module convention source '{}' was not scanned", expectation.path.as_path()));
+                return Err(ModuleError::Convention(rstd::format(
+                    "module convention source '{}' was not scanned", expectation.path.as_path())));
             }
             if (! actual->language.is_Cpp()) {
-                return convention_failure<empty>(
+                return Err(ModuleError::Convention(
                     rstd::format("module convention source '{}' was classified as C",
-                                 expectation.path.as_path()));
+                                 expectation.path.as_path())));
             }
             const auto& actual_cpp = actual->language.as_Cpp().facts;
             if (actual_cpp.provided.is_none()) {
-                return convention_failure<empty>(
+                return Err(ModuleError::Convention(
                     rstd::format("module convention expected '{}' to provide module '{}'",
                                  expectation.path.as_path(),
-                                 expectation.expected_module->as_str()));
+                                 expectation.expected_module->as_str())));
             }
             if (actual_cpp.provided->logical_name.as_str() !=
                 expectation.expected_module->as_str()) {
-                return convention_failure<empty>(rstd::format(
+                return Err(ModuleError::Convention(rstd::format(
                     "module convention expected '{}' to provide module '{}', but Clang "
                     "reported '{}'",
                     expectation.path.as_path(),
                     expectation.expected_module->as_str(),
-                    actual_cpp.provided->logical_name.as_str()));
+                    actual_cpp.provided->logical_name.as_str())));
             }
         }
     }

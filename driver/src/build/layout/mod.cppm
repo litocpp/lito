@@ -12,37 +12,25 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto layout_failure(String message) -> BuildLayoutResult<T> {
-    return Err(BuildLayoutError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error error)
-    -> BuildLayoutResult<T> {
-    return Err(
-        BuildLayoutError::Io(String::make(operation), PathBuf::from(path), rstd::move(error)));
-}
-
 auto join(ref<rstd::path::Path> base, ref<str> component) -> PathBuf {
     return PathBuf::from(base).join(PathBuf::from(component).as_path());
 }
 
 auto validated_relative_text(ref<rstd::path::Path> relative) -> BuildLayoutResult<String> {
     if (relative.is_empty() || relative.is_absolute() || relative.has_root()) {
-        return layout_failure<String>(
-            rstd::format("source artifact path '{}' is not relative", relative));
+        return Err(BuildLayoutError::Message(
+            rstd::format("source artifact path '{}' is not relative", relative)));
     }
     if (! relative.components().all([](auto component) {
             return component.is_normal();
         })) {
-        return layout_failure<String>(
-            rstd::format("source artifact path '{}' contains a non-normal component", relative));
+        return Err(BuildLayoutError::Message(
+            rstd::format("source artifact path '{}' contains a non-normal component", relative)));
     }
     auto text = relative.to_str();
     if (text.is_none()) {
-        return layout_failure<String>(
-            rstd::format("source artifact path '{}' is not valid UTF-8", relative));
+        return Err(BuildLayoutError::Message(
+            rstd::format("source artifact path '{}' is not valid UTF-8", relative)));
     }
     return Ok(String::make(*text));
 }
@@ -155,40 +143,41 @@ public:
             auto parts     = component.as_path().components();
             auto first     = parts.next();
             if (first.is_none() || ! first->is_normal() || parts.next().is_some()) {
-                return layout_failure<BuildLayout>(rstd::format(
-                    "target output key '{}' is not a normal path component", target_output_key));
+                return Err(BuildLayoutError::Message(rstd::format(
+                    "target output key '{}' is not a normal path component", target_output_key)));
             }
         }
         auto layout  = resolve(owner_root, requested_output, profile, target_output_key);
         auto created = rstd::fs::create_dir_all(layout.output());
         if (created.is_err()) {
-            return io_failure<BuildLayout>(
-                "create output directory"_str, layout.output(), rstd::move(created).unwrap_err());
+            return Err(BuildLayoutError::Io("create output directory"_Str,
+                                            PathBuf::from(layout.output()),
+                                            rstd::move(created).unwrap_err()));
         }
         auto canonical = rstd::fs::canonicalize(layout.output());
         if (canonical.is_err()) {
-            return io_failure<BuildLayout>("resolve output directory"_str,
-                                           layout.output(),
-                                           rstd::move(canonical).unwrap_err());
+            return Err(BuildLayoutError::Io("resolve output directory"_Str,
+                                            PathBuf::from(layout.output()),
+                                            rstd::move(canonical).unwrap_err()));
         }
         auto scan_cache   = layout.scan_cache_directory();
         auto scan_created = rstd::fs::create_dir_all(scan_cache.as_path());
         if (scan_created.is_err()) {
-            return io_failure<BuildLayout>("create scan cache directory"_str,
-                                           scan_cache.as_path(),
-                                           rstd::move(scan_created).unwrap_err());
+            return Err(BuildLayoutError::Io("create scan cache directory"_Str,
+                                            PathBuf::from(scan_cache.as_path()),
+                                            rstd::move(scan_created).unwrap_err()));
         }
         auto canonical_scan = rstd::fs::canonicalize(scan_cache.as_path());
         if (canonical_scan.is_err()) {
-            return io_failure<BuildLayout>("resolve scan cache directory"_str,
-                                           scan_cache.as_path(),
-                                           rstd::move(canonical_scan).unwrap_err());
+            return Err(BuildLayoutError::Io("resolve scan cache directory"_Str,
+                                            PathBuf::from(scan_cache.as_path()),
+                                            rstd::move(canonical_scan).unwrap_err()));
         }
         auto base = rstd::fs::canonicalize(layout.base_.as_path());
         if (base.is_err()) {
-            return io_failure<BuildLayout>("resolve build directory"_str,
-                                           layout.base_.as_path(),
-                                           rstd::move(base).unwrap_err());
+            return Err(BuildLayoutError::Io("resolve build directory"_Str,
+                                            PathBuf::from(layout.base_.as_path()),
+                                            rstd::move(base).unwrap_err()));
         }
         return Ok(BuildLayout(rstd::move(base).unwrap(), rstd::move(canonical).unwrap()));
     }
@@ -300,8 +289,8 @@ public:
         auto first     = parts.next();
         if (package.is_empty() || first.is_none() || ! first->is_normal() ||
             parts.next().is_some()) {
-            return layout_failure<PathBuf>(
-                rstd::format("generated package name '{}' is invalid", package));
+            return Err(BuildLayoutError::Message(
+                rstd::format("generated package name '{}' is invalid", package)));
         }
         auto root = generated_root();
         return Ok(join(root.as_path(), package));
@@ -312,15 +301,15 @@ public:
         if (requested.is_err()) return Err(rstd::move(requested).unwrap_err());
         auto created = rstd::fs::create_dir_all(requested->as_path());
         if (created.is_err()) {
-            return io_failure<PathBuf>("create generated package directory"_str,
-                                       requested->as_path(),
-                                       rstd::move(created).unwrap_err());
+            return Err(BuildLayoutError::Io("create generated package directory"_Str,
+                                            PathBuf::from(requested->as_path()),
+                                            rstd::move(created).unwrap_err()));
         }
         auto canonical = rstd::fs::canonicalize(requested->as_path());
         if (canonical.is_err()) {
-            return io_failure<PathBuf>("resolve generated package directory"_str,
-                                       requested->as_path(),
-                                       rstd::move(canonical).unwrap_err());
+            return Err(BuildLayoutError::Io("resolve generated package directory"_Str,
+                                            PathBuf::from(requested->as_path()),
+                                            rstd::move(canonical).unwrap_err()));
         }
         return Ok(rstd::move(canonical).unwrap());
     }

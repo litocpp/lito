@@ -498,30 +498,20 @@ auto platform_error_ref(const PlatformError& error [[clang::lifetimebound]]) noe
     return rstd::ptr_::dyn<rstd::error::Error>::from_ref(error);
 }
 
-template<typename T>
-auto platform_failure(String message) -> PlatformResult<T> {
-    return Err(PlatformError(rstd::move(message)));
-}
-
-template<typename T>
-auto platform_failure(ref<str> message) -> PlatformResult<T> {
-    return platform_failure<T>(String::make(message));
-}
-
 auto host_os(ref<str> name) -> PlatformResult<String> {
     if (name == "Linux"_str) return Ok("linux"_Str);
     if (name == "Darwin"_str) return Ok("macos"_Str);
     if (name == "FreeBSD"_str) return Ok("freebsd"_Str);
     if (name == "NetBSD"_str) return Ok("netbsd"_Str);
     if (name == "OpenBSD"_str) return Ok("openbsd"_Str);
-    return platform_failure<String>(rstd::format("unsupported host operating system '{}'", name));
+    return Err(PlatformError(rstd::format("unsupported host operating system '{}'", name)));
 }
 
 #if ! defined(_WIN32)
 auto c_string(const char* value, ref<str> context) -> PlatformResult<String> {
     auto text = rstd::ffi::CStr::from_ptr(value).to_str();
     if (text.is_err()) {
-        return platform_failure<String>(rstd::format("{} is not valid UTF-8", context));
+        return Err(PlatformError(rstd::format("{} is not valid UTF-8", context)));
     }
     return Ok(String::make(text.unwrap()));
 }
@@ -535,10 +525,10 @@ export namespace lito::system
 auto require_architecture(ref<str> value) -> PlatformResult<Architecture> {
     auto architecture = parse_architecture(value);
     if (architecture != Architecture::Unknown) return Ok(architecture);
-    return platform_failure<Architecture>(rstd::format(
+    return Err(PlatformError(rstd::format(
         "architecture '{}' is not a canonical Clang architecture name; expected one of {}",
         value,
-        architecture_choices().as_str()));
+        architecture_choices().as_str())));
 }
 
 auto parse_target_architecture(ref<str> value) noexcept -> Architecture {
@@ -601,17 +591,17 @@ auto parse_target_architecture(ref<str> value) noexcept -> Architecture {
 }
 
 auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
-    if (triple.is_empty()) return platform_failure<TargetInfo>("target triple is empty"_str);
+    if (triple.is_empty()) return Err(PlatformError("target triple is empty"_Str));
     auto architecture_and_rest = triple.split_once("-"_str);
     if (architecture_and_rest.is_none() || architecture_and_rest->get<0>().is_empty()) {
-        return platform_failure<TargetInfo>(rstd::format(
-            "target triple '{}' must contain architecture, vendor, and operating system", triple));
+        return Err(PlatformError(rstd::format(
+            "target triple '{}' must contain architecture, vendor, and operating system", triple)));
     }
     auto vendor_and_rest = architecture_and_rest->get<1>().split_once("-"_str);
     if (vendor_and_rest.is_none() || vendor_and_rest->get<0>().is_empty() ||
         vendor_and_rest->get<1>().is_empty()) {
-        return platform_failure<TargetInfo>(rstd::format(
-            "target triple '{}' must contain architecture, vendor, and operating system", triple));
+        return Err(PlatformError(rstd::format(
+            "target triple '{}' must contain architecture, vendor, and operating system", triple)));
     }
     auto os_and_environment = vendor_and_rest->get<1>().split_once("-"_str);
     auto vendor             = vendor_and_rest->get<0>();
@@ -621,8 +611,8 @@ auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
     if (os_and_environment.is_some()) {
         auto raw_environment = os_and_environment->get<1>();
         if (raw_environment.is_empty() || raw_environment.contains("-"_str)) {
-            return platform_failure<TargetInfo>(
-                rstd::format("target triple '{}' has an invalid environment component", triple));
+            return Err(PlatformError(
+                rstd::format("target triple '{}' has an invalid environment component", triple)));
         }
         environment = Some(String::make(raw_environment));
     } else if ((vendor == "linux"_str &&
@@ -674,10 +664,9 @@ auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
 auto target_operating_system(const TargetInfo& target) -> PlatformResult<OperatingSystem> {
     auto parsed = parse_operating_system(target.platform_name());
     if (parsed.is_some()) return Ok(*parsed);
-    return platform_failure<OperatingSystem>(
-        rstd::format("target '{}' has unsupported operating system '{}'",
-                     target.triple.as_str(),
-                     target.operating_system.as_str()));
+    return Err(PlatformError(rstd::format("target '{}' has unsupported operating system '{}'",
+                                          target.triple.as_str(),
+                                          target.operating_system.as_str())));
 }
 
 auto encode_target_candidate(ref<str>            os,
@@ -686,28 +675,27 @@ auto encode_target_candidate(ref<str>            os,
                              Option<ref<str>>    environment) -> PlatformResult<String> {
     auto triple = String::make();
     if (architecture == Architecture::Unknown) {
-        return platform_failure<String>("cannot encode an unknown target architecture"_str);
+        return Err(PlatformError("cannot encode an unknown target architecture"_Str));
     }
     const auto valid_component = [](ref<str> value) {
         return ! value.is_empty() && ! value.contains("-"_str);
     };
     if (! valid_component(os)) {
-        return platform_failure<String>(rstd::format("invalid target operating system '{}'", os));
+        return Err(PlatformError(rstd::format("invalid target operating system '{}'", os)));
     }
     if (vendor.is_some() && ! valid_component(*vendor)) {
-        return platform_failure<String>(rstd::format("invalid target vendor '{}'", *vendor));
+        return Err(PlatformError(rstd::format("invalid target vendor '{}'", *vendor)));
     }
     if (environment.is_some() && ! valid_component(*environment)) {
-        return platform_failure<String>(
-            rstd::format("invalid target environment '{}'", *environment));
+        return Err(PlatformError(rstd::format("invalid target environment '{}'", *environment)));
     }
     triple.push_str(architecture_name(architecture));
     triple.push_ascii(u8('-'));
     triple.push_str(vendor.is_some() ? *vendor : "unknown"_str);
     if (os == "android"_str) {
         if (environment.is_some() && ! environment->starts_with("android"_str)) {
-            return platform_failure<String>(
-                "the Android target platform requires an Android environment"_str);
+            return Err(
+                PlatformError("the Android target platform requires an Android environment"_Str));
         }
         triple.push_str("-linux-"_str);
         triple.push_str(environment.is_some() ? *environment : "android"_str);
@@ -731,8 +719,8 @@ auto detect_host_info() -> PlatformResult<HostInfo> {
     case PROCESSOR_ARCHITECTURE_AMD64: machine = "amd64"_Str; break;
     case PROCESSOR_ARCHITECTURE_ARM64: machine = "arm64"_Str; break;
     default:
-        return platform_failure<HostInfo>(rstd::format(
-            "unsupported Windows processor architecture {}", information.wProcessorArchitecture));
+        return Err(PlatformError(rstd::format("unsupported Windows processor architecture {}",
+                                              information.wProcessorArchitecture)));
     }
     auto architecture = parse_target_architecture(machine.as_str());
     return Ok(HostInfo {
@@ -742,7 +730,7 @@ auto detect_host_info() -> PlatformResult<HostInfo> {
 #else
     auto information = utsname {};
     if (::uname(&information) != 0) {
-        return platform_failure<HostInfo>("cannot query host platform with uname"_str);
+        return Err(PlatformError("cannot query host platform with uname"_Str));
     }
     auto machine = c_string(information.machine, "host architecture"_str);
     if (machine.is_err()) return Err(rstd::move(machine).unwrap_err());
@@ -771,12 +759,12 @@ auto resolve_build_platform(const HostInfo&   host,
         intent    = BuildTargetIntent::ExplicitTarget;
     } else if (host.architecture != compiler_default.architecture ||
                host.os != compiler_default.platform_name()) {
-        return platform_failure<BuildPlatform>(rstd::format(
+        return Err(PlatformError(rstd::format(
             "compiler default target '{}' is not native-compatible with host '{}-{}'; declare "
             "an explicit target/toolchain configuration for cross compilation",
             compiler_default.triple.as_str(),
             architecture_name(host.architecture),
-            host.os.as_str()));
+            host.os.as_str())));
     }
     auto cross =
         intent == BuildTargetIntent::ExplicitTarget

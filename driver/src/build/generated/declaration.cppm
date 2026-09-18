@@ -16,8 +16,8 @@ auto ToolActionSession::tool(ref<str> alias) const -> BuildScriptResult<BuildScr
     auto identity = default_package_.is_some() ? tools_.identity(default_package_->as_str(), alias)
                                                : tools_.identity(alias);
     if (identity == nullptr) {
-        return action_failure<BuildScriptHandle>(
-            BuildToolActionError::UnknownTool(String::make(alias)));
+        return Err(
+            BuildScriptError::BuildToolAction(BuildToolActionError::UnknownTool(alias.into())));
     }
     return Ok(BuildScriptHandle { .identity = identity });
 }
@@ -32,8 +32,9 @@ auto ToolActionSession::target(TargetScriptRequest request) const
         if (candidate == package->as_str()) allowed = true;
     }
     if (! allowed) {
-        return action_request_failure<BuildScriptHandle>(
-            rstd::format("package '{}' is not available to this build script", package->as_str()));
+        return Err(
+            BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(rstd::format(
+                "package '{}' is not available to this build script", package->as_str()))));
     }
     for (const auto& candidate : metadata_->targets) {
         if (candidate.id.package == package->as_str() &&
@@ -42,8 +43,11 @@ auto ToolActionSession::target(TargetScriptRequest request) const
             return Ok(BuildScriptHandle { .identity = rstd::addressof(candidate) });
         }
     }
-    return action_request_failure<BuildScriptHandle>(rstd::format(
-        "target '{}::{}::{}' is not selected", package->as_str(), kind->as_str(), name->as_str()));
+    return Err(BuildScriptError::BuildToolAction(
+        BuildToolActionError::InvalidRequest(rstd::format("target '{}::{}::{}' is not selected",
+                                                          package->as_str(),
+                                                          kind->as_str(),
+                                                          name->as_str()))));
 }
 
 auto ToolActionSession::external_dependency(BuildScriptHandle target_handle, ref<str> alias) const
@@ -56,27 +60,27 @@ auto ToolActionSession::external_dependency(BuildScriptHandle target_handle, ref
         }
     }
     if (target == nullptr) {
-        return action_request_failure<BuildScriptHandle>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     for (const auto& dependency : target->external_dependencies) {
         if (dependency.alias == alias) {
             return Ok(BuildScriptHandle { .identity = rstd::addressof(dependency) });
         }
     }
-    return action_request_failure<BuildScriptHandle>(
+    return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
         rstd::format("target '{}::{}' has no active external dependency '{}'",
                      target->id.package.as_str(),
                      target->id.name.as_str(),
-                     alias));
+                     alias))));
 }
 
 auto ToolActionSession::external_source(BuildScriptHandle target_handle, ref<str> alias) const
     -> BuildScriptResult<BuildScriptHandle> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<BuildScriptHandle>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     for (const auto& source : metadata_->external_sources) {
         if (source.package_name == metadata_->targets[*target].id.package.as_str() &&
@@ -84,43 +88,43 @@ auto ToolActionSession::external_source(BuildScriptHandle target_handle, ref<str
             return Ok(BuildScriptHandle { .identity = rstd::addressof(source) });
         }
     }
-    return action_request_failure<BuildScriptHandle>(
+    return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
         rstd::format("target '{}::{}' has no active external source '{}'",
                      metadata_->targets[*target].id.package.as_str(),
                      metadata_->targets[*target].id.name.as_str(),
-                     alias));
+                     alias))));
 }
 
 auto ToolActionSession::external_source_file(BuildScriptHandle source_handle, String relative)
     -> BuildScriptResult<BuildScriptHandle> {
     auto source = external_source_root(source_handle);
     if (source == nullptr) {
-        return action_request_failure<BuildScriptHandle>(
-            "external source handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "external source handle does not belong to this build script"_Str)));
     }
     auto normalized =
         rstd_try(normal_relative_path(rstd::move(relative), "external source file"_str));
     auto source_root = rstd::fs::canonicalize(source->root.as_path());
     if (source_root.is_err()) {
-        return build_script_io_failure<BuildScriptHandle>("resolve external source root"_str,
-                                                          source->root.as_path(),
-                                                          rstd::move(source_root).unwrap_err());
+        return Err(BuildScriptError::Io("resolve external source root"_Str,
+                                        PathBuf::from(source->root.as_path()),
+                                        rstd::move(source_root).unwrap_err()));
     }
     auto requested = source->root.join(normalized.as_path());
     auto inspected = rstd::fs::symlink_metadata(requested.as_path());
     if (inspected.is_err() || inspected->is_symlink() || ! inspected->is_file()) {
-        return action_failure<BuildScriptHandle>(BuildToolActionError::InvalidInput(
-            rstd::move(requested), "external source path is not a regular file"_Str));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+            rstd::move(requested), "external source path is not a regular file"_Str)));
     }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return build_script_io_failure<BuildScriptHandle>("resolve external source file"_str,
-                                                          requested.as_path(),
-                                                          rstd::move(canonical).unwrap_err());
+        return Err(BuildScriptError::Io("resolve external source file"_Str,
+                                        PathBuf::from(requested.as_path()),
+                                        rstd::move(canonical).unwrap_err()));
     }
     if (canonical->as_path().strip_prefix(source_root->as_path()).is_none()) {
-        return action_failure<BuildScriptHandle>(BuildToolActionError::InvalidInput(
-            canonical->clone(), "external source path escapes source root"_Str));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+            canonical->clone(), "external source path escapes source root"_Str)));
     }
     auto owned  = Box<ResolvedExternalSourceFile>::make(ResolvedExternalSourceFile {
         .source   = source,
@@ -144,24 +148,24 @@ auto ToolActionSession::external_tool(BuildScriptHandle dependency_handle, ref<s
         }
     }
     if (dependency == nullptr) {
-        return action_request_failure<BuildScriptHandle>(
-            "external dependency handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "external dependency handle does not belong to this build script"_Str)));
     }
     for (const auto& tool : dependency->host_tools) {
         if (tool.name == name) {
             return Ok(BuildScriptHandle { .identity = rstd::addressof(tool) });
         }
     }
-    return action_request_failure<BuildScriptHandle>(rstd::format(
-        "external dependency '{}' has no host tool '{}'", dependency->alias.as_str(), name));
+    return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(rstd::format(
+        "external dependency '{}' has no host tool '{}'", dependency->alias.as_str(), name))));
 }
 
 auto ToolActionSession::host_tool(BuildScriptHandle target_handle, ref<str> package, ref<str> name)
     -> BuildScriptResult<BuildScriptHandle> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<BuildScriptHandle>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     auto allowed = false;
     for (const auto& dependency : metadata_->targets[*target].host_tool_dependencies) {
@@ -171,11 +175,11 @@ auto ToolActionSession::host_tool(BuildScriptHandle target_handle, ref<str> pack
         }
     }
     if (! allowed) {
-        return action_request_failure<BuildScriptHandle>(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             rstd::format("target '{}::{}' has no host-tool dependency '{}'",
                          metadata_->targets[*target].id.package.as_str(),
                          metadata_->targets[*target].id.name.as_str(),
-                         package));
+                         package))));
     }
     const cpp::ResolvedTarget* provider = nullptr;
     for (const auto& candidate : metadata_->targets) {
@@ -185,8 +189,8 @@ auto ToolActionSession::host_tool(BuildScriptHandle target_handle, ref<str> pack
         }
     }
     if (provider == nullptr) {
-        return action_request_failure<BuildScriptHandle>(
-            rstd::format("host-tool dependency '{}' has no target '{}'", package, name));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            rstd::format("host-tool dependency '{}' has no target '{}'", package, name))));
     }
     auto bound  = Box<PackageHostToolHandle>::make(PackageHostToolHandle {
         .package = metadata_->targets[*target].id.package.clone(),
@@ -214,20 +218,20 @@ auto ToolActionSession::external_dependency_info(BuildScriptHandle dependency_ha
                                              rstd::move(targets) });
         }
     }
-    return action_request_failure<ScriptDependencyInfo>(
-        "external dependency handle does not belong to this build script"_str);
+    return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+        "external dependency handle does not belong to this build script"_Str)));
 }
 
 auto ToolActionSession::preprocessor_environment(BuildScriptHandle target_handle) const
     -> BuildScriptResult<ScriptPreprocessorInfo> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<ScriptPreprocessorInfo>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     if (*target >= target_plan_->contexts.len()) {
-        return action_request_failure<ScriptPreprocessorInfo>(
-            "target handle has no resolved compile environment"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle has no resolved compile environment"_Str)));
     }
     auto projection = toolchain_->build_tool_preprocessor_projection(
         target_plan_->contexts[*target], metadata_->targets[*target].root.as_path());
@@ -245,31 +249,32 @@ auto ToolActionSession::add_generated_source(BuildScriptHandle target_handle,
     -> BuildScriptResult<bool> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<bool>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     auto output = generated_output(output_handle);
     if (output == nullptr) {
-        return action_request_failure<bool>(
-            "generated output handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "generated output handle does not belong to this build script"_Str)));
     }
     if (metadata_->targets[*target].id.package != output->package.as_str()) {
-        return action_request_failure<bool>(
-            "generated output and target belong to different packages"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "generated output and target belong to different packages"_Str)));
     }
     if (metadata_->targets[*target].language != lito::manifest::PackageLanguage::Cpp) {
-        return action_request_failure<bool>("generated compile sources require a C++ target"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "generated compile sources require a C++ target"_Str)));
     }
     if (output->kind != GeneratedOutputKind::Source) {
-        return action_request_failure<bool>(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             rstd::format("generated output '{}' is not declared or inferred as a source",
-                         output->relative.as_path()));
+                         output->relative.as_path()))));
     }
     if (output->availability == cpp::GeneratedSourceAvailability::BeforeScan &&
         ! lito::manifest::cpp_manifest_source(output->relative.as_path())) {
-        return action_request_failure<bool>(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             rstd::format("generated compile source '{}' has an unsupported C++ extension",
-                         output->relative.as_path()));
+                         output->relative.as_path()))));
     }
     return Ok(cpp::add_generated_source(
         metadata_->targets[*target], output->relative.clone(), output->availability));
@@ -279,8 +284,8 @@ auto ToolActionSession::add_generated_include(BuildScriptHandle target_handle, S
     -> BuildScriptResult<bool> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<bool>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     auto path = PathBuf::make();
     if (relative != "."_str) {
@@ -301,17 +306,18 @@ auto ToolActionSession::add_generated_definition(BuildScriptHandle target_handle
     -> BuildScriptResult<bool> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<bool>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     if (*target >= target_plan_->contexts.len()) {
-        return action_request_failure<bool>(
-            "target handle has no resolved compile environment"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle has no resolved compile environment"_Str)));
     }
     auto added = cpp::add_private_definition(
         metadata_->targets[*target], target_plan_->contexts[*target], rstd::move(definition));
     if (added.is_err()) {
-        return action_request_failure<bool>(rstd::move(added).unwrap_err());
+        return Err(BuildScriptError::BuildToolAction(
+            BuildToolActionError::InvalidRequest(rstd::move(added).unwrap_err())));
     }
     return Ok(*added);
 }
@@ -322,17 +328,17 @@ auto ToolActionSession::add_generated_artifact(BuildScriptHandle          target
     -> BuildScriptResult<bool> {
     auto target = target_index(target_handle);
     if (target.is_none()) {
-        return action_request_failure<bool>(
-            "target handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "target handle does not belong to this build script"_Str)));
     }
     auto output = generated_output(output_handle);
     if (output == nullptr) {
-        return action_request_failure<bool>(
-            "generated output handle does not belong to this build script"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "generated output handle does not belong to this build script"_Str)));
     }
     if (metadata_->targets[*target].id.package != output->package.as_str()) {
-        return action_request_failure<bool>(
-            "generated output and target belong to different packages"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "generated output and target belong to different packages"_Str)));
     }
     auto contribution = cpp::add_generated_artifact(metadata_->targets[*target],
                                                     role,
@@ -347,14 +353,14 @@ auto ToolActionSession::write(WriteScriptRequest request) -> BuildScriptResult<T
     auto  package = &request.package;
     auto& inputs  = request.inputs;
     if (! package_is_selected(packages_, package->as_str())) {
-        return action_request_failure<ToolActionOutcome>(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             rstd::format("generated output package '{}' is not available to this build script",
-                         package->as_str()));
+                         package->as_str()))));
     }
     auto package_root = find_package_root(*metadata_, package->as_str());
     if (package_root.is_none()) {
-        return action_request_failure<ToolActionOutcome>(
-            rstd::format("generated output package '{}' has no source root", package->as_str()));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            rstd::format("generated output package '{}' has no source root", package->as_str()))));
     }
     auto rendered      = rstd::move(request.content);
     auto input_records = Vec<ResolvedActionInput>::with_capacity(inputs.len());
@@ -370,8 +376,8 @@ auto ToolActionSession::write(WriteScriptRequest request) -> BuildScriptResult<T
     }
     if (rendered.as_str().contains("@INPUT:"_str) ||
         rendered.as_str().contains("@INPUT_XML:"_str)) {
-        return action_request_failure<ToolActionOutcome>(
-            "lito.write.content contains an unresolved input marker"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "lito.write.content contains an unresolved input marker"_Str)));
     }
     auto output = rstd::move(request.output);
     auto relative =
@@ -424,14 +430,14 @@ auto ToolActionSession::copy(CopyScriptRequest request) -> BuildScriptResult<Too
     auto package = &request.package;
     auto input   = &request.input;
     if (! package_is_selected(packages_, package->as_str())) {
-        return action_request_failure<ToolActionOutcome>(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             rstd::format("generated output package '{}' is not available to this build script",
-                         package->as_str()));
+                         package->as_str()))));
     }
     auto package_root = find_package_root(*metadata_, package->as_str());
     if (package_root.is_none()) {
-        return action_request_failure<ToolActionOutcome>(
-            rstd::format("generated output package '{}' has no source root", package->as_str()));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            rstd::format("generated output package '{}' has no source root", package->as_str()))));
     }
     auto resolved = rstd_try(resolve_action_input(
         *input, package->as_str(), *package_root, usize {}, "lito.copy.input"_str));
@@ -475,18 +481,18 @@ auto ToolActionSession::transform(TransformScriptRequest request)
     auto kind    = &request.kind;
     auto input   = &request.input;
     if (kind->as_str() != "cpp-leading-preamble"_str) {
-        return action_request_failure<ToolActionOutcome>(
-            rstd::format("unknown lito.transform kind '{}'", kind->as_str()));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            rstd::format("unknown lito.transform kind '{}'", kind->as_str()))));
     }
     auto source = generated_output(*input);
     if (source == nullptr || source->package != package->as_str()) {
-        return action_request_failure<ToolActionOutcome>(
-            "lito.transform.input is not an output owned by the selected package"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "lito.transform.input is not an output owned by the selected package"_Str)));
     }
     auto declared_outputs = rstd::move(request.outputs);
     if (declared_outputs.len() != usize(2)) {
-        return action_request_failure<ToolActionOutcome>(
-            "cpp-leading-preamble transform requires exactly two outputs"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "cpp-leading-preamble transform requires exactly two outputs"_Str)));
     }
     auto output_paths = Vec<PathBuf>::make();
     auto output_kinds = Vec<GeneratedOutputKind>::make();
@@ -581,14 +587,15 @@ auto ToolActionSession::validate_action_schedule() const -> BuildScriptResult<em
         auto text      = extension.is_some() ? extension->to_str() : None();
         if (output->kind == GeneratedOutputKind::Header || text == Some("h"_str) ||
             text == Some("hpp"_str)) {
-            return action_request_failure<empty>(
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
                 rstd::format("generated header '{}' cannot be produced after source scan",
-                             output->relative.as_path()));
+                             output->relative.as_path()))));
         }
         if (text == Some("cppm"_str)) {
-            return action_request_failure<empty>(rstd::format(
-                "generated module interface source '{}' cannot be produced after source scan",
-                output->relative.as_path()));
+            return Err(
+                BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(rstd::format(
+                    "generated module interface source '{}' cannot be produced after source scan",
+                    output->relative.as_path()))));
         }
     }
     return Ok(empty {});
@@ -601,9 +608,9 @@ auto ToolActionSession::bind_host_tools(const ResolvedPackageHostTools& tools)
         if (tool.target.is_none()) return Ok(empty {});
         auto artifact = tools.get(*tool.target);
         if (artifact.is_none()) {
-            return action_request_failure<empty>(
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
                 rstd::format("host-tool target '{}' is not ready",
-                             lito::package::package_target_id_text(*tool.target).as_str()));
+                             lito::package::package_target_id_text(*tool.target).as_str()))));
         }
         auto digest     = rstd_try(action_file_digest((**artifact).executable.as_path()));
         tool.identity   = (**artifact).identity.clone();
@@ -657,21 +664,21 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
     auto& input_root_handles = request.input_roots;
     auto  primary_tool       = rstd_try(resolve_action_tool(*handle));
     if (primary_tool.package != package->as_str()) {
-        return action_request_failure<ToolActionOutcome>(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             rstd::format("build-tool '{}' belongs to package '{}', not '{}'",
                          primary_tool.alias.as_str(),
                          primary_tool.package.as_str(),
-                         package->as_str()));
+                         package->as_str()))));
     }
     auto secondary_tools = Vec<ResolvedActionTool>::with_capacity(secondary_handles.len());
     for (usize index {}; index < secondary_handles.len(); ++index) {
         auto tool = rstd_try(resolve_action_tool(secondary_handles[index]));
         if (tool.package != package->as_str()) {
-            return action_request_failure<ToolActionOutcome>(
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
                 rstd::format("build-tool '{}' belongs to package '{}', not '{}'",
                              tool.alias.as_str(),
                              tool.package.as_str(),
-                             package->as_str()));
+                             package->as_str()))));
         }
         secondary_tools.push(rstd::move(tool));
     }
@@ -680,22 +687,22 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         auto source = rstd_try(
             action_external_source(input_root_handles[index], "lito.run.input_roots"_str, index));
         if (source->package_name != package->as_str()) {
-            return action_request_failure<ToolActionOutcome>(
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
                 rstd::format("external source '{}' belongs to package '{}', not '{}'",
                              source->name.as_str(),
                              source->package_name.as_str(),
-                             package->as_str()));
+                             package->as_str()))));
         }
         auto canonical = rstd::fs::canonicalize(source->root.as_path());
         if (canonical.is_err()) {
-            return build_script_io_failure<ToolActionOutcome>("resolve build-tool input root"_str,
-                                                              source->root.as_path(),
-                                                              rstd::move(canonical).unwrap_err());
+            return Err(BuildScriptError::Io("resolve build-tool input root"_Str,
+                                            PathBuf::from(source->root.as_path()),
+                                            rstd::move(canonical).unwrap_err()));
         }
         auto inspected = rstd::fs::symlink_metadata(canonical->as_path());
         if (inspected.is_err() || ! inspected->is_dir()) {
-            return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidInput(
-                canonical->clone(), "build-tool input root is not a directory"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                canonical->clone(), "build-tool input root is not a directory"_Str)));
         }
         input_roots.push(ResolvedActionInputRoot {
             .source = source,
@@ -704,8 +711,8 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
     }
     auto package_root = find_package_root(*metadata_, package->as_str());
     if (package_root.is_none()) {
-        return action_request_failure<ToolActionOutcome>(
-            rstd::format("build-tool action package '{}' is not selected", package->as_str()));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            rstd::format("build-tool action package '{}' is not selected", package->as_str()))));
     }
     auto cwd_text     = rstd::move(request.cwd);
     auto cwd_relative = PathBuf::make();
@@ -716,20 +723,19 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
     auto cwd_requested     = PathBuf::from(*package_root).join(cwd_relative.as_path());
     auto working_directory = rstd::fs::canonicalize(cwd_requested.as_path());
     if (working_directory.is_err()) {
-        return build_script_io_failure<ToolActionOutcome>(
-            "resolve build-tool action cwd"_str,
-            cwd_requested.as_path(),
-            rstd::move(working_directory).unwrap_err());
+        return Err(BuildScriptError::Io("resolve build-tool action cwd"_Str,
+                                        PathBuf::from(cwd_requested.as_path()),
+                                        rstd::move(working_directory).unwrap_err()));
     }
     if (working_directory->as_path().strip_prefix(*package_root).is_none()) {
-        return action_request_failure<ToolActionOutcome>(
-            "build-tool action cwd escapes package root"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "build-tool action cwd escapes package root"_Str)));
     }
     auto arguments        = rstd::move(request.args);
     auto declared_outputs = rstd::move(request.outputs);
     if (arguments.is_empty() || inputs->is_empty() || declared_outputs.is_empty()) {
-        return action_request_failure<ToolActionOutcome>(
-            "build-tool action requires args, inputs, and outputs"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "build-tool action requires args, inputs, and outputs"_Str)));
     }
     auto input_records = Vec<ResolvedActionInput>::make();
     for (usize input_index {}; input_index < inputs->len(); ++input_index) {
@@ -747,8 +753,8 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
             rstd_try(normal_relative_path(rstd::move(output.path), "build-tool action output"_str));
         for (const auto& existing : output_paths) {
             if (existing.as_path() == relative.as_path()) {
-                return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidOutput(
-                    relative.clone(), "path is declared more than once"_Str));
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+                    relative.clone(), "path is declared more than once"_Str)));
             }
         }
         rstd_try(
@@ -761,15 +767,15 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         auto selected = request.output_cwd;
         auto index    = usize(static_cast<size_t>(selected->to_primitive()));
         if (*selected < i64(1) || index > output_paths.len()) {
-            return action_request_failure<ToolActionOutcome>(
-                "lito.run.output_cwd must identify a declared output"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "lito.run.output_cwd must identify a declared output"_Str)));
         }
         output_working_directory = Some(index - usize(1));
         auto selected_parent     = output_paths[index - usize(1)].as_path().parent().unwrap();
         for (const auto& candidate : output_paths) {
             if (candidate.as_path().parent().unwrap() != selected_parent) {
-                return action_request_failure<ToolActionOutcome>(
-                    "lito.run.output_cwd requires all outputs to share one directory"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "lito.run.output_cwd requires all outputs to share one directory"_Str)));
             }
         }
     }
@@ -781,8 +787,8 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         auto& roots        = request.depfile->roots;
         auto  output_index = usize(static_cast<size_t>(output->to_primitive()));
         if (*output < i64(1) || output_index > output_paths.len()) {
-            return action_request_failure<ToolActionOutcome>(
-                "lito.run.depfile.output must identify a declared output"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "lito.run.depfile.output must identify a declared output"_Str)));
         }
         depfile_output_index = Some(output_index - usize(1));
         for (usize index {}; index < roots.len(); ++index) {
@@ -793,15 +799,14 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
             auto canonical = rstd::fs::canonicalize(path.as_path());
             if (canonical.is_err()) {
                 if (path.as_path().strip_prefix(generated_root.as_path()).is_some()) continue;
-                return build_script_io_failure<ToolActionOutcome>(
-                    "resolve build-tool depfile root"_str,
-                    path.as_path(),
-                    rstd::move(canonical).unwrap_err());
+                return Err(BuildScriptError::Io("resolve build-tool depfile root"_Str,
+                                                PathBuf::from(path.as_path()),
+                                                rstd::move(canonical).unwrap_err()));
             }
             auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
             if (metadata.is_err() || ! metadata->is_dir()) {
-                return action_failure<ToolActionOutcome>(BuildToolActionError::InvalidInput(
-                    canonical->clone(), "depfile root is not a directory"_Str));
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                    canonical->clone(), "depfile root is not a directory"_Str)));
             }
             depfile_roots.push(rstd::move(canonical).unwrap());
         }
@@ -939,8 +944,8 @@ auto ToolActionSession::refresh_action_identities(
     }
     for (auto& output : generated_outputs_) {
         if (output->producer >= actions_.len()) {
-            return action_request_failure<empty>(
-                "generated output refers to an unknown producer"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "generated output refers to an unknown producer"_Str)));
         }
         output->action_identity = actions_[output->producer].identity.clone();
     }
@@ -1001,8 +1006,8 @@ auto ToolActionSession::resolve_action_tool(BuildScriptHandle handle) const
             .target = Some(binding->target.clone()),
         });
     }
-    return action_request_failure<ResolvedActionTool>(
-        "tool handle does not belong to this build script"_str);
+    return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+        "tool handle does not belong to this build script"_Str)));
 }
 
 auto ToolActionSession::external_source_root(BuildScriptHandle handle) const noexcept
@@ -1027,8 +1032,9 @@ auto ToolActionSession::action_external_source(BuildScriptHandle handle,
     -> BuildScriptResult<const cpp::ExternalSourceRoot*> {
     auto source = external_source_root(handle);
     if (source == nullptr) {
-        return action_request_failure<const cpp::ExternalSourceRoot*>(
-            rstd::format("{}[{}] does not belong to this build script", context, index + usize(1)));
+        return Err(
+            BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(rstd::format(
+                "{}[{}] does not belong to this build script", context, index + usize(1)))));
     }
     return Ok(source);
 }
@@ -1048,15 +1054,14 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
         auto requested = PathBuf::from(working_directory).join(relative.as_path());
         auto resolved  = rstd::fs::canonicalize(requested.as_path());
         if (resolved.is_err()) {
-            return build_script_io_failure<ResolvedActionInput>(
-                "resolve generated action input"_str,
-                requested.as_path(),
-                rstd::move(resolved).unwrap_err());
+            return Err(BuildScriptError::Io("resolve generated action input"_Str,
+                                            PathBuf::from(requested.as_path()),
+                                            rstd::move(resolved).unwrap_err()));
         }
         auto package_root = find_package_root(*metadata_, package);
         if (package_root.is_none() || resolved->as_path().strip_prefix(*package_root).is_none()) {
-            return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
-                requested.clone(), "path escapes package root"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                requested.clone(), "path escapes package root"_Str)));
         }
         canonical = rstd::move(resolved).unwrap();
     } else if (input.handle.identity != nullptr) {
@@ -1064,16 +1069,16 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
         auto file   = external_source_file(handle);
         if (file != nullptr) {
             if (file->source->package_name != package) {
-                return action_request_failure<ResolvedActionInput>(
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
                     rstd::format("{}[{}] is not an external source file owned by package '{}'",
                                  context,
                                  index + usize(1),
-                                 package));
+                                 package))));
             }
             auto metadata = rstd::fs::symlink_metadata(file->path.as_path());
             if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
-                return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
-                    file->path.clone(), "external source path is not a regular file"_Str));
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                    file->path.clone(), "external source path is not a regular file"_Str)));
             }
             auto file_digest = rstd_try(action_file_digest(file->path.as_path()));
             return Ok(ResolvedActionInput {
@@ -1087,11 +1092,12 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
         }
         auto output = generated_output(handle);
         if (output == nullptr || output->package != package) {
-            return action_request_failure<ResolvedActionInput>(rstd::format(
-                "{}[{}] is not a source file or generated output owned by package '{}'",
-                context,
-                index + usize(1),
-                package));
+            return Err(
+                BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(rstd::format(
+                    "{}[{}] is not a source file or generated output owned by package '{}'",
+                    context,
+                    index + usize(1),
+                    package))));
         }
         auto generated = rstd_try(layout_->generated_package_directory(package));
         canonical      = generated.join(output->relative.as_path());
@@ -1099,8 +1105,10 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
         digest =
             rstd::format("{}:{}", output->action_identity.as_str(), output->relative.as_path());
     } else {
-        return action_request_failure<ResolvedActionInput>(rstd::format(
-            "{}[{}] must be a source path or generated output handle", context, index + usize(1)));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            rstd::format("{}[{}] must be a source path or generated output handle",
+                         context,
+                         index + usize(1)))));
     }
     if (producer.is_some()) {
         return Ok(ResolvedActionInput {
@@ -1111,8 +1119,8 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
     }
     auto metadata = rstd::fs::symlink_metadata(canonical.as_path());
     if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
-        return action_failure<ResolvedActionInput>(BuildToolActionError::InvalidInput(
-            canonical.clone(), "path is not a regular file"_Str));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+            canonical.clone(), "path is not a regular file"_Str)));
     }
     digest = rstd_try(action_file_digest(canonical.as_path()));
     return Ok(ResolvedActionInput {

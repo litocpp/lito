@@ -23,17 +23,6 @@ inline constexpr auto CACHE_VERSION  = u64(5);
 inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v13"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-compile-v6"_str;
 
-template<typename T>
-auto cache_failure(String message) -> CacheResult<T> {
-    return Err(CacheError::Record(rstd::move(message)));
-}
-
-template<typename T>
-auto cache_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
-    -> CacheResult<T> {
-    return Err(CacheError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto cache_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
@@ -55,7 +44,7 @@ auto cache_version(const Json& document) -> Option<u64> {
 auto path_string(ref<rstd::path::Path> path) -> CacheResult<String> {
     auto value = path.to_str();
     if (value.is_none()) {
-        return cache_failure<String>(rstd::format("cache path '{}' is not valid UTF-8", path));
+        return Err(CacheError::Record(rstd::format("cache path '{}' is not valid UTF-8", path)));
     }
     return Ok(String::make(*value));
 }
@@ -63,19 +52,20 @@ auto path_string(ref<rstd::path::Path> path) -> CacheResult<String> {
 auto write_json(ref<rstd::path::Path> path, const Json& document) -> CacheResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
-        return cache_failure<empty>(rstd::format("cache path '{}' has no parent", path));
+        return Err(CacheError::Record(rstd::format("cache path '{}' has no parent", path)));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return cache_io_failure<empty>(
-            "create directory"_str, *parent, rstd::move(created).unwrap_err());
+        return Err(CacheError::Io(
+            "create directory"_Str, PathBuf::from(*parent), rstd::move(created).unwrap_err()));
     }
     auto text = rstd::json::to_string(
         document, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     text.push_ascii('\n');
     auto written = rstd::fs::write_atomic(path, text.as_str().as_bytes());
     if (written.is_err()) {
-        return cache_io_failure<empty>("write record"_str, path, rstd::move(written).unwrap_err());
+        return Err(CacheError::Io(
+            "write record"_Str, PathBuf::from(path), rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -84,23 +74,24 @@ template<rstd::serde::Serializable T>
 auto write_typed_json(ref<rstd::path::Path> path, const T& document) -> CacheResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
-        return cache_failure<empty>(rstd::format("cache path '{}' has no parent", path));
+        return Err(CacheError::Record(rstd::format("cache path '{}' has no parent", path)));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return cache_io_failure<empty>(
-            "create directory"_str, *parent, rstd::move(created).unwrap_err());
+        return Err(CacheError::Io(
+            "create directory"_Str, PathBuf::from(*parent), rstd::move(created).unwrap_err()));
     }
     auto text = rstd::json::encode_direct(
         document, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     if (text.is_err()) {
-        return cache_failure<empty>(
-            rstd::format("serialize cache record: {}", rstd::move(text).unwrap_err()));
+        return Err(CacheError::Record(
+            rstd::format("serialize cache record: {}", rstd::move(text).unwrap_err())));
     }
     text->push_ascii('\n');
     auto written = rstd::fs::write_atomic(path, text->as_str().as_bytes());
     if (written.is_err()) {
-        return cache_io_failure<empty>("write record"_str, path, rstd::move(written).unwrap_err());
+        return Err(CacheError::Io(
+            "write record"_Str, PathBuf::from(path), rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -132,7 +123,8 @@ auto file_json(const FileFingerprint& file) -> CacheResult<Json> {
 auto output_exists(ref<rstd::path::Path> path) -> CacheResult<bool> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cache_io_failure<bool>("inspect output"_str, path, rstd::move(exists).unwrap_err());
+        return Err(CacheError::Io(
+            "inspect output"_Str, PathBuf::from(path), rstd::move(exists).unwrap_err()));
     }
     return Ok(*exists);
 }
@@ -140,8 +132,8 @@ auto output_exists(ref<rstd::path::Path> path) -> CacheResult<bool> {
 auto output_content_digest(ref<rstd::path::Path> path) -> CacheResult<String> {
     auto opened = rstd::fs::File::open(path);
     if (opened.is_err()) {
-        return cache_io_failure<String>(
-            "open compiler output"_str, path, rstd::move(opened).unwrap_err());
+        return Err(CacheError::Io(
+            "open compiler output"_Str, PathBuf::from(path), rstd::move(opened).unwrap_err()));
     }
     auto file = rstd::move(opened).unwrap();
     auto hash = lito::hash::Fnv1a64 {};
@@ -150,8 +142,8 @@ auto output_content_digest(ref<rstd::path::Path> path) -> CacheResult<String> {
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
         if (read.is_err()) {
-            return cache_io_failure<String>(
-                "read compiler output"_str, path, rstd::move(read).unwrap_err());
+            return Err(CacheError::Io(
+                "read compiler output"_Str, PathBuf::from(path), rstd::move(read).unwrap_err()));
         }
         if (*read == usize {}) break;
         hash.write(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
@@ -180,12 +172,12 @@ auto receipt_output_paths(const Json& document) -> Vec<PathBuf> {
 auto read_receipt_output_paths(ref<rstd::path::Path> path) -> CacheResult<Vec<PathBuf>> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cache_io_failure<Vec<PathBuf>>("inspect record"_str, path, exists.unwrap_err());
+        return Err(CacheError::Io("inspect record"_Str, PathBuf::from(path), exists.unwrap_err()));
     }
     if (! *exists) return Ok(Vec<PathBuf>::make());
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return cache_io_failure<Vec<PathBuf>>("read record"_str, path, contents.unwrap_err());
+        return Err(CacheError::Io("read record"_Str, PathBuf::from(path), contents.unwrap_err()));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) return Ok(Vec<PathBuf>::make());
@@ -195,17 +187,17 @@ auto read_receipt_output_paths(ref<rstd::path::Path> path) -> CacheResult<Vec<Pa
 auto remove_owned_output(ref<rstd::path::Path> path, ref<rstd::path::Path> owner_root)
     -> CacheResult<empty> {
     if (path.strip_prefix(owner_root).is_none()) {
-        return cache_failure<empty>(
-            rstd::format("cache output '{}' is outside build root '{}'", path, owner_root));
+        return Err(CacheError::Record(
+            rstd::format("cache output '{}' is outside build root '{}'", path, owner_root)));
     }
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cache_io_failure<empty>("inspect output"_str, path, exists.unwrap_err());
+        return Err(CacheError::Io("inspect output"_Str, PathBuf::from(path), exists.unwrap_err()));
     }
     if (! *exists) return Ok(empty {});
     auto removed = rstd::fs::remove_file(path);
     if (removed.is_err()) {
-        return cache_io_failure<empty>("remove output"_str, path, removed.unwrap_err());
+        return Err(CacheError::Io("remove output"_Str, PathBuf::from(path), removed.unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -215,27 +207,28 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
                            ref<rstd::path::Path> owner_root) -> CacheResult<empty> {
     auto exists = rstd::fs::exists(directory);
     if (exists.is_err()) {
-        return cache_io_failure<empty>(
-            "inspect directory"_str, directory, rstd::move(exists).unwrap_err());
+        return Err(CacheError::Io(
+            "inspect directory"_Str, PathBuf::from(directory), rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(empty {});
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return cache_io_failure<empty>(
-            "enumerate directory"_str, directory, rstd::move(opened).unwrap_err());
+        return Err(CacheError::Io(
+            "enumerate directory"_Str, PathBuf::from(directory), rstd::move(opened).unwrap_err()));
     }
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return cache_io_failure<empty>(
-                "enumerate directory"_str, directory, rstd::move(item).unwrap_err());
+            return Err(CacheError::Io("enumerate directory"_Str,
+                                      PathBuf::from(directory),
+                                      rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
             auto path = entry.path();
-            return cache_io_failure<empty>(
-                "inspect entry"_str, path.as_path(), rstd::move(type).unwrap_err());
+            return Err(CacheError::Io(
+                "inspect entry"_Str, PathBuf::from(path.as_path()), rstd::move(type).unwrap_err()));
         }
         auto path = entry.path();
         if (type->is_dir()) {
@@ -245,8 +238,8 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
             if (removed.is_err() &&
                 rstd::move(removed).unwrap_err().kind() !=
                     rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::DirectoryNotEmpty }) {
-                return cache_failure<empty>(
-                    rstd::format("cannot remove stale cache directory '{}'", path.as_path()));
+                return Err(CacheError::Record(
+                    rstd::format("cannot remove stale cache directory '{}'", path.as_path())));
             }
             continue;
         }
@@ -262,8 +255,9 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
         }
         auto removed = rstd::fs::remove_file(path.as_path());
         if (removed.is_err()) {
-            return cache_io_failure<empty>(
-                "remove stale record"_str, path.as_path(), rstd::move(removed).unwrap_err());
+            return Err(CacheError::Io("remove stale record"_Str,
+                                      PathBuf::from(path.as_path()),
+                                      rstd::move(removed).unwrap_err()));
         }
     }
     return Ok(empty {});
@@ -419,14 +413,16 @@ public:
         auto refresh = false;
         auto exists  = rstd::fs::exists(path.as_path());
         if (exists.is_err()) {
-            return cache_io_failure<CacheEnvironment>(
-                "inspect environment"_str, path.as_path(), rstd::move(exists).unwrap_err());
+            return Err(CacheError::Io("inspect environment"_Str,
+                                      PathBuf::from(path.as_path()),
+                                      rstd::move(exists).unwrap_err()));
         }
         if (*exists) {
             auto contents = rstd::fs::read_to_string(path.as_path());
             if (contents.is_err()) {
-                return cache_io_failure<CacheEnvironment>(
-                    "read environment"_str, path.as_path(), rstd::move(contents).unwrap_err());
+                return Err(CacheError::Io("read environment"_Str,
+                                          PathBuf::from(path.as_path()),
+                                          rstd::move(contents).unwrap_err()));
             }
             auto parsed = rstd::json::from_str(contents->as_str());
             if (parsed.is_err()) {
@@ -436,8 +432,8 @@ public:
             } else if (*parsed != desired) {
                 auto version = cache_version(*parsed);
                 if (version.is_some() && *version == CACHE_VERSION) {
-                    return cache_failure<CacheEnvironment>(
-                        rstd::format("cache environment key collision at '{}'", path.as_path()));
+                    return Err(CacheError::Record(
+                        rstd::format("cache environment key collision at '{}'", path.as_path())));
                 }
                 auto written = write_json(path.as_path(), desired);
                 if (written.is_err()) return Err(rstd::move(written).unwrap_err());

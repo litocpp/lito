@@ -14,10 +14,6 @@ using rstd::parse::PositionedCursor;
 namespace lito::frontend::lexical
 {
 
-auto lex_failure(ref<str> message, SourceLocation location) {
-    return Err(Error::at(String::make(message), location));
-}
-
 auto append_token(Vec<Token>&    tokens,
                   TokenKind      kind,
                   TokenText      text,
@@ -162,7 +158,7 @@ auto scan_preprocessing_token(slice<u8> bytes, SourceLocation location)
         }
         if (cursor.position() >= bytes.len() || bytes[cursor.position()] != u8('(') ||
             cursor.position() - delimiter_begin > usize(16)) {
-            return lex_failure("invalid raw string delimiter"_str, location);
+            return Err(Error::at("invalid raw string delimiter"_Str, location));
         }
         auto delimiter_end = cursor.position();
         (void)cursor.advance(usize(1));
@@ -188,7 +184,7 @@ auto scan_preprocessing_token(slice<u8> bytes, SourceLocation location)
             }
             (void)cursor.advance(usize(1));
         }
-        if (! closed) return lex_failure("unterminated raw string literal"_str, location);
+        if (! closed) return Err(Error::at("unterminated raw string literal"_Str, location));
     } else if (bytes[start] == u8('"') || bytes[start] == u8('\'') || prefix != usize {}) {
         (void)cursor.advance(prefix);
         auto quote = bytes[cursor.position()];
@@ -209,7 +205,7 @@ auto scan_preprocessing_token(slice<u8> bytes, SourceLocation location)
             if (bytes[cursor.position()] == u8('\n') || bytes[cursor.position()] == u8('\r')) break;
             (void)cursor.advance(usize(1));
         }
-        if (! closed) return lex_failure("unterminated literal"_str, location);
+        if (! closed) return Err(Error::at("unterminated literal"_Str, location));
     } else if (auto length = identifier_length(cursor.remaining_input()); length != usize()) {
         kind = TokenKind::Identifier;
         (void)cursor.advance(length);
@@ -450,7 +446,7 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
                 }
                 (void)cursor.advance_single_line_unchecked(usize(1));
             }
-            if (! closed) return lex_failure("unterminated block comment"_str, start);
+            if (! closed) return Err(Error::at("unterminated block comment"_Str, start));
             auto kind = CommentKind::Ordinary;
             if (start.offset + usize(2) < bytes.len() &&
                 bytes[start.offset + usize(2)] == u8('!')) {
@@ -514,8 +510,8 @@ auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
 auto lex_scan_file(const SourceFile& source, ScanMemoryAllocator allocator)
     -> Result<ScanFileStorage> {
     if (source.contents().len().to_primitive() > uint32_t(-1)) {
-        return lex_failure("source file exceeds compact scan offset range"_str,
-                           SourceLocation { .source = source.id });
+        return Err(Error::at("source file exceeds compact scan offset range"_Str,
+                             SourceLocation { .source = source.id }));
     }
     auto sink   = ScanFileStorageSink(source.snapshot.clone(), rstd::move(allocator));
     auto result = lex_into(source, sink);

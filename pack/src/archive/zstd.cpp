@@ -29,7 +29,7 @@ auto io_error(ref<str> operation, const auto& error) -> ArchiveError {
 auto state_error(ref<str> message) -> ArchiveError {
     return ArchiveError {
         .kind    = ArchiveErrorKind::State,
-        .message = String::make(message),
+        .message = message.into(),
     };
 }
 

@@ -26,7 +26,7 @@ inline constexpr u64   TAR_MODIFIED_TIME {};
 auto tar_error(ref<str> message, ArchiveErrorKind kind = ArchiveErrorKind::Tar) -> ArchiveError {
     return ArchiveError {
         .kind    = kind,
-        .message = String::make(message),
+        .message = message.into(),
     };
 }
 

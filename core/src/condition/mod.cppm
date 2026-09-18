@@ -161,15 +161,15 @@ class Parser {
 
     auto failure(ref<str> message, usize position) const -> ParseError {
         return ParseError {
-            .expression = String::make(input_),
-            .message    = String::make(message),
+            .expression = input_.into(),
+            .message    = message.into(),
             .position   = position,
         };
     }
 
     auto failure(String message, usize position) const -> ParseError {
         return ParseError {
-            .expression = String::make(input_),
+            .expression = input_.into(),
             .message    = rstd::move(message),
             .position   = position,
         };
@@ -391,7 +391,7 @@ struct ResolvedValue {
 };
 
 auto evaluation_failure(ref<str> message, usize position) -> EvaluationError {
-    return EvaluationError { .message = String::make(message), .position = position };
+    return EvaluationError { .message = message.into(), .position = position };
 }
 
 auto evaluation_failure(String message, usize position) -> EvaluationError {

@@ -65,16 +65,6 @@ namespace
 
 using namespace lito::manifest;
 
-template<typename T>
-auto publish_failure(String message) -> PackageFileSetResult<T> {
-    return Err(PackageFileSetError { .message = rstd::move(message) });
-}
-
-template<typename T>
-auto publish_failure(ref<str> message) -> PackageFileSetResult<T> {
-    return publish_failure<T>(String::make(message));
-}
-
 struct PublishGlob {
     String      source;
     Vec<String> components;
@@ -99,15 +89,16 @@ auto parse_glob(ref<str> value) -> PackageFileSetResult<PublishGlob> {
     if (value.is_empty() || value.starts_with("/"_str) || value.starts_with("!"_str) ||
         value.contains("\\"_str) || value.contains("?"_str) || value.contains("["_str) ||
         value.contains("]"_str) || value.contains("{"_str) || value.contains("}"_str)) {
-        return publish_failure<PublishGlob>(
-            rstd::format("package publish pattern '{}' uses unsupported syntax", value));
+        return Err(PackageFileSetError {
+            .message =
+                rstd::format("package publish pattern '{}' uses unsupported syntax", value) });
     }
     auto components = split_components(value);
     for (const auto& component : components) {
         if (component.is_empty() || component == "."_str || component == ".."_str ||
             (component != "**"_str && component.as_str().contains("**"_str))) {
-            return publish_failure<PublishGlob>(
-                rstd::format("package publish pattern '{}' is not portable", value));
+            return Err(PackageFileSetError {
+                .message = rstd::format("package publish pattern '{}' is not portable", value) });
         }
     }
     return Ok(PublishGlob {
@@ -214,16 +205,18 @@ auto nested_manifest(ref<rstd::path::Path> directory) -> PackageFileSetResult<bo
     auto path   = PathBuf::from(directory).join(PathBuf::from("lito.toml"_str).as_path());
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
-        return publish_failure<bool>(rstd::format("cannot inspect nested package manifest '{}': {}",
-                                                  path.as_path(),
-                                                  exists.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format("cannot inspect nested package manifest '{}': {}",
+                                    path.as_path(),
+                                    exists.unwrap_err()) });
     }
     if (! *exists) return Ok(false);
     auto metadata = rstd::fs::symlink_metadata(path.as_path());
     if (metadata.is_err()) {
-        return publish_failure<bool>(rstd::format("cannot inspect nested package manifest '{}': {}",
-                                                  path.as_path(),
-                                                  metadata.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format("cannot inspect nested package manifest '{}': {}",
+                                    path.as_path(),
+                                    metadata.unwrap_err()) });
     }
     return Ok(metadata->is_file() && ! metadata->is_symlink());
 }
@@ -253,28 +246,31 @@ auto append_file(FileSetState&             state,
                  ref<str>                  portable,
                  const rstd::fs::Metadata& metadata) -> PackageFileSetResult<empty> {
     if (metadata.nlink() > u64(1)) {
-        return publish_failure<empty>(
-            rstd::format("published file '{}' is a hardlink alias", physical));
+        return Err(PackageFileSetError {
+            .message = rstd::format("published file '{}' is a hardlink alias", physical) });
     }
     auto validated = lito::source::SourcePath::parse(portable);
     if (validated.is_err()) {
-        return publish_failure<empty>(
-            rstd::format("published path '{}': {}", portable, rstd::move(validated).unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "published path '{}': {}", portable, rstd::move(validated).unwrap_err()) });
     }
     state.candidates.insert(String::make(portable), empty {});
     if (! selected_by_patterns(state, portable)) return Ok(empty {});
     auto contents = rstd::fs::read(physical);
     if (contents.is_err()) {
-        return publish_failure<empty>(
-            rstd::format("cannot read published file '{}': {}", physical, contents.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "cannot read published file '{}': {}", physical, contents.unwrap_err()) });
     }
     auto mode  = (metadata.permissions().mode() & u32(0111)) == u32 {}
                      ? lito::source::SourceFileMode::Regular
                      : lito::source::SourceFileMode::Executable;
     auto added = state.tree.add_bytes(portable, contents->as_slice(), mode);
     if (added.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot add published file '{}': {}", portable, rstd::move(added).unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "cannot add published file '{}': {}", portable, rstd::move(added).unwrap_err()) });
     }
     state.selected.insert(String::make(portable), empty {});
     return Ok(empty {});
@@ -285,29 +281,33 @@ auto collect_directory(FileSetState& state, ref<rstd::path::Path> physical, ref<
     state.directories.push(PathBuf::from(physical));
     auto opened = rstd::fs::read_dir(physical);
     if (opened.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot enumerate package directory '{}': {}", physical, opened.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "cannot enumerate package directory '{}': {}", physical, opened.unwrap_err()) });
     }
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return publish_failure<empty>(rstd::format(
-                "cannot enumerate package directory '{}': {}", physical, item.unwrap_err()));
+            return Err(PackageFileSetError {
+                .message = rstd::format(
+                    "cannot enumerate package directory '{}': {}", physical, item.unwrap_err()) });
         }
         auto entry = rstd::move(item).unwrap();
         auto name  = entry.file_name();
         auto text  = name.as_os_str().to_str();
         if (text.is_none()) {
-            return publish_failure<empty>(
-                rstd::format("package directory '{}' contains a non-UTF-8 name", physical));
+            return Err(PackageFileSetError {
+                .message =
+                    rstd::format("package directory '{}' contains a non-UTF-8 name", physical) });
         }
         auto portable =
             prefix.is_empty() ? String::make(*text) : rstd::format("{}/{}", prefix, *text);
         auto path = entry.path();
         auto type = entry.file_type();
         if (type.is_err()) {
-            return publish_failure<empty>(rstd::format(
-                "cannot inspect package entry '{}': {}", path.as_path(), type.unwrap_err()));
+            return Err(PackageFileSetError {
+                .message = rstd::format(
+                    "cannot inspect package entry '{}': {}", path.as_path(), type.unwrap_err()) });
         }
         if (type->is_dir()) {
             if (fixed_directory(*text, portable.as_str()) ||
@@ -317,8 +317,10 @@ auto collect_directory(FileSetState& state, ref<rstd::path::Path> physical, ref<
             }
             if (rstd_try(nested_manifest(path.as_path()))) {
                 if (explicit_pattern_crosses_nested(state, portable.as_str())) {
-                    return publish_failure<empty>(rstd::format(
-                        "package publish pattern crosses nested package root '{}'", portable));
+                    return Err(PackageFileSetError {
+                        .message =
+                            rstd::format("package publish pattern crosses nested package root '{}'",
+                                         portable) });
                 }
                 state.pruned_roots.push(rstd::move(portable));
                 continue;
@@ -327,8 +329,9 @@ auto collect_directory(FileSetState& state, ref<rstd::path::Path> physical, ref<
             continue;
         }
         if (type->is_symlink() || ! type->is_file()) {
-            return publish_failure<empty>(
-                rstd::format("published entry '{}' must be a regular file", path.as_path()));
+            return Err(PackageFileSetError {
+                .message =
+                    rstd::format("published entry '{}' must be a regular file", path.as_path()) });
         }
         if (under_policy_root(path.as_path(), state.policy) ||
             is_archive_path(path.as_path(), state.policy)) {
@@ -337,8 +340,10 @@ auto collect_directory(FileSetState& state, ref<rstd::path::Path> physical, ref<
         }
         auto metadata = rstd::fs::symlink_metadata(path.as_path());
         if (metadata.is_err()) {
-            return publish_failure<empty>(rstd::format(
-                "cannot inspect package file '{}': {}", path.as_path(), metadata.unwrap_err()));
+            return Err(PackageFileSetError {
+                .message = rstd::format("cannot inspect package file '{}': {}",
+                                        path.as_path(),
+                                        metadata.unwrap_err()) });
         }
         rstd_try(append_file(state, path.as_path(), portable.as_str(), *metadata));
     }
@@ -349,18 +354,21 @@ auto portable_path(const PackageManifest& manifest, ref<rstd::path::Path> path, 
     -> PackageFileSetResult<String> {
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
-        return publish_failure<String>(rstd::format(
-            "cannot resolve published {} '{}': {}", owner, path, canonical.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "cannot resolve published {} '{}': {}", owner, path, canonical.unwrap_err()) });
     }
     auto relative = canonical->as_path().strip_prefix(manifest.root.as_path());
     if (relative.is_none() || relative->is_empty()) {
-        return publish_failure<String>(
-            rstd::format("published {} '{}' must be inside package root", owner, path));
+        return Err(PackageFileSetError {
+            .message =
+                rstd::format("published {} '{}' must be inside package root", owner, path) });
     }
     auto parsed = lito::source::SourcePath::from_relative_path(*relative);
     if (parsed.is_err()) {
-        return publish_failure<String>(rstd::format(
-            "published {} path '{}': {}", owner, *relative, rstd::move(parsed).unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "published {} path '{}': {}", owner, *relative, rstd::move(parsed).unwrap_err()) });
     }
     return Ok(String::make(parsed->as_str()));
 }
@@ -378,24 +386,28 @@ auto require_published_path(const FileSetState&   state,
     auto portable = rstd_try(portable_path(state.manifest, physical, owner));
     auto metadata = rstd::fs::symlink_metadata(physical);
     if (metadata.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot inspect published {} '{}': {}", owner, physical, metadata.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "cannot inspect published {} '{}': {}", owner, physical, metadata.unwrap_err()) });
     }
     if (metadata->is_symlink() || (! metadata->is_file() && ! metadata->is_dir())) {
-        return publish_failure<empty>(
-            rstd::format("published {} '{}' must be a regular file or directory", owner, physical));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "published {} '{}' must be a regular file or directory", owner, physical) });
     }
     for (const auto& root : state.pruned_roots) {
         if (path_is_under(portable.as_str(), root.as_str()) ||
             (complete_directory && path_is_under(root.as_str(), portable.as_str()))) {
-            return publish_failure<empty>(rstd::format(
-                "published {} '{}' is excluded from the package file set", owner, portable));
+            return Err(PackageFileSetError {
+                .message = rstd::format(
+                    "published {} '{}' is excluded from the package file set", owner, portable) });
         }
     }
     if (metadata->is_file()) {
         if (! state.selected.contains_key(portable.as_str())) {
-            return publish_failure<empty>(rstd::format(
-                "published {} '{}' is not selected by package.publish", owner, portable));
+            return Err(PackageFileSetError {
+                .message = rstd::format(
+                    "published {} '{}' is not selected by package.publish", owner, portable) });
         }
         return Ok(empty {});
     }
@@ -404,13 +416,15 @@ auto require_published_path(const FileSetState&   state,
         if (! path_is_under((*candidate).as_str(), portable.as_str())) continue;
         selected_any = true;
         if (complete_directory && ! state.selected.contains_key((*candidate).as_str())) {
-            return publish_failure<empty>(rstd::format(
-                "published {} directory '{}' is only partially selected", owner, portable));
+            return Err(PackageFileSetError {
+                .message = rstd::format(
+                    "published {} directory '{}' is only partially selected", owner, portable) });
         }
     }
     if (! selected_any) {
-        return publish_failure<empty>(rstd::format(
-            "published {} directory '{}' contains no selected files", owner, portable));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "published {} directory '{}' contains no selected files", owner, portable) });
     }
     return Ok(empty {});
 }
@@ -480,9 +494,10 @@ auto validate_references(const FileSetState& state) -> PackageFileSetResult<empt
     auto build_script     = state.manifest.root.join(PathBuf::from("build.lua"_str).as_path());
     auto has_build_script = rstd::fs::exists(build_script.as_path());
     if (has_build_script.is_err()) {
-        return publish_failure<empty>(rstd::format("cannot inspect build script '{}': {}",
-                                                   build_script.as_path(),
-                                                   has_build_script.unwrap_err()));
+        return Err(
+            PackageFileSetError { .message = rstd::format("cannot inspect build script '{}': {}",
+                                                          build_script.as_path(),
+                                                          has_build_script.unwrap_err()) });
     }
     if (*has_build_script) {
         rstd_try(require_published_path(state, build_script.as_path(), "build script"_str));
@@ -521,27 +536,34 @@ auto include_package_readme(FileSetState& state) -> PackageFileSetResult<empty> 
     const auto& portable = *state.manifest.readme.archive_path;
     auto        metadata = rstd::fs::symlink_metadata(physical.as_path());
     if (metadata.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot inspect package.readme '{}': {}", physical.as_path(), metadata.unwrap_err()));
+        return Err(
+            PackageFileSetError { .message = rstd::format("cannot inspect package.readme '{}': {}",
+                                                          physical.as_path(),
+                                                          metadata.unwrap_err()) });
     }
     if (metadata->is_symlink() || ! metadata->is_file()) {
-        return publish_failure<empty>(
-            rstd::format("package.readme '{}' must be a regular file", physical.as_path()));
+        return Err(PackageFileSetError {
+            .message =
+                rstd::format("package.readme '{}' must be a regular file", physical.as_path()) });
     }
     if (metadata->nlink() > u64(1)) {
-        return publish_failure<empty>(
-            rstd::format("package.readme '{}' is a hardlink alias", physical.as_path()));
+        return Err(
+            PackageFileSetError { .message = rstd::format("package.readme '{}' is a hardlink alias",
+                                                          physical.as_path()) });
     }
     auto validated = lito::source::SourcePath::parse(portable.as_str());
     if (validated.is_err()) {
-        return publish_failure<empty>(
-            rstd::format("package.readme archive path '{}': {}", portable, validated.unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "package.readme archive path '{}': {}", portable, validated.unwrap_err()) });
     }
 
     auto canonical = rstd::fs::canonicalize(physical.as_path());
     if (canonical.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot resolve package.readme '{}': {}", physical.as_path(), canonical.unwrap_err()));
+        return Err(
+            PackageFileSetError { .message = rstd::format("cannot resolve package.readme '{}': {}",
+                                                          physical.as_path(),
+                                                          canonical.unwrap_err()) });
     }
     auto package_relative  = canonical->as_path().strip_prefix(state.manifest.root.as_path());
     auto same_package_file = false;
@@ -550,25 +572,28 @@ auto include_package_readme(FileSetState& state) -> PackageFileSetResult<empty> 
         same_package_file = package_path.is_ok() && package_path->as_str() == portable.as_str();
     }
     if (state.candidates.contains_key(portable.as_str()) && ! same_package_file) {
-        return publish_failure<empty>(
-            rstd::format("package.readme '{}' conflicts with package file '{}'",
-                         physical.as_path(),
-                         portable.as_str()));
+        return Err(PackageFileSetError {
+            .message = rstd::format("package.readme '{}' conflicts with package file '{}'",
+                                    physical.as_path(),
+                                    portable.as_str()) });
     }
     if (state.selected.contains_key(portable.as_str())) return Ok(empty {});
 
     auto contents = rstd::fs::read(physical.as_path());
     if (contents.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot read package.readme '{}': {}", physical.as_path(), contents.unwrap_err()));
+        return Err(
+            PackageFileSetError { .message = rstd::format("cannot read package.readme '{}': {}",
+                                                          physical.as_path(),
+                                                          contents.unwrap_err()) });
     }
     auto mode  = (metadata->permissions().mode() & u32(0111)) == u32 {}
                      ? lito::source::SourceFileMode::Regular
                      : lito::source::SourceFileMode::Executable;
     auto added = state.tree.add_bytes(portable.as_str(), contents->as_slice(), mode);
     if (added.is_err()) {
-        return publish_failure<empty>(rstd::format(
-            "cannot add package.readme '{}': {}", portable, rstd::move(added).unwrap_err()));
+        return Err(PackageFileSetError {
+            .message = rstd::format(
+                "cannot add package.readme '{}': {}", portable, rstd::move(added).unwrap_err()) });
     }
     state.candidates.insert(portable.clone(), empty {});
     state.selected.insert(portable.clone(), empty {});
@@ -583,8 +608,8 @@ auto lito::manifest::PackageFileSetResolver::resolve(const PackageManifest&     
     if (manifest.manifest_path.as_path().file_name().is_none() ||
         manifest.manifest_path.as_path().file_name()->to_str().is_none() ||
         *manifest.manifest_path.as_path().file_name()->to_str() != "lito.toml"_str) {
-        return publish_failure<PackageFileSet>(
-            "Registry packages require a root lito.toml manifest"_str);
+        return Err(PackageFileSetError {
+            .message = "Registry packages require a root lito.toml manifest"_Str });
     }
     auto state = FileSetState {
         .manifest = manifest,
@@ -601,19 +626,21 @@ auto lito::manifest::PackageFileSetResolver::resolve(const PackageManifest&     
     rstd_try(collect_directory(state, manifest.root.as_path(), ""_str));
     for (const auto& pattern : state.includes) {
         if (pattern.matches == usize {}) {
-            return publish_failure<PackageFileSet>(rstd::format(
-                "package.publish.include pattern '{}' matches no files", pattern.source));
+            return Err(PackageFileSetError {
+                .message = rstd::format("package.publish.include pattern '{}' matches no files",
+                                        pattern.source) });
         }
     }
     for (const auto& pattern : state.excludes) {
         if (pattern.matches == usize {}) {
-            return publish_failure<PackageFileSet>(rstd::format(
-                "package.publish.exclude pattern '{}' matches no files", pattern.source));
+            return Err(PackageFileSetError {
+                .message = rstd::format("package.publish.exclude pattern '{}' matches no files",
+                                        pattern.source) });
         }
     }
     if (! state.selected.contains_key("lito.toml"_str)) {
-        return publish_failure<PackageFileSet>(
-            "package root lito.toml is missing from the publish file set"_str);
+        return Err(PackageFileSetError {
+            .message = "package root lito.toml is missing from the publish file set"_Str });
     }
     rstd_try(include_package_readme(state));
     rstd_try(validate_references(state));

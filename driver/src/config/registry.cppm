@@ -118,24 +118,6 @@ auto load_registry_bootstrap_config(RegistryBootstrapConfigRequest request = {})
 namespace
 {
 
-template<typename T>
-auto registry_config_failure(String message) -> lito::config::ConfigResult<T> {
-    return Err(lito::config::ConfigError::Schema(rstd::move(message)));
-}
-
-template<typename T>
-auto registry_config_failure(ref<str> message) -> lito::config::ConfigResult<T> {
-    return Err(lito::config::ConfigError::Schema(String::make(message)));
-}
-
-template<typename T>
-auto registry_config_io_failure(ref<str>               operation,
-                                ref<rstd::path::Path>  path,
-                                rstd::io::error::Error source) -> lito::config::ConfigResult<T> {
-    return Err(lito::config::ConfigError::Io(
-        String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto valid_registry_config_name(ref<str> value) -> bool {
     if (value.is_empty() || value.len() > usize(64)) return false;
     for (auto byte : value.as_bytes()) {
@@ -161,8 +143,8 @@ auto reject_unknown(const Table& value, ref<str> context, initializer_list<ref<s
             }
         }
         if (! known) {
-            return registry_config_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (*key).as_str()));
+            return Err(lito::config::ConfigError::Schema(
+                rstd::format("{} contains unknown field '{}'", context, (*key).as_str())));
         }
     }
     return Ok(empty {});
@@ -171,7 +153,7 @@ auto reject_unknown(const Table& value, ref<str> context, initializer_list<ref<s
 auto table(const Toml& value, ref<str> context) -> lito::config::ConfigResult<ref<Table>> {
     auto result = value.as_table();
     if (result.is_none()) {
-        return registry_config_failure<ref<Table>>(rstd::format("{} must be a table", context));
+        return Err(lito::config::ConfigError::Schema(rstd::format("{} must be a table", context)));
     }
     return Ok(*result);
 }
@@ -180,12 +162,13 @@ auto required_string(const Toml& value, ref<str> key, ref<str> context)
     -> lito::config::ConfigResult<ref<str>> {
     auto member = value.get(key);
     if (member.is_none()) {
-        return registry_config_failure<ref<str>>(rstd::format("{}.{} is required", context, key));
+        return Err(
+            lito::config::ConfigError::Schema(rstd::format("{}.{} is required", context, key)));
     }
     auto text = (**member).as_str();
     if (text.is_none() || text->is_empty()) {
-        return registry_config_failure<ref<str>>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
+        return Err(lito::config::ConfigError::Schema(
+            rstd::format("{}.{} must be a non-empty string", context, key)));
     }
     return Ok(*text);
 }
@@ -195,8 +178,8 @@ auto parse_registry_value(ref<str> value, ref<str> context, Parser parser)
     -> lito::config::ConfigResult<T> {
     auto parsed = parser(value);
     if (parsed.is_err()) {
-        return registry_config_failure<T>(
-            rstd::format("{}: {}", context, rstd::move(parsed).unwrap_err()));
+        return Err(lito::config::ConfigError::Schema(
+            rstd::format("{}: {}", context, rstd::move(parsed).unwrap_err())));
     }
     return Ok(rstd::move(parsed).unwrap());
 }
@@ -245,8 +228,8 @@ auto parse_bearer_token(const Toml& value, ref<str> context)
     auto token = rstd_try(required_string(value, "token"_str, context));
     for (auto byte : token.as_bytes()) {
         if (byte.to_primitive() <= 0x20 || byte.to_primitive() == 0x7f) {
-            return registry_config_failure<Option<lito::config::RegistryBearerToken>>(
-                rstd::format("{}.token must not contain whitespace or control bytes", context));
+            return Err(lito::config::ConfigError::Schema(
+                rstd::format("{}.token must not contain whitespace or control bytes", context)));
         }
     }
     return Ok(Some(lito::config::RegistryBearerToken(String::make(token))));
@@ -255,10 +238,10 @@ auto parse_bearer_token(const Toml& value, ref<str> context)
 auto parse_named_registry(ref<str> name, const Toml& value)
     -> lito::config::ConfigResult<lito::config::NamedRegistryConfig> {
     if (! valid_registry_config_name(name)) {
-        return registry_config_failure<lito::config::NamedRegistryConfig>(
+        return Err(lito::config::ConfigError::Schema(
             rstd::format("registry config name '{}' must use 1 to 64 lowercase ASCII letters, "
                          "digits, '-' or '_'",
-                         name));
+                         name)));
     }
     auto context     = rstd::format("registries.{}", name);
     auto value_table = rstd_try(table(value, context.as_str()));
@@ -312,8 +295,8 @@ auto parse_bootstrap_document(const Toml& document)
     if (default_value.is_some()) {
         auto text = (**default_value).as_str();
         if (text.is_none() || ! valid_registry_config_name(*text)) {
-            return registry_config_failure<lito::config::LitoBootstrapConfig>(
-                "registry bootstrap config default must be a valid registry config name"_str);
+            return Err(lito::config::ConfigError::Schema(
+                "registry bootstrap config default must be a valid registry config name"_Str));
         }
         default_registry = Some(String::make(*text));
     }
@@ -329,25 +312,29 @@ auto read_registry_toml(ref<rstd::path::Path> path, ref<str> description, bool p
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(Option<Toml> {});
         }
-        return registry_config_io_failure<Option<Toml>>(
-            rstd::format("inspect {}", description).as_str(), path, rstd::move(error));
+        return Err(
+            lito::config::ConfigError::Io((rstd::format("inspect {}", description).as_str()).into(),
+                                          PathBuf::from(path),
+                                          rstd::move(error)));
     }
     if (! metadata->is_file()) {
-        return registry_config_failure<Option<Toml>>(
-            rstd::format("{} '{}' must be an ordinary file", description, path));
+        return Err(lito::config::ConfigError::Schema(
+            rstd::format("{} '{}' must be an ordinary file", description, path)));
     }
 #if ! defined(_WIN32)
     if (private_file && (metadata->permissions().mode() & u32(0077)) != u32 {}) {
-        return registry_config_failure<Option<Toml>>(rstd::format(
-            "{} '{}' must not be accessible by group or other users", description, path));
+        return Err(lito::config::ConfigError::Schema(rstd::format(
+            "{} '{}' must not be accessible by group or other users", description, path)));
     }
 #else
     (void)private_file;
 #endif
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return registry_config_io_failure<Option<Toml>>(
-            rstd::format("read {}", description).as_str(), path, rstd::move(contents).unwrap_err());
+        return Err(
+            lito::config::ConfigError::Io((rstd::format("read {}", description).as_str()).into(),
+                                          PathBuf::from(path),
+                                          rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -355,8 +342,8 @@ auto read_registry_toml(ref<rstd::path::Path> path, ref<str> description, bool p
             lito::config::ConfigError::Parse(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     if (! parsed->is_table()) {
-        return registry_config_failure<Option<Toml>>(
-            rstd::format("{} root must be a table", description));
+        return Err(lito::config::ConfigError::Schema(
+            rstd::format("{} root must be a table", description)));
     }
     return Ok(Some(rstd::move(parsed).unwrap()));
 }
@@ -390,8 +377,8 @@ auto validate_bootstrap_default(const lito::config::LitoBootstrapConfig& config)
     -> lito::config::ConfigResult<empty> {
     auto name = config.default_registry_name();
     if (name.is_some() && config.registry(*name).is_none()) {
-        return registry_config_failure<empty>(
-            rstd::format("default registry '{}' is not configured", *name));
+        return Err(lito::config::ConfigError::Schema(
+            rstd::format("default registry '{}' is not configured", *name)));
     }
     return Ok(empty {});
 }
@@ -406,7 +393,8 @@ api = "https://registry.litocpp.org/api/"
 )toml"_str;
     auto           parsed  = rstd::toml::from_str(litocpp);
     if (parsed.is_err()) {
-        return registry_config_failure<Toml>("compiled litocpp registry config is invalid"_str);
+        return Err(
+            lito::config::ConfigError::Schema("compiled litocpp registry config is invalid"_Str));
     }
     return Ok(rstd::move(parsed).unwrap());
 }
@@ -440,8 +428,8 @@ auto lito::config::load_registry_bootstrap_config(RegistryBootstrapConfigRequest
     }
     if (request.default_registry.is_some()) {
         if (! valid_registry_config_name(request.default_registry->as_str())) {
-            return registry_config_failure<LitoBootstrapConfig>(
-                "invocation default registry is not a valid registry config name"_str);
+            return Err(lito::config::ConfigError::Schema(
+                "invocation default registry is not a valid registry config name"_Str));
         }
         default_registry = rstd::move(request.default_registry);
     }

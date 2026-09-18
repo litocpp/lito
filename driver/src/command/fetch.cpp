@@ -24,22 +24,12 @@ using namespace lito::system;
 namespace lito
 {
 
-template<typename T>
-auto fetch_failure(String message) -> CommandResult<T> {
-    return Err(CommandError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto fetch_failure(ref<str> message) -> CommandResult<T> {
-    return fetch_failure<T>(String::make(message));
-}
-
 auto command_source_result(
     lito::source::SourceResult<Vec<lito::tools::acquisition::VerifiedFile>> result)
     -> CommandResult<Vec<lito::tools::acquisition::VerifiedFile>> {
     if (result.is_err()) {
-        return fetch_failure<Vec<lito::tools::acquisition::VerifiedFile>>(
-            rstd::format("source acquisition failed: {}", rstd::move(result).unwrap_err()));
+        return Err(CommandError::Message(
+            rstd::format("source acquisition failed: {}", rstd::move(result).unwrap_err())));
     }
     return Ok(rstd::move(result).unwrap());
 }
@@ -94,10 +84,10 @@ auto fetch_cargo_provider_dependencies(const lito::package::ResolvedPackageGraph
         for (const auto& dependency : package.manifest.cargo_external_dependencies) {
             auto source = source_for(sources, package_index, dependency.recipe.source.as_str());
             if (source.is_none() || (*source)->acquired.is_none()) {
-                return fetch_failure<CargoFetchOutcome>(
+                return Err(CommandError::Message(
                     rstd::format("Cargo dependency '{}:{}' requires an external source directory",
                                  package.manifest.name.as_str(),
-                                 dependency.alias.as_str()));
+                                 dependency.alias.as_str())));
             }
             if (provider.is_none()) {
                 auto requirement = lito::tools::external_dependency_tool_requirement(
@@ -116,9 +106,9 @@ auto fetch_cargo_provider_dependencies(const lito::package::ResolvedPackageGraph
                 provider             = Some(rstd::move(identified).unwrap());
                 auto selected_target = lito::cargo_target(*provider, platform);
                 if (selected_target.is_err()) {
-                    return fetch_failure<CargoFetchOutcome>(
+                    return Err(CommandError::Message(
                         rstd::format("Cargo target resolution failed: {}",
-                                     rstd::move(selected_target).unwrap_err()));
+                                     rstd::move(selected_target).unwrap_err())));
                 }
                 target = Some(rstd::move(selected_target).unwrap());
             }
@@ -230,9 +220,10 @@ auto fetch_entry_count(const lito::package::ResolvedPackageGraph&          graph
         auto identity = lito::source::acquired_git_fetch_identity(
             *external.acquired, external.source.as_Git().url.as_str());
         if (identity.is_err()) {
-            return fetch_failure<usize>(rstd::format("cannot identify external Git source '{}': {}",
-                                                     external.name.as_str(),
-                                                     rstd::move(identity).unwrap_err()));
+            return Err(
+                CommandError::Message(rstd::format("cannot identify external Git source '{}': {}",
+                                                   external.name.as_str(),
+                                                   rstd::move(identity).unwrap_err())));
         }
         if (identity->is_none()) continue;
         entries.insert(rstd::format("git:{}", lito::source::fetch_identity_stable_key(**identity)),
@@ -263,18 +254,19 @@ auto registry_configuration(const config::LitoBootstrapConfig& config,
 auto copy_bundle_file(ref<rstd::path::Path> source, ref<rstd::path::Path> destination)
     -> CommandResult<empty> {
     auto parent = destination.parent();
-    if (parent.is_none()) return fetch_failure<empty>("source bundle path has no parent"_str);
+    if (parent.is_none()) return Err(CommandError::Message("source bundle path has no parent"_Str));
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return fetch_failure<empty>(rstd::format(
-            "cannot create source bundle directory '{}': {}", *parent, created.unwrap_err()));
+        return Err(CommandError::Message(rstd::format(
+            "cannot create source bundle directory '{}': {}", *parent, created.unwrap_err())));
     }
     auto copied = rstd::fs::copy(source, destination);
     if (copied.is_err()) {
-        return fetch_failure<empty>(rstd::format("cannot copy source bundle entry '{}' to '{}': {}",
-                                                 source,
-                                                 destination,
-                                                 copied.unwrap_err()));
+        return Err(
+            CommandError::Message(rstd::format("cannot copy source bundle entry '{}' to '{}': {}",
+                                               source,
+                                               destination,
+                                               copied.unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -282,17 +274,17 @@ auto copy_bundle_file(ref<rstd::path::Path> source, ref<rstd::path::Path> destin
 auto write_bundle_file(ref<rstd::path::Path> destination, ref<str> contents)
     -> CommandResult<empty> {
     auto parent = destination.parent();
-    if (parent.is_none()) return fetch_failure<empty>("source bundle path has no parent"_str);
+    if (parent.is_none()) return Err(CommandError::Message("source bundle path has no parent"_Str));
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return fetch_failure<empty>(rstd::format(
-            "cannot create source bundle directory '{}': {}", *parent, created.unwrap_err()));
+        return Err(CommandError::Message(rstd::format(
+            "cannot create source bundle directory '{}': {}", *parent, created.unwrap_err())));
     }
     auto written = rstd::fs::write_atomic(destination, contents.as_bytes());
     if (written.is_err()) {
-        return fetch_failure<empty>(rstd::format("cannot write source bundle entry '{}': {}",
-                                                 destination,
-                                                 rstd::move(written).unwrap_err()));
+        return Err(CommandError::Message(rstd::format("cannot write source bundle entry '{}': {}",
+                                                      destination,
+                                                      rstd::move(written).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -301,21 +293,24 @@ auto staging_directory(ref<rstd::path::Path> destination) -> CommandResult<PathB
     auto parent = destination.parent();
     auto name   = destination.file_name();
     if (parent.is_none() || name.is_none()) {
-        return fetch_failure<PathBuf>("source bundle destination must have a parent and name"_str);
+        return Err(
+            CommandError::Message("source bundle destination must have a parent and name"_Str));
     }
     auto exists = rstd::fs::exists(destination);
     if (exists.is_err()) {
-        return fetch_failure<PathBuf>(rstd::format(
-            "cannot inspect source bundle destination '{}': {}", destination, exists.unwrap_err()));
+        return Err(
+            CommandError::Message(rstd::format("cannot inspect source bundle destination '{}': {}",
+                                               destination,
+                                               exists.unwrap_err())));
     }
     if (*exists) {
-        return fetch_failure<PathBuf>(
-            rstd::format("source bundle destination '{}' already exists", destination));
+        return Err(CommandError::Message(
+            rstd::format("source bundle destination '{}' already exists", destination)));
     }
     auto created_parent = rstd::fs::create_dir_all(*parent);
     if (created_parent.is_err()) {
-        return fetch_failure<PathBuf>(rstd::format(
-            "cannot create source bundle parent '{}': {}", *parent, created_parent.unwrap_err()));
+        return Err(CommandError::Message(rstd::format(
+            "cannot create source bundle parent '{}': {}", *parent, created_parent.unwrap_err())));
     }
     for (usize attempt {}; attempt < usize(64); ++attempt) {
         auto path =
@@ -329,11 +324,11 @@ auto staging_directory(ref<rstd::path::Path> destination) -> CommandResult<PathB
         auto error = rstd::move(created).unwrap_err();
         if (error.kind() !=
             rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::AlreadyExists }) {
-            return fetch_failure<PathBuf>(rstd::format(
-                "cannot create source bundle staging directory '{}': {}", path.as_path(), error));
+            return Err(CommandError::Message(rstd::format(
+                "cannot create source bundle staging directory '{}': {}", path.as_path(), error)));
         }
     }
-    return fetch_failure<PathBuf>("cannot reserve source bundle staging directory"_str);
+    return Err(CommandError::Message("cannot reserve source bundle staging directory"_Str));
 }
 
 auto write_source_bundle(ref<rstd::path::Path>                               destination,
@@ -363,9 +358,10 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             *external.acquired, external.source.as_Git().url.as_str());
         if (identity.is_err()) {
             cleanup();
-            return fetch_failure<usize>(rstd::format("cannot export external Git source '{}': {}",
-                                                     external.name.as_str(),
-                                                     rstd::move(identity).unwrap_err()));
+            return Err(
+                CommandError::Message(rstd::format("cannot export external Git source '{}': {}",
+                                                   external.name.as_str(),
+                                                   rstd::move(identity).unwrap_err())));
         }
         if (identity->is_none()) continue;
         auto duplicate = false;
@@ -402,8 +398,8 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             auto created = rstd::fs::create_dir_all(parent);
             if (created.is_err()) {
                 cleanup();
-                return fetch_failure<usize>(rstd::format(
-                    "cannot create Git bundle directory '{}': {}", parent, created.unwrap_err()));
+                return Err(CommandError::Message(rstd::format(
+                    "cannot create Git bundle directory '{}': {}", parent, created.unwrap_err())));
             }
             auto exported = git.export_checkout(
                 entry.source.as_path(), output.as_path(), entry.commit.as_str());
@@ -433,7 +429,7 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
 
     if (! cargo.entries.is_empty() && cargo.provider.is_none()) {
         cleanup();
-        return fetch_failure<usize>("Cargo source bundle provider is unavailable"_str);
+        return Err(CommandError::Message("Cargo source bundle provider is unavailable"_Str));
     }
     for (const auto& entry : cargo.entries) {
         auto area = layout.cargo(
@@ -470,14 +466,14 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
         if (builtin_package_source(graph, source)) continue;
         if (registries.is_none() || source.registry.is_none()) {
             cleanup();
-            return fetch_failure<usize>("Registry source bundle metadata is incomplete"_str);
+            return Err(CommandError::Message("Registry source bundle metadata is incomplete"_Str));
         }
         const auto& pin        = *source.registry;
         auto        configured = registry_configuration(*registries, pin.release.package.registry);
         if (configured.is_none()) {
             cleanup();
-            return fetch_failure<usize>(rstd::format("Registry '{}' is not configured",
-                                                     pin.release.package.registry.as_str()));
+            return Err(CommandError::Message(rstd::format("Registry '{}' is not configured",
+                                                          pin.release.package.registry.as_str())));
         }
         if (registry_cache.is_none()) {
             auto data = lito::system::LitoDataRoot::resolve();
@@ -500,8 +496,8 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             auto record = indices.source_bundle_record(pin);
             if (record.is_err()) {
                 cleanup();
-                return fetch_failure<usize>(rstd::format("cannot read Registry package index: {}",
-                                                         record.unwrap_err().message));
+                return Err(CommandError::Message(rstd::format(
+                    "cannot read Registry package index: {}", record.unwrap_err().message)));
             }
             auto written = write_bundle_file(index_destination.as_path(), record->as_str());
             if (written.is_err()) {
@@ -523,8 +519,8 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
         auto blob = blobs.acquire(pin);
         if (blob.is_err()) {
             cleanup();
-            return fetch_failure<usize>(rstd::format(
-                "cannot read verified Registry package archive: {}", blob.unwrap_err().message));
+            return Err(CommandError::Message(rstd::format(
+                "cannot read verified Registry package archive: {}", blob.unwrap_err().message)));
         }
         auto copied = copy_bundle_file(blob->path.as_path(), destination.as_path());
         if (copied.is_err()) {
@@ -538,21 +534,21 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
     auto published = rstd::fs::rename(staging.as_path(), destination);
     if (published.is_err()) {
         cleanup();
-        return fetch_failure<usize>(rstd::format(
-            "cannot publish source bundle '{}': {}", destination, published.unwrap_err()));
+        return Err(CommandError::Message(rstd::format(
+            "cannot publish source bundle '{}': {}", destination, published.unwrap_err())));
     }
     return Ok(entries);
 }
 
 auto fetch_dependencies(const FetchRequest& request) -> CommandResult<FetchSummary> {
     if (request.selection.root.as_path().is_empty()) {
-        return fetch_failure<FetchSummary>("fetch directory is required"_str);
+        return Err(CommandError::Message("fetch directory is required"_Str));
     }
     if (request.jobs == usize {}) {
-        return fetch_failure<FetchSummary>("fetch jobs must be greater than zero"_str);
+        return Err(CommandError::Message("fetch jobs must be greater than zero"_Str));
     }
     if (! request.sources.source_bundles.is_empty()) {
-        return fetch_failure<FetchSummary>("fetch does not accept source bundle inputs"_str);
+        return Err(CommandError::Message("fetch does not accept source bundle inputs"_Str));
     }
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
     if (environment.is_err()) {
@@ -595,15 +591,15 @@ auto fetch_dependencies(const FetchRequest& request) -> CommandResult<FetchSumma
         request.jobs,
         request.observer.is_some() ? *request.observer : BuildEventSink {});
     if (external.is_err()) {
-        return fetch_failure<FetchSummary>(rstd::format("external source preparation failed: {}",
-                                                        rstd::move(external).unwrap_err()));
+        return Err(CommandError::Message(rstd::format("external source preparation failed: {}",
+                                                      rstd::move(external).unwrap_err())));
     }
     auto prepared = rstd::move(external).unwrap();
     auto external_plan =
         resolve_external_acquisition_plan(resolved.selection.graph, prepared, platform.platform);
     if (external_plan.is_err()) {
-        return fetch_failure<FetchSummary>(rstd::format("external acquisition planning failed: {}",
-                                                        rstd::move(external_plan).unwrap_err()));
+        return Err(CommandError::Message(rstd::format("external acquisition planning failed: {}",
+                                                      rstd::move(external_plan).unwrap_err())));
     }
     auto archive_requests = Vec<lito::source::ArchiveSourceFetchRequest>::make();
     for (auto& acquisition : external_plan->archives) {
@@ -613,9 +609,9 @@ auto fetch_dependencies(const FetchRequest& request) -> CommandResult<FetchSumma
                                                           resolved.selection.selected_package_names,
                                                           platform.platform.host);
     if (host_archives.is_err()) {
-        return fetch_failure<FetchSummary>(
-            rstd::format("host build-tool acquisition planning failed: {}",
-                         rstd::move(host_archives).unwrap_err()));
+        return Err(
+            CommandError::Message(rstd::format("host build-tool acquisition planning failed: {}",
+                                               rstd::move(host_archives).unwrap_err())));
     }
     for (auto& archive : *host_archives) archive_requests.push(rstd::move(archive));
     auto acquisition_requests = archive_requests.iter()

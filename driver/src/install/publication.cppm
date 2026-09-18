@@ -46,16 +46,6 @@ struct InstallPublicationPlan {
 namespace lito
 {
 
-template<typename T>
-auto publication_failure(String message) -> InstallStoreResult<T> {
-    return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::move(message))));
-}
-
-template<typename T>
-auto publication_failure(ref<str> message) -> InstallStoreResult<T> {
-    return publication_failure<T>(String::make(message));
-}
-
 auto origin_text(const InstallEntryOrigin& origin) -> String {
     if (origin.is_PackageFile()) {
         return rstd::format("package-file:{}:{}",
@@ -93,8 +83,8 @@ auto normalize_binary_entries(InstallPackageRecord& package) -> InstallStoreResu
     for (auto& binary : package.binaries) {
         auto name = binary.source.as_path().file_name();
         if (name.is_none() || name->to_str().is_none()) {
-            return publication_failure<empty>(
-                rstd::format("install artifact '{}' has no UTF-8 name", binary.source.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install artifact '{}' has no UTF-8 name", binary.source.as_path()))));
         }
         auto destination = PathBuf::from("bin"_str);
         destination.push(PathBuf::from(*name).as_path());
@@ -151,7 +141,8 @@ auto plan_install_publication(InstallDestination        destination,
                               Vec<InstallPackageRecord> packages)
     -> InstallStoreResult<InstallPublicationPlan> {
     if (packages.is_empty()) {
-        return publication_failure<InstallPublicationPlan>("install request has no packages"_str);
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Message("install request has no packages"_Str)));
     }
     auto requested_packages = rstd::collections::BTreeMap<String, String>::make();
     auto requested_paths    = rstd::collections::BTreeMap<String, String>::make();
@@ -163,19 +154,19 @@ auto plan_install_publication(InstallDestination        destination,
     for (auto& package : packages) {
         if (! lito::manifest::valid_package_name(package.name.as_str()) ||
             package.version.is_empty() || package.profile.is_empty() || package.target.is_empty()) {
-            return publication_failure<InstallPublicationPlan>(
-                "install package identity is invalid"_str);
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Message("install package identity is invalid"_Str)));
         }
         rstd_try(normalize_binary_entries(package));
         if (package.entries.is_empty()) {
-            return publication_failure<InstallPublicationPlan>(
-                rstd::format("install package '{}' has no entries", package.name.as_str()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install package '{}' has no entries", package.name.as_str()))));
         }
         auto identity =
             rstd_try(resolve_install_package_identity(package.name.as_str(), package.provenance));
         if (requested_packages.contains_key(package.name.as_str())) {
-            return publication_failure<InstallPublicationPlan>(
-                rstd::format("install request repeats package '{}'", package.name.as_str()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install request repeats package '{}'", package.name.as_str()))));
         }
         requested_packages.insert(package.name.clone(), identity.source_identity.clone());
 
@@ -203,8 +194,8 @@ auto plan_install_publication(InstallDestination        destination,
         auto owned_links = Vec<InstallOwnedEntry>::make();
         for (auto& entry : package.entries) {
             if (! install_relative_destination_is_valid(entry.relative_destination.as_path())) {
-                return publication_failure<InstallPublicationPlan>(rstd::format(
-                    "install destination '{}' is unsafe", entry.relative_destination.as_path()));
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                    "install destination '{}' is unsafe", entry.relative_destination.as_path()))));
             }
             auto physical = entry.relative_destination.clone();
             if (publication.destination.is_Managed() &&
@@ -216,12 +207,12 @@ auto plan_install_publication(InstallDestination        destination,
             auto physical_key = request_destination_key(physical.as_path());
             auto prior        = requested_paths.get(physical_key.as_str());
             if (prior.is_some()) {
-                return publication_failure<InstallPublicationPlan>(rstd::format(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
                     "install request contains more than one entry for destination '{}' from "
                     "packages '{}' and '{}'",
                     physical.as_path(),
                     **prior,
-                    package.name.as_str()));
+                    package.name.as_str()))));
             }
             requested_paths.insert(rstd::move(physical_key), package.name.clone());
             info.entries.push(InstallOwnedEntry {
@@ -245,28 +236,28 @@ auto plan_install_publication(InstallDestination        destination,
             auto public_key  = request_destination_key(public_path.as_path());
             prior            = requested_paths.get(public_key.as_str());
             if (prior.is_some()) {
-                return publication_failure<InstallPublicationPlan>(rstd::format(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
                     "install request contains more than one entry for destination '{}' from "
                     "packages '{}' and '{}'",
                     public_path.as_path(),
                     **prior,
-                    package.name.as_str()));
+                    package.name.as_str()))));
             }
             requested_paths.insert(rstd::move(public_key), package.name.clone());
             auto public_absolute =
                 PathBuf::from(publication.destination.path()).join(public_path.as_path());
             auto parent = public_absolute.as_path().parent();
             if (parent.is_none()) {
-                return publication_failure<InstallPublicationPlan>(
-                    "public install link has no parent"_str);
+                return Err(InstallStoreError::Cause(
+                    InstallStoreCause::Message("public install link has no parent"_Str)));
             }
             auto relative_target =
                 rstd::path::lexically_relative(*parent, entry.destination.as_path());
             if (relative_target.is_none()) {
-                return publication_failure<InstallPublicationPlan>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("cannot form relative install link from '{}' to '{}'",
                                  *parent,
-                                 entry.destination.as_path()));
+                                 entry.destination.as_path()))));
             }
             owned_links.push(InstallOwnedEntry {
                 .logical_destination  = entry.relative_destination.clone(),
@@ -298,9 +289,9 @@ auto plan_install_publication(InstallDestination        destination,
                 PathBuf::from(rstd::format("{}.info", identity.id.as_str())).as_path());
             auto info_key = request_destination_key(info_destination.as_path());
             if (requested_paths.contains_key(info_key.as_str())) {
-                return publication_failure<InstallPublicationPlan>(rstd::format(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
                     "install package info destination '{}' conflicts with another entry",
-                    info_destination.as_path()));
+                    info_destination.as_path()))));
             }
             requested_paths.insert(rstd::move(info_key), package.name.clone());
         }
@@ -317,18 +308,18 @@ auto plan_install_publication(InstallDestination        destination,
         auto names = rstd::collections::BTreeMap<String, empty>::make();
         for (const auto& dependency : package.info.runtime_dependencies) {
             if (names.contains_key(dependency.name.as_str())) {
-                return publication_failure<InstallPublicationPlan>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("install package '{}' repeats runtime dependency '{}'",
                                  package.info.identity.name.as_str(),
-                                 dependency.name.as_str()));
+                                 dependency.name.as_str()))));
             }
             names.insert(dependency.name.clone(), empty {});
             auto target = requested_packages.get(dependency.name.as_str());
             if (target.is_some() && **target != dependency.source_identity.as_str()) {
-                return publication_failure<InstallPublicationPlan>(rstd::format(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
                     "install package '{}' runtime dependency '{}' has source identity mismatch",
                     package.info.identity.name.as_str(),
-                    dependency.name.as_str()));
+                    dependency.name.as_str()))));
             }
         }
     }

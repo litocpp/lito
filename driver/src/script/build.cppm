@@ -362,22 +362,19 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
     module.set("profile"_Str, String::make(profile));
     auto project_root = metadata.root.as_path().to_str();
     if (project_root.is_none()) {
-        return build_script_failure<DeclaredBuildScriptInvocation>(
-            "project root is not valid UTF-8"_str);
+        return Err(BuildScriptError::Message("project root is not valid UTF-8"_Str));
     }
     module.set("project_root"_Str, String::make(*project_root));
     if (invocation.package.is_some()) {
         auto package_root = invocation.root.as_path().to_str();
         if (package_root.is_none()) {
-            return build_script_failure<DeclaredBuildScriptInvocation>(
-                "package root is not valid UTF-8"_str);
+            return Err(BuildScriptError::Message("package root is not valid UTF-8"_Str));
         }
         auto generated =
             rstd_try(layout.create_generated_package_directory(invocation.package->as_str()));
         auto generated_root = generated.as_path().to_str();
         if (generated_root.is_none()) {
-            return build_script_failure<DeclaredBuildScriptInvocation>(
-                "generated root is not valid UTF-8"_str);
+            return Err(BuildScriptError::Message("generated root is not valid UTF-8"_Str));
         }
         module.set("package"_Str, invocation.package->clone());
         module.set("package_root"_Str, String::make(*package_root));

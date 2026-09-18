@@ -19,11 +19,6 @@ using namespace rstd::literals;
 using namespace lito;
 using namespace lito::workspace;
 
-template<typename T>
-auto workspace_failure(String message) -> WorkspaceResult<T> {
-    return Err(WorkspaceError::Message(rstd::move(message)));
-}
-
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
     return left.starts_with(right) && right.starts_with(left);
 }
@@ -43,8 +38,8 @@ auto workspace_member_directory(const lito::manifest::WorkspaceManifest& workspa
     }
     auto directory = rstd::move(canonical).unwrap();
     if (directory.as_path().strip_prefix(workspace.root.as_path()).is_none()) {
-        return workspace_failure<PathBuf>(
-            rstd::format("{} directory '{}' is outside workspace root", context, declared));
+        return Err(WorkspaceError::Message(
+            rstd::format("{} directory '{}' is outside workspace root", context, declared)));
     }
     return Ok(rstd::move(directory));
 }
@@ -56,10 +51,10 @@ auto resolve_workspace_member_version(lito::manifest::PackageManifest&         m
         return Ok(empty {});
     }
     if (workspace.package.version.is_none()) {
-        return workspace_failure<empty>(
+        return Err(WorkspaceError::Message(
             rstd::format("workspace member '{}' inherits package.version but "
                          "workspace.package.version is not set",
-                         manifest.name.as_str()));
+                         manifest.name.as_str())));
     }
     manifest.version.value = Some(workspace.package.version->clone());
     return Ok(empty {});
@@ -72,10 +67,10 @@ auto resolve_workspace_member_license(lito::manifest::PackageManifest&         m
         return Ok(empty {});
     }
     if (workspace.package.license.is_none()) {
-        return workspace_failure<empty>(
+        return Err(WorkspaceError::Message(
             rstd::format("workspace member '{}' inherits package.license but "
                          "workspace.package.license is not set",
-                         manifest.name.as_str()));
+                         manifest.name.as_str())));
     }
     manifest.license.value = Some(workspace.package.license->clone());
     return Ok(empty {});
@@ -88,10 +83,10 @@ auto resolve_workspace_member_authors(lito::manifest::PackageManifest&         m
         return Ok(empty {});
     }
     if (workspace.package.authors.is_none()) {
-        return workspace_failure<empty>(
+        return Err(WorkspaceError::Message(
             rstd::format("workspace member '{}' inherits package.authors but "
                          "workspace.package.authors is not set",
-                         manifest.name.as_str()));
+                         manifest.name.as_str())));
     }
     manifest.authors.values = workspace.package.authors->clone();
     return Ok(empty {});
@@ -105,11 +100,11 @@ auto resolve_workspace_member_metadata(lito::manifest::PackageMetadata& metadata
         return Ok(empty {});
     }
     if (workspace_value.is_none()) {
-        return workspace_failure<empty>(rstd::format(
+        return Err(WorkspaceError::Message(rstd::format(
             "workspace member '{}' inherits package.{} but workspace.package.{} is not set",
             package,
             key,
-            key));
+            key)));
     }
     metadata.value = Some(workspace_value->clone());
     return Ok(empty {});
@@ -122,10 +117,10 @@ auto resolve_workspace_member_readme(lito::manifest::PackageManifest&         ma
         return Ok(empty {});
     }
     if (workspace.package.readme.is_none()) {
-        return workspace_failure<empty>(
+        return Err(WorkspaceError::Message(
             rstd::format("workspace member '{}' inherits package.readme but "
                          "workspace.package.readme is not set",
-                         manifest.name.as_str()));
+                         manifest.name.as_str())));
     }
     if (! workspace.package.readme->enabled) {
         manifest.readme.source = lito::manifest::PackageReadmeSource::Disabled;
@@ -133,16 +128,16 @@ auto resolve_workspace_member_readme(lito::manifest::PackageManifest&         ma
     }
     auto filename = workspace.package.readme->path.as_path().file_name();
     if (filename.is_none() || filename->to_str().is_none()) {
-        return workspace_failure<empty>(
+        return Err(WorkspaceError::Message(
             rstd::format("workspace package.readme for member '{}' must name a portable file",
-                         manifest.name.as_str()));
+                         manifest.name.as_str())));
     }
     auto archive_path = lito::source::SourcePath::parse(*filename->to_str());
     if (archive_path.is_err()) {
-        return workspace_failure<empty>(
+        return Err(WorkspaceError::Message(
             rstd::format("workspace package.readme for member '{}' must name a portable file: {}",
                          manifest.name.as_str(),
-                         rstd::move(archive_path).unwrap_err()));
+                         rstd::move(archive_path).unwrap_err())));
     }
     manifest.readme.path         = Some(workspace.package.readme->path.clone());
     manifest.readme.archive_path = Some(String::make(archive_path->as_str()));
@@ -205,12 +200,12 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 }
             }
             if (definition == nullptr) {
-                return workspace_failure<empty>(
+                return Err(WorkspaceError::Message(
                     rstd::format("workspace member '{}' inherits {} dependency '{}' but "
                                  "workspace.dependencies has no matching definition",
                                  manifest.name.as_str(),
                                  kind,
-                                 reference.name.as_str()));
+                                 reference.name.as_str())));
             }
             dependencies.push(lito::manifest::DeclaredDependency {
                 .name             = reference.name.clone(),
@@ -241,11 +236,11 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             }
         }
         if (definition == nullptr) {
-            return workspace_failure<empty>(
+            return Err(WorkspaceError::Message(
                 rstd::format("workspace member '{}' inherits runtime dependency '{}' but "
                              "workspace.dependencies has no matching definition",
                              manifest.name.as_str(),
-                             reference.name.as_str()));
+                             reference.name.as_str())));
         }
         manifest.runtime_dependencies.push(lito::manifest::DeclaredRuntimeDependency {
             .name             = reference.name.clone(),
@@ -257,11 +252,11 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
 
     for (const auto& reference : manifest.workspace_external_sources) {
         if (! inherit_workspace_external_source(manifest, workspace, reference.name.as_str())) {
-            return workspace_failure<empty>(
+            return Err(WorkspaceError::Message(
                 rstd::format("workspace member '{}' inherits external source '{}' but "
                              "workspace.external-sources has no matching definition",
                              manifest.name.as_str(),
-                             reference.name.as_str()));
+                             reference.name.as_str())));
         }
     }
     manifest.workspace_external_sources.clear();
@@ -275,11 +270,11 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             }
         }
         if (definition == nullptr) {
-            return workspace_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "workspace member '{}' inherits pkg-config dependency '{}' but "
                 "workspace.external-dependencies.pkg-config has no matching definition",
                 manifest.name.as_str(),
-                reference.alias.as_str()));
+                reference.alias.as_str())));
         }
         manifest.pkg_config_external_dependencies.push(
             lito::dependency::PkgConfigExternalDependency {
@@ -302,11 +297,11 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             }
         }
         if (definition == nullptr) {
-            return workspace_failure<empty>(
+            return Err(WorkspaceError::Message(
                 rstd::format("workspace member '{}' inherits CMake dependency '{}' but "
                              "workspace.external-dependencies.cmake has no matching definition",
                              manifest.name.as_str(),
-                             reference.alias.as_str()));
+                             reference.alias.as_str())));
         }
         auto adapter = Option<PathBuf> {};
         if (definition->adapter.is_some()) adapter = Some(definition->adapter->clone());
@@ -352,12 +347,12 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             requirement.source = Some(definition->source->clone());
             if (! inherit_workspace_external_source(
                     manifest, workspace, definition->source->as_str())) {
-                return workspace_failure<empty>(rstd::format(
+                return Err(WorkspaceError::Message(rstd::format(
                     "workspace member '{}' inherits CMake dependency '{}' whose external source "
                     "'{}' has no matching workspace.external-sources definition",
                     manifest.name.as_str(),
                     reference.alias.as_str(),
-                    definition->source->as_str()));
+                    definition->source->as_str())));
             }
         }
         manifest.cmake_external_dependencies.push(rstd::move(requirement));
@@ -370,12 +365,12 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             if (source.name == dependency.source->as_str()) found = true;
         }
         if (! found) {
-            return workspace_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "workspace member '{}' CMake dependency '{}' references unknown external source "
                 "'{}'",
                 manifest.name.as_str(),
                 dependency.alias.as_str(),
-                dependency.source->as_str()));
+                dependency.source->as_str())));
         }
     }
     for (const auto& reference : manifest.workspace_cargo_external_dependencies) {
@@ -387,20 +382,20 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             }
         }
         if (definition == nullptr) {
-            return workspace_failure<empty>(
+            return Err(WorkspaceError::Message(
                 rstd::format("workspace member '{}' inherits Cargo dependency '{}' but "
                              "workspace.external-dependencies.cargo has no matching definition",
                              manifest.name.as_str(),
-                             reference.alias.as_str()));
+                             reference.alias.as_str())));
         }
         if (! inherit_workspace_external_source(
                 manifest, workspace, definition->recipe.source.as_str())) {
-            return workspace_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "workspace member '{}' inherits Cargo dependency '{}' whose external source "
                 "'{}' has no matching workspace.external-sources definition",
                 manifest.name.as_str(),
                 reference.alias.as_str(),
-                definition->recipe.source.as_str()));
+                definition->recipe.source.as_str())));
         }
         manifest.cargo_external_dependencies.push(lito::dependency::CargoDependencyRequirement {
             .alias            = reference.alias.clone(),
@@ -416,12 +411,12 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             if (source.name == dependency.recipe.source.as_str()) found = true;
         }
         if (! found) {
-            return workspace_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "workspace member '{}' Cargo dependency '{}' references unknown external source "
                 "'{}'",
                 manifest.name.as_str(),
                 dependency.alias.as_str(),
-                dependency.recipe.source.as_str()));
+                dependency.recipe.source.as_str())));
         }
     }
     return Ok(empty {});
@@ -481,11 +476,11 @@ auto resolve_containing_workspace_version(lito::manifest::PackageManifest& manif
         }
     }
 
-    return workspace_failure<empty>(
+    return Err(WorkspaceError::Message(
         rstd::format("package '{}' inherits package.version but no containing "
                      "workspace lists directory '{}'",
                      manifest.name.as_str(),
-                     manifest.root.as_path()));
+                     manifest.root.as_path())));
 }
 
 } // namespace lito::workspace

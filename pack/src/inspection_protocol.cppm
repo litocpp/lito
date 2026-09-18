@@ -64,20 +64,11 @@ using namespace lito::registry;
 using Json    = rstd::json::Value;
 using JsonMap = rstd::json::Map;
 
-template<typename T>
-auto protocol_failure(String message) -> RegistryInspectionProtocolResult<T> {
-    return Err(RegistryInspectionProtocolError { .message = rstd::move(message) });
-}
-
-template<typename T>
-auto protocol_failure(ref<str> message) -> RegistryInspectionProtocolResult<T> {
-    return protocol_failure<T>(String::make(message));
-}
-
 auto object(const Json& value, ref<str> context) -> RegistryInspectionProtocolResult<ref<JsonMap>> {
     auto result = value.as_object();
     if (result.is_none()) {
-        return protocol_failure<ref<JsonMap>>(rstd::format("{} must be an object", context));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{} must be an object", context) });
     }
     return Ok(*result);
 }
@@ -96,8 +87,9 @@ auto reject_unknown(const Json& value, ref<str> context, initializer_list<ref<st
     auto keys    = members->keys();
     for (auto key : keys) {
         if (! known_field((*key).as_str(), allowed)) {
-            return protocol_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (*key).as_str()));
+            return Err(RegistryInspectionProtocolError {
+                .message =
+                    rstd::format("{} contains unknown field '{}'", context, (*key).as_str()) });
         }
     }
     return Ok(empty {});
@@ -108,7 +100,8 @@ auto member(const Json& value, ref<str> key, ref<str> context)
     auto members = rstd_try(object(value, context));
     auto result  = members->get(key);
     if (result.is_none()) {
-        return protocol_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{} is missing '{}'", context, key) });
     }
     return Ok(*result);
 }
@@ -118,7 +111,8 @@ auto string_member(const Json& value, ref<str> key, ref<str> context)
     auto result = rstd_try(member(value, key, context));
     auto text   = result->as_str();
     if (text.is_none()) {
-        return protocol_failure<ref<str>>(rstd::format("{}.{} must be a string", context, key));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{}.{} must be a string", context, key) });
     }
     return Ok(*text);
 }
@@ -130,8 +124,8 @@ auto optional_string_member(const Json& value, ref<str> key, ref<str> context)
     if (result.is_none()) return Ok(None());
     auto text = (**result).as_str();
     if (text.is_none()) {
-        return protocol_failure<Option<String>>(
-            rstd::format("{}.{} must be a string", context, key));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{}.{} must be a string", context, key) });
     }
     return Ok(Some(String::make(*text)));
 }
@@ -141,7 +135,8 @@ auto bool_member(const Json& value, ref<str> key, ref<str> context)
     auto result  = rstd_try(member(value, key, context));
     auto boolean = result->as_bool();
     if (boolean.is_none()) {
-        return protocol_failure<bool>(rstd::format("{}.{} must be a boolean", context, key));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{}.{} must be a boolean", context, key) });
     }
     return Ok(*boolean);
 }
@@ -150,15 +145,17 @@ template<typename T>
 auto parse_registry_value(RegistryValueResult<T> result, ref<str> context)
     -> RegistryInspectionProtocolResult<T> {
     if (result.is_ok()) return Ok(rstd::move(result).unwrap());
-    return protocol_failure<T>(rstd::format("{}: {}", context, rstd::move(result).unwrap_err()));
+    return Err(RegistryInspectionProtocolError {
+        .message = rstd::format("{}: {}", context, rstd::move(result).unwrap_err()) });
 }
 
 auto parse_limit(const Json& value, ref<str> key) -> RegistryInspectionProtocolResult<u64> {
     auto text   = rstd_try(string_member(value, key, "request.limits"_str));
     auto parsed = RegistryBlobSize::parse(text);
     if (parsed.is_err()) {
-        return protocol_failure<u64>(
-            rstd::format("request.limits.{} must be a canonical unsigned decimal string", key));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("request.limits.{} must be a canonical unsigned decimal string",
+                                    key) });
     }
     return Ok(parsed->value());
 }
@@ -198,16 +195,16 @@ auto dependency_kind(ref<str> value, ref<str> context)
     if (value == "normal"_str) return Ok(RegistryDependencyKind::Normal);
     if (value == "development"_str) return Ok(RegistryDependencyKind::Development);
     if (value == "runtime"_str) return Ok(RegistryDependencyKind::Runtime);
-    return protocol_failure<RegistryDependencyKind>(
-        rstd::format("{}.kind is unsupported", context));
+    return Err(RegistryInspectionProtocolError {
+        .message = rstd::format("{}.kind is unsupported", context) });
 }
 
 auto dependency_usage(const Json& value, ref<str> context)
     -> RegistryInspectionProtocolResult<lito::dependency::DependencyUsage> {
     auto array = value.as_array();
     if (array.is_none()) {
-        return protocol_failure<lito::dependency::DependencyUsage>(
-            rstd::format("{} must be an array", context));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{} must be an array", context) });
     }
     auto compile = false;
     auto link    = false;
@@ -215,8 +212,8 @@ auto dependency_usage(const Json& value, ref<str> context)
     for (usize index {}; index < (*array)->len(); ++index) {
         auto text = (**array)[index].as_str();
         if (text.is_none()) {
-            return protocol_failure<lito::dependency::DependencyUsage>(
-                rstd::format("{}[{}] must be a string", context, index));
+            return Err(RegistryInspectionProtocolError {
+                .message = rstd::format("{}[{}] must be a string", context, index) });
         }
         auto* selected = &compile;
         if (*text == "link"_str)
@@ -224,18 +221,18 @@ auto dependency_usage(const Json& value, ref<str> context)
         else if (*text == "runtime"_str)
             selected = &runtime;
         else if (*text != "compile"_str)
-            return protocol_failure<lito::dependency::DependencyUsage>(
-                rstd::format("{}[{}] is unsupported", context, index));
+            return Err(RegistryInspectionProtocolError {
+                .message = rstd::format("{}[{}] is unsupported", context, index) });
         if (*selected) {
-            return protocol_failure<lito::dependency::DependencyUsage>(
-                rstd::format("{} repeats '{}'", context, *text));
+            return Err(RegistryInspectionProtocolError {
+                .message = rstd::format("{} repeats '{}'", context, *text) });
         }
         *selected = true;
     }
     auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime);
     if (result.is_none()) {
-        return protocol_failure<lito::dependency::DependencyUsage>(
-            rstd::format("{} is empty or mixes runtime with native usage", context));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{} is empty or mixes runtime with native usage", context) });
     }
     return Ok(*result);
 }
@@ -245,8 +242,9 @@ auto canonical_size(const Json& value, ref<str> field, ref<str> context)
     auto text   = rstd_try(string_member(value, field, context));
     auto parsed = RegistryBlobSize::parse(text);
     if (parsed.is_err()) {
-        return protocol_failure<u64>(
-            rstd::format("{}.{} must be a canonical unsigned decimal string", context, field));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format(
+                "{}.{} must be a canonical unsigned decimal string", context, field) });
     }
     return Ok(parsed->value());
 }
@@ -278,15 +276,16 @@ auto parse_dependency(const Json& value, usize index)
     auto features_value = rstd_try(member(value, "features"_str, context.as_str()));
     auto features_array = features_value->as_array();
     if (features_array.is_none()) {
-        return protocol_failure<RegistryDependencyProjection>(
-            rstd::format("{}.features must be an array", context.as_str()));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{}.features must be an array", context.as_str()) });
     }
     auto features = Vec<String>::with_capacity((*features_array)->len());
     for (usize feature_index {}; feature_index < (*features_array)->len(); ++feature_index) {
         auto feature = (**features_array)[feature_index].as_str();
         if (feature.is_none()) {
-            return protocol_failure<RegistryDependencyProjection>(
-                rstd::format("{}.features[{}] must be a string", context.as_str(), feature_index));
+            return Err(RegistryInspectionProtocolError {
+                .message = rstd::format(
+                    "{}.features[{}] must be a string", context.as_str(), feature_index) });
         }
         features.push(String::make(*feature));
     }
@@ -296,12 +295,14 @@ auto parse_dependency(const Json& value, usize index)
                                            rstd::format("{}.usage", context.as_str()).as_str()));
     auto is_public = rstd_try(bool_member(value, "pub"_str, context.as_str()));
     if (usage.uses_runtime() != (kind == RegistryDependencyKind::Runtime)) {
-        return protocol_failure<RegistryDependencyProjection>(
-            rstd::format("{}.kind and usage do not describe the same lifecycle", context));
+        return Err(RegistryInspectionProtocolError {
+            .message =
+                rstd::format("{}.kind and usage do not describe the same lifecycle", context) });
     }
     if (kind != RegistryDependencyKind::Normal && is_public) {
-        return protocol_failure<RegistryDependencyProjection>(
-            rstd::format("{}.pub cannot be true for development or runtime dependencies", context));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{}.pub cannot be true for development or runtime dependencies",
+                                    context) });
     }
     return Ok(RegistryDependencyProjection {
         .alias = String::make(rstd_try(string_member(value, "alias"_str, context.as_str()))),
@@ -348,15 +349,16 @@ auto parse_candidate_metadata(const Json& value)
     auto authors_value = rstd_try(member(value, "authors"_str, "candidate.metadata"_str));
     auto authors_array = authors_value->as_array();
     if (authors_array.is_none()) {
-        return protocol_failure<RegistryPackageMetadata>(
-            "candidate.metadata.authors must be an array"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "candidate.metadata.authors must be an array"_Str });
     }
     auto authors = Vec<String>::with_capacity((*authors_array)->len());
     for (usize index {}; index < (*authors_array)->len(); ++index) {
         auto author = (**authors_array)[index].as_str();
         if (author.is_none()) {
-            return protocol_failure<RegistryPackageMetadata>(
-                rstd::format("candidate.metadata.authors[{}] must be a string", index));
+            return Err(RegistryInspectionProtocolError {
+                .message =
+                    rstd::format("candidate.metadata.authors[{}] must be a string", index) });
         }
         authors.push(String::make(*author));
     }
@@ -372,16 +374,17 @@ auto parse_candidate_metadata(const Json& value)
             rstd_try(string_member(**readme_value, "file"_str, "candidate.metadata.readme"_str));
         auto source_path = lito::source::SourcePath::parse(path);
         if (source_path.is_err()) {
-            return protocol_failure<RegistryPackageMetadata>(rstd::format(
-                "candidate.metadata.readme.file is invalid: {}", source_path.unwrap_err()));
+            return Err(RegistryInspectionProtocolError {
+                .message = rstd::format("candidate.metadata.readme.file is invalid: {}",
+                                        source_path.unwrap_err()) });
         }
         auto contents = rstd_try(
             string_member(**readme_value, "contents"_str, "candidate.metadata.readme"_str));
         auto size =
             rstd_try(canonical_size(**readme_value, "size"_str, "candidate.metadata.readme"_str));
         if (size != as_cast<u64>(contents.len())) {
-            return protocol_failure<RegistryPackageMetadata>(
-                "candidate.metadata.readme.size does not match contents"_str);
+            return Err(RegistryInspectionProtocolError {
+                .message = "candidate.metadata.readme.size does not match contents"_Str });
         }
         auto checksum = rstd_try(parse_registry_value(
             PackageChecksum::parse(rstd_try(
@@ -389,8 +392,8 @@ auto parse_candidate_metadata(const Json& value)
             "candidate.metadata.readme.sha256"_str));
         auto actual   = licrypto::sha256_digest(contents);
         if (! (checksum.digest() == actual)) {
-            return protocol_failure<RegistryPackageMetadata>(
-                "candidate.metadata.readme.checksum does not match contents"_str);
+            return Err(RegistryInspectionProtocolError {
+                .message = "candidate.metadata.readme.checksum does not match contents"_Str });
         }
         readme = Some(RegistryReadmeMetadata {
             .path     = String::make(path),
@@ -454,8 +457,9 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
     auto parsed =
         rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
     if (parsed.is_err()) {
-        return protocol_failure<RegistryInspectionRequest>(rstd::format(
-            "inspection request is not strict JSON: {}", rstd::move(parsed).unwrap_err()));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("inspection request is not strict JSON: {}",
+                                    rstd::move(parsed).unwrap_err()) });
     }
     auto& root = *parsed;
     rstd_try(reject_unknown(root,
@@ -469,13 +473,13 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
                               "limits"_str }));
     if (rstd_try(string_member(root, "schema"_str, "request"_str)) !=
         REGISTRY_INSPECTION_REQUEST_SCHEMA) {
-        return protocol_failure<RegistryInspectionRequest>(
-            "inspection request schema is unsupported"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "inspection request schema is unsupported"_Str });
     }
     if (rstd_try(string_member(root, "protocol"_str, "request"_str)) !=
         REGISTRY_INSPECTION_PROTOCOL) {
-        return protocol_failure<RegistryInspectionRequest>(
-            "inspection protocol is unsupported"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "inspection protocol is unsupported"_Str });
     }
     auto registry     = rstd_try(parse_registry_value(
         RegistryId::parse(rstd_try(string_member(root, "registry"_str, "request"_str))),
@@ -515,12 +519,12 @@ auto lito::registry::parse_registry_inspection_request(slice<u8> input)
     auto maximum_file_size     = rstd_try(parse_limit(*limits, "maximum_file_size"_str));
     auto maximum_entries       = rstd_try(parse_limit(*limits, "maximum_entries"_str));
     if (maximum_entries > as_cast<u64>(usize::MAX)) {
-        return protocol_failure<RegistryInspectionRequest>(
-            "request.limits.maximum_entries exceeds this inspector's range"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "request.limits.maximum_entries exceeds this inspector's range"_Str });
     }
     if (archive_size.value() > maximum_blob_size) {
-        return protocol_failure<RegistryInspectionRequest>(
-            "request blob exceeds the configured compressed size limit"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "request blob exceeds the configured compressed size limit"_Str });
     }
     return Ok(RegistryInspectionRequest {
         .package =
@@ -550,8 +554,9 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
     auto parsed =
         rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
     if (parsed.is_err()) {
-        return protocol_failure<VerifiedRegistryPackageDescriptor>(rstd::format(
-            "verified candidate is not strict JSON: {}", rstd::move(parsed).unwrap_err()));
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("verified candidate is not strict JSON: {}",
+                                    rstd::move(parsed).unwrap_err()) });
     }
     auto& root = *parsed;
     rstd_try(reject_unknown(root,
@@ -573,8 +578,8 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
             REGISTRY_INSPECTION_PROTOCOL ||
         rstd_try(string_member(root, "receipt"_str, "candidate"_str)) !=
             REGISTRY_INSPECTOR_RECEIPT) {
-        return protocol_failure<VerifiedRegistryPackageDescriptor>(
-            "verified candidate protocol identity is unsupported"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "verified candidate protocol identity is unsupported"_Str });
     }
     auto registry = rstd_try(parse_registry_value(
         RegistryId::parse(rstd_try(string_member(root, "registry"_str, "candidate"_str))),
@@ -602,8 +607,8 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
     auto dependencies_value = rstd_try(member(root, "dependencies"_str, "candidate"_str));
     auto dependencies_array = dependencies_value->as_array();
     if (dependencies_array.is_none()) {
-        return protocol_failure<VerifiedRegistryPackageDescriptor>(
-            "candidate.dependencies must be an array"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "candidate.dependencies must be an array"_Str });
     }
     auto dependencies =
         Vec<RegistryDependencyProjection>::with_capacity((*dependencies_array)->len());
@@ -614,8 +619,8 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
         parse_candidate_metadata(*rstd_try(member(root, "metadata"_str, "candidate"_str))));
     auto file_count = rstd_try(canonical_size(root, "file_count"_str, "candidate"_str));
     if (file_count > as_cast<u64>(usize::MAX)) {
-        return protocol_failure<VerifiedRegistryPackageDescriptor>(
-            "candidate.file_count exceeds this platform's range"_str);
+        return Err(RegistryInspectionProtocolError {
+            .message = "candidate.file_count exceeds this platform's range"_Str });
     }
     return Ok(VerifiedRegistryPackageDescriptor {
         .package =

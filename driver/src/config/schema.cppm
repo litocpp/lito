@@ -21,28 +21,6 @@ using namespace lito::tools;
 using PathBuf = rstd::path::PathBuf;
 using Toml    = rstd::toml::Value;
 
-template<typename T>
-auto config_failure(String message) -> ConfigResult<T> {
-    return Err(ConfigError::Schema(rstd::move(message)));
-}
-
-template<typename T>
-auto config_failure(ref<str> message) -> ConfigResult<T> {
-    return Err(ConfigError::Schema(String::make(message)));
-}
-
-template<typename T>
-auto config_data_failure(rstd::serde::DataPath path, ref<str> message) -> ConfigResult<T> {
-    return Err(ConfigError::Data(rstd::serde::Error::invalid_value(rstd::move(path), message)));
-}
-
-template<typename T>
-auto config_io_failure(ref<str>               operation,
-                       ref<rstd::path::Path>  path,
-                       rstd::io::error::Error source) -> ConfigResult<T> {
-    return Err(ConfigError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto normalize_host_tool_provider_shorthand(Toml& document) -> void {
     auto tools = document.get_mut("tools"_str);
     if (tools.is_none()) return;
@@ -85,13 +63,14 @@ auto decode_host_config_wire(const Toml& document)
 
 auto configured_executable(ref<str> value, rstd::serde::DataPath path) -> ConfigResult<PathBuf> {
     if (value.is_empty()) {
-        return config_data_failure<PathBuf>(rstd::move(path), "executable must not be empty"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            rstd::move(path), "executable must not be empty"_str)));
     }
     auto executable = PathBuf::from(value);
     if (! executable.as_path().is_absolute() &&
         ! is_searchable_executable_name(executable.as_path())) {
-        return config_data_failure<PathBuf>(rstd::move(path),
-                                            "must be an executable name or absolute path"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            rstd::move(path), "must be an executable name or absolute path"_str)));
     }
     return Ok(rstd::move(executable));
 }
@@ -109,8 +88,8 @@ auto configured_linker_override(const Option<String>& value, rstd::serde::DataPa
     if (linker.as_path().is_absolute() || linker.as_path().to_str() == Some("lld"_str)) {
         return Ok(Some(rstd::move(linker)));
     }
-    return config_data_failure<Option<PathBuf>>(rstd::move(path),
-                                                "must be 'lld' or an absolute path to LLD"_str);
+    return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+        rstd::move(path), "must be 'lld' or an absolute path to LLD"_str)));
 }
 
 auto configured_toolchain_sdk(const Option<lito::config::wire::Sdk>& value)
@@ -119,29 +98,29 @@ auto configured_toolchain_sdk(const Option<lito::config::wire::Sdk>& value)
     auto path = rstd::serde::DataPath().with_field("toolchain"_str).with_field("sdk"_str);
     auto kind = parse_sdk_kind(value->kind.as_str());
     if (kind.is_none()) {
-        return config_data_failure<Option<ToolchainSdkSelection>>(
-            path.with_field("kind"_str), "must be 'llvm' or 'android-ndk'"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("kind"_str), "must be 'llvm' or 'android-ndk'"_str)));
     }
     if (value->version.is_some() == value->path.is_some()) {
-        return config_data_failure<Option<ToolchainSdkSelection>>(
-            rstd::move(path), "must contain exactly one of 'version' or 'path'"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            rstd::move(path), "must contain exactly one of 'version' or 'path'"_str)));
     }
     if (value->version.is_some()) {
         if (value->version->is_empty()) {
-            return config_data_failure<Option<ToolchainSdkSelection>>(
-                path.with_field("version"_str), "must not be empty"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                path.with_field("version"_str), "must not be empty"_str)));
         }
         return Ok(
             Some(ToolchainSdkSelection::Managed(*kind, String::make(value->version->as_str()))));
     }
     if (value->path->is_empty()) {
-        return config_data_failure<Option<ToolchainSdkSelection>>(path.with_field("path"_str),
-                                                                  "must not be empty"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(path.with_field("path"_str),
+                                                                       "must not be empty"_str)));
     }
     auto directory = PathBuf::from(value->path->as_str());
     if (! directory.as_path().is_absolute()) {
-        return config_data_failure<Option<ToolchainSdkSelection>>(path.with_field("path"_str),
-                                                                  "must be absolute"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(path.with_field("path"_str),
+                                                                       "must be absolute"_str)));
     }
     return Ok(Some(ToolchainSdkSelection::Directory(*kind, rstd::move(directory))));
 }
@@ -153,9 +132,9 @@ auto configured_standard_library(const Option<lito::config::wire::Toolchain>& to
     }
     auto parsed = parse_standard_library_selection(toolchain->standard_library->as_str());
     if (parsed.is_some()) return Ok(*parsed);
-    return config_data_failure<StandardLibrarySelection>(
+    return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
         rstd::serde::DataPath().with_field("toolchain"_str).with_field("stdlib"_str),
-        "must be 'auto', 'libc++', 'libstdc++', or 'msvc'"_str);
+        "must be 'auto', 'libc++', 'libstdc++', or 'msvc'"_str)));
 }
 
 auto configured_standard_library_runtime(const Option<lito::config::wire::Toolchain>& toolchain)
@@ -165,9 +144,9 @@ auto configured_standard_library_runtime(const Option<lito::config::wire::Toolch
     }
     auto parsed = parse_standard_library_runtime(toolchain->standard_library_runtime->as_str());
     if (parsed.is_some()) return Ok(*parsed);
-    return config_data_failure<StandardLibraryRuntime>(
+    return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
         rstd::serde::DataPath().with_field("toolchain"_str).with_field("stdlib-runtime"_str),
-        "must be 'dynamic' or 'static'"_str);
+        "must be 'dynamic' or 'static'"_str)));
 }
 
 auto configured_build_target(const Option<lito::config::wire::Build>& build)
@@ -176,16 +155,16 @@ auto configured_build_target(const Option<lito::config::wire::Build>& build)
     const auto& value = *build->target;
     auto        path  = rstd::serde::DataPath().with_field("build"_str).with_field("target"_str);
     if (value.kind.as_str() != "android"_str) {
-        return config_data_failure<BuildTargetRequest>(path.with_field("kind"_str),
-                                                       "must be 'android'"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(path.with_field("kind"_str),
+                                                                       "must be 'android'"_str)));
     }
     if (value.abi.is_empty()) {
-        return config_data_failure<BuildTargetRequest>(path.with_field("abi"_str),
-                                                       "must not be empty"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(path.with_field("abi"_str),
+                                                                       "must not be empty"_str)));
     }
     if (value.minimum_api <= i64 {} || value.minimum_api > i64(u32::MAX.to_primitive())) {
-        return config_data_failure<BuildTargetRequest>(path.with_field("min-api"_str),
-                                                       "must be a positive 32-bit integer"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("min-api"_str), "must be a positive 32-bit integer"_str)));
     }
     return Ok(BuildTargetRequest::Android(AndroidTargetRequest {
         .abi         = value.abi.clone(),
@@ -200,8 +179,8 @@ auto configured_build_option_input(const Option<Vec<String>>& values,
     auto arguments = Vec<String>::with_capacity(values->len());
     for (usize index {}; index < values->len(); ++index) {
         if ((*values)[index].is_empty()) {
-            return config_data_failure<Option<BuildOptionInput>>(
-                path.with_index(index), "compiler option must not be empty"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                path.with_index(index), "compiler option must not be empty"_str)));
         }
         arguments.push((*values)[index].clone());
     }
@@ -241,13 +220,12 @@ auto environment_build_option(ToolchainEnvironmentVariable variable)
     auto text = value->as_os_str().to_str();
     if (text.is_none()) {
         return Err(ConfigError::EnvironmentFlags(
-            String::make(name),
+            name.into(),
             lito::system::SystemError::Environment(rstd::format("{} is not valid UTF-8", name))));
     }
     auto arguments = lito::system::tokenize_command_fragments(*text, name);
     if (arguments.is_err()) {
-        return Err(
-            ConfigError::EnvironmentFlags(String::make(name), rstd::move(arguments).unwrap_err()));
+        return Err(ConfigError::EnvironmentFlags(name.into(), rstd::move(arguments).unwrap_err()));
     }
     if (arguments->is_empty()) return Ok(Option<BuildOptionInput> {});
     return Ok(Some(BuildOptionInput {
@@ -278,8 +256,8 @@ auto configured_directories(const Option<Vec<String>>& values,
     for (usize index {}; index < values->len(); ++index) {
         const auto& value = (*values)[index];
         if (value.is_empty()) {
-            return config_data_failure<Vec<PathBuf>>(path.with_index(index),
-                                                     "path must not be empty"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                path.with_index(index), "path must not be empty"_str)));
         }
         auto requested = PathBuf::from(value.as_str());
         if (requested.as_path().is_relative()) {
@@ -287,21 +265,19 @@ auto configured_directories(const Option<Vec<String>>& values,
         }
         auto canonical = rstd::fs::canonicalize(requested.as_path());
         if (canonical.is_err()) {
-            return config_io_failure<Vec<PathBuf>>(
-                rstd::format("resolve {} path", context).as_str(),
-                requested.as_path(),
-                rstd::move(canonical).unwrap_err());
+            return Err(ConfigError::Io((rstd::format("resolve {} path", context).as_str()).into(),
+                                       PathBuf::from(requested.as_path()),
+                                       rstd::move(canonical).unwrap_err()));
         }
         auto metadata = rstd::fs::metadata(canonical->as_path());
         if (metadata.is_err()) {
-            return config_io_failure<Vec<PathBuf>>(
-                rstd::format("inspect {} path", context).as_str(),
-                canonical->as_path(),
-                rstd::move(metadata).unwrap_err());
+            return Err(ConfigError::Io((rstd::format("inspect {} path", context).as_str()).into(),
+                                       PathBuf::from(canonical->as_path()),
+                                       rstd::move(metadata).unwrap_err()));
         }
         if (! metadata->is_dir()) {
-            return config_data_failure<Vec<PathBuf>>(path.with_index(index),
-                                                     "path is not a directory"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                path.with_index(index), "path is not a directory"_str)));
         }
         result.push(rstd::move(canonical).unwrap_unchecked());
     }
@@ -324,8 +300,8 @@ auto configured_pkg_config(const lito::config::wire::PkgConfig& value,
                                         project_root));
     if (value.sysroot.is_some()) {
         if (value.sysroot->is_empty()) {
-            return config_data_failure<lito::dependency::PkgConfigProviderConfig>(
-                root.with_field("sysroot"_str), "must not be empty"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                root.with_field("sysroot"_str), "must not be empty"_str)));
         }
         auto requested = PathBuf::from(value.sysroot->as_str());
         if (requested.as_path().is_relative()) {
@@ -333,10 +309,9 @@ auto configured_pkg_config(const lito::config::wire::PkgConfig& value,
         }
         auto canonical = rstd::fs::canonicalize(requested.as_path());
         if (canonical.is_err()) {
-            return config_io_failure<lito::dependency::PkgConfigProviderConfig>(
-                "resolve config.tools.pkg-config.sysroot"_str,
-                requested.as_path(),
-                rstd::move(canonical).unwrap_err());
+            return Err(ConfigError::Io("resolve config.tools.pkg-config.sysroot"_Str,
+                                       PathBuf::from(requested.as_path()),
+                                       rstd::move(canonical).unwrap_err()));
         }
         result.sysroot = Some(rstd::move(canonical).unwrap_unchecked());
     }
@@ -365,8 +340,8 @@ auto configured_cmake(const lito::config::wire::CMake& value, ref<rstd::path::Pa
     auto root = rstd::serde::DataPath().with_field("tools"_str).with_field("cmake"_str);
     if (value.generator.is_some()) {
         if (value.generator->is_empty()) {
-            return config_data_failure<lito::dependency::CMakeProviderConfig>(
-                root.with_field("generator"_str), "must not be empty"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                root.with_field("generator"_str), "must not be empty"_str)));
         }
         result.generator = value.generator->clone();
     }
@@ -390,13 +365,13 @@ auto configured_cmake_build_overrides(const lito::config::wire::CMake& cmake)
                                   .with_field("overrides"_str)
                                   .with_map_key(package.as_str());
         if (! lito::dependency::cmake_package_name_is_valid(package.as_str())) {
-            return config_data_failure<lito::dependency::CMakeBuildOverrideSet>(
-                rstd::move(path), "package name is unsafe"_str);
+            return Err(ConfigError::Data(
+                rstd::serde::Error::invalid_value(rstd::move(path), "package name is unsafe"_str)));
         }
         const auto specification = overrides.get(package.as_str()).unwrap_unchecked();
         if (specification->source.as_str() != "installed"_str) {
-            return config_data_failure<lito::dependency::CMakeBuildOverrideSet>(
-                path.with_field("source"_str), "must be 'installed'"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                path.with_field("source"_str), "must be 'installed'"_str)));
         }
         result.entries.push(lito::dependency::CMakeBuildOverride {
             .package = package.clone(),
@@ -427,24 +402,24 @@ auto configured_toolchain_target(const lito::config::wire::Toolchain& value,
         return Ok(None());
     }
     if (value.os.is_none()) {
-        return config_data_failure<Option<ToolchainTargetSelection>>(
-            root.with_field("os"_str), "must be configured together with toolchain.arch"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            root.with_field("os"_str), "must be configured together with toolchain.arch"_str)));
     }
     if (value.arch.is_none()) {
-        return config_data_failure<Option<ToolchainTargetSelection>>(
-            root.with_field("arch"_str), "must be configured together with toolchain.os"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            root.with_field("arch"_str), "must be configured together with toolchain.os"_str)));
     }
     auto os = value.os->as_str();
     if (os != "unknown"_str && parse_operating_system(os).is_none()) {
-        return config_data_failure<Option<ToolchainTargetSelection>>(
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
             root.with_field("os"_str),
-            rstd::format("must be 'unknown' or one of {}", operating_system_choices().as_str()));
+            rstd::format("must be 'unknown' or one of {}", operating_system_choices().as_str()))));
     }
     auto architecture = require_architecture(value.arch->as_str());
     if (architecture.is_err()) {
         auto error = rstd::move(architecture).unwrap_err();
-        return config_data_failure<Option<ToolchainTargetSelection>>(root.with_field("arch"_str),
-                                                                     error.message());
+        return Err(ConfigError::Data(
+            rstd::serde::Error::invalid_value(root.with_field("arch"_str), error.message())));
     }
     auto candidate = encode_target_candidate(
         os,
@@ -452,8 +427,8 @@ auto configured_toolchain_target(const lito::config::wire::Toolchain& value,
         value.vendor.is_some() ? Some(value.vendor->as_str()) : Option<ref<str>> {},
         value.environment.is_some() ? Some(value.environment->as_str()) : Option<ref<str>> {});
     if (candidate.is_err()) {
-        return config_data_failure<Option<ToolchainTargetSelection>>(
-            root.with_field("os"_str), rstd::move(candidate).unwrap_err().message());
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            root.with_field("os"_str), rstd::move(candidate).unwrap_err().message())));
     }
     return Ok(Some(ToolchainTargetSelection::Config(value.os->clone(),
                                                     rstd::move(architecture).unwrap(),
@@ -470,14 +445,14 @@ auto configured_wasm_toolchain(const Option<lito::config::wire::Wasm>& value)
         if (value->entry->as_str() == "main"_str) {
             entry = WasmEntry::Main;
         } else if (value->entry->as_str() != "none"_str) {
-            return config_data_failure<Option<WasmToolchainSpec>>(path.with_field("entry"_str),
-                                                                  "must be 'main' or 'none'"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                path.with_field("entry"_str), "must be 'main' or 'none'"_str)));
         }
     }
     if (value->processor.is_some() &&
         ! lito::manifest::valid_package_name(value->processor->as_str())) {
-        return config_data_failure<Option<WasmToolchainSpec>>(
-            path.with_field("processor"_str), "must be a valid dependency package name"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("processor"_str), "must be a valid dependency package name"_str)));
     }
     return Ok(Some(WasmToolchainSpec {
         .entry         = entry,
@@ -540,7 +515,7 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
         case lito::tools::Tool::Cargo:
         case lito::tools::Tool::CMake:
         case lito::tools::Tool::PkgConfig:
-            return config_failure<empty>("provider tools require table configuration"_str);
+            return Err(ConfigError::Schema("provider tools require table configuration"_Str));
         }
         result.executables.mark_configured(tool);
         return Ok(empty {});
@@ -596,8 +571,8 @@ auto configured_lock(const Option<lito::config::wire::Lock>& value,
     if (value.is_none()) return Ok(default_lock_config(project_root));
     auto path = rstd::serde::DataPath().with_field("lock"_str).with_field("path"_str);
     if (value->path.is_empty()) {
-        return config_data_failure<lito::lock::LockConfig>(rstd::move(path),
-                                                           "must not be empty"_str);
+        return Err(ConfigError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "must not be empty"_str)));
     }
     auto requested = PathBuf::from(value->path.as_str());
     if (requested.as_path().is_relative()) {
@@ -606,31 +581,32 @@ auto configured_lock(const Option<lito::config::wire::Lock>& value,
     auto parent = requested.as_path().parent();
     auto name   = requested.as_path().file_name();
     if (parent.is_none() || name.is_none()) {
-        return config_data_failure<lito::lock::LockConfig>(rstd::move(path),
-                                                           "must name a file"_str);
+        return Err(ConfigError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "must name a file"_str)));
     }
     auto canonical_parent = rstd::fs::canonicalize(*parent);
     if (canonical_parent.is_err()) {
-        return config_io_failure<lito::lock::LockConfig>("resolve config.lock.path parent"_str,
-                                                         *parent,
-                                                         rstd::move(canonical_parent).unwrap_err());
+        return Err(ConfigError::Io("resolve config.lock.path parent"_Str,
+                                   PathBuf::from(*parent),
+                                   rstd::move(canonical_parent).unwrap_err()));
     }
     auto resolved = canonical_parent->join(PathBuf::from(*name).as_path());
     auto exists   = rstd::fs::exists(resolved.as_path());
     if (exists.is_err()) {
-        return config_io_failure<lito::lock::LockConfig>(
-            "inspect config.lock.path"_str, resolved.as_path(), rstd::move(exists).unwrap_err());
+        return Err(ConfigError::Io("inspect config.lock.path"_Str,
+                                   PathBuf::from(resolved.as_path()),
+                                   rstd::move(exists).unwrap_err()));
     }
     if (*exists) {
         auto metadata = rstd::fs::metadata(resolved.as_path());
         if (metadata.is_err()) {
-            return config_io_failure<lito::lock::LockConfig>("inspect config.lock.path"_str,
-                                                             resolved.as_path(),
-                                                             rstd::move(metadata).unwrap_err());
+            return Err(ConfigError::Io("inspect config.lock.path"_Str,
+                                       PathBuf::from(resolved.as_path()),
+                                       rstd::move(metadata).unwrap_err()));
         }
         if (! metadata->is_file()) {
-            return config_data_failure<lito::lock::LockConfig>(rstd::move(path),
-                                                               "must identify a file"_str);
+            return Err(ConfigError::Data(
+                rstd::serde::Error::invalid_value(rstd::move(path), "must identify a file"_str)));
         }
     }
     return Ok(lito::lock::LockConfig { .path = rstd::move(resolved) });
@@ -640,9 +616,9 @@ auto configured_install(const Option<lito::config::wire::Install>& value,
                         ref<rstd::path::Path> project_root) -> ConfigResult<InstallConfig> {
     if (value.is_none()) return Ok(InstallConfig {});
     if (value->root.is_empty()) {
-        return config_data_failure<InstallConfig>(
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
             rstd::serde::DataPath().with_field("install"_str).with_field("root"_str),
-            "must not be empty"_str);
+            "must not be empty"_str)));
     }
     auto root = PathBuf::from(value->root.as_str());
     if (root.as_path().is_relative()) root = PathBuf::from(project_root).join(root.as_path());
@@ -654,7 +630,8 @@ auto configured_doc(const Option<lito::config::wire::Doc>& value,
     if (value.is_none() || value->litodoc_path.is_none()) return Ok(DocConfig {});
     auto path = rstd::serde::DataPath().with_field("doc"_str).with_field("litodoc-path"_str);
     if (value->litodoc_path->is_empty()) {
-        return config_data_failure<DocConfig>(rstd::move(path), "must not be empty"_str);
+        return Err(ConfigError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "must not be empty"_str)));
     }
     auto requested = PathBuf::from(value->litodoc_path->as_str());
     if (requested.as_path().is_relative()) {
@@ -662,18 +639,19 @@ auto configured_doc(const Option<lito::config::wire::Doc>& value,
     }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return config_io_failure<DocConfig>("resolve config.doc.litodoc-path"_str,
-                                            requested.as_path(),
-                                            rstd::move(canonical).unwrap_err());
+        return Err(ConfigError::Io("resolve config.doc.litodoc-path"_Str,
+                                   PathBuf::from(requested.as_path()),
+                                   rstd::move(canonical).unwrap_err()));
     }
     auto metadata = rstd::fs::metadata(canonical->as_path());
     if (metadata.is_err()) {
-        return config_io_failure<DocConfig>("inspect config.doc.litodoc-path"_str,
-                                            canonical->as_path(),
-                                            rstd::move(metadata).unwrap_err());
+        return Err(ConfigError::Io("inspect config.doc.litodoc-path"_Str,
+                                   PathBuf::from(canonical->as_path()),
+                                   rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return config_data_failure<DocConfig>(rstd::move(path), "must be a directory"_str);
+        return Err(ConfigError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "must be a directory"_str)));
     }
     return Ok(DocConfig { .litodoc_path = Some(rstd::move(canonical).unwrap_unchecked()) });
 }
@@ -690,27 +668,28 @@ auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value
                              .with_field("packages"_str)
                              .with_map_key(id);
         if (lito::registry::RegistryPackageName::parse(id).is_err()) {
-            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                rstd::move(data_path), "key must be a valid builtin package id"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(data_path), "key must be a valid builtin package id"_str)));
         }
         const auto& source       = **value->packages->get(id);
         const auto  source_count = usize(source.version.is_some()) + usize(source.git.is_some()) +
                                    usize(source.path.is_some());
         if (source_count != usize(1)) {
-            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
                 rstd::move(data_path),
-                "must contain exactly one of 'version', 'git', or 'path'"_str);
+                "must contain exactly one of 'version', 'git', or 'path'"_str)));
         }
         if (source.version.is_some()) {
             if (source.branch.is_some() || source.tag.is_some() || source.rev.is_some() ||
                 source.commit.is_some()) {
-                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                    rstd::move(data_path), "Registry source cannot contain Git selectors"_str);
+                return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(data_path), "Registry source cannot contain Git selectors"_str)));
             }
             auto requirement = lito::registry::VersionRequirement::parse(source.version->as_str());
             if (requirement.is_err()) {
-                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                    data_path.with_field("version"_str), "must be a valid version requirement"_str);
+                return Err(ConfigError::Data(
+                    rstd::serde::Error::invalid_value(data_path.with_field("version"_str),
+                                                      "must be a valid version requirement"_str)));
             }
             result.push(lito::source::BuiltinPackageSourceEntry {
                 .id     = (*key).clone(),
@@ -722,8 +701,9 @@ auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value
         if (source.path.is_some()) {
             if (source.registry.is_some() || source.branch.is_some() || source.tag.is_some() ||
                 source.rev.is_some() || source.commit.is_some()) {
-                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                    rstd::move(data_path), "Path source cannot contain Registry or Git fields"_str);
+                return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(data_path),
+                    "Path source cannot contain Registry or Git fields"_str)));
             }
             auto requested = PathBuf::from(source.path->as_str());
             if (requested.as_path().is_relative()) {
@@ -731,21 +711,19 @@ auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value
             }
             auto canonical = rstd::fs::canonicalize(requested.as_path());
             if (canonical.is_err()) {
-                return config_io_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                    "resolve builtin package path"_str,
-                    requested.as_path(),
-                    rstd::move(canonical).unwrap_err());
+                return Err(ConfigError::Io("resolve builtin package path"_Str,
+                                           PathBuf::from(requested.as_path()),
+                                           rstd::move(canonical).unwrap_err()));
             }
             auto metadata = rstd::fs::metadata(canonical->as_path());
             if (metadata.is_err()) {
-                return config_io_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                    "inspect builtin package path"_str,
-                    canonical->as_path(),
-                    rstd::move(metadata).unwrap_err());
+                return Err(ConfigError::Io("inspect builtin package path"_Str,
+                                           PathBuf::from(canonical->as_path()),
+                                           rstd::move(metadata).unwrap_err()));
             }
             if (! metadata->is_dir()) {
-                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                    data_path.with_field("path"_str), "must be a directory"_str);
+                return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                    data_path.with_field("path"_str), "must be a directory"_str)));
             }
             result.push(lito::source::BuiltinPackageSourceEntry {
                 .id     = (*key).clone(),
@@ -754,19 +732,19 @@ auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value
             continue;
         }
         if (source.registry.is_some()) {
-            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                data_path.with_field("registry"_str), "is only valid with 'version'"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                data_path.with_field("registry"_str), "is only valid with 'version'"_str)));
         }
         if (source.git->is_empty() || source.git->as_str().starts_with("-"_str) ||
             source.git->as_str().contains("#"_str)) {
-            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                data_path.with_field("git"_str), "must be a valid Git URL"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                data_path.with_field("git"_str), "must be a valid Git URL"_str)));
         }
         const auto selector_count = usize(source.branch.is_some()) + usize(source.tag.is_some()) +
                                     usize(source.rev.is_some()) + usize(source.commit.is_some());
         if (selector_count > usize(1)) {
-            return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
-                rstd::move(data_path), "Git source accepts at most one selector"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(data_path), "Git source accepts at most one selector"_str)));
         }
         auto reference = lito::source::GitReference {};
         if (source.branch.is_some()) {
@@ -780,9 +758,9 @@ auto configured_builtin_sources(const Option<lito::config::wire::Builtin>& value
             reference.value = source.rev->clone();
         } else if (source.commit.is_some()) {
             if (! lito::source::git_commit_is_valid(source.commit->as_str())) {
-                return config_data_failure<Vec<lito::source::BuiltinPackageSourceEntry>>(
+                return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
                     data_path.with_field("commit"_str),
-                    "must be a 40-digit hexadecimal commit"_str);
+                    "must be a 40-digit hexadecimal commit"_str)));
             }
             reference.kind  = lito::source::GitReferenceKind::Commit;
             reference.value = source.commit->clone();
@@ -802,7 +780,8 @@ auto configured_patch_path(const Toml&           value,
     auto decoded = rstd::toml::decode_value<lito::config::wire::Patch>(value, path.clone());
     if (decoded.is_err()) return Err(ConfigError::Data(rstd::move(decoded).unwrap_err()));
     if (decoded->path.is_empty()) {
-        return config_data_failure<PathBuf>(path.with_field("path"_str), "must not be empty"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(path.with_field("path"_str),
+                                                                       "must not be empty"_str)));
     }
     auto requested = PathBuf::from(decoded->path.as_str());
     if (requested.as_path().is_relative()) {
@@ -810,18 +789,19 @@ auto configured_patch_path(const Toml&           value,
     }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return config_io_failure<PathBuf>("resolve config.patch path"_str,
-                                          requested.as_path(),
-                                          rstd::move(canonical).unwrap_err());
+        return Err(ConfigError::Io("resolve config.patch path"_Str,
+                                   PathBuf::from(requested.as_path()),
+                                   rstd::move(canonical).unwrap_err()));
     }
     auto metadata = rstd::fs::metadata(canonical->as_path());
     if (metadata.is_err()) {
-        return config_io_failure<PathBuf>("inspect config.patch path"_str,
-                                          canonical->as_path(),
-                                          rstd::move(metadata).unwrap_err());
+        return Err(ConfigError::Io("inspect config.patch path"_Str,
+                                   PathBuf::from(canonical->as_path()),
+                                   rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return config_data_failure<PathBuf>(path.with_field("path"_str), "must be a directory"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(path.with_field("path"_str),
+                                                                       "must be a directory"_str)));
     }
     return Ok(rstd::move(canonical).unwrap_unchecked());
 }
@@ -841,30 +821,30 @@ auto configured_sources(Option<ref<Toml>>                          value,
     }
     auto table = (**value).as_table();
     if (table.is_none()) {
-        return config_data_failure<lito::source::PackageSourceConfig>(
-            rstd::serde::DataPath().with_field("patch"_str), "must be a table"_str);
+        return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+            rstd::serde::DataPath().with_field("patch"_str), "must be a table"_str)));
     }
     for (auto source_key : (**table).keys()) {
         const auto& source = *source_key;
         auto        source_path =
             rstd::serde::DataPath().with_field("patch"_str).with_map_key(source.as_str());
         if (source.is_empty()) {
-            return config_data_failure<lito::source::PackageSourceConfig>(
-                rstd::move(source_path), "source must not be empty"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(source_path), "source must not be empty"_str)));
         }
         if (source.as_str().starts_with("-"_str)) {
-            return config_data_failure<lito::source::PackageSourceConfig>(
-                rstd::move(source_path), "source must not start with '-'"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(source_path), "source must not start with '-'"_str)));
         }
         if (source.as_str().contains("#"_str)) {
-            return config_data_failure<lito::source::PackageSourceConfig>(
-                rstd::move(source_path), "source must not contain a fragment"_str);
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(source_path), "source must not contain a fragment"_str)));
         }
         const auto source_value = (**table).get(source.as_str()).unwrap_unchecked();
         auto       source_table = source_value->as_table();
         if (source_table.is_none()) {
-            return config_data_failure<lito::source::PackageSourceConfig>(rstd::move(source_path),
-                                                                          "must be a table"_str);
+            return Err(ConfigError::Data(
+                rstd::serde::Error::invalid_value(rstd::move(source_path), "must be a table"_str)));
         }
         auto direct_path = source_value->get("path"_str);
         if (direct_path.is_some() && (**direct_path).as_str().is_some()) {
@@ -879,8 +859,8 @@ auto configured_sources(Option<ref<Toml>>                          value,
             const auto& package = *package_key;
             auto        path    = source_path.clone().with_map_key(package.as_str());
             if (! lito::manifest::valid_package_name(package.as_str())) {
-                return config_data_failure<lito::source::PackageSourceConfig>(
-                    rstd::move(path), "must be a valid package name"_str);
+                return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(path), "must be a valid package name"_str)));
             }
             const auto specification = (**source_table).get(package.as_str()).unwrap_unchecked();
             package_patches.push(lito::source::PackageSourcePatch {

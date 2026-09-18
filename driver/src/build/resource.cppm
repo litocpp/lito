@@ -18,34 +18,29 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto resource_io_failure(ref<str>               operation,
-                         ref<rstd::path::Path>  path,
-                         rstd::io::error::Error error) -> BuildScriptResult<T> {
-    return Err(
-        BuildScriptError::Io(String::make(operation), PathBuf::from(path), rstd::move(error)));
-}
-
 auto collect_resource_files(ref<rstd::path::Path> root,
                             ref<rstd::path::Path> directory,
                             Vec<PathBuf>&         files) -> BuildScriptResult<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return resource_io_failure<empty>(
-            "enumerate runtime resource"_str, directory, rstd::move(opened).unwrap_err());
+        return Err(BuildScriptError::Io("enumerate runtime resource"_Str,
+                                        PathBuf::from(directory),
+                                        rstd::move(opened).unwrap_err()));
     }
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return resource_io_failure<empty>(
-                "enumerate runtime resource"_str, directory, rstd::move(item).unwrap_err());
+            return Err(BuildScriptError::Io("enumerate runtime resource"_Str,
+                                            PathBuf::from(directory),
+                                            rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         auto path  = entry.path();
         if (type.is_err()) {
-            return resource_io_failure<empty>(
-                "inspect runtime resource"_str, path.as_path(), rstd::move(type).unwrap_err());
+            return Err(BuildScriptError::Io("inspect runtime resource"_Str,
+                                            PathBuf::from(path.as_path()),
+                                            rstd::move(type).unwrap_err()));
         }
         if (type->is_symlink()) {
             return Err(BuildScriptError::Message(
@@ -84,8 +79,9 @@ auto resource_identity(ref<rstd::path::Path> root, const Vec<PathBuf>& files)
         auto path = PathBuf::from(root).join(relative.as_path());
         auto data = rstd::fs::read(path.as_path());
         if (data.is_err()) {
-            return resource_io_failure<String>(
-                "read runtime resource"_str, path.as_path(), rstd::move(data).unwrap_err());
+            return Err(BuildScriptError::Io("read runtime resource"_Str,
+                                            PathBuf::from(path.as_path()),
+                                            rstd::move(data).unwrap_err()));
         }
         state.update(data->as_slice());
         state.update(separator.as_slice());
@@ -108,8 +104,9 @@ namespace lito
 auto runtime_resource_directory_identity(ref<rstd::path::Path> root) -> BuildScriptResult<String> {
     auto inspected = rstd::fs::symlink_metadata(root);
     if (inspected.is_err()) {
-        return resource_io_failure<String>(
-            "inspect runtime resource"_str, root, rstd::move(inspected).unwrap_err());
+        return Err(BuildScriptError::Io("inspect runtime resource"_Str,
+                                        PathBuf::from(root),
+                                        rstd::move(inspected).unwrap_err()));
     }
     if (inspected->is_symlink() || ! inspected->is_dir()) {
         return Err(BuildScriptError::Message(
@@ -141,10 +138,9 @@ auto resolve_runtime_resources(const cpp::PackageMetadata&                metada
             auto requested = package_root.join(declaration.path.as_path());
             auto inspected = rstd::fs::symlink_metadata(requested.as_path());
             if (inspected.is_err()) {
-                return resource_io_failure<Vec<BuiltRuntimeResource>>(
-                    "inspect runtime resource"_str,
-                    requested.as_path(),
-                    rstd::move(inspected).unwrap_err());
+                return Err(BuildScriptError::Io("inspect runtime resource"_Str,
+                                                PathBuf::from(requested.as_path()),
+                                                rstd::move(inspected).unwrap_err()));
             }
             if (inspected->is_symlink() || ! inspected->is_dir()) {
                 return Err(BuildScriptError::Message(
@@ -155,10 +151,9 @@ auto resolve_runtime_resources(const cpp::PackageMetadata&                metada
             }
             auto canonical = rstd::fs::canonicalize(requested.as_path());
             if (canonical.is_err()) {
-                return resource_io_failure<Vec<BuiltRuntimeResource>>(
-                    "resolve runtime resource"_str,
-                    requested.as_path(),
-                    rstd::move(canonical).unwrap_err());
+                return Err(BuildScriptError::Io("resolve runtime resource"_Str,
+                                                PathBuf::from(requested.as_path()),
+                                                rstd::move(canonical).unwrap_err()));
             }
             if (canonical->as_path().strip_prefix(package_root.as_path()).is_none()) {
                 return Err(BuildScriptError::Message(rstd::format(
@@ -182,19 +177,17 @@ auto resolve_runtime_resources(const cpp::PackageMetadata&                metada
                 auto parent  = receipt.as_path().parent().unwrap();
                 auto created = rstd::fs::create_dir_all(parent);
                 if (created.is_err()) {
-                    return resource_io_failure<Vec<BuiltRuntimeResource>>(
-                        "create runtime resource receipt directory"_str,
-                        parent,
-                        rstd::move(created).unwrap_err());
+                    return Err(BuildScriptError::Io("create runtime resource receipt directory"_Str,
+                                                    PathBuf::from(parent),
+                                                    rstd::move(created).unwrap_err()));
                 }
                 auto text = identity.clone();
                 text.push_ascii('\n');
                 auto written = rstd::fs::write_atomic(receipt.as_path(), text.as_str().as_bytes());
                 if (written.is_err()) {
-                    return resource_io_failure<Vec<BuiltRuntimeResource>>(
-                        "write runtime resource receipt"_str,
-                        receipt.as_path(),
-                        rstd::move(written).unwrap_err());
+                    return Err(BuildScriptError::Io("write runtime resource receipt"_Str,
+                                                    PathBuf::from(receipt.as_path()),
+                                                    rstd::move(written).unwrap_err()));
                 }
             }
             if (observer.is_some() && observer->notify != nullptr) {

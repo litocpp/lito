@@ -164,11 +164,6 @@ auto resolve_external_dependency_conditions(lito::package::ResolvedPackage& pack
 namespace lito::cpp
 {
 
-template<typename T>
-auto adapter_failure(String message) -> lito::package::PackageResult<T> {
-    return Err(lito::package::PackageError::Message(rstd::move(message)));
-}
-
 auto parse_options(const CppArgumentParser&        parser,
                    const Vec<String>&              options,
                    String                          source,
@@ -224,34 +219,34 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
                 ! package_metadata_macro(name)) {
                 continue;
             }
-            return adapter_failure<empty>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("{} definition '{}' overrides a Lito-owned setting",
                              usage_source(package, field).as_str(),
-                             definition.as_str()));
+                             definition.as_str())));
         }
         return Ok(empty {});
     };
     rstd_try(validate_definitions(usage.public_definitions, "public-definitions"_str));
     rstd_try(validate_definitions(usage.private_definitions, "private-definitions"_str));
     if (! has_link_action && ! usage.linker_options.is_empty()) {
-        return adapter_failure<empty>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("{} requires a shared library, binary, test, or benchmark target",
-                         usage_source(package, "usage.linker-options"_str).as_str()));
+                         usage_source(package, "usage.linker-options"_str).as_str())));
     }
     const auto validate_linker_options =
         [&](const Vec<String>& options, ref<str> source) -> lito::package::PackageResult<empty> {
         for (const auto& option : options) {
             if (option.as_str() == "-pthread"_str) {
-                return adapter_failure<empty>(
-                    rstd::format("{} option '-pthread' must be declared as usage.threads", source));
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "{} option '-pthread' must be declared as usage.threads", source)));
             }
             if (! option.as_str().starts_with("-stdlib="_str) &&
                 option.as_str() != "-nostdlib++"_str &&
                 ! is_profile_owned_linker_option(option.as_str())) {
                 continue;
             }
-            return adapter_failure<empty>(rstd::format(
-                "{} option '{}' overrides a Lito-owned setting", source, option.as_str()));
+            return Err(lito::package::PackageError::Message(rstd::format(
+                "{} option '{}' overrides a Lito-owned setting", source, option.as_str())));
         }
         return Ok(empty {});
     };
@@ -379,14 +374,14 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                     duplicate = true;
                     break;
                 }
-                return adapter_failure<empty>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' defines macro '{}' as '{}' from {} and '{}' from {}",
                                  package.manifest.name.as_str(),
                                  name,
                                  existing.value.as_str(),
                                  existing.source.as_str(),
                                  value.as_str(),
-                                 source));
+                                 source)));
             }
             if (duplicate) continue;
             definitions.push(DefinitionRecord {
@@ -406,12 +401,12 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
     for (const auto& conditional : package.manifest.conditions) {
         auto matched = lito::condition::evaluate(conditional.condition, context);
         if (matched.is_err()) {
-            return adapter_failure<empty>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("package '{}' manifest '{}' condition '{}' is invalid: {}",
                              package.manifest.name.as_str(),
                              package.manifest.manifest_path.as_path(),
                              conditional.source.as_str(),
-                             rstd::move(matched).unwrap_err()));
+                             rstd::move(matched).unwrap_err())));
         }
         if (! *matched) continue;
         const auto& overlay            = conditional.usage;
@@ -439,11 +434,11 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                                   overlay.values.public_include_directory_requirements);
         if (overlay.declares_threads) {
             if (matched_threads.is_some() && *matched_threads != overlay.values.threads) {
-                return adapter_failure<empty>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' has conflicting usage.threads values from {} and {}",
                                  package.manifest.name.as_str(),
                                  matched_threads_source->as_str(),
-                                 conditional_source.as_str()));
+                                 conditional_source.as_str())));
             }
             matched_threads        = Some<bool>(overlay.values.threads);
             matched_threads_source = Some(conditional_source.clone());
@@ -458,9 +453,9 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
         (! package.manifest.usage.public_include_directories.is_empty() ||
          ! package.manifest.usage.public_include_directory_requirements.is_empty() ||
          ! package.manifest.usage.public_definitions.is_empty())) {
-        return adapter_failure<empty>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("package '{}' conditional public usage requires a library target",
-                         package.manifest.name.as_str()));
+                         package.manifest.name.as_str())));
     }
     return Ok(empty {});
 }
@@ -471,39 +466,39 @@ auto validate_package_metadata_arguments(const lito::manifest::PackageManifest& 
     if (arguments.is_C()) {
         for (const auto& occurrence : arguments.as_C().layer.occurrences) {
             if (occurrence.argument.is_CodegenSetting()) {
-                return adapter_failure<empty>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "package '{}' compiler option from {} overrides a Lito-owned codegen setting",
                     package.name.as_str(),
-                    occurrence.source.as_str()));
+                    occurrence.source.as_str())));
             }
             if (! occurrence.argument.is_Macro()) continue;
             const auto& value = occurrence.argument.as_Macro().directive.value;
             auto        name  = definition_name(value.as_str());
             if (! package_metadata_macro(name)) continue;
-            return adapter_failure<empty>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("package '{}' option from {} overrides Lito-owned macro '{}'",
                              package.name.as_str(),
                              occurrence.source.as_str(),
-                             name));
+                             name)));
         }
         return Ok(empty {});
     }
     for (const auto& occurrence : arguments.as_Cpp().layer.occurrences) {
         if (occurrence.argument.is_CodegenSetting()) {
-            return adapter_failure<empty>(rstd::format(
+            return Err(lito::package::PackageError::Message(rstd::format(
                 "package '{}' compiler option from {} overrides a Lito-owned codegen setting",
                 package.name.as_str(),
-                occurrence.source.as_str()));
+                occurrence.source.as_str())));
         }
         if (! occurrence.argument.is_Macro()) continue;
         const auto& value = occurrence.argument.as_Macro().directive.value;
         auto        name  = definition_name(value.as_str());
         if (! package_metadata_macro(name)) continue;
-        return adapter_failure<empty>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("package '{}' option from {} overrides Lito-owned macro '{}'",
                          package.name.as_str(),
                          occurrence.source.as_str(),
-                         name));
+                         name)));
     }
     return Ok(empty {});
 }
@@ -581,10 +576,10 @@ auto resolve_usage_link(const lito::manifest::PackageManifest& package,
     }
     for (const auto& library : usage.system_libraries) {
         if (! valid_system_library_name(library.as_str())) {
-            return adapter_failure<UsageLinkResolution>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("{} contains invalid logical library name '{}'",
                              usage_source(package, "usage.system-libraries"_str).as_str(),
-                             library.as_str()));
+                             library.as_str())));
         }
         result.system_libraries.push(lito::link::SystemLibraryRequirement {
             .name   = library.clone(),
@@ -593,10 +588,10 @@ auto resolve_usage_link(const lito::manifest::PackageManifest& package,
     }
     for (const auto& framework : usage.frameworks) {
         if (! valid_system_library_name(framework.name.as_str())) {
-            return adapter_failure<UsageLinkResolution>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("{} contains invalid framework name '{}'",
                              framework.source.as_str(),
-                             framework.name.as_str()));
+                             framework.name.as_str())));
         }
         result.frameworks.push(lito::link::FrameworkRequirement {
             .name   = framework.name.clone(),
@@ -612,15 +607,15 @@ auto resolve_usage_link(const lito::manifest::PackageManifest& package,
         .identity = usage_source(package, "usage.linker-options"_str),
     });
     if (normalized.is_err()) {
-        return adapter_failure<UsageLinkResolution>(
-            rstd::format("{}", rstd::move(normalized).unwrap_err()));
+        return Err(lito::package::PackageError::Message(
+            rstd::format("{}", rstd::move(normalized).unwrap_err())));
     }
     if (! normalized->profile_arguments.is_empty()) {
         const auto& occurrence = normalized->profile_arguments[usize {}];
-        return adapter_failure<UsageLinkResolution>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("{} option '{}' overrides a Lito-owned setting",
                          usage_source(package, "usage.linker-options"_str).as_str(),
-                         occurrence.raw_tokens[usize {}].as_str()));
+                         occurrence.raw_tokens[usize {}].as_str())));
     }
     lito::link::append_requirements(result, normalized->requirements);
     return Ok(UsageLinkResolution {
@@ -649,15 +644,15 @@ auto resolve_target_link(const lito::manifest::PackageManifest&       package,
         .identity = source.clone(),
     });
     if (normalized.is_err()) {
-        return adapter_failure<UsageLinkResolution>(
-            rstd::format("{}", rstd::move(normalized).unwrap_err()));
+        return Err(lito::package::PackageError::Message(
+            rstd::format("{}", rstd::move(normalized).unwrap_err())));
     }
     if (! normalized->profile_arguments.is_empty()) {
         const auto& occurrence = normalized->profile_arguments[usize {}];
-        return adapter_failure<UsageLinkResolution>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("{} option '{}' overrides a Lito-owned setting",
                          source.as_str(),
-                         occurrence.raw_tokens[usize {}].as_str()));
+                         occurrence.raw_tokens[usize {}].as_str())));
     }
     lito::link::append_requirements(result.requirements, normalized->requirements);
     for (auto& option : normalized->arguments.tokens) result.options.push(rstd::move(option));
@@ -686,34 +681,34 @@ auto materialize_external_include_requirements(usize                            
                 }
             }
             if (source == nullptr) {
-                return adapter_failure<empty>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "package '{}' external include source '{}' was not prepared",
                     manifest.name.as_str(),
                     requirement.external_source.is_some() ? requirement.external_source->as_str()
-                                                          : "<none>"_str));
+                                                          : "<none>"_str)));
             }
             auto requested = source->root.join(requirement.path.as_path());
             auto canonical = rstd::fs::canonicalize(requested.as_path());
             if (canonical.is_err()) {
-                return adapter_failure<empty>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "package '{}' cannot resolve external include directory '{}' from source '{}'",
                     manifest.name.as_str(),
                     requirement.path.as_path(),
-                    source->name.as_str()));
+                    source->name.as_str())));
             }
             if (canonical->as_path().strip_prefix(source->root.as_path()).is_none()) {
-                return adapter_failure<empty>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' external include directory '{}' escapes source '{}'",
                                  manifest.name.as_str(),
                                  requirement.path.as_path(),
-                                 source->name.as_str()));
+                                 source->name.as_str())));
             }
             auto metadata = rstd::fs::metadata(canonical->as_path());
             if (metadata.is_err() || ! metadata->is_dir()) {
-                return adapter_failure<empty>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' external include directory '{}' is not a directory",
                                  manifest.name.as_str(),
-                                 canonical->as_path()));
+                                 canonical->as_path())));
             }
             auto repeated = false;
             for (const auto& existing : output) {
@@ -956,10 +951,10 @@ auto resolve_source_groups(usize                                       package_i
             }
         }
         if (declaration == nullptr) {
-            return adapter_failure<Vec<ResolvedSourceGroup>>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("package '{}' target source group '{}' is not declared",
                              package.manifest.name.as_str(),
-                             name.as_str()));
+                             name.as_str())));
         }
         auto root      = package.manifest.root.clone();
         auto identity  = package.source_identity.clone();
@@ -975,11 +970,11 @@ auto resolve_source_groups(usize                                       package_i
                 }
             }
             if (source == nullptr) {
-                return adapter_failure<Vec<ResolvedSourceGroup>>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "package '{}' source group '{}' external source '{}' was not prepared",
                     package.manifest.name.as_str(),
                     declaration->name.as_str(),
-                    declaration->external_source->as_str()));
+                    declaration->external_source->as_str())));
             }
             root     = source->root.clone();
             identity = source->identity.clone();
@@ -1023,14 +1018,14 @@ struct ExternalUsageCatalog {
         for (auto& entry : packages) {
             if (entry.package.as_str() != package) continue;
             if (entry.consumed) {
-                return adapter_failure<Vec<ExternalDependencyUsage>>(rstd::format(
-                    "external usage for package '{}' was consumed more than once", package));
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "external usage for package '{}' was consumed more than once", package)));
             }
             entry.consumed = true;
             return Ok(rstd::move(entry.dependencies));
         }
-        return adapter_failure<Vec<ExternalDependencyUsage>>(
-            rstd::format("external usage catalog has no package '{}'", package));
+        return Err(lito::package::PackageError::Message(
+            rstd::format("external usage catalog has no package '{}'", package)));
     }
 
     auto all_consumed() const noexcept -> bool {
@@ -1122,8 +1117,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.cxx.is_empty() || configuration.toolchain.ld.is_empty() ||
         configuration.toolchain.ar.is_empty()) {
-        return adapter_failure<PackageMetadata>(
-            "invalid build configuration for package graph"_Str);
+        return Err(lito::package::PackageError::Message(
+            "invalid build configuration for package graph"_Str));
     }
     auto libraries = library_targets(graph);
 
@@ -1160,9 +1155,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             rstd_try(external_usage.take(graph.packages[index].manifest.name.as_str()));
         if (unresolved.is_empty()) continue;
         if (graph.packages[index].manifest.standard.is_none()) {
-            return adapter_failure<PackageMetadata>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("selected package '{}' has external usage but no language contract",
-                             graph.packages[index].manifest.name.as_str()));
+                             graph.packages[index].manifest.name.as_str())));
         }
         external_by_package[index] = rstd_try(resolve_external_usage(
             rstd::move(unresolved),
@@ -1170,8 +1165,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             argument_parser));
     }
     if (! external_usage.all_consumed()) {
-        return adapter_failure<PackageMetadata>(
-            "external usage catalog contains an unselected package"_Str);
+        return Err(lito::package::PackageError::Message(
+            "external usage catalog contains an unselected package"_Str));
     }
 
     for (const auto& package : graph.packages) {
@@ -1181,11 +1176,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             const auto& cpp_dependency = dependency.as_Cpp().value;
             if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
-                return adapter_failure<PackageMetadata>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' depends on package '{}' which does not expose a "
                                  "library target",
                                  package.manifest.name.as_str(),
-                                 cpp_dependency.name.as_str()));
+                                 cpp_dependency.name.as_str())));
             }
         }
         for (const auto& dependency : package.dev_dependencies) {
@@ -1193,11 +1188,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             const auto& cpp_dependency = dependency.as_Cpp().value;
             if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
-                return adapter_failure<PackageMetadata>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' has development dependency '{}' which does not "
                                  "expose a library target",
                                  package.manifest.name.as_str(),
-                                 cpp_dependency.name.as_str()));
+                                 cpp_dependency.name.as_str())));
             }
         }
     }
@@ -1270,8 +1265,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                                     package_language));
             rstd_try(validate_package_metadata_arguments(package.manifest, arguments));
             if (! arguments.is_Cpp()) {
-                return adapter_failure<PackageMetadata>(rstd::format(
-                    "C package '{}' cannot declare compile tests", package.manifest.name.as_str()));
+                return Err(lito::package::PackageError::Message(
+                    rstd::format("C package '{}' cannot declare compile tests",
+                                 package.manifest.name.as_str())));
             }
             auto cpp_arguments = rstd::move(arguments.as_Cpp().layer);
             compile_tests.push(ResolvedCompileTestCase {
@@ -1295,14 +1291,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
             if (! selected.contains_key(cpp_dependency.name.as_str())) {
-                return adapter_failure<PackageMetadata>(rstd::format(
-                    "resolved dependency '{}' is missing", cpp_dependency.name.as_str()));
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "resolved dependency '{}' is missing", cpp_dependency.name.as_str())));
             }
             auto library = libraries.get(cpp_dependency.name.as_str());
             if (library.is_none()) {
-                return adapter_failure<PackageMetadata>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("resolved dependency '{}' has no library target",
-                                 cpp_dependency.name.as_str()));
+                                 cpp_dependency.name.as_str())));
             }
             dependencies.push(DependencySpec {
                 .target      = (**library).clone(),
@@ -1358,15 +1354,15 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
                 if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
                 if (! selected.contains_key(cpp_dependency.name.as_str())) {
-                    return adapter_failure<PackageMetadata>(
+                    return Err(lito::package::PackageError::Message(
                         rstd::format("resolved development dependency '{}' is missing",
-                                     cpp_dependency.name.as_str()));
+                                     cpp_dependency.name.as_str())));
                 }
                 auto library = libraries.get(cpp_dependency.name.as_str());
                 if (library.is_none()) {
-                    return adapter_failure<PackageMetadata>(
+                    return Err(lito::package::PackageError::Message(
                         rstd::format("resolved development dependency '{}' has no library target",
-                                     cpp_dependency.name.as_str()));
+                                     cpp_dependency.name.as_str())));
                 }
                 dev_dependencies.push(DependencySpec {
                     .target      = (**library).clone(),
@@ -1529,16 +1525,16 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
             }
             if (! direct) {
-                return adapter_failure<PackageMetadata>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "test target '{}::{}' can only attach a direct dependency, but '{}' is not one",
                     test.id.package.as_str(),
                     test.id.name.as_str(),
-                    declaration.package.as_str()));
+                    declaration.package.as_str())));
             }
             auto library_id = libraries.get(declaration.package.as_str());
             if (library_id.is_none()) {
-                return adapter_failure<PackageMetadata>(rstd::format(
-                    "test attachment dependency '{}' is missing", declaration.package.as_str()));
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "test attachment dependency '{}' is missing", declaration.package.as_str())));
             }
             const ResolvedTarget* library = nullptr;
             for (const auto& candidate : targets) {
@@ -1548,25 +1544,25 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
             }
             if (library == nullptr || library->artifact_kind != ArtifactKind::StaticLibrary) {
-                return adapter_failure<PackageMetadata>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("test target '{}::{}' cannot attach non-library package '{}'",
                                  test.id.package.as_str(),
                                  test.id.name.as_str(),
-                                 declaration.package.as_str()));
+                                 declaration.package.as_str())));
             }
             auto sources = Vec<PathBuf>::make();
             for (const auto& source : declaration.sources) {
                 if (contains_source(sources, source.as_path())) {
-                    return adapter_failure<PackageMetadata>(
+                    return Err(lito::package::PackageError::Message(
                         rstd::format("test attachment '{}' repeats source '{}'",
                                      declaration.package.as_str(),
-                                     source.as_path()));
+                                     source.as_path())));
                 }
                 if (contains_source(test.source.declared_sources, source.as_path())) {
-                    return adapter_failure<PackageMetadata>(
+                    return Err(lito::package::PackageError::Message(
                         rstd::format("test source '{}' cannot also attach to package '{}'",
                                      source.as_path(),
-                                     declaration.package.as_str()));
+                                     declaration.package.as_str())));
                 }
                 sources.push(source.clone());
             }
@@ -1608,8 +1604,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         Vec<lito::package::PackageTargetId>::with_capacity(selected_targets.len());
     for (const auto& target : selected_targets) {
         if (! selected.contains_key(target.package.as_str())) {
-            return adapter_failure<PackageMetadata>(
-                rstd::format("selected root package '{}' is missing", target.package.as_str()));
+            return Err(lito::package::PackageError::Message(
+                rstd::format("selected root package '{}' is missing", target.package.as_str())));
         }
         default_targets.push(target.clone());
     }
@@ -1617,8 +1613,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         Vec<lito::package::PackageTargetId>::with_capacity(available_targets.len());
     for (const auto& target : available_targets) {
         if (! selected.contains_key(target.package.as_str())) {
-            return adapter_failure<PackageMetadata>(
-                rstd::format("available target package '{}' is missing", target.package.as_str()));
+            return Err(lito::package::PackageError::Message(
+                rstd::format("available target package '{}' is missing", target.package.as_str())));
         }
         selectable_targets.push(target.clone());
     }
@@ -1741,11 +1737,11 @@ auto append_package_sources(PackageSpec& package, Vec<ResolvedTargetSources> sou
     for (usize index {}; index < source_sets.len(); ++index) {
         for (usize prior {}; prior < index; ++prior) {
             if (source_sets[prior].target == source_sets[index].target) {
-                return adapter_failure<empty>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "source discovery repeated target '{}::{}::{}'",
                     source_sets[index].target.package.as_str(),
                     lito::package::package_target_kind_name(source_sets[index].target.kind),
-                    source_sets[index].target.name.as_str()));
+                    source_sets[index].target.name.as_str())));
             }
         }
     }
@@ -1758,22 +1754,22 @@ auto append_package_sources(PackageSpec& package, Vec<ResolvedTargetSources> sou
             }
         }
         if (target_position.is_none()) {
-            return adapter_failure<empty>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("source discovery returned unknown target '{}::{}::{}'",
                              source_set.target.package.as_str(),
                              lito::package::package_target_kind_name(source_set.target.kind),
-                             source_set.target.name.as_str()));
+                             source_set.target.name.as_str())));
         }
         auto& target = package.targets[*target_position];
         for (auto& source : source_set.sources.sources) {
             for (const auto& existing : target.sources) {
                 if (existing.path.as_path() == source.canonical_path.as_path()) {
-                    return adapter_failure<empty>(rstd::format(
+                    return Err(lito::package::PackageError::Message(rstd::format(
                         "source discovery repeated source '{}' for target '{}::{}::{}'",
                         source.canonical_path.as_path(),
                         target.id.package.as_str(),
                         lito::package::package_target_kind_name(target.id.kind),
-                        target.id.name.as_str()));
+                        target.id.name.as_str())));
                 }
             }
             target.sources.push(TargetSource {

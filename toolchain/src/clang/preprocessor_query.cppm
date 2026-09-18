@@ -36,10 +36,9 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
         return Err(rstd::into<ToolchainError>(rstd::move(macro_output).unwrap_err()));
     }
     if (macro_output->exit_code != i32 {}) {
-        return environment_failure<SharedClangBuiltinEnvironmentSnapshot>(
-            rstd::format("clang++ -dM failed\n{}\n{}",
-                         command_text(macro_command).as_str(),
-                         macro_output->standard_error.as_str()));
+        return Err(ToolchainError::Message(rstd::format("clang++ -dM failed\n{}\n{}",
+                                                        command_text(macro_command).as_str(),
+                                                        macro_output->standard_error.as_str())));
     }
     auto macro_output_bytes = macro_output->standard_output.len();
     auto parsed =
@@ -87,8 +86,7 @@ auto query_clang_builtin_capability(const Vec<String>&                   base_co
     auto key   = capability_key(query);
     auto value = queried->values.get(key.as_str());
     if (value.is_none()) {
-        return environment_failure<QueriedBuiltinCapability>(
-            "clang builtin query returned no value"_str);
+        return Err(ToolchainError::Message("clang builtin query returned no value"_Str));
     }
     return Ok(QueriedBuiltinCapability {
         .value        = **value,
@@ -122,8 +120,8 @@ auto query_text_builtins(const Vec<String>&                base_command,
         return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
-        return environment_failure<TextBuiltinValues>(
-            rstd::format("clang text builtin query failed: {}", output->standard_error.as_str()));
+        return Err(ToolchainError::Message(
+            rstd::format("clang text builtin query failed: {}", output->standard_error.as_str())));
     }
     auto date = Option<String> {};
     auto time = Option<String> {};
@@ -141,27 +139,27 @@ auto query_text_builtins(const Vec<String>&                base_command,
                 value  = line.get(time_prefix.len(), line.len());
                 target = rstd::addressof(time);
             } else if (! line.is_empty()) {
-                return environment_failure<empty>(
-                    rstd::format("unexpected clang text builtin output: {}", line));
+                return Err(ToolchainError::Message(
+                    rstd::format("unexpected clang text builtin output: {}", line)));
             }
             if (target == nullptr) return Ok(empty {});
             auto text = value->trim_ascii();
             if (text.len() < usize(2) || text.as_bytes()[usize {}] != u8('"') ||
                 text.as_bytes()[text.len() - usize(1)] != u8('"')) {
-                return environment_failure<empty>(
-                    rstd::format("invalid clang text builtin value: {}", text));
+                return Err(ToolchainError::Message(
+                    rstd::format("invalid clang text builtin value: {}", text)));
             }
             auto inner = text.get(usize(1), text.len() - usize(1));
             if (inner.is_none()) {
-                return environment_failure<empty>("invalid clang text builtin boundary"_str);
+                return Err(ToolchainError::Message("invalid clang text builtin boundary"_Str));
             }
             *target = Some(String::make(*inner));
             return Ok(empty {});
         });
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     if (date.is_none() || time.is_none()) {
-        return environment_failure<TextBuiltinValues>(
-            "clang text builtin query returned an incomplete snapshot"_str);
+        return Err(ToolchainError::Message(
+            "clang text builtin query returned an incomplete snapshot"_Str));
     }
     return Ok(TextBuiltinValues {
         .date = rstd::move(date).unwrap(),
@@ -197,10 +195,9 @@ auto query_preprocessor_environment(const Vec<String>&                     base_
         return Err(rstd::into<ToolchainError>(rstd::move(include_output).unwrap_err()));
     }
     if (include_output->exit_code != i32 {}) {
-        return environment_failure<PreprocessorEnvironment>(
-            rstd::format("clang++ -E -v failed\n{}\n{}",
-                         command_text(include_command).as_str(),
-                         include_output->standard_error.as_str()));
+        return Err(ToolchainError::Message(rstd::format("clang++ -E -v failed\n{}\n{}",
+                                                        command_text(include_command).as_str(),
+                                                        include_output->standard_error.as_str())));
     }
     auto includes = parse_include_search(include_output->standard_error.as_str());
     if (includes.is_err()) return Err(rstd::move(includes).unwrap_err());

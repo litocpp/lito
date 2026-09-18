@@ -81,25 +81,25 @@ auto registry_package_id_text(const RegistryPackageId& id) -> String;
 auto lito::registry::RegistryId::parse(ref<str> value) -> RegistryValueResult<RegistryId> {
     auto parsed = lito::parse::HttpsUrl::parse(value);
     if (parsed.is_err()) {
-        return registry_value_failure<RegistryId>(
-            "registry identity must be a canonical HTTPS origin"_str);
+        return Err(
+            RegistryValueError::Message("registry identity must be a canonical HTTPS origin"_Str));
     }
     auto url = rstd::move(parsed).unwrap();
     if (url.url()->path() != "/"_str || url.url()->fragment().is_some() ||
         value.contains("?"_str) || ! value.ends_with("/"_str)) {
-        return registry_value_failure<RegistryId>(
-            "registry identity must contain only an HTTPS origin and trailing '/'"_str);
+        return Err(RegistryValueError::Message(
+            "registry identity must contain only an HTTPS origin and trailing '/'"_Str));
     }
     auto authority = url.url()->authority();
     if (authority.contains("@"_str) || authority.ends_with(":443"_str)) {
-        return registry_value_failure<RegistryId>(
-            "registry identity must not contain credentials or the default port"_str);
+        return Err(RegistryValueError::Message(
+            "registry identity must not contain credentials or the default port"_Str));
     }
     for (auto byte : authority.as_bytes()) {
         const auto ascii = byte.to_primitive();
         if (ascii >= 'A' && ascii <= 'Z') {
-            return registry_value_failure<RegistryId>(
-                "registry identity authority must use lowercase ASCII"_str);
+            return Err(RegistryValueError::Message(
+                "registry identity authority must use lowercase ASCII"_Str));
         }
     }
     return Ok(RegistryId(rstd::move(url)));
@@ -120,26 +120,26 @@ auto registry_name_is_reserved(ref<str> value) -> bool {
 auto lito::registry::RegistryPackageName::parse(ref<str> value)
     -> RegistryValueResult<RegistryPackageName> {
     if (value.is_empty() || value.len() > usize(64)) {
-        return registry_value_failure<RegistryPackageName>(
-            "registry package name must contain 1 to 64 ASCII bytes"_str);
+        return Err(RegistryValueError::Message(
+            "registry package name must contain 1 to 64 ASCII bytes"_Str));
     }
     for (usize index {}; index < value.len(); ++index) {
         const auto ascii   = value[index].to_primitive();
         const auto allowed = (ascii >= 'a' && ascii <= 'z') || (ascii >= '0' && ascii <= '9') ||
                              ascii == '-' || ascii == '_';
         if (! allowed) {
-            return registry_value_failure<RegistryPackageName>(
-                rstd::format("registry package name contains an invalid byte at {}", index));
+            return Err(RegistryValueError::Message(
+                rstd::format("registry package name contains an invalid byte at {}", index)));
         }
         if ((index == usize {} || index + usize(1) == value.len()) &&
             ! ((ascii >= 'a' && ascii <= 'z') || (ascii >= '0' && ascii <= '9'))) {
-            return registry_value_failure<RegistryPackageName>(
-                "registry package name must start and end with an ASCII letter or digit"_str);
+            return Err(RegistryValueError::Message(
+                "registry package name must start and end with an ASCII letter or digit"_Str));
         }
     }
     if (registry_name_is_reserved(value)) {
-        return registry_value_failure<RegistryPackageName>(
-            "registry package name is reserved by portable filesystems"_str);
+        return Err(RegistryValueError::Message(
+            "registry package name is reserved by portable filesystems"_Str));
     }
     return Ok(RegistryPackageName(String::make(value)));
 }

@@ -13,16 +13,6 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
 
-namespace lito::tools
-{
-
-template<typename T>
-auto clang_format_failure(ref<str> message) -> ToolResult<T> {
-    return Err(ToolError::Message(String::make(message)));
-}
-
-} // namespace lito::tools
-
 export namespace lito::tools
 {
 
@@ -37,8 +27,7 @@ public:
         auto version = rstd_try(
             command::tool_output(rstd::move(arguments), "clang-format --version"_str, environment));
         if (! version.as_str().contains("clang-format version"_str)) {
-            return clang_format_failure<ClangFormat>(
-                "configured formatter is not clang-format"_str);
+            return Err(ToolError::Message("configured formatter is not clang-format"_Str));
         }
         return Ok(
             ClangFormat { rstd::move(path), rstd::move(version), rstd::addressof(environment) });

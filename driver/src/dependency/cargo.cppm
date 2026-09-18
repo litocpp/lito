@@ -24,7 +24,7 @@ namespace lito
 auto cargo_error(ref<str> context, lito::tools::ToolError error)
     -> lito::dependency::DependencyError {
     return lito::dependency::DependencyError::Provider(
-        String::make(context), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
+        context.into(), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
 }
 
 auto cargo_profile_source(const Option<String>& source, const cpp::ProfileSpec& profile)
@@ -53,13 +53,12 @@ auto cargo_optimization(ref<str>                                            owne
     case Native::Level4:
     case Native::Debug:
     case Native::Fast:
-        return lito::dependency::dependency_failure<
-            Option<lito::tools::cargo::ProfileOptimization>>(rstd::format(
+        return Err(lito::dependency::DependencyError::Message(rstd::format(
             "Cargo dependency '{}:{}' cannot represent Lito optimization '{}' selected by {}",
             owner,
             declaration.alias.as_str(),
             cpp::cpp_optimization_option(*native.optimization),
-            cargo_profile_source(native.sources.optimization, profile)));
+            cargo_profile_source(native.sources.optimization, profile))));
     case Native::Default: break;
     }
     __builtin_unreachable();
@@ -151,16 +150,16 @@ auto cargo_target(const lito::tools::cargo::Provider& provider, const BuildPlatf
     -> lito::dependency::DependencyResult<String> {
     if (platform.cross || platform.intent != BuildTargetIntent::Native ||
         platform.effective_target.triple != platform.compiler_default.triple.as_str()) {
-        return lito::dependency::dependency_failure<String>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("Cargo external dependencies do not yet support cross target '{}'",
-                         platform.effective_target.triple.as_str()));
+                         platform.effective_target.triple.as_str())));
     }
     auto parsed = parse_target_info(provider.host_target.as_str());
     if (parsed.is_err()) {
-        return lito::dependency::dependency_failure<String>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("Cargo provider host target '{}' is invalid: {}",
                          provider.host_target.as_str(),
-                         rstd::move(parsed).unwrap_err()));
+                         rstd::move(parsed).unwrap_err())));
     }
     const auto& cargo     = *parsed;
     const auto& lito      = platform.effective_target;
@@ -168,10 +167,10 @@ auto cargo_target(const lito::tools::cargo::Provider& provider, const BuildPlatf
                             cargo.platform == TargetPlatform::Macos ||
                             (cargo.platform == TargetPlatform::Windows && cargo.is_msvc());
     if (! supported || ! cargo.is_abi_compatible_with(lito)) {
-        return lito::dependency::dependency_failure<String>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("Cargo host target '{}' does not match Lito target '{}'",
                          provider.host_target.as_str(),
-                         lito.triple.as_str()));
+                         lito.triple.as_str())));
     }
     return Ok(provider.host_target.clone());
 }
@@ -185,15 +184,14 @@ auto cargo_source(const cpp::ExternalSourceRootCatalog& catalog,
     for (const auto& source : catalog.sources) {
         if (source.package != package || source.name != name) continue;
         if (result != nullptr) {
-            return lito::dependency::dependency_failure<const cpp::ExternalSourceRoot*>(
-                rstd::format(
-                    "Cargo dependency '{}' external source '{}' is ambiguous", alias, name));
+            return Err(lito::dependency::DependencyError::Message(rstd::format(
+                "Cargo dependency '{}' external source '{}' is ambiguous", alias, name)));
         }
         result = rstd::addressof(source);
     }
     if (result == nullptr) {
-        return lito::dependency::dependency_failure<const cpp::ExternalSourceRoot*>(rstd::format(
-            "Cargo dependency '{}' external source '{}' was not materialized", alias, name));
+        return Err(lito::dependency::DependencyError::Message(rstd::format(
+            "Cargo dependency '{}' external source '{}' was not materialized", alias, name)));
     }
     return Ok(result);
 }
@@ -373,9 +371,9 @@ auto resolve_cargo_dependencies(
             for (auto& artifact : snapshot->artifacts) {
                 auto name = artifact.executable.as_path().file_name();
                 if (name.is_none()) {
-                    return lito::dependency::dependency_failure<ResolvedCargoDependencies>(
+                    return Err(lito::dependency::DependencyError::Message(
                         rstd::format("Cargo binary artifact '{}' has no file name",
-                                     artifact.executable.as_path()));
+                                     artifact.executable.as_path())));
                 }
                 auto entries = Vec<lito::dependency::ExternalAssetEntry>::make();
                 entries.push(lito::dependency::ExternalAssetEntry {
@@ -407,8 +405,8 @@ auto resolve_cargo_dependencies(
         }
         auto archive = snapshot->archive.as_path().to_str();
         if (archive.is_none()) {
-            return lito::dependency::dependency_failure<ResolvedCargoDependencies>(rstd::format(
-                "Cargo artifact '{}' is not valid UTF-8", snapshot->archive.as_path()));
+            return Err(lito::dependency::DependencyError::Message(rstd::format(
+                "Cargo artifact '{}' is not valid UTF-8", snapshot->archive.as_path())));
         }
         auto link_arguments =
             Vec<String>::with_capacity(snapshot->native_link_arguments.len() + usize(1));

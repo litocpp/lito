@@ -32,8 +32,7 @@ private:
                 tokens_[index_].expansion));
         }
         if (! tokens_.is_empty()) {
-            return Err(
-                Error::at(String::make(message), tokens_[tokens_.len() - usize(1)].expansion));
+            return Err(Error::at(message.into(), tokens_[tokens_.len() - usize(1)].expansion));
         }
         return Err(Error::make(message));
     }

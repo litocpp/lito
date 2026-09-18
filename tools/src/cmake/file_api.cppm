@@ -22,13 +22,14 @@ export namespace lito::tools::cmake
 auto read_json(ref<rstd::path::Path> path, ref<str> context) -> lito::tools::ToolResult<Json> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return cmake_io_failure<Json>(
-            rstd::format("read {}", context).as_str(), path, rstd::move(contents).unwrap_err());
+        return Err(lito::tools::ToolError::Io((rstd::format("read {}", context).as_str()).into(),
+                                              PathBuf::from(path),
+                                              rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
         return Err(lito::tools::ToolError::Json(
-            String::make(context), PathBuf::from(path), rstd::move(parsed).unwrap_err()));
+            context.into(), PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     return Ok(rstd::move(parsed).unwrap());
 }
@@ -37,7 +38,8 @@ auto required_json_member(const Json& value, ref<str> key, ref<str> context)
     -> lito::tools::ToolResult<ref<Json>> {
     auto member = value.get(key);
     if (member.is_none()) {
-        return cmake_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
+        return Err(
+            lito::tools::ToolError::Message(rstd::format("{} is missing '{}'", context, key)));
     }
     return Ok(*member);
 }
@@ -48,7 +50,8 @@ auto required_json_string(const Json& value, ref<str> key, ref<str> context)
     if (member.is_err()) return Err(rstd::move(member).unwrap_err());
     auto text = (**member).as_str();
     if (text.is_none()) {
-        return cmake_failure<ref<str>>(rstd::format("{}.{} must be a string", context, key));
+        return Err(
+            lito::tools::ToolError::Message(rstd::format("{}.{} must be a string", context, key)));
     }
     return Ok(*text);
 }
@@ -59,7 +62,8 @@ auto required_json_array(const Json& value, ref<str> key, ref<str> context)
     if (member.is_err()) return Err(rstd::move(member).unwrap_err());
     auto array = (**member).as_array();
     if (array.is_none()) {
-        return cmake_failure<ref<JsonArray>>(rstd::format("{}.{} must be an array", context, key));
+        return Err(
+            lito::tools::ToolError::Message(rstd::format("{}.{} must be an array", context, key)));
     }
     return Ok(*array);
 }
@@ -67,16 +71,18 @@ auto required_json_array(const Json& value, ref<str> key, ref<str> context)
 auto current_reply_index(ref<rstd::path::Path> reply) -> lito::tools::ToolResult<PathBuf> {
     auto opened = rstd::fs::read_dir(reply);
     if (opened.is_err()) {
-        return cmake_io_failure<PathBuf>(
-            "enumerate CMake File API reply"_str, reply, rstd::move(opened).unwrap_err());
+        return Err(lito::tools::ToolError::Io("enumerate CMake File API reply"_Str,
+                                              PathBuf::from(reply),
+                                              rstd::move(opened).unwrap_err()));
     }
     auto selected      = Option<PathBuf> {};
     auto selected_name = String::make();
     auto entries       = rstd::move(opened).unwrap();
     for (auto entry : entries) {
         if (entry.is_err()) {
-            return cmake_io_failure<PathBuf>(
-                "enumerate CMake File API reply"_str, reply, rstd::move(entry).unwrap_err());
+            return Err(lito::tools::ToolError::Io("enumerate CMake File API reply"_Str,
+                                                  PathBuf::from(reply),
+                                                  rstd::move(entry).unwrap_err()));
         }
         auto value = rstd::move(entry).unwrap();
         auto name  = value.file_name().into_string();
@@ -91,7 +97,7 @@ auto current_reply_index(ref<rstd::path::Path> reply) -> lito::tools::ToolResult
         }
     }
     if (selected.is_none()) {
-        return cmake_failure<PathBuf>("CMake File API produced no reply index"_str);
+        return Err(lito::tools::ToolError::Message("CMake File API produced no reply index"_Str));
     }
     return Ok(rstd::move(selected).unwrap());
 }
@@ -114,7 +120,8 @@ auto codemodel_path(const CMakeWorkArea& area) -> lito::tools::ToolResult<PathBu
         required_json_array(**query, "responses"_str, "CMake File API query reply"_str);
     if (responses.is_err()) return Err(rstd::move(responses).unwrap_err());
     if ((**responses).is_empty()) {
-        return cmake_failure<PathBuf>("CMake File API query returned no response"_str);
+        return Err(
+            lito::tools::ToolError::Message("CMake File API query returned no response"_Str));
     }
     auto file = required_json_string(
         (**responses)[usize {}], "jsonFile"_str, "CMake File API codemodel response"_str);
@@ -137,7 +144,7 @@ auto probe_target_paths(const CMakeWorkArea& area, const Request& requirement)
     auto configurations = required_json_array(*model, "configurations"_str, "CMake codemodel"_str);
     if (configurations.is_err()) return Err(rstd::move(configurations).unwrap_err());
     if ((**configurations).is_empty()) {
-        return cmake_failure<ProbeTargets>("CMake codemodel has no configuration"_str);
+        return Err(lito::tools::ToolError::Message("CMake codemodel has no configuration"_Str));
     }
     auto targets = required_json_array(
         (**configurations)[usize {}], "targets"_str, "CMake codemodel configuration"_str);
@@ -168,12 +175,13 @@ auto probe_target_paths(const CMakeWorkArea& area, const Request& requirement)
         }
     }
     if (baseline.is_none() || combined.is_none()) {
-        return cmake_failure<ProbeTargets>("CMake codemodel is missing probe targets"_str);
+        return Err(lito::tools::ToolError::Message("CMake codemodel is missing probe targets"_Str));
     }
     auto resolved_dependencies = Vec<PathBuf>::with_capacity(dependencies.len());
     for (auto& dependency : dependencies) {
         if (dependency.is_none()) {
-            return cmake_failure<ProbeTargets>("CMake codemodel is missing probe targets"_str);
+            return Err(
+                lito::tools::ToolError::Message("CMake codemodel is missing probe targets"_Str));
         }
         resolved_dependencies.push(rstd::move(dependency).unwrap());
     }
@@ -204,7 +212,7 @@ auto compile_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> 
     if (groups.is_none()) return Ok(rstd::move(result));
     auto array = (**groups).as_array();
     if (array.is_none())
-        return cmake_failure<Vec<String>>("CMake compileGroups is not an array"_str);
+        return Err(lito::tools::ToolError::Message("CMake compileGroups is not an array"_Str));
     for (const auto& group : **array) {
         auto language = required_json_string(group, "language"_str, "CMake compile group"_str);
         if (language.is_err()) return Err(rstd::move(language).unwrap_err());
@@ -213,7 +221,8 @@ auto compile_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> 
         if (fragments.is_some()) {
             auto values = (**fragments).as_array();
             if (values.is_none()) {
-                return cmake_failure<Vec<String>>("CMake compile fragments is not an array"_str);
+                return Err(
+                    lito::tools::ToolError::Message("CMake compile fragments is not an array"_Str));
             }
             for (const auto& fragment : **values) {
                 auto text =
@@ -226,7 +235,7 @@ auto compile_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> 
         if (definitions.is_some()) {
             auto values = (**definitions).as_array();
             if (values.is_none())
-                return cmake_failure<Vec<String>>("CMake defines is not an array"_str);
+                return Err(lito::tools::ToolError::Message("CMake defines is not an array"_Str));
             for (const auto& definition : **values) {
                 auto text = required_json_string(definition, "define"_str, "CMake definition"_str);
                 if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -237,7 +246,7 @@ auto compile_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> 
         if (includes.is_some()) {
             auto values = (**includes).as_array();
             if (values.is_none())
-                return cmake_failure<Vec<String>>("CMake includes is not an array"_str);
+                return Err(lito::tools::ToolError::Message("CMake includes is not an array"_Str));
             for (const auto& include : **values) {
                 auto path = required_json_string(include, "path"_str, "CMake include"_str);
                 if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -246,7 +255,8 @@ auto compile_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> 
                 if (system.is_some()) {
                     auto value = (**system).as_bool();
                     if (value.is_none())
-                        return cmake_failure<Vec<String>>("CMake isSystem is not a boolean"_str);
+                        return Err(
+                            lito::tools::ToolError::Message("CMake isSystem is not a boolean"_Str));
                     is_system = *value;
                 }
                 if (is_system) {
@@ -270,7 +280,7 @@ auto link_tokens(const Json& target) -> lito::tools::ToolResult<Vec<String>> {
     if (fragments.is_none()) return Ok(rstd::move(result));
     auto values = (**fragments).as_array();
     if (values.is_none())
-        return cmake_failure<Vec<String>>("CMake link fragments is not an array"_str);
+        return Err(lito::tools::ToolError::Message("CMake link fragments is not an array"_Str));
     for (const auto& fragment : **values) {
         auto text = required_json_string(fragment, "fragment"_str, "CMake link fragment"_str);
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -342,74 +352,74 @@ auto validate_asset_snapshot(const CMakeWorkArea&  area,
         auto& set = sets[set_index];
         if (set.name.is_empty() || set.name.as_str().contains("\t"_str) ||
             set.name.as_str().contains("\r"_str) || set.name.as_str().contains("\n"_str)) {
-            return cmake_failure<Vec<ExternalAssetSet>>("CMake asset set has an invalid name"_Str);
+            return Err(lito::tools::ToolError::Message("CMake asset set has an invalid name"_Str));
         }
         for (usize prior {}; prior < set_index; ++prior) {
             if (sets[prior].name == set.name.as_str()) {
-                return cmake_failure<Vec<ExternalAssetSet>>(
+                return Err(lito::tools::ToolError::Message(
                     rstd::format("CMake asset set '{}:{}' is declared more than once",
                                  requirement.alias.as_str(),
-                                 set.name.as_str()));
+                                 set.name.as_str())));
             }
         }
         set.alias = requirement.alias.clone();
         if (set.disposition == ExternalAssetDisposition::Provided) {
             if (! set.entries.is_empty()) {
-                return cmake_failure<Vec<ExternalAssetSet>>(
+                return Err(lito::tools::ToolError::Message(
                     rstd::format("provided CMake asset set '{}:{}' contains materialized entries",
                                  requirement.alias.as_str(),
-                                 set.name.as_str()));
+                                 set.name.as_str())));
             }
             continue;
         }
         if (set.entries.is_empty()) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
+            return Err(lito::tools::ToolError::Message(
                 rstd::format("materialized CMake asset set '{}:{}' is empty",
                              requirement.alias.as_str(),
-                             set.name.as_str()));
+                             set.name.as_str())));
         }
         for (usize entry_index {}; entry_index < set.entries.len(); ++entry_index) {
             auto& entry   = set.entries[entry_index];
             auto  logical = entry.logical_path.as_path().to_str();
             if (logical.is_none() || ! normal_asset_path(*logical)) {
-                return cmake_failure<Vec<ExternalAssetSet>>(
+                return Err(lito::tools::ToolError::Message(
                     rstd::format("CMake asset set '{}:{}' contains invalid path '{}'",
                                  requirement.alias.as_str(),
                                  set.name.as_str(),
-                                 entry.logical_path.as_path()));
+                                 entry.logical_path.as_path())));
             }
             for (usize prior {}; prior < entry_index; ++prior) {
                 if (set.entries[prior].logical_path.as_path() == entry.logical_path.as_path()) {
-                    return cmake_failure<Vec<ExternalAssetSet>>(
+                    return Err(lito::tools::ToolError::Message(
                         rstd::format("CMake asset set '{}:{}' repeats path '{}'",
                                      requirement.alias.as_str(),
                                      set.name.as_str(),
-                                     entry.logical_path.as_path()));
+                                     entry.logical_path.as_path())));
                 }
             }
             if (! entry.source.as_path().is_absolute()) {
-                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                    "CMake asset source '{}' is not absolute", entry.source.as_path()));
+                return Err(lito::tools::ToolError::Message(rstd::format(
+                    "CMake asset source '{}' is not absolute", entry.source.as_path())));
             }
             auto metadata = rstd::fs::symlink_metadata(entry.source.as_path());
             if (metadata.is_err()) {
-                return cmake_io_failure<Vec<ExternalAssetSet>>("inspect CMake asset"_str,
-                                                               entry.source.as_path(),
-                                                               rstd::move(metadata).unwrap_err());
+                return Err(lito::tools::ToolError::Io("inspect CMake asset"_Str,
+                                                      PathBuf::from(entry.source.as_path()),
+                                                      rstd::move(metadata).unwrap_err()));
             }
             if (! metadata->is_file() || metadata->is_symlink()) {
-                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                    "CMake asset '{}' is not a regular non-symlink file", entry.source.as_path()));
+                return Err(lito::tools::ToolError::Message(rstd::format(
+                    "CMake asset '{}' is not a regular non-symlink file", entry.source.as_path())));
             }
             auto canonical = rstd::fs::canonicalize(entry.source.as_path());
             if (canonical.is_err()) {
-                return cmake_io_failure<Vec<ExternalAssetSet>>("resolve CMake asset"_str,
-                                                               entry.source.as_path(),
-                                                               rstd::move(canonical).unwrap_err());
+                return Err(lito::tools::ToolError::Io("resolve CMake asset"_Str,
+                                                      PathBuf::from(entry.source.as_path()),
+                                                      rstd::move(canonical).unwrap_err()));
             }
             if (! asset_source_allowed(area, requirement, canonical->as_path())) {
-                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                    "CMake asset '{}' is outside dependency-owned roots", canonical->as_path()));
+                return Err(lito::tools::ToolError::Message(rstd::format(
+                    "CMake asset '{}' is outside dependency-owned roots", canonical->as_path())));
             }
             entry.source = rstd::move(canonical).unwrap();
         }
@@ -422,16 +432,17 @@ auto read_asset_snapshot(const CMakeWorkArea& area, const Request& requirement)
     auto path     = area.query_build.join(PathBuf::from("lito-assets-v2.txt"_str).as_path());
     auto contents = rstd::fs::read_to_string(path.as_path());
     if (contents.is_err()) {
-        return cmake_io_failure<Vec<ExternalAssetSet>>(
-            "read CMake asset receipt"_str, path.as_path(), rstd::move(contents).unwrap_err());
+        return Err(lito::tools::ToolError::Io("read CMake asset receipt"_Str,
+                                              PathBuf::from(path.as_path()),
+                                              rstd::move(contents).unwrap_err()));
     }
     auto remaining   = contents->as_str();
     auto header      = remaining.split_once("\n"_str);
     auto header_line = header.is_some() ? header->get<0>() : ref<str> {};
     if (auto line = header_line.strip_suffix("\r"_str); line.is_some()) header_line = *line;
     if (header.is_none() || header_line != "lito-cmake-assets-v2"_str) {
-        return cmake_failure<Vec<ExternalAssetSet>>(
-            rstd::format("CMake asset receipt '{}' has an unsupported schema", path.as_path()));
+        return Err(lito::tools::ToolError::Message(
+            rstd::format("CMake asset receipt '{}' has an unsupported schema", path.as_path())));
     }
     remaining = header->get<1>();
     auto sets = Vec<ExternalAssetSet>::make();
@@ -445,25 +456,25 @@ auto read_asset_snapshot(const CMakeWorkArea& area, const Request& requirement)
         if (line.is_empty()) continue;
         auto kind = line.split_once("\t"_str);
         if (kind.is_none()) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
-                rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake asset receipt '{}' contains an invalid entry", path.as_path())));
         }
         if (kind->get<0>() == "set"_str) {
             auto declaration = kind->get<1>().split_once("\t"_str);
             if (declaration.is_none() || declaration->get<0>().is_empty() ||
                 declaration->get<1>().contains("\t"_str)) {
-                return cmake_failure<Vec<ExternalAssetSet>>(
+                return Err(lito::tools::ToolError::Message(
                     rstd::format("CMake asset receipt '{}' contains an invalid set declaration",
-                                 path.as_path()));
+                                 path.as_path())));
             }
             auto disposition = ExternalAssetDisposition::Materialized;
             if (declaration->get<1>() == "provided"_str) {
                 disposition = ExternalAssetDisposition::Provided;
             } else if (declaration->get<1>() != "materialized"_str) {
-                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                return Err(lito::tools::ToolError::Message(rstd::format(
                     "CMake asset receipt '{}' contains an unknown set disposition '{}'",
                     path.as_path(),
-                    declaration->get<1>()));
+                    declaration->get<1>())));
             }
             ExternalAssetSet* set = nullptr;
             for (auto& candidate : sets) {
@@ -481,34 +492,34 @@ auto read_asset_snapshot(const CMakeWorkArea& area, const Request& requirement)
             continue;
         }
         if (kind->get<0>() != "entry"_str) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
-                rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake asset receipt '{}' contains an invalid entry", path.as_path())));
         }
         auto named = kind->get<1>().split_once("\t"_str);
         if (named.is_none()) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
-                rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake asset receipt '{}' contains an invalid entry", path.as_path())));
         }
         auto entry = named->get<1>().split_once("\t"_str);
         if (entry.is_none() || entry->get<1>().contains("\t"_str)) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
-                rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake asset receipt '{}' contains an invalid entry", path.as_path())));
         }
         ExternalAssetSet* set = nullptr;
         for (auto& candidate : sets) {
             if (candidate.name == named->get<0>()) set = rstd::addressof(candidate);
         }
         if (set == nullptr) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
+            return Err(lito::tools::ToolError::Message(
                 rstd::format("CMake asset receipt '{}' contains an entry for undeclared set '{}'",
                              path.as_path(),
-                             named->get<0>()));
+                             named->get<0>())));
         }
         if (set->disposition == ExternalAssetDisposition::Provided) {
-            return cmake_failure<Vec<ExternalAssetSet>>(
+            return Err(lito::tools::ToolError::Message(
                 rstd::format("CMake asset receipt '{}' appends an entry to provided set '{}'",
                              path.as_path(),
-                             named->get<0>()));
+                             named->get<0>())));
         }
         set->entries.push(ExternalAssetEntry {
             .logical_path = PathBuf::from(entry->get<0>()),
@@ -539,14 +550,15 @@ auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirem
     auto path     = area.query_build.join(PathBuf::from("lito-host-tools-v1.txt"_str).as_path());
     auto contents = rstd::fs::read_to_string(path.as_path());
     if (contents.is_err()) {
-        return cmake_io_failure<Vec<CMakeHostToolSnapshot>>(
-            "read CMake host tool snapshot"_str, path.as_path(), rstd::move(contents).unwrap_err());
+        return Err(lito::tools::ToolError::Io("read CMake host tool snapshot"_Str,
+                                              PathBuf::from(path.as_path()),
+                                              rstd::move(contents).unwrap_err()));
     }
     auto remaining = contents->as_str();
     auto header    = remaining.split_once("\n"_str);
     if (header.is_none() || header->template get<0>() != "lito-cmake-host-tools-v1"_str) {
-        return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
-            "CMake host tool snapshot '{}' has an unsupported schema", path.as_path()));
+        return Err(lito::tools::ToolError::Message(rstd::format(
+            "CMake host tool snapshot '{}' has an unsupported schema", path.as_path())));
     }
     remaining   = header->template get<1>();
     auto result = Vec<CMakeHostToolSnapshot>::make();
@@ -561,43 +573,44 @@ auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirem
         auto targeted = named.is_some() ? named->template get<1>().split_once("\t"_str) : None();
         if (kind.is_none() || kind->template get<0>() != "tool"_str || named.is_none() ||
             targeted.is_none() || targeted->template get<1>().contains("\t"_str)) {
-            return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
-                "CMake host tool snapshot '{}' contains an invalid entry", path.as_path()));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake host tool snapshot '{}' contains an invalid entry", path.as_path())));
         }
         if (result.len() >= requirement.host_tools.len()) {
-            return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
-                "CMake host tool snapshot '{}' contains unexpected entries", path.as_path()));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake host tool snapshot '{}' contains unexpected entries", path.as_path())));
         }
         const auto& expected = requirement.host_tools[result.len()];
         if (named->template get<0>() != expected.name.as_str() ||
             targeted->template get<0>() != expected.target.as_str()) {
-            return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
+            return Err(lito::tools::ToolError::Message(rstd::format(
                 "CMake host tool snapshot '{}' does not match declared tool '{}' target '{}'",
                 path.as_path(),
                 expected.name.as_str(),
-                expected.target.as_str()));
+                expected.target.as_str())));
         }
         auto executable = PathBuf::from(targeted->template get<1>());
         auto canonical  = rstd::fs::canonicalize(executable.as_path());
         if (canonical.is_err()) {
-            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("resolve CMake host tool"_str,
-                                                                executable.as_path(),
-                                                                rstd::move(canonical).unwrap_err());
+            return Err(lito::tools::ToolError::Io("resolve CMake host tool"_Str,
+                                                  PathBuf::from(executable.as_path()),
+                                                  rstd::move(canonical).unwrap_err()));
         }
         auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
         if (metadata.is_err()) {
-            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("inspect CMake host tool"_str,
-                                                                canonical->as_path(),
-                                                                rstd::move(metadata).unwrap_err());
+            return Err(lito::tools::ToolError::Io("inspect CMake host tool"_Str,
+                                                  PathBuf::from(canonical->as_path()),
+                                                  rstd::move(metadata).unwrap_err()));
         }
         if (! metadata->is_file()) {
-            return cmake_failure<Vec<CMakeHostToolSnapshot>>(
-                rstd::format("CMake host tool '{}' is not a file", canonical->as_path()));
+            return Err(lito::tools::ToolError::Message(
+                rstd::format("CMake host tool '{}' is not a file", canonical->as_path())));
         }
         auto bytes = rstd::fs::read(canonical->as_path());
         if (bytes.is_err()) {
-            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>(
-                "read CMake host tool"_str, canonical->as_path(), rstd::move(bytes).unwrap_err());
+            return Err(lito::tools::ToolError::Io("read CMake host tool"_Str,
+                                                  PathBuf::from(canonical->as_path()),
+                                                  rstd::move(bytes).unwrap_err()));
         }
         result.push(CMakeHostToolSnapshot {
             .name       = expected.name.clone(),
@@ -607,11 +620,11 @@ auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirem
         });
     }
     if (result.len() != requirement.host_tools.len()) {
-        return cmake_failure<Vec<CMakeHostToolSnapshot>>(
+        return Err(lito::tools::ToolError::Message(
             rstd::format("CMake host tool snapshot '{}' has {} tools, expected {}",
                          path.as_path(),
                          result.len(),
-                         requirement.host_tools.len()));
+                         requirement.host_tools.len())));
     }
     return Ok(rstd::move(result));
 }

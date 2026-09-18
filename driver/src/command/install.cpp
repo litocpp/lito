@@ -27,16 +27,6 @@ namespace lito
 {
 
 template<typename T>
-auto install_failure(String message) -> InstallResult<T> {
-    return Err(InstallError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto install_failure(ref<str> message) -> InstallResult<T> {
-    return Err(InstallError::Message(String::make(message)));
-}
-
-template<typename T>
 auto install_project_failure(ProjectResult<T> result) -> InstallResult<T> {
     if (result.is_ok()) return Ok(rstd::move(result).unwrap());
     return Err(InstallError::Build(BuildError::Project(rstd::move(result).unwrap_err())));
@@ -58,8 +48,8 @@ auto resolve_install_recipes(const lito::package::ResolvedPackageSelection& sele
     auto recipes         = Vec<InstallRecipe>::make();
     for (const auto& owner : selected_owners) {
         if (owner.direct && owner.script.is_some() && ! binaries.is_empty()) {
-            return install_failure<Vec<InstallRecipe>>(rstd::format(
-                "--bin cannot filter install recipe package '{}'", owner.name.as_str()));
+            return Err(InstallError::Message(rstd::format(
+                "--bin cannot filter install recipe package '{}'", owner.name.as_str())));
         }
         if (owner.script.is_some()) {
             recipes.push(rstd_try(execute_install_script(
@@ -99,8 +89,8 @@ auto resolve_install_recipes(const lito::package::ResolvedPackageSelection& sele
             });
         }
         if (recipe.artifacts.is_empty()) {
-            return install_failure<Vec<InstallRecipe>>(rstd::format(
-                "package '{}' has no selected installable binaries", owner.name.as_str()));
+            return Err(InstallError::Message(rstd::format(
+                "package '{}' has no selected installable binaries", owner.name.as_str())));
         }
         recipes.push(rstd::move(recipe));
     }
@@ -128,9 +118,9 @@ auto publish_install(InstallRequest&                   request,
             environment, request.build.tools.clone(), request.build.tool_reporter);
         auto resolved_strip = resolver.require(lito::tools::Tool::Strip, *strip_requirement);
         if (resolved_strip.is_err()) {
-            return install_failure<InstallSummary>(
-                rstd::format("cannot resolve LLVM strip executable: {}",
-                             rstd::move(resolved_strip).unwrap_err()));
+            return Err(
+                InstallError::Message(rstd::format("cannot resolve LLVM strip executable: {}",
+                                                   rstd::move(resolved_strip).unwrap_err())));
         }
         strip_provider =
             Some(LlvmStrip(rstd::move(resolved_strip).unwrap().executable, environment));
@@ -199,8 +189,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         request.build.profile = Some(lito::manifest::BuildProfileName { .value = "release"_Str });
     }
     if (! request.build.targets.is_empty()) {
-        return install_failure<InstallSummary>(
-            "install build targets must be selected through install binaries"_str);
+        return Err(InstallError::Message(
+            "install build targets must be selected through install binaries"_Str));
     }
     const auto profile = request.build.profile->as_str();
 
@@ -211,10 +201,10 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                                   profile));
         auto target = lito::system::parse_target_info(product.target.as_str());
         if (target.is_err()) {
-            return install_failure<InstallSummary>(
-                rstd::format("completed build target '{}' is invalid: {}",
-                             product.target.as_str(),
-                             rstd::move(target).unwrap_err()));
+            return Err(
+                InstallError::Message(rstd::format("completed build target '{}' is invalid: {}",
+                                                   product.target.as_str(),
+                                                   rstd::move(target).unwrap_err())));
         }
         auto effective_target = rstd::move(target).unwrap();
         rstd_try(validate_completed_build_product(
@@ -222,8 +212,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
 
         auto environment = ResolvedProcessEnvironment::resolve(request.build.environment);
         if (environment.is_err()) {
-            return install_failure<InstallSummary>(
-                rstd::format("cannot resolve install environment: {}", environment.unwrap_err()));
+            return Err(InstallError::Message(
+                rstd::format("cannot resolve install environment: {}", environment.unwrap_err())));
         }
         auto sources    = request.build.sources.clone();
         sources.network = lito::source::NetworkPolicy::Offline;
@@ -262,8 +252,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
 
     auto environment = ResolvedProcessEnvironment::resolve(request.build.environment);
     if (environment.is_err()) {
-        return install_failure<InstallSummary>(
-            rstd::format("cannot resolve install environment: {}", environment.unwrap_err()));
+        return Err(InstallError::Message(
+            rstd::format("cannot resolve install environment: {}", environment.unwrap_err())));
     }
     auto resolver = lito::tools::ToolResolver(
         *environment, request.build.tools.clone(), request.build.tool_reporter);

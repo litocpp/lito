@@ -35,23 +35,6 @@ struct ConfigMutationSession {
     ConfigDocument     document;
 };
 
-template<typename T>
-auto document_failure(String message) -> ConfigResult<T> {
-    return Err(ConfigError::Schema(rstd::move(message)));
-}
-
-template<typename T>
-auto document_failure(ref<str> message) -> ConfigResult<T> {
-    return Err(ConfigError::Schema(String::make(message)));
-}
-
-template<typename T>
-auto document_io_failure(ref<str>               operation,
-                         ref<rstd::path::Path>  path,
-                         rstd::io::error::Error source) -> ConfigResult<T> {
-    return Err(ConfigError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto is_not_found(const rstd::io::error::Error& error) noexcept -> bool {
     return error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound };
 }
@@ -59,18 +42,20 @@ auto is_not_found(const rstd::io::error::Error& error) noexcept -> bool {
 auto resolve_config_location(ref<rstd::path::Path> requested_root) -> ConfigResult<ConfigLocation> {
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
-        return document_io_failure<ConfigLocation>(
-            "resolve project root"_str, requested_root, rstd::move(canonical).unwrap_err());
+        return Err(ConfigError::Io("resolve project root"_Str,
+                                   PathBuf::from(requested_root),
+                                   rstd::move(canonical).unwrap_err()));
     }
     auto root     = rstd::move(canonical).unwrap();
     auto metadata = rstd::fs::metadata(root.as_path());
     if (metadata.is_err()) {
-        return document_io_failure<ConfigLocation>(
-            "inspect project root"_str, root.as_path(), rstd::move(metadata).unwrap_err());
+        return Err(ConfigError::Io("inspect project root"_Str,
+                                   PathBuf::from(root.as_path()),
+                                   rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return document_failure<ConfigLocation>(
-            rstd::format("project root '{}' is not a directory", root.as_path()));
+        return Err(ConfigError::Schema(
+            rstd::format("project root '{}' is not a directory", root.as_path())));
     }
     auto directory   = root.join(PathBuf::from(".lito"_str).as_path());
     auto shared_path = root.join(PathBuf::from("lito-config.toml"_str).as_path());
@@ -95,12 +80,13 @@ auto inspect_ordinary_file(ref<rstd::path::Path> path, ref<str> description) -> 
     if (metadata.is_err()) {
         auto error = rstd::move(metadata).unwrap_err();
         if (is_not_found(error)) return Ok(false);
-        return document_io_failure<bool>(
-            rstd::format("inspect {}", description).as_str(), path, rstd::move(error));
+        return Err(ConfigError::Io((rstd::format("inspect {}", description).as_str()).into(),
+                                   PathBuf::from(path),
+                                   rstd::move(error)));
     }
     if (! metadata->is_file()) {
-        return document_failure<bool>(
-            rstd::format("{} '{}' must be an ordinary file", description, path));
+        return Err(ConfigError::Schema(
+            rstd::format("{} '{}' must be an ordinary file", description, path)));
     }
     return Ok(true);
 }
@@ -113,10 +99,9 @@ auto read_config_value(ref<rstd::path::Path> path, ref<str> description, bool re
     } else {
         auto result = rstd::fs::exists(path);
         if (result.is_err()) {
-            return document_io_failure<Option<Toml>>(
-                rstd::format("inspect {}", description).as_str(),
-                path,
-                rstd::move(result).unwrap_err());
+            return Err(ConfigError::Io((rstd::format("inspect {}", description).as_str()).into(),
+                                       PathBuf::from(path),
+                                       rstd::move(result).unwrap_err()));
         }
         exists = *result;
     }
@@ -124,15 +109,16 @@ auto read_config_value(ref<rstd::path::Path> path, ref<str> description, bool re
 
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return document_io_failure<Option<Toml>>(
-            rstd::format("read {}", description).as_str(), path, rstd::move(contents).unwrap_err());
+        return Err(ConfigError::Io((rstd::format("read {}", description).as_str()).into(),
+                                   PathBuf::from(path),
+                                   rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
         return Err(ConfigError::Parse(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     if (! parsed->is_table()) {
-        return document_failure<Option<Toml>>(rstd::format("{} root must be a table", description));
+        return Err(ConfigError::Schema(rstd::format("{} root must be a table", description)));
     }
     return Ok(Some(rstd::move(parsed).unwrap()));
 }
@@ -207,10 +193,10 @@ auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
                 if (cmake.is_some()) {
                     auto cmake_table = (**cmake).as_table();
                     if (cmake_table.is_some() && (**cmake_table).contains_key("overrides"_str)) {
-                        return document_failure<ConfigDocument>(
+                        return Err(ConfigError::Schema(
                             rstd::format("project configuration '{}' cannot contain "
                                          "tools.cmake.overrides; use .lito/config.toml or --config",
-                                         location.shared_path.as_path()));
+                                         location.shared_path.as_path())));
                     }
                 }
             }
@@ -310,14 +296,14 @@ auto unset_config_value_at(Table&                     table,
     const auto& segment = key[index];
     if (index + usize(1) == key.len()) {
         if (table.remove(segment.as_str()).is_none()) {
-            return Err(ConfigError::MissingKey(String::make(normalized)));
+            return Err(ConfigError::MissingKey(normalized.into()));
         }
         return Ok(empty {});
     }
     auto child = table.get_mut(segment.as_str());
-    if (child.is_none()) return Err(ConfigError::MissingKey(String::make(normalized)));
+    if (child.is_none()) return Err(ConfigError::MissingKey(normalized.into()));
     if (! (**child).is_table()) {
-        return Err(ConfigError::KeyConflict(String::make(normalized)));
+        return Err(ConfigError::KeyConflict(normalized.into()));
     }
     auto child_table = (**child).as_table_mut().unwrap();
     rstd_try(unset_config_value_at(*child_table, key, index + usize(1), normalized));
@@ -333,13 +319,14 @@ auto unset_config_value(Toml& document, const rstd::toml::KeyPath& key) -> Confi
 auto parse_config_key(ref<str> text, ref<str> context) -> ConfigResult<rstd::toml::KeyPath> {
     auto key = rstd::toml::parse_key_path(text);
     if (key.is_err()) {
-        return Err(ConfigError::Input(String::make(context), rstd::move(key).unwrap_err()));
+        return Err(ConfigError::Input(context.into(), rstd::move(key).unwrap_err()));
     }
     return Ok(rstd::move(key).unwrap());
 }
 
 auto parse_config_value(ref<str> text) -> ConfigResult<Toml> {
-    if (text.is_empty()) return document_failure<Toml>("configuration value must not be empty"_str);
+    if (text.is_empty())
+        return Err(ConfigError::Schema("configuration value must not be empty"_Str));
     auto value = rstd::toml::parse_value(text);
     if (value.is_ok()) return Ok(rstd::move(value).unwrap());
     return Ok(Toml::String(String::make(text)));
@@ -370,22 +357,23 @@ auto ensure_config_directory(const ConfigLocation& location) -> ConfigResult<emp
     auto metadata = rstd::fs::symlink_metadata(location.directory.as_path());
     if (metadata.is_ok()) {
         if (! metadata->is_dir()) {
-            return document_failure<empty>(
+            return Err(ConfigError::Schema(
                 rstd::format("configuration directory '{}' must be an ordinary directory",
-                             location.directory.as_path()));
+                             location.directory.as_path())));
         }
         return Ok(empty {});
     }
     auto error = rstd::move(metadata).unwrap_err();
     if (! is_not_found(error)) {
-        return document_io_failure<empty>(
-            "inspect configuration directory"_str, location.directory.as_path(), rstd::move(error));
+        return Err(ConfigError::Io("inspect configuration directory"_Str,
+                                   PathBuf::from(location.directory.as_path()),
+                                   rstd::move(error)));
     }
     auto created = rstd::fs::create_dir_all(location.directory.as_path());
     if (created.is_err()) {
-        return document_io_failure<empty>("create configuration directory"_str,
-                                          location.directory.as_path(),
-                                          rstd::move(created).unwrap_err());
+        return Err(ConfigError::Io("create configuration directory"_Str,
+                                   PathBuf::from(location.directory.as_path()),
+                                   rstd::move(created).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -397,25 +385,26 @@ auto open_mutation_session(ref<rstd::path::Path> root) -> ConfigResult<ConfigMut
     auto opened = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
         location.lock.as_path());
     if (opened.is_err()) {
-        return document_io_failure<ConfigMutationSession>("open configuration lock"_str,
-                                                          location.lock.as_path(),
-                                                          rstd::move(opened).unwrap_err());
+        return Err(ConfigError::Io("open configuration lock"_Str,
+                                   PathBuf::from(location.lock.as_path()),
+                                   rstd::move(opened).unwrap_err()));
     }
     auto opened_metadata = opened->metadata();
     if (opened_metadata.is_err()) {
-        return document_io_failure<ConfigMutationSession>("inspect opened configuration lock"_str,
-                                                          location.lock.as_path(),
-                                                          rstd::move(opened_metadata).unwrap_err());
+        return Err(ConfigError::Io("inspect opened configuration lock"_Str,
+                                   PathBuf::from(location.lock.as_path()),
+                                   rstd::move(opened_metadata).unwrap_err()));
     }
     if (! opened_metadata->is_file()) {
-        return document_failure<ConfigMutationSession>(rstd::format(
-            "configuration lock '{}' must be an ordinary file", location.lock.as_path()));
+        return Err(ConfigError::Schema(rstd::format(
+            "configuration lock '{}' must be an ordinary file", location.lock.as_path())));
     }
     auto locked =
         rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return document_io_failure<ConfigMutationSession>(
-            "lock configuration"_str, location.lock.as_path(), rstd::move(locked).unwrap_err());
+        return Err(ConfigError::Io("lock configuration"_Str,
+                                   PathBuf::from(location.lock.as_path()),
+                                   rstd::move(locked).unwrap_err()));
     }
     auto document = read_config_document(rstd::move(location), true);
     if (document.is_err()) return Err(rstd::move(document).unwrap_err());
@@ -436,9 +425,9 @@ auto write_config_document(const ConfigDocument& document) -> ConfigResult<empty
     auto written =
         rstd::fs::write_atomic(document.location.path.as_path(), serialized->as_str().as_bytes());
     if (written.is_err()) {
-        return document_io_failure<empty>("write configuration"_str,
-                                          document.location.path.as_path(),
-                                          rstd::move(written).unwrap_err());
+        return Err(ConfigError::Io("write configuration"_Str,
+                                   PathBuf::from(document.location.path.as_path()),
+                                   rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }

@@ -77,16 +77,6 @@ struct Impl<fmt::Display, lito::package::PackageSelectionPurpose>
 
 using namespace lito::package;
 
-template<typename T>
-auto package_selection_failure(String message) -> PackageSelectionResult<T> {
-    return Err(PackageSelectionError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto package_selection_failure(ref<str> message) -> PackageSelectionResult<T> {
-    return Err(PackageSelectionError::Message(String::make(message)));
-}
-
 auto copy_strings(const Vec<String>& values) -> Vec<String> {
     auto result = values.iter()
                       .map([](auto value) {
@@ -222,33 +212,33 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         if (selected.contains_key(current.as_str())) return Ok(empty {});
         auto index = indices.get(current.as_str());
         if (index.is_none()) {
-            return package_selection_failure<empty>(rstd::format(
-                "selected package '{}' is missing from resolved graph", current.as_str()));
+            return Err(PackageSelectionError::Message(rstd::format(
+                "selected package '{}' is missing from resolved graph", current.as_str())));
         }
         if (! host && target != nullptr &&
             ! graph.packages[**index].manifest.target.matches(*target)) {
-            return package_selection_failure<empty>(
+            return Err(PackageSelectionError::Message(
                 rstd::format("package '{}' does not support target '{}'",
                              current.as_str(),
-                             target->triple.as_str()));
+                             target->triple.as_str())));
         }
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
             if (dependency.is_Plugin()) {
                 if (host && plugins.contains_key(current.as_str())) {
-                    return package_selection_failure<empty>(
+                    return Err(PackageSelectionError::Message(
                         rstd::format("plugin '{}' cannot depend on plugin '{}'",
                                      current.as_str(),
-                                     dependency.as_Plugin().value.name.as_str()));
+                                     dependency.as_Plugin().value.name.as_str())));
                 }
                 pending_host.push(dependency.as_Plugin().value.name.clone());
                 plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
             } else if (dependency.is_Pmacro()) {
                 if (host) {
-                    return package_selection_failure<empty>(
+                    return Err(PackageSelectionError::Message(
                         rstd::format("pmacro provider '{}' cannot depend on pmacro provider '{}'",
                                      current.as_str(),
-                                     dependency.as_Pmacro().value.name.as_str()));
+                                     dependency.as_Pmacro().value.name.as_str())));
                 }
                 pending_host.push(dependency.as_Pmacro().value.name.clone());
                 providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
@@ -441,19 +431,19 @@ auto resolve_package_selection_with_environment_impl(
         auto selected_names = StringSet::make();
         for (const auto& name : selection.packages) {
             if (! lito::manifest::valid_package_name(name.as_str())) {
-                return package_selection_failure<ResolvedPackageSelection>(
+                return Err(PackageSelectionError::Message(
                     rstd::format("package selection '{}' must contain only ASCII "
                                  "letters, digits, '-' or '_'",
-                                 name.as_str()));
+                                 name.as_str())));
             }
             if (selected_names.contains_key(name.as_str())) {
-                return package_selection_failure<ResolvedPackageSelection>(rstd::format(
-                    "project package '{}' was selected more than once", name.as_str()));
+                return Err(PackageSelectionError::Message(rstd::format(
+                    "project package '{}' was selected more than once", name.as_str())));
             }
             auto role = root_roles.get(name.as_str());
             if (role.is_none()) {
-                return package_selection_failure<ResolvedPackageSelection>(
-                    rstd::format("project has no root package named '{}'", name.as_str()));
+                return Err(PackageSelectionError::Message(
+                    rstd::format("project has no root package named '{}'", name.as_str())));
             }
             const ResolvedPackage* selected_package = nullptr;
             if (target != nullptr) {
@@ -461,10 +451,10 @@ auto resolve_package_selection_with_environment_impl(
                     if (package.manifest.name.as_str() != name.as_str()) continue;
                     selected_package = rstd::addressof(package);
                     if (! package.manifest.target.matches(*target)) {
-                        return package_selection_failure<ResolvedPackageSelection>(
+                        return Err(PackageSelectionError::Message(
                             rstd::format("package '{}' does not support target '{}'",
                                          name.as_str(),
-                                         target->triple.as_str()));
+                                         target->triple.as_str())));
                     }
                     break;
                 }
@@ -478,16 +468,16 @@ auto resolve_package_selection_with_environment_impl(
             }
             if (selected_package == nullptr ||
                 ! append_selected_targets(selected_targets, *selected_package, **role, purpose)) {
-                return package_selection_failure<ResolvedPackageSelection>(
-                    rstd::format("project package '{}' has no {} target", name.as_str(), purpose));
+                return Err(PackageSelectionError::Message(
+                    rstd::format("project package '{}' has no {} target", name.as_str(), purpose)));
             }
             selected_names.insert(name.clone(), empty {});
             selected_roots.push(name.clone());
         }
     }
     if (selected_roots.is_empty()) {
-        return package_selection_failure<ResolvedPackageSelection>(
-            rstd::format("project has no selected {} package", purpose));
+        return Err(PackageSelectionError::Message(
+            rstd::format("project has no selected {} package", purpose)));
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
@@ -522,8 +512,8 @@ auto resolve_package_selection_with_environment_impl(
             if (selected_package == nullptr ||
                 ! append_selected_targets(
                     appended, *selected_package, ProjectRootRole::PrimaryPackage, purpose)) {
-                return package_selection_failure<ResolvedPackageSelection>(
-                    rstd::format("runtime package '{}' has no install target", name.as_str()));
+                return Err(PackageSelectionError::Message(
+                    rstd::format("runtime package '{}' has no install target", name.as_str())));
             }
             for (auto& selected_target : appended) {
                 auto key = package_target_id_text(selected_target);
@@ -581,8 +571,7 @@ auto resolve_package_selection_with_environment_impl(
 auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     if (selection.host_package_names.is_empty()) {
-        return package_selection_failure<ResolvedPackageSelection>(
-            "plugin host selection has no packages"_str);
+        return Err(PackageSelectionError::Message("plugin host selection has no packages"_Str));
     }
     auto host = StringSet::make();
     for (const auto& name : selection.host_package_names) host.insert(name.clone(), empty {});
@@ -638,28 +627,28 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     };
     for (const auto& name : selection.plugin_package_names) {
         if (! has_selected(name.as_str(), PackageTargetKind::Plugin)) {
-            return package_selection_failure<ResolvedPackageSelection>(rstd::format(
-                "host selection is missing plugin target for package '{}'", name.as_str()));
+            return Err(PackageSelectionError::Message(rstd::format(
+                "host selection is missing plugin target for package '{}'", name.as_str())));
         }
     }
     for (const auto& name : selection.proc_macro_provider_names) {
         if (! has_selected(name.as_str(), PackageTargetKind::ProcMacro)) {
-            return package_selection_failure<ResolvedPackageSelection>(rstd::format(
-                "host selection is missing pmacro target for package '{}'", name.as_str()));
+            return Err(PackageSelectionError::Message(rstd::format(
+                "host selection is missing pmacro target for package '{}'", name.as_str())));
         }
     }
     for (const auto& name : selection.artifact_processor_package_names) {
         if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
-            return package_selection_failure<ResolvedPackageSelection>(
+            return Err(PackageSelectionError::Message(
                 rstd::format("host selection is missing artifact processor target for package '{}'",
-                             name.as_str()));
+                             name.as_str())));
         }
     }
     for (const auto& name : selection.host_tool_package_names) {
         if (! host.contains_key(name.as_str())) continue;
         if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
-            return package_selection_failure<ResolvedPackageSelection>(rstd::format(
-                "host selection is missing host-tool target for package '{}'", name.as_str()));
+            return Err(PackageSelectionError::Message(rstd::format(
+                "host selection is missing host-tool target for package '{}'", name.as_str())));
         }
     }
     auto standards =

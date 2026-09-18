@@ -408,7 +408,7 @@ class ScanCacheSession {
         auto add_path = [&](ref<rstd::path::Path> path) -> CacheResult<empty> {
             auto text = path.to_str();
             if (text.is_none()) {
-                return cache_failure<empty>(rstd::format("path '{}' is not valid UTF-8", path));
+                return Err(CacheError::Record(rstd::format("path '{}' is not valid UTF-8", path)));
             }
             hash.write_zero_terminated(*text);
             return Ok(empty {});
@@ -469,8 +469,8 @@ class ScanCacheSession {
             rstd::addressof(result),
         });
         if (encoded.is_err()) {
-            return cache_failure<String>(
-                rstd::format("serialize scan cache result: {}", rstd::move(encoded).unwrap_err()));
+            return Err(CacheError::Record(
+                rstd::format("serialize scan cache result: {}", rstd::move(encoded).unwrap_err())));
         }
         hash.write_zero_terminated(encoded->as_str());
         return Ok(hash.hex64());
@@ -499,14 +499,16 @@ private:
         }
         auto exists = rstd::fs::exists(input.record.as_path());
         if (exists.is_err()) {
-            return cache_io_failure<ScanCacheLookup>(
-                "inspect scan record"_str, input.record.as_path(), rstd::move(exists).unwrap_err());
+            return Err(CacheError::Io("inspect scan record"_Str,
+                                      PathBuf::from(input.record.as_path()),
+                                      rstd::move(exists).unwrap_err()));
         }
         if (! *exists) return miss(ScanCacheMissReason::Absent);
         auto contents = rstd::fs::read_to_string(input.record.as_path());
         if (contents.is_err()) {
-            return cache_io_failure<ScanCacheLookup>(
-                "read scan record"_str, input.record.as_path(), rstd::move(contents).unwrap_err());
+            return Err(CacheError::Io("read scan record"_Str,
+                                      PathBuf::from(input.record.as_path()),
+                                      rstd::move(contents).unwrap_err()));
         }
         auto decoded = rstd::json::decode_direct<scan_cache_wire::Receipt>(contents->as_str());
         if (decoded.is_err()) return miss(ScanCacheMissReason::Corrupt);
@@ -558,14 +560,16 @@ private:
             auto path   = PathBuf::from(item.path.as_str());
             auto exists = rstd::fs::exists(path.as_path());
             if (exists.is_err()) {
-                return cache_io_failure<ScanCacheLookup>(
-                    "inspect scan input"_str, path.as_path(), rstd::move(exists).unwrap_err());
+                return Err(CacheError::Io("inspect scan input"_Str,
+                                          PathBuf::from(path.as_path()),
+                                          rstd::move(exists).unwrap_err()));
             }
             if (! *exists) return miss(ScanCacheMissReason::FileDependency);
             auto metadata = rstd::fs::metadata(path.as_path());
             if (metadata.is_err()) {
-                return cache_io_failure<ScanCacheLookup>(
-                    "inspect scan input"_str, path.as_path(), rstd::move(metadata).unwrap_err());
+                return Err(CacheError::Io("inspect scan input"_Str,
+                                          PathBuf::from(path.as_path()),
+                                          rstd::move(metadata).unwrap_err()));
             }
             if (! metadata->is_file()) return miss(ScanCacheMissReason::FileDependency);
             auto current = file_fingerprint(path.as_path());
@@ -583,7 +587,7 @@ private:
             if (lookup.is_none()) return miss(ScanCacheMissReason::Corrupt);
             auto valid = frontend::validate(*lookup);
             if (valid.is_err()) {
-                return cache_failure<ScanCacheLookup>(rstd::move(valid).unwrap_err());
+                return Err(CacheError::Record(rstd::move(valid).unwrap_err()));
             }
             if (! *valid) {
                 return miss(ScanCacheMissReason::IncludeLookup);
@@ -597,7 +601,7 @@ private:
             if (lookup.is_none()) return miss(ScanCacheMissReason::Corrupt);
             auto valid = frontend::validate(*lookup);
             if (valid.is_err()) {
-                return cache_failure<ScanCacheLookup>(rstd::move(valid).unwrap_err());
+                return Err(CacheError::Record(rstd::move(valid).unwrap_err()));
             }
             if (! *valid) return miss(ScanCacheMissReason::EmbedLookup);
             embed_lookups.push(rstd::move(lookup).unwrap());
@@ -686,8 +690,8 @@ private:
         if (cacheable) {
             auto working = input.working_directory.as_path().to_str();
             if (working.is_none()) {
-                return cache_failure<frontend::FrontendAnalysis>(rstd::format(
-                    "path '{}' is not valid UTF-8", input.working_directory.as_path()));
+                return Err(CacheError::Record(rstd::format("path '{}' is not valid UTF-8",
+                                                           input.working_directory.as_path())));
             }
             auto document = scan_cache_wire::WriteReceipt<decltype(files)> {
                 .version               = SCAN_CACHE_VERSION,

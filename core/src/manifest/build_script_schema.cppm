@@ -28,22 +28,22 @@ auto validate_script_entry(ref<rstd::path::Path>                 root,
     -> ManifestSchemaResult<empty> {
     if (embedded.is_some()) {
         if (! source_tree_file(**embedded, "lib.lua"_str)) {
-            return manifest_schema_failure<empty>(
-                "script package source must contain the regular file 'lib.lua'"_str);
+            return Err(ManifestSchemaError::Domain(
+                "script package source must contain the regular file 'lib.lua'"_Str));
         }
         return Ok(empty {});
     }
     auto entry    = PathBuf::from(root).join(PathBuf::from("lib.lua"_str).as_path());
     auto metadata = rstd::fs::symlink_metadata(entry.as_path());
     if (metadata.is_err()) {
-        return manifest_io_failure<empty>("manifest.script"_str,
-                                          "inspect script package entry"_str,
-                                          entry.as_path(),
-                                          rstd::move(metadata).unwrap_err());
+        return Err(ManifestSchemaError::Io("manifest.script"_Str,
+                                           "inspect script package entry"_Str,
+                                           PathBuf::from(entry.as_path()),
+                                           rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
-        return manifest_schema_failure<empty>(rstd::format(
-            "script package entry '{}' must be a regular non-symlink file", entry.as_path()));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "script package entry '{}' must be a regular non-symlink file", entry.as_path())));
     }
     return Ok(empty {});
 }
@@ -56,8 +56,8 @@ auto parse_script_package(Option<wire::Script>                  value,
     auto path = rstd::serde::DataPath().with_field("script"_str);
     auto wire = rstd::move(value).unwrap();
     if (wire.supports.is_empty()) {
-        return manifest_data_failure<Option<ScriptPackageManifest>>(path.with_field("supports"_str),
-                                                                    "must not be empty"_str);
+        return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("supports"_str), "must not be empty"_str)));
     }
     auto supports = Vec<ScriptHostKind>::with_capacity(wire.supports.len());
     for (usize index {}; index < wire.supports.len(); ++index) {
@@ -68,14 +68,15 @@ auto parse_script_package(Option<wire::Script>                  value,
         } else if (value == "install"_str) {
             kind = ScriptHostKind::Install;
         } else {
-            return manifest_data_failure<Option<ScriptPackageManifest>>(
-                path.with_field("supports"_str).with_index(index), "unknown script host kind"_str);
+            return Err(ManifestSchemaError::Data(
+                rstd::serde::Error::invalid_value(path.with_field("supports"_str).with_index(index),
+                                                  "unknown script host kind"_str)));
         }
         for (auto existing : supports) {
             if (existing == kind) {
-                return manifest_data_failure<Option<ScriptPackageManifest>>(
+                return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
                     path.with_field("supports"_str).with_index(index),
-                    "script host kind is repeated"_str);
+                    "script host kind is repeated"_str)));
             }
         }
         supports.push(rstd::move(kind));

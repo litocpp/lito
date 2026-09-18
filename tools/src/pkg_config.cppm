@@ -80,16 +80,6 @@ auto tokenize_fragments(ref<str> input) -> ToolResult<Vec<String>>;
 namespace lito::tools::pkg_config
 {
 
-template<typename T>
-auto failure(String message) -> ToolResult<T> {
-    return Err(ToolError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto failure(ref<str> message) -> ToolResult<T> {
-    return failure<T>(String::make(message));
-}
-
 auto version_operator(VersionOperator value) noexcept -> ref<str> {
     switch (value) {
     case VersionOperator::Equal: return "="_str;
@@ -117,8 +107,8 @@ auto path_list(const Vec<PathBuf>& paths, u8 separator) -> ToolResult<String> {
     for (const auto& path : paths) {
         auto text = path.as_path().to_str();
         if (text.is_none()) {
-            return failure<String>(
-                rstd::format("pkg-config path '{}' is not valid UTF-8", path.as_path()));
+            return Err(ToolError::Message(
+                rstd::format("pkg-config path '{}' is not valid UTF-8", path.as_path())));
         }
         if (! result.is_empty()) result.push_ascii(separator);
         result.push_str(*text);
@@ -145,8 +135,8 @@ auto provider_environment(const Provider& provider) -> ToolResult<CommandEnviron
     if (provider.sysroot.is_some()) {
         auto text = provider.sysroot->as_path().to_str();
         if (text.is_none()) {
-            return failure<CommandEnvironment>(rstd::format(
-                "pkg-config sysroot '{}' is not valid UTF-8", provider.sysroot->as_path()));
+            return Err(ToolError::Message(rstd::format("pkg-config sysroot '{}' is not valid UTF-8",
+                                                       provider.sysroot->as_path())));
         }
         result.entries.push(CommandEnvironmentEntry {
             .key   = "PKG_CONFIG_SYSROOT_DIR"_Str,
@@ -163,8 +153,8 @@ auto run_query(const Provider&                   provider,
                const ResolvedProcessEnvironment& environment) -> ToolResult<String> {
     auto executable = provider.executable.as_path().to_str();
     if (executable.is_none()) {
-        return failure<String>(rstd::format("pkg-config executable '{}' is not valid UTF-8",
-                                            provider.executable.as_path()));
+        return Err(ToolError::Message(rstd::format("pkg-config executable '{}' is not valid UTF-8",
+                                                   provider.executable.as_path())));
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
@@ -198,8 +188,8 @@ auto provider_version(const Provider&                   provider,
                       const ResolvedProcessEnvironment& environment) -> ToolResult<String> {
     auto executable = provider.executable.as_path().to_str();
     if (executable.is_none()) {
-        return failure<String>(rstd::format("pkg-config provider '{}' is not valid UTF-8",
-                                            provider.executable.as_path()));
+        return Err(ToolError::Message(rstd::format("pkg-config provider '{}' is not valid UTF-8",
+                                                   provider.executable.as_path())));
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
@@ -221,7 +211,8 @@ auto provider_version(const Provider&                   provider,
                                  rstd::move(value.standard_error)));
     }
     auto version = String::make(value.standard_output.as_str().trim_ascii());
-    if (version.is_empty()) return failure<String>("pkg-config returned an empty version"_str);
+    if (version.is_empty())
+        return Err(ToolError::Message("pkg-config returned an empty version"_Str));
     return Ok(rstd::move(version));
 }
 
@@ -232,7 +223,7 @@ auto append_identity_value(String& output, ref<str> value) -> void {
 auto provider_identity(const Provider& provider, ref<str> version) -> ToolResult<String> {
     auto executable = provider.executable.as_path().to_str();
     if (executable.is_none()) {
-        return failure<String>("pkg-config executable path is not valid UTF-8"_str);
+        return Err(ToolError::Message("pkg-config executable path is not valid UTF-8"_Str));
     }
     auto result = "lito-pkg-config-provider-v1\n"_Str;
     append_identity_value(result, *executable);
@@ -240,17 +231,17 @@ auto provider_identity(const Provider& provider, ref<str> version) -> ToolResult
     append_identity_value(result, provider.effective_target.as_str());
     for (const auto& path : provider.search_paths) {
         auto text = path.as_path().to_str();
-        if (text.is_none()) return failure<String>("pkg-config path is not UTF-8"_str);
+        if (text.is_none()) return Err(ToolError::Message("pkg-config path is not UTF-8"_Str));
         append_identity_value(result, *text);
     }
     for (const auto& path : provider.library_paths) {
         auto text = path.as_path().to_str();
-        if (text.is_none()) return failure<String>("pkg-config path is not UTF-8"_str);
+        if (text.is_none()) return Err(ToolError::Message("pkg-config path is not UTF-8"_Str));
         append_identity_value(result, *text);
     }
     if (provider.sysroot.is_some()) {
         auto text = provider.sysroot->as_path().to_str();
-        if (text.is_none()) return failure<String>("pkg-config sysroot is not UTF-8"_str);
+        if (text.is_none()) return Err(ToolError::Message("pkg-config sysroot is not UTF-8"_Str));
         append_identity_value(result, *text);
     }
     return Ok(rstd::move(result));
@@ -289,7 +280,7 @@ auto query(const Provider&                   provider,
         rstd_try(run_query(provider, request, "modversion"_str, overrides, environment));
     auto version = String::make(module_version.as_str().trim_ascii());
     if (version.is_empty())
-        return failure<Snapshot>("pkg-config returned an empty module version"_str);
+        return Err(ToolError::Message("pkg-config returned an empty module version"_Str));
     auto compile_output =
         rstd_try(run_query(provider, request, "cflags"_str, overrides, environment));
     auto link_output = rstd_try(run_query(provider, request, "libs"_str, overrides, environment));

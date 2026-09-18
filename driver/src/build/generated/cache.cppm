@@ -20,8 +20,8 @@ namespace lito
 auto action_file_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String> {
     auto data = rstd::fs::read(path);
     if (data.is_err()) {
-        return build_script_io_failure<String>(
-            "read build-tool action file"_str, path, rstd::move(data).unwrap_err());
+        return Err(BuildScriptError::Io(
+            "read build-tool action file"_Str, PathBuf::from(path), rstd::move(data).unwrap_err()));
     }
     return Ok(licrypto::sha256_hex(data->as_slice()));
 }
@@ -29,23 +29,25 @@ auto action_file_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String>
 auto action_directory_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String> {
     auto opened = rstd::fs::read_dir(path);
     if (opened.is_err()) {
-        return build_script_io_failure<String>(
-            "enumerate build-tool action directory"_str, path, rstd::move(opened).unwrap_err());
+        return Err(BuildScriptError::Io("enumerate build-tool action directory"_Str,
+                                        PathBuf::from(path),
+                                        rstd::move(opened).unwrap_err()));
     }
     auto records = Vec<String>::make();
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return build_script_io_failure<String>(
-                "enumerate build-tool action directory"_str, path, rstd::move(item).unwrap_err());
+            return Err(BuildScriptError::Io("enumerate build-tool action directory"_Str,
+                                            PathBuf::from(path),
+                                            rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
             auto entry_path = entry.path();
-            return build_script_io_failure<String>("inspect build-tool action directory entry"_str,
-                                                   entry_path.as_path(),
-                                                   rstd::move(type).unwrap_err());
+            return Err(BuildScriptError::Io("inspect build-tool action directory entry"_Str,
+                                            PathBuf::from(entry_path.as_path()),
+                                            rstd::move(type).unwrap_err()));
         }
         auto kind = type->is_file()      ? "file"_str
                     : type->is_dir()     ? "directory"_str
@@ -106,8 +108,8 @@ auto make_depfile_paths(ref<str> text, ref<rstd::path::Path> working_directory)
         }
     }
     if (separator.is_none()) {
-        return action_request_failure<Vec<PathBuf>>(
-            "build-tool depfile does not contain a target separator"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "build-tool depfile does not contain a target separator"_Str)));
     }
 
     auto result  = Vec<PathBuf>::make();
@@ -117,8 +119,8 @@ auto make_depfile_paths(ref<str> text, ref<rstd::path::Path> working_directory)
         auto decoded = String::from_utf8(rstd::move(token));
         token        = Vec<u8>::make();
         if (decoded.is_err()) {
-            return action_request_failure<empty>(
-                "build-tool depfile contains a non-UTF-8 dependency path"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "build-tool depfile contains a non-UTF-8 dependency path"_Str)));
         }
         auto path = PathBuf::from(rstd::move(decoded).unwrap());
         if (! path.as_path().is_absolute()) {
@@ -166,24 +168,24 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
     -> BuildScriptResult<Vec<ActionDependency>> {
     auto contents = rstd::fs::read_to_string(depfile);
     if (contents.is_err()) {
-        return build_script_io_failure<Vec<ActionDependency>>(
-            "read build-tool depfile"_str, depfile, rstd::move(contents).unwrap_err());
+        return Err(BuildScriptError::Io("read build-tool depfile"_Str,
+                                        PathBuf::from(depfile),
+                                        rstd::move(contents).unwrap_err()));
     }
     auto paths  = rstd_try(make_depfile_paths(contents->as_str(), working_directory));
     auto result = Vec<ActionDependency>::make();
     for (const auto& path : paths) {
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return build_script_io_failure<Vec<ActionDependency>>(
-                "resolve build-tool depfile dependency"_str,
-                path.as_path(),
-                rstd::move(canonical).unwrap_err());
+            return Err(BuildScriptError::Io("resolve build-tool depfile dependency"_Str,
+                                            PathBuf::from(path.as_path()),
+                                            rstd::move(canonical).unwrap_err()));
         }
         auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
         if (metadata.is_err() || metadata->is_symlink() ||
             (! metadata->is_file() && ! metadata->is_dir())) {
-            return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(), "depfile dependency is not a regular file or directory"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                canonical->clone(), "depfile dependency is not a regular file or directory"_Str)));
         }
         auto              allowed   = false;
         static const auto env_roots = [] {
@@ -228,8 +230,8 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
             }
         }
         if (! allowed) {
-            return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(), "depfile dependency is outside allowed roots"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                canonical->clone(), "depfile dependency is outside allowed roots"_Str)));
         }
         auto duplicate = false;
         for (const auto& dependency : result) {
@@ -262,8 +264,10 @@ auto action_receipt_matches(ref<rstd::path::Path> receipt,
                             ref<rstd::path::Path> generated_root) -> BuildScriptResult<bool> {
     auto exists = rstd::fs::exists(receipt);
     if (exists.is_err()) {
-        return action_receipt_failure<bool>(
-            "inspect build-tool action receipt"_str, receipt, rstd::move(exists).unwrap_err());
+        return Err(BuildScriptError::BuildToolAction(
+            BuildToolActionError::Receipt("inspect build-tool action receipt"_Str,
+                                          PathBuf::from(receipt),
+                                          rstd::move(exists).unwrap_err())));
     }
     if (! *exists) return Ok(false);
     auto contents = rstd::fs::read_to_string(receipt);
@@ -355,40 +359,41 @@ auto collect_action_outputs(ref<rstd::path::Path> root,
                             Vec<PathBuf>&         files) -> BuildScriptResult<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return build_script_io_failure<empty>(
-            "enumerate staged build-tool outputs"_str, directory, rstd::move(opened).unwrap_err());
+        return Err(BuildScriptError::Io("enumerate staged build-tool outputs"_Str,
+                                        PathBuf::from(directory),
+                                        rstd::move(opened).unwrap_err()));
     }
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return build_script_io_failure<empty>("enumerate staged build-tool outputs"_str,
-                                                  directory,
-                                                  rstd::move(item).unwrap_err());
+            return Err(BuildScriptError::Io("enumerate staged build-tool outputs"_Str,
+                                            PathBuf::from(directory),
+                                            rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         auto path  = entry.path();
         if (type.is_err()) {
-            return build_script_io_failure<empty>("inspect staged build-tool output"_str,
-                                                  path.as_path(),
-                                                  rstd::move(type).unwrap_err());
+            return Err(BuildScriptError::Io("inspect staged build-tool output"_Str,
+                                            PathBuf::from(path.as_path()),
+                                            rstd::move(type).unwrap_err()));
         }
         if (type->is_symlink()) {
-            return action_failure<empty>(BuildToolActionError::InvalidOutput(
-                path.clone(), "produced output is a symlink"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+                path.clone(), "produced output is a symlink"_Str)));
         }
         if (type->is_dir()) {
             rstd_try(collect_action_outputs(root, path.as_path(), files));
             continue;
         }
         if (! type->is_file()) {
-            return action_failure<empty>(BuildToolActionError::InvalidOutput(
-                path.clone(), "produced output is not a regular file"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+                path.clone(), "produced output is not a regular file"_Str)));
         }
         auto relative = path.as_path().strip_prefix(root);
         if (relative.is_none() || (*relative).is_empty()) {
-            return action_failure<empty>(BuildToolActionError::InvalidOutput(
-                path.clone(), "produced output escapes staging"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+                path.clone(), "produced output escapes staging"_Str)));
         }
         files.push(PathBuf::from(*relative));
     }

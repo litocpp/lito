@@ -14,7 +14,7 @@ namespace lito::system
 auto output_text(Vec<u8> bytes, ref<str> context) -> SystemResult<String> {
     auto decoded = String::from_utf8(rstd::move(bytes));
     if (decoded.is_err()) {
-        return Err(SystemError::Utf8(String::make(context), rstd::move(decoded).unwrap_err()));
+        return Err(SystemError::Utf8(context.into(), rstd::move(decoded).unwrap_err()));
     }
     return Ok(rstd::move(decoded).unwrap());
 }
@@ -30,7 +30,7 @@ auto push_fragment_word(Vec<String>& output, Vec<u8>& current, ref<str> context)
     -> SystemResult<empty> {
     auto word = String::from_utf8(rstd::move(current));
     if (word.is_err()) {
-        return Err(SystemError::Utf8(String::make(context), rstd::move(word).unwrap_err()));
+        return Err(SystemError::Utf8(context.into(), rstd::move(word).unwrap_err()));
     }
     output.push(rstd::move(word).unwrap());
     current = Vec<u8>::make();
@@ -240,7 +240,7 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
     auto word_active = false;
     for (auto byte : input.as_bytes()) {
         if (byte == u8()) {
-            return Err(SystemError::Fragment(String::make(context), "contains NUL"_Str));
+            return Err(SystemError::Fragment(context.into(), "contains NUL"_Str));
         }
         if (escaping) {
             if (quote == FragmentQuote::Double && byte != u8('"') && byte != u8('\\') &&
@@ -296,10 +296,10 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
         }
     }
     if (escaping) {
-        return Err(SystemError::Fragment(String::make(context), "ends with an escape"_Str));
+        return Err(SystemError::Fragment(context.into(), "ends with an escape"_Str));
     }
     if (quote != FragmentQuote::None) {
-        return Err(SystemError::Fragment(String::make(context), "contains an unclosed quote"_Str));
+        return Err(SystemError::Fragment(context.into(), "contains an unclosed quote"_Str));
     }
     if (word_active) {
         auto pushed = push_fragment_word(result, current, context);
@@ -319,7 +319,7 @@ auto tokenize_windows_command_fragments(ref<str> input, ref<str> context)
     while (index < bytes.len()) {
         auto value = bytes[index];
         if (value == u8()) {
-            return Err(SystemError::Fragment(String::make(context), "contains NUL"_Str));
+            return Err(SystemError::Fragment(context.into(), "contains NUL"_Str));
         }
         if (value == u8('\\')) {
             auto slashes = usize {};
@@ -364,7 +364,7 @@ auto tokenize_windows_command_fragments(ref<str> input, ref<str> context)
         ++index;
     }
     if (quoted) {
-        return Err(SystemError::Fragment(String::make(context), "contains an unclosed quote"_Str));
+        return Err(SystemError::Fragment(context.into(), "contains an unclosed quote"_Str));
     }
     if (word_active) {
         auto pushed = push_fragment_word(result, current, context);

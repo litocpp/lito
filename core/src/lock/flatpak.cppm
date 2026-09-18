@@ -53,11 +53,6 @@ auto lock_export_format_names() -> Vec<String> {
 
 } // namespace lito::lock
 
-template<typename T>
-auto lock_flatpak_failure(String message) -> LockResult<T> {
-    return Err(LockError::Schema(rstd::move(message)));
-}
-
 auto lock_flatpak_failure(lito::flatpak::Error error) -> LockError {
     return LockError::Schema(rstd::format("Flatpak source export failed: {}", error));
 }
@@ -103,10 +98,10 @@ auto merge_architectures(FlatpakCandidate& candidate, const Vec<Architecture>& a
     for (const auto& architecture : architectures) {
         if (architecture != Architecture::X86_64 && architecture != Architecture::Aarch64) {
             auto owners = candidate_owners(candidate);
-            return lock_flatpak_failure<empty>(
+            return Err(LockError::Schema(
                 rstd::format("Flatpak source export does not support architecture '{}' for {}",
                              architecture_name(architecture),
-                             owners.as_str()));
+                             owners.as_str())));
         }
         auto duplicate = false;
         for (const auto& current : candidate.architectures) {
@@ -253,10 +248,10 @@ auto project_flatpak_sources(const LockedProject&           project,
     for (auto value : registry_values) {
         auto& candidate = *value;
         if (registry.download_url == nullptr) {
-            return lock_flatpak_failure<lito::flatpak::SourceSet>(rstd::format(
+            return Err(LockError::Schema(rstd::format(
                 "Flatpak source export has no Registry provider for '{}@{}'",
                 lito::registry::registry_package_id_text(candidate.pin.release.package).as_str(),
-                candidate.pin.release.version.text().as_str()));
+                candidate.pin.release.version.text().as_str())));
         }
         auto download = registry.download_url(registry.context, candidate.pin.release);
         if (download.is_err()) return Err(rstd::move(download).unwrap_err());

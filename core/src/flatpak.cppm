@@ -77,16 +77,6 @@ auto write_sources(ref<rstd::path::Path> root,
 
 } // namespace lito::flatpak
 
-template<typename T>
-auto flatpak_failure(String message) -> lito::flatpak::Result<T> {
-    return Err(lito::flatpak::Error::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto flatpak_failure(ref<str> message) -> lito::flatpak::Result<T> {
-    return flatpak_failure<T>(String::make(message));
-}
-
 auto public_http_url(ref<str> value) -> bool {
     auto remainder = value.strip_prefix("https://"_str);
     if (remainder.is_none()) remainder = value.strip_prefix("http://"_str);
@@ -104,26 +94,26 @@ auto public_http_url(ref<str> value) -> bool {
 auto path_text(ref<rstd::path::Path> path, ref<str> origin, ref<str> field)
     -> lito::flatpak::Result<String> {
     if (path.is_absolute()) {
-        return flatpak_failure<String>(
-            rstd::format("Flatpak source from {} has absolute {} '{}'", origin, field, path));
+        return Err(lito::flatpak::Error::Message(
+            rstd::format("Flatpak source from {} has absolute {} '{}'", origin, field, path)));
     }
     auto components = path.components();
     auto count      = usize {};
     for (auto component : components) {
         if (! component.is_normal()) {
-            return flatpak_failure<String>(
-                rstd::format("Flatpak source from {} has non-normal {} '{}'", origin, field, path));
+            return Err(lito::flatpak::Error::Message(rstd::format(
+                "Flatpak source from {} has non-normal {} '{}'", origin, field, path)));
         }
         ++count;
     }
     if (count == usize {}) {
-        return flatpak_failure<String>(
-            rstd::format("Flatpak source from {} has empty {}", origin, field));
+        return Err(lito::flatpak::Error::Message(
+            rstd::format("Flatpak source from {} has empty {}", origin, field)));
     }
     auto text = path.to_str();
     if (text.is_none()) {
-        return flatpak_failure<String>(
-            rstd::format("Flatpak source from {} has non-UTF-8 {} '{}'", origin, field, path));
+        return Err(lito::flatpak::Error::Message(
+            rstd::format("Flatpak source from {} has non-UTF-8 {} '{}'", origin, field, path)));
     }
     return Ok(String::make(*text));
 }
@@ -143,12 +133,12 @@ auto claim_destination(rstd::collections::BTreeMap<String, String>& claims,
                        ref<str> kind) -> lito::flatpak::Result<empty> {
     auto existing = claims.get(path.as_str());
     if (existing.is_some()) {
-        return flatpak_failure<empty>(
+        return Err(lito::flatpak::Error::Message(
             rstd::format("Flatpak {} destination '{}' from {} conflicts with {}",
                          kind,
                          path.as_str(),
                          origin,
-                         (**existing).as_str()));
+                         (**existing).as_str())));
     }
     claims.insert(rstd::move(path), String::make(origin));
     return Ok(empty {});
@@ -163,8 +153,8 @@ auto validate_sources(const lito::flatpak::SourceSet& sources) -> lito::flatpak:
         if (source.is_Git()) {
             const auto& value = source.as_Git();
             if (! public_http_url(value.url.as_str())) {
-                return flatpak_failure<empty>(rstd::format(
-                    "Flatpak Git source from {} requires a public HTTP(S) URL", origin));
+                return Err(lito::flatpak::Error::Message(rstd::format(
+                    "Flatpak Git source from {} requires a public HTTP(S) URL", origin)));
             }
             auto destination = rstd_try(path_text(value.destination.as_path(), origin, "dest"_str));
             rstd_try(
@@ -174,8 +164,8 @@ auto validate_sources(const lito::flatpak::SourceSet& sources) -> lito::flatpak:
         if (source.is_Archive()) {
             const auto& value = source.as_Archive();
             if (! public_http_url(value.url.as_str())) {
-                return flatpak_failure<empty>(rstd::format(
-                    "Flatpak archive source from {} requires a public HTTP(S) URL", origin));
+                return Err(lito::flatpak::Error::Message(rstd::format(
+                    "Flatpak archive source from {} requires a public HTTP(S) URL", origin)));
             }
             auto destination = rstd_try(path_text(value.destination.as_path(), origin, "dest"_str));
             rstd_try(
@@ -185,14 +175,14 @@ auto validate_sources(const lito::flatpak::SourceSet& sources) -> lito::flatpak:
         if (source.is_File()) {
             const auto& value = source.as_File();
             if (! public_http_url(value.url.as_str())) {
-                return flatpak_failure<empty>(rstd::format(
-                    "Flatpak file source from {} requires a public HTTP(S) URL", origin));
+                return Err(lito::flatpak::Error::Message(rstd::format(
+                    "Flatpak file source from {} requires a public HTTP(S) URL", origin)));
             }
             if (value.filename.is_empty() || value.filename.as_str().contains("/"_str)) {
-                return flatpak_failure<empty>(
+                return Err(lito::flatpak::Error::Message(
                     rstd::format("Flatpak file source from {} has invalid filename '{}'",
                                  origin,
-                                 value.filename.as_str()));
+                                 value.filename.as_str())));
             }
             auto destination =
                 value.destination.join(PathBuf::from(value.filename.as_str()).as_path());
@@ -203,10 +193,10 @@ auto validate_sources(const lito::flatpak::SourceSet& sources) -> lito::flatpak:
         if (source.is_Inline()) {
             const auto& value = source.as_Inline();
             if (value.filename.is_empty() || value.filename.as_str().contains("/"_str)) {
-                return flatpak_failure<empty>(
+                return Err(lito::flatpak::Error::Message(
                     rstd::format("Flatpak inline source from {} has invalid filename '{}'",
                                  origin,
-                                 value.filename.as_str()));
+                                 value.filename.as_str())));
             }
             auto destination =
                 value.destination.join(PathBuf::from(value.filename.as_str()).as_path());
@@ -215,8 +205,8 @@ auto validate_sources(const lito::flatpak::SourceSet& sources) -> lito::flatpak:
             continue;
         }
         if (source.as_Shell().commands.is_empty()) {
-            return flatpak_failure<empty>(
-                rstd::format("Flatpak shell source from {} has no commands", origin));
+            return Err(lito::flatpak::Error::Message(
+                rstd::format("Flatpak shell source from {} has no commands", origin)));
         }
     }
     return Ok(empty {});

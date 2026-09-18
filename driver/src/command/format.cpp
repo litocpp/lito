@@ -19,19 +19,9 @@ using StringSet = rstd::collections::BTreeMap<String, empty>;
 namespace lito
 {
 
-template<typename T>
-auto format_failure(ref<str> message) -> CommandResult<T> {
-    return Err(CommandError::Message(String::make(message)));
-}
-
-} // namespace lito
-
-namespace lito
-{
-
 auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     if (request.root.is_empty()) {
-        return format_failure<FormatSummary>("format directory is required"_str);
+        return Err(CommandError::Message("format directory is required"_Str));
     }
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
     if (environment.is_err()) {
@@ -61,23 +51,23 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     } else {
         for (const auto& name : request.packages) {
             if (! lito::manifest::valid_package_name(name.as_str())) {
-                return format_failure<FormatSummary>(rstd::format(
+                return Err(CommandError::Message(rstd::format(
                     "package selection '{}' must contain only ASCII letters, digits, '-' or '_'",
-                    name.as_str()));
+                    name.as_str())));
             }
             if (selected.contains_key(name.as_str())) {
-                return format_failure<FormatSummary>(rstd::format(
-                    "project package '{}' was selected more than once", name.as_str()));
+                return Err(CommandError::Message(rstd::format(
+                    "project package '{}' was selected more than once", name.as_str())));
             }
             if (! available.contains_key(name.as_str())) {
-                return format_failure<FormatSummary>(
-                    rstd::format("project has no local package named '{}'", name.as_str()));
+                return Err(CommandError::Message(
+                    rstd::format("project has no local package named '{}'", name.as_str())));
             }
             selected.insert(name.clone(), empty {});
         }
     }
     if (selected.is_empty()) {
-        return format_failure<FormatSummary>("project has no selected format package"_str);
+        return Err(CommandError::Message("project has no selected format package"_Str));
     }
 
     const auto tool_requirement = lito::tools::command_tool_requirement(
@@ -109,8 +99,8 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
             if (! selected.contains_key(name.as_str())) continue;
             auto package = packages.take_package(name.as_str());
             if (package.is_none()) {
-                return format_failure<empty>(
-                    rstd::format("local project is missing package '{}'", name.as_str()));
+                return Err(CommandError::Message(
+                    rstd::format("local project is missing package '{}'", name.as_str())));
             }
             auto discovered = discover_format_sources(*package);
             if (discovered.is_err()) {
@@ -120,8 +110,8 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
             for (const auto& source : sources.sources) {
                 auto key = source.canonical_path.as_path().to_str();
                 if (key.is_none())
-                    return format_failure<empty>(rstd::format("source path '{}' is not valid UTF-8",
-                                                              source.canonical_path.as_path()));
+                    return Err(CommandError::Message(rstd::format(
+                        "source path '{}' is not valid UTF-8", source.canonical_path.as_path())));
                 if (seen.contains_key(*key)) continue;
                 seen.insert(String::make(*key), empty {});
                 paths.push(source.canonical_path.clone());
@@ -135,8 +125,7 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
         rstd_try(discover_packages(*project.tests));
     }
     if (summary.packages != selected.len()) {
-        return format_failure<FormatSummary>(
-            "selected packages are missing from local project"_str);
+        return Err(CommandError::Message("selected packages are missing from local project"_Str));
     }
     summary.files = paths.len();
     if (paths.is_empty()) return Ok(rstd::move(summary));

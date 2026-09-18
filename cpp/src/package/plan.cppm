@@ -22,16 +22,6 @@ using namespace rstd::literals;
 namespace lito::cpp
 {
 
-template<typename T>
-auto plan_failure(String message) -> lito::package::PackageResult<T> {
-    return Err(lito::package::PackageError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto plan_failure(ref<str> message) -> lito::package::PackageResult<T> {
-    return Err(lito::package::PackageError::Message(String::make(message)));
-}
-
 auto append_unique(Vec<String>& output, const Vec<String>& input) -> void {
     for (const auto& value : input) {
         auto present = false;
@@ -111,10 +101,10 @@ auto append_language_arguments(LanguageArgumentLayer&       output,
                                ref<str> provider) -> lito::package::PackageResult<empty> {
     if (output.is_C()) {
         if (! input.is_C()) {
-            return plan_failure<empty>(
+            return Err(lito::package::PackageError::Message(
                 rstd::format("C target '{}' cannot consume C++ compiler arguments from '{}'",
                              consumer,
-                             provider));
+                             provider)));
         }
         append_unique(output.as_C().layer, input.as_C().layer);
         return Ok(empty {});
@@ -125,10 +115,10 @@ auto append_language_arguments(LanguageArgumentLayer&       output,
     }
     for (const auto& occurrence : input.as_C().layer.occurrences) {
         if (! occurrence.argument.is_Common()) {
-            return plan_failure<empty>(rstd::format(
+            return Err(lito::package::PackageError::Message(rstd::format(
                 "C++ target '{}' cannot consume language-specific C compiler arguments from '{}'",
                 consumer,
-                provider));
+                provider)));
         }
         output.as_Cpp().layer.occurrences.push(CppCompilerArgumentOccurrence {
             .argument = CppCompilerArgument::Common(
@@ -185,14 +175,14 @@ auto append_external_link_input(Vec<PlannedLinkInput>&                      inpu
         if (rust_runtime->artifact_identity == incoming->artifact_identity.as_str()) {
             return Ok(empty {});
         }
-        return plan_failure<empty>(rstd::format(
+        return Err(lito::package::PackageError::Message(rstd::format(
             "Rust static runtime conflict in final target '{}': {} ({}) conflicts with {} ({}); "
             "aggregate the Rust crates behind one Cargo facade staticlib",
             target,
             rust_runtime->source.as_str(),
             rust_runtime->artifact_identity.as_str(),
             incoming->source.as_str(),
-            incoming->artifact_identity.as_str()));
+            incoming->artifact_identity.as_str())));
     }
     rust_runtime = Some(incoming->clone());
     if (! external.link_arguments.tokens.is_empty()) {
@@ -250,8 +240,8 @@ auto visit_target(const PackageMetadata& package,
     auto& color = colors[target];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return plan_failure<empty>(rstd::format("target dependency cycle at '{}'",
-                                                target_text(package.targets[target].id).as_str()));
+        return Err(lito::package::PackageError::Message(rstd::format(
+            "target dependency cycle at '{}'", target_text(package.targets[target].id).as_str())));
     }
 
     color = 1;
@@ -263,10 +253,10 @@ auto visit_target(const PackageMetadata& package,
             if (dependency_link_only != link_only) continue;
             auto found = target_index(package, dependency.target);
             if (found.is_none()) {
-                return plan_failure<empty>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("target '{}' depends on unknown target '{}'",
                                  target_text(package.targets[target].id).as_str(),
-                                 target_text(dependency.target).as_str()));
+                                 target_text(dependency.target).as_str())));
             }
             auto nested = visit_target(package, *found, colors, target_order);
             if (nested.is_err()) return nested;
@@ -285,8 +275,8 @@ auto visit_link_target(const PackageMetadata& package,
     auto& color = colors[target];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return plan_failure<empty>(rstd::format("target dependency cycle at '{}'",
-                                                target_text(package.targets[target].id).as_str()));
+        return Err(lito::package::PackageError::Message(rstd::format(
+            "target dependency cycle at '{}'", target_text(package.targets[target].id).as_str())));
     }
 
     color = 1;
@@ -303,10 +293,10 @@ auto visit_link_target(const PackageMetadata& package,
             }
             auto found = target_index(package, dependency.target);
             if (found.is_none()) {
-                return plan_failure<empty>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("target '{}' depends on unknown target '{}'",
                                  target_text(package.targets[target].id).as_str(),
-                                 target_text(dependency.target).as_str()));
+                                 target_text(dependency.target).as_str())));
             }
             const auto nested_public_interface_only =
                 package.targets[*found].artifact_kind == ArtifactKind::SharedLibrary;
@@ -331,7 +321,8 @@ auto resolve_import_requirements(const PackageMetadata& package,
                                  Vec<CompileContext>&   contexts)
     -> lito::package::PackageResult<empty> {
     if (contexts.len() != package.targets.len()) {
-        return plan_failure<empty>("import requirement contexts do not match package targets"_str);
+        return Err(lito::package::PackageError::Message(
+            "import requirement contexts do not match package targets"_Str));
     }
     auto selected = Vec<bool>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
@@ -347,18 +338,18 @@ auto resolve_import_requirements(const PackageMetadata& package,
                 if (! dependency.consumption.usage.uses_compile()) continue;
                 auto provider = target_index(package, dependency.target);
                 if (provider.is_none() || ! selected[*provider]) {
-                    return plan_failure<empty>(rstd::format(
+                    return Err(lito::package::PackageError::Message(rstd::format(
                         "import requirement dependency '{}' of target '{}' is not selected",
                         target_text(dependency.target).as_str(),
-                        target_text(package.targets[importer].id).as_str()));
+                        target_text(package.targets[importer].id).as_str())));
                 }
                 if (package.targets[importer].language == lito::manifest::PackageLanguage::C) {
                     if (package.targets[*provider].language ==
                         lito::manifest::PackageLanguage::Cpp) {
-                        return plan_failure<empty>(
+                        return Err(lito::package::PackageError::Message(
                             rstd::format("C target '{}' cannot import C++ target '{}'",
                                          target_text(package.targets[importer].id).as_str(),
-                                         target_text(package.targets[*provider].id).as_str()));
+                                         target_text(package.targets[*provider].id).as_str())));
                     }
                     continue;
                 }
@@ -436,14 +427,15 @@ auto attachment_context(const CompileContext&       library,
                         const TestAttachmentTarget& attachment)
     -> lito::package::PackageResult<CompileContext> {
     if (! library.language.is_Cpp() || ! test.language.is_Cpp()) {
-        return plan_failure<CompileContext>("test attachments currently require C++ targets"_str);
+        return Err(lito::package::PackageError::Message(
+            "test attachments currently require C++ targets"_Str));
     }
     const auto& library_cpp = library.language.as_Cpp();
     const auto& test_cpp    = test.language.as_Cpp();
     if (library_cpp.bmi.representation != test_cpp.bmi.representation ||
         library_cpp.bmi.source_embedding != test_cpp.bmi.source_embedding) {
-        return plan_failure<CompileContext>(
-            "test attachment cannot merge different BMI requests"_str);
+        return Err(lito::package::PackageError::Message(
+            "test attachment cannot merge different BMI requests"_Str));
     }
     auto result = library.clone();
     auto merged = merge_cpp_options(rstd::move(result.language.as_Cpp().options), test_cpp.options);
@@ -706,7 +698,8 @@ auto replace_generated_artifact_identity(TargetSpec&     target,
 auto compile_test_context(const CompileContext& base, const ResolvedCompileTestCase& test)
     -> lito::package::PackageResult<CompileContext> {
     if (! base.language.is_Cpp()) {
-        return plan_failure<CompileContext>("compile tests currently require C++ targets"_str);
+        return Err(lito::package::PackageError::Message(
+            "compile tests currently require C++ targets"_Str));
     }
     auto context    = base.clone();
     auto layer      = CppOptionLayer {};
@@ -738,14 +731,14 @@ auto resolve_source_selection(const PackageMetadata&                     package
         }
     }
     if (profile.is_none()) {
-        return plan_failure<SourceTargetSelection>(
-            rstd::format("unknown profile '{}'", profile_name));
+        return Err(lito::package::PackageError::Message(
+            rstd::format("unknown profile '{}'", profile_name)));
     }
 
     auto selected_identities = Vec<lito::package::PackageTargetId>::make();
     if (! requested_targets.is_empty() && ! exact_targets.is_empty()) {
-        return plan_failure<SourceTargetSelection>(
-            "target selectors and exact target identities cannot be combined"_str);
+        return Err(lito::package::PackageError::Message(
+            "target selectors and exact target identities cannot be combined"_Str));
     }
     if (! exact_targets.is_empty()) {
         selected_identities =
@@ -759,14 +752,14 @@ auto resolve_source_selection(const PackageMetadata&                     package
                 }
             }
             if (found == nullptr) {
-                return plan_failure<SourceTargetSelection>(rstd::format(
-                    "unknown exact target '{}'", lito::package::package_target_id_text(exact)));
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "unknown exact target '{}'", lito::package::package_target_id_text(exact))));
             }
             for (const auto& prior : selected_identities) {
                 if (prior == *found) {
-                    return plan_failure<SourceTargetSelection>(
+                    return Err(lito::package::PackageError::Message(
                         rstd::format("exact target '{}' was selected more than once",
-                                     lito::package::package_target_id_text(exact)));
+                                     lito::package::package_target_id_text(exact))));
                 }
             }
             selected_identities.push(found->clone());
@@ -794,13 +787,13 @@ auto resolve_source_selection(const PackageMetadata&                     package
                 else if (kind_text == "bench"_str)
                     kind = Some(lito::package::PackageTargetKind::Benchmark);
                 else
-                    return plan_failure<SourceTargetSelection>(
+                    return Err(lito::package::PackageError::Message(
                         rstd::format("target selector '{}' has unknown kind '{}'",
                                      requested.as_str(),
-                                     kind_text));
+                                     kind_text)));
                 if (name.is_empty()) {
-                    return plan_failure<SourceTargetSelection>(
-                        rstd::format("target selector '{}' is missing a name", requested.as_str()));
+                    return Err(lito::package::PackageError::Message(rstd::format(
+                        "target selector '{}' is missing a name", requested.as_str())));
                 }
             }
             auto matched_packages =
@@ -812,20 +805,20 @@ auto resolve_source_selection(const PackageMetadata&                     package
                 }
                 auto prior = matched_packages.get(candidate.package.as_str());
                 if (prior.is_some()) {
-                    return plan_failure<SourceTargetSelection>(rstd::format(
+                    return Err(lito::package::PackageError::Message(rstd::format(
                         "target selector '{}' is ambiguous in package '{}'; use '{}:{}'",
                         requested.as_str(),
                         candidate.package.as_str(),
                         lito::package::package_target_kind_name(candidate.kind),
-                        candidate.name.as_str()));
+                        candidate.name.as_str())));
                 }
                 matched_packages.insert(candidate.package.clone(), candidate.kind);
                 selected_identities.push(candidate.clone());
                 ++matches;
             }
             if (matches == usize {}) {
-                return plan_failure<SourceTargetSelection>(
-                    rstd::format("unknown target selector '{}'", requested.as_str()));
+                return Err(lito::package::PackageError::Message(
+                    rstd::format("unknown target selector '{}'", requested.as_str())));
             }
         }
     }
@@ -835,8 +828,8 @@ auto resolve_source_selection(const PackageMetadata&                     package
     for (const auto& target_identity : selected_identities) {
         auto found = target_index(package, target_identity);
         if (found.is_none()) {
-            return plan_failure<SourceTargetSelection>(
-                rstd::format("unknown target '{}'", target_text(target_identity).as_str()));
+            return Err(lito::package::PackageError::Message(
+                rstd::format("unknown target '{}'", target_text(target_identity).as_str())));
         }
         auto visited = visit_target(package, *found, colors, target_order);
         if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
@@ -855,10 +848,10 @@ auto resolve_source_selection(const PackageMetadata&                     package
                 if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
             }
             if (! found) {
-                return plan_failure<SourceTargetSelection>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "target '{}' has host-tool dependency '{}' without a host-tool target",
                     target_text(package.targets[consumer].id).as_str(),
-                    dependency.package.as_str()));
+                    dependency.package.as_str())));
             }
         }
     }
@@ -880,7 +873,8 @@ auto resolve_build_script_packages(const PackageMetadata&       package,
     auto result = Vec<String>::make();
     for (auto target : selection.target_order) {
         if (target >= package.targets.len()) {
-            return plan_failure<Vec<String>>("source target selection does not match package"_str);
+            return Err(lito::package::PackageError::Message(
+                "source target selection does not match package"_Str));
         }
         auto name    = package.targets[target].id.package.as_str();
         auto allowed = false;
@@ -899,13 +893,13 @@ auto resolve_build_script_packages(const PackageMetadata&       package,
 auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelection selection)
     -> lito::package::PackageResult<ResolvedNativeTargetPlan> {
     if (selection.profile >= package.profiles.len()) {
-        return plan_failure<ResolvedNativeTargetPlan>(
-            "source target selection does not match package profile"_str);
+        return Err(lito::package::PackageError::Message(
+            "source target selection does not match package profile"_Str));
     }
     for (auto target : selection.target_order) {
         if (target >= package.targets.len()) {
-            return plan_failure<ResolvedNativeTargetPlan>(
-                "source target selection does not match package targets"_str);
+            return Err(lito::package::PackageError::Message(
+                "source target selection does not match package targets"_Str));
         }
     }
     auto profile      = selection.profile;
@@ -989,9 +983,9 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         const auto& exported_usage   = *public_usage[target];
         if (spec.language == lito::manifest::PackageLanguage::C) {
             if (! exported_usage.arguments.is_C()) {
-                return plan_failure<ResolvedNativeTargetPlan>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("C target '{}' received compiler arguments for the wrong language",
-                                 target_text(spec.id).as_str()));
+                                 target_text(spec.id).as_str())));
             }
             auto public_layer = lito::c::CArgumentLayer {};
             append_unique(public_layer.include_directories, exported_usage.include_directories);
@@ -1012,9 +1006,9 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             append_unique(public_layer.include_directories, exported_usage.include_directories);
             append_unique(public_layer.definitions, exported_usage.definitions);
             if (! exported_usage.arguments.is_Cpp()) {
-                return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "C++ target '{}' received compiler arguments for the wrong language",
-                    target_text(spec.id).as_str()));
+                    target_text(spec.id).as_str())));
             }
             append_unique(public_layer.arguments, exported_usage.arguments.as_Cpp().layer);
             auto public_cpp = apply_cpp_option_layer(as<Clone>(selected_profile.cpp).clone(),
@@ -1080,28 +1074,28 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                         continue;
                     }
                     if (provider.is_some()) {
-                        return plan_failure<ResolvedNativeTargetPlan>(
+                        return Err(lito::package::PackageError::Message(
                             rstd::format("proc-macro target '{}' has an ambiguous compiler plugin "
                                          "dependency '{}'",
                                          target_text(spec.id).as_str(),
-                                         dependency.package.as_str()));
+                                         dependency.package.as_str())));
                     }
                     provider = Some(candidate);
                 }
                 if (provider.is_none()) {
-                    return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                    return Err(lito::package::PackageError::Message(rstd::format(
                         "proc-macro target '{}' has no compiler plugin target for dependency '{}'",
                         target_text(spec.id).as_str(),
-                        dependency.package.as_str()));
+                        dependency.package.as_str())));
                 }
                 append_unique(visible, *provider);
             }
         }
         if (spec.language == lito::manifest::PackageLanguage::C) {
             if (! private_arguments.is_C()) {
-                return plan_failure<ResolvedNativeTargetPlan>(
+                return Err(lito::package::PackageError::Message(
                     rstd::format("C target '{}' received compiler arguments for the wrong language",
-                                 target_text(spec.id).as_str()));
+                                 target_text(spec.id).as_str())));
             }
             auto c_layer = lito::c::CArgumentLayer {
                 .include_directories = rstd::move(private_include_directories),
@@ -1121,9 +1115,9 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             }
         } else {
             if (! private_arguments.is_Cpp()) {
-                return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "C++ target '{}' received compiler arguments for the wrong language",
-                    target_text(spec.id).as_str()));
+                    target_text(spec.id).as_str())));
             }
             auto private_layer = CppOptionLayer {
                 .include_directories = rstd::move(private_include_directories),
@@ -1164,12 +1158,12 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         auto test_id    = target_index(package, attachment->test_target);
         auto library_id = target_index(package, attachment->library_target);
         if (test_id.is_none() || library_id.is_none()) {
-            return plan_failure<ResolvedNativeTargetPlan>(
-                "test attachment references an unknown target"_str);
+            return Err(lito::package::PackageError::Message(
+                "test attachment references an unknown target"_Str));
         }
         if (! append_unique(visible_targets[target], target)) {
-            return plan_failure<ResolvedNativeTargetPlan>(
-                "test attachment target is repeated in the build graph"_str);
+            return Err(lito::package::PackageError::Message(
+                "test attachment target is repeated in the build graph"_Str));
         }
         append_unique(visible_targets[target], visible_targets[*library_id]);
         append_unique(visible_targets[target], visible_targets[*test_id]);
@@ -1220,13 +1214,13 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                                                 contexts[target].language.as_Cpp().options);
             }
             if (abi_difference.is_some()) {
-                return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                return Err(lito::package::PackageError::Message(rstd::format(
                     "artifact ABI conflict in {}: target '{}' has '{}', dependency '{}' has '{}'",
                     cpp_abi_compatibility_field_name(abi_difference->field),
                     target_text(package.targets[target].id).as_str(),
                     abi_difference->consumer.as_str(),
                     target_text(package.targets[candidate].id).as_str(),
-                    abi_difference->provider.as_str()));
+                    abi_difference->provider.as_str())));
             }
             const auto shared_boundary =
                 package.targets[candidate].artifact_kind == ArtifactKind::SharedLibrary;
@@ -1282,13 +1276,13 @@ auto snapshot_package_plan(const PackageSpec& package, const ResolvedNativeTarge
     -> lito::package::PackageResult<PackagePlan> {
     if (discovery.profile >= package.profiles.len() ||
         discovery.target_identities.len() != package.targets.len()) {
-        return plan_failure<PackagePlan>(
-            "source discovery plan does not match the finalized package"_str);
+        return Err(lito::package::PackageError::Message(
+            "source discovery plan does not match the finalized package"_Str));
     }
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         if (! (discovery.target_identities[target] == package.targets[target].id)) {
-            return plan_failure<PackagePlan>(
-                "source discovery target order changed during finalization"_str);
+            return Err(lito::package::PackageError::Message(
+                "source discovery target order changed during finalization"_Str));
         }
     }
     auto       contexts      = discovery.contexts.iter()

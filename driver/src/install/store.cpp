@@ -40,23 +40,6 @@ struct TransactionItem {
     bool    publish {};
 };
 
-template<typename T>
-auto store_failure(String message) -> InstallStoreResult<T> {
-    return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::move(message))));
-}
-
-template<typename T>
-auto store_failure(ref<str> message) -> InstallStoreResult<T> {
-    return store_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto store_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error error)
-    -> InstallStoreResult<T> {
-    return Err(InstallStoreError::Cause(
-        InstallStoreCause::Io(String::make(operation), PathBuf::from(path), rstd::move(error))));
-}
-
 auto path_metadata(ref<rstd::path::Path> path) -> InstallStoreResult<Option<rstd::fs::Metadata>> {
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_ok()) return Ok(Some(rstd::move(metadata).unwrap()));
@@ -64,15 +47,15 @@ auto path_metadata(ref<rstd::path::Path> path) -> InstallStoreResult<Option<rstd
     if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
         return Ok(None());
     }
-    return store_io_failure<Option<rstd::fs::Metadata>>(
-        "inspect install path"_str, path, rstd::move(error));
+    return Err(InstallStoreError::Cause(
+        InstallStoreCause::Io("inspect install path"_Str, PathBuf::from(path), rstd::move(error))));
 }
 
 auto validate_directory(ref<rstd::path::Path> path, ref<str> role) -> InstallStoreResult<empty> {
     auto metadata = rstd_try(path_metadata(path));
     if (metadata.is_none() || ! metadata->is_dir() || metadata->is_symlink()) {
-        return store_failure<empty>(
-            rstd::format("{} directory '{}' is not a real directory", role, path));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            rstd::format("{} directory '{}' is not a real directory", role, path))));
     }
     return Ok(empty {});
 }
@@ -88,8 +71,8 @@ auto validate_parent_tree(ref<rstd::path::Path> root, ref<rstd::path::Path> rela
         auto metadata = rstd_try(path_metadata(current.as_path()));
         if (metadata.is_none()) return Ok(empty {});
         if (! metadata->is_dir() || metadata->is_symlink()) {
-            return store_failure<empty>(rstd::format(
-                "install destination parent '{}' is not a real directory", current.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "install destination parent '{}' is not a real directory", current.as_path()))));
         }
     }
     return Ok(empty {});
@@ -107,16 +90,18 @@ auto ensure_parent_tree(ref<rstd::path::Path> root,
         auto metadata = rstd_try(path_metadata(current.as_path()));
         if (metadata.is_some()) {
             if (! metadata->is_dir() || metadata->is_symlink()) {
-                return store_failure<empty>(rstd::format(
-                    "install destination parent '{}' is not a real directory", current.as_path()));
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                    rstd::format("install destination parent '{}' is not a real directory",
+                                 current.as_path()))));
             }
             continue;
         }
         auto made = rstd::fs::create_dir(current.as_path());
         if (made.is_err()) {
-            return store_io_failure<empty>("create install destination parent"_str,
-                                           current.as_path(),
-                                           rstd::move(made).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("create install destination parent"_Str,
+                                      PathBuf::from(current.as_path()),
+                                      rstd::move(made).unwrap_err())));
         }
         if (created != nullptr) created->push(current.clone());
     }
@@ -128,12 +113,16 @@ auto same_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right)
     auto left_metadata  = rstd::fs::metadata(left);
     auto right_metadata = rstd::fs::metadata(right);
     if (left_metadata.is_err()) {
-        return store_io_failure<bool>(
-            "inspect staged entry"_str, left, rstd::move(left_metadata).unwrap_err());
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Io("inspect staged entry"_Str,
+                                  PathBuf::from(left),
+                                  rstd::move(left_metadata).unwrap_err())));
     }
     if (right_metadata.is_err()) {
-        return store_io_failure<bool>(
-            "inspect installed entry"_str, right, rstd::move(right_metadata).unwrap_err());
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Io("inspect installed entry"_Str,
+                                  PathBuf::from(right),
+                                  rstd::move(right_metadata).unwrap_err())));
     }
     if (left_metadata->len() != right_metadata->len() ||
         left_metadata->permissions().mode() != right_metadata->permissions().mode()) {
@@ -141,13 +130,15 @@ auto same_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right)
     }
     auto left_file = rstd::fs::File::open(left);
     if (left_file.is_err()) {
-        return store_io_failure<bool>(
-            "open staged entry"_str, left, rstd::move(left_file).unwrap_err());
+        return Err(InstallStoreError::Cause(InstallStoreCause::Io(
+            "open staged entry"_Str, PathBuf::from(left), rstd::move(left_file).unwrap_err())));
     }
     auto right_file = rstd::fs::File::open(right);
     if (right_file.is_err()) {
-        return store_io_failure<bool>(
-            "open installed entry"_str, right, rstd::move(right_file).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("open installed entry"_Str,
+                                                           PathBuf::from(right),
+                                                           rstd::move(right_file).unwrap_err())));
     }
     auto left_buffer  = array<u8, 65536> {};
     auto right_buffer = array<u8, 65536> {};
@@ -161,13 +152,15 @@ auto same_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right)
         auto right_chunk = mut_ref<u8[]>::from_raw_parts(right_buffer.as_mut_ptr(), count);
         auto left_read   = left_file->read_exact_at(left_chunk, offset);
         if (left_read.is_err()) {
-            return store_io_failure<bool>(
-                "read staged entry"_str, left, rstd::move(left_read).unwrap_err());
+            return Err(InstallStoreError::Cause(InstallStoreCause::Io(
+                "read staged entry"_Str, PathBuf::from(left), rstd::move(left_read).unwrap_err())));
         }
         auto right_read = right_file->read_exact_at(right_chunk, offset);
         if (right_read.is_err()) {
-            return store_io_failure<bool>(
-                "read installed entry"_str, right, rstd::move(right_read).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("read installed entry"_Str,
+                                      PathBuf::from(right),
+                                      rstd::move(right_read).unwrap_err())));
         }
         for (usize index {}; index < count; ++index) {
             if (left_buffer[index].get() != right_buffer[index].get()) return Ok(false);
@@ -182,12 +175,16 @@ auto same_link(ref<rstd::path::Path> left, ref<rstd::path::Path> right)
     auto left_target  = rstd::fs::read_link(left);
     auto right_target = rstd::fs::read_link(right);
     if (left_target.is_err()) {
-        return store_io_failure<bool>(
-            "read staged install link"_str, left, rstd::move(left_target).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("read staged install link"_Str,
+                                                           PathBuf::from(left),
+                                                           rstd::move(left_target).unwrap_err())));
     }
     if (right_target.is_err()) {
-        return store_io_failure<bool>(
-            "read installed link"_str, right, rstd::move(right_target).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("read installed link"_Str,
+                                                           PathBuf::from(right),
+                                                           rstd::move(right_target).unwrap_err())));
     }
     return Ok(left_target->as_path() == right_target->as_path());
 }
@@ -231,9 +228,9 @@ auto apply_entry_transforms(const InstallEntry&                 entry,
     for (const auto& transform : entry.transforms) {
         if (! transform.is_Strip()) continue;
         if (strip.is_none() || strip->apply == nullptr) {
-            return store_failure<empty>(
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                 rstd::format("install entry '{}' requires LLVM strip but no executor was provided",
-                             install_entry_origin_text(entry.origin).as_str()));
+                             install_entry_origin_text(entry.origin).as_str()))));
         }
         auto applied = strip->apply(strip->context,
                                     InstallStripRequest {
@@ -261,56 +258,67 @@ auto stage_entry(const InstallEntry&                 entry,
                  ref<rstd::path::Path>               destination,
                  const Option<InstallStripExecutor>& strip) -> InstallStoreResult<empty> {
     auto parent = staged.parent();
-    if (parent.is_none()) return store_failure<empty>("staged entry has no parent"_str);
+    if (parent.is_none())
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Message("staged entry has no parent"_Str)));
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return store_io_failure<empty>(
-            "create staging parent"_str, *parent, rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create staging parent"_Str,
+                                                           PathBuf::from(*parent),
+                                                           rstd::move(created).unwrap_err())));
     }
     if (entry.payload.is_CopyFile()) {
         const auto& source   = entry.payload.as_CopyFile().source;
         auto        metadata = rstd_try(path_metadata(source.as_path()));
         if (metadata.is_none() || ! metadata->is_file() || metadata->is_symlink()) {
-            return store_failure<empty>(rstd::format(
-                "install source '{}' is not a regular non-symlink file", source.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "install source '{}' is not a regular non-symlink file", source.as_path()))));
         }
         auto copied = rstd::fs::copy(source.as_path(), staged);
         if (copied.is_err()) {
-            return store_io_failure<empty>(
-                "stage install entry"_str, source.as_path(), rstd::move(copied).unwrap_err());
+            return Err(
+                InstallStoreError::Cause(InstallStoreCause::Io("stage install entry"_Str,
+                                                               PathBuf::from(source.as_path()),
+                                                               rstd::move(copied).unwrap_err())));
         }
         auto working_directory = source.as_path().parent();
         if (working_directory.is_none()) working_directory = staged.parent();
         if (working_directory.is_none()) {
-            return store_failure<empty>("strip working directory is unavailable"_str);
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Message("strip working directory is unavailable"_Str)));
         }
         rstd_try(
             apply_entry_transforms(entry, package, staged, destination, *working_directory, strip));
         auto permissions = rstd::fs::set_permissions(staged, metadata->permissions());
         if (permissions.is_err()) {
-            return store_io_failure<empty>("preserve install entry permissions"_str,
-                                           source.as_path(),
-                                           rstd::move(permissions).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("preserve install entry permissions"_Str,
+                                      PathBuf::from(source.as_path()),
+                                      rstd::move(permissions).unwrap_err())));
         }
         return Ok(empty {});
     }
     if (! entry.transforms.is_empty()) {
-        return store_failure<empty>(
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
             rstd::format("generated install entry '{}' cannot declare file transforms",
-                         install_entry_origin_text(entry.origin).as_str()));
+                         install_entry_origin_text(entry.origin).as_str()))));
     }
     const auto& bytes   = entry.payload.as_Bytes();
     auto        written = rstd::fs::write(staged, bytes.contents.as_slice());
     if (written.is_err()) {
-        return store_io_failure<empty>(
-            "stage generated install entry"_str, staged, rstd::move(written).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("stage generated install entry"_Str,
+                                                           PathBuf::from(staged),
+                                                           rstd::move(written).unwrap_err())));
     }
     auto permissions =
         rstd::fs::set_permissions(staged, rstd::fs::Permissions::from_mode(bytes.permissions));
     if (permissions.is_err()) {
-        return store_io_failure<empty>("set generated install entry permissions"_str,
-                                       staged,
-                                       rstd::move(permissions).unwrap_err());
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Io("set generated install entry permissions"_Str,
+                                  PathBuf::from(staged),
+                                  rstd::move(permissions).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -318,16 +326,20 @@ auto stage_entry(const InstallEntry&                 entry,
 auto stage_link(ref<rstd::path::Path> relative_target, ref<rstd::path::Path> staged)
     -> InstallStoreResult<empty> {
     auto parent = staged.parent();
-    if (parent.is_none()) return store_failure<empty>("staged link has no parent"_str);
+    if (parent.is_none())
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Message("staged link has no parent"_Str)));
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return store_io_failure<empty>(
-            "create staged link parent"_str, *parent, rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create staged link parent"_Str,
+                                                           PathBuf::from(*parent),
+                                                           rstd::move(created).unwrap_err())));
     }
     auto linked = rstd::fs::soft_link(relative_target, staged);
     if (linked.is_err()) {
-        return store_io_failure<empty>(
-            "stage install link"_str, staged, rstd::move(linked).unwrap_err());
+        return Err(InstallStoreError::Cause(InstallStoreCause::Io(
+            "stage install link"_Str, PathBuf::from(staged), rstd::move(linked).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -336,13 +348,15 @@ auto remove_installed_path(ref<rstd::path::Path> path) -> InstallStoreResult<emp
     auto metadata = rstd_try(path_metadata(path));
     if (metadata.is_none()) return Ok(empty {});
     if (metadata->is_dir() && ! metadata->is_symlink()) {
-        return store_failure<empty>(
-            rstd::format("install transaction path '{}' unexpectedly became a directory", path));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            rstd::format("install transaction path '{}' unexpectedly became a directory", path))));
     }
     auto removed = rstd::fs::remove_file(path);
     if (removed.is_err()) {
-        return store_io_failure<empty>(
-            "remove install transaction path"_str, path, rstd::move(removed).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("remove install transaction path"_Str,
+                                                           PathBuf::from(path),
+                                                           rstd::move(removed).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -447,7 +461,7 @@ auto transaction_failure(ref<str>                    operation,
     if (created_directories != nullptr) {
         rollback_created_directories(*created_directories, rollback_failures);
     }
-    return InstallStoreError::Transaction(String::make(operation),
+    return InstallStoreError::Transaction(operation.into(),
                                           Box<InstallStoreError>::make(rstd::move(error)),
                                           rstd::move(rollback_failures));
 }
@@ -476,9 +490,10 @@ auto parse_transaction_journal(ref<rstd::path::Path> transaction)
     auto journal  = PathBuf::from(transaction).join(PathBuf::from("journal.json"_str).as_path());
     auto contents = rstd::fs::read_to_string(journal.as_path());
     if (contents.is_err()) {
-        return store_io_failure<Vec<TransactionItem>>("read install transaction journal"_str,
-                                                      journal.as_path(),
-                                                      rstd::move(contents).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("read install transaction journal"_Str,
+                                                           PathBuf::from(journal.as_path()),
+                                                           rstd::move(contents).unwrap_err())));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -489,8 +504,8 @@ auto parse_transaction_journal(ref<rstd::path::Path> transaction)
     auto items  = parsed->get("items"_str);
     if (schema.is_none() || (**schema).as_u64() != Some(u64(1)) || items.is_none() ||
         (**items).as_array().is_none()) {
-        return store_failure<Vec<TransactionItem>>(
-            rstd::format("install transaction journal '{}' is invalid", journal.as_path()));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            rstd::format("install transaction journal '{}' is invalid", journal.as_path()))));
     }
     auto result = Vec<TransactionItem>::make();
     for (const auto& value : **(**items).as_array()) {
@@ -500,13 +515,13 @@ auto parse_transaction_journal(ref<rstd::path::Path> transaction)
         if (path_value.is_none() || (**path_value).as_str().is_none() || existing.is_none() ||
             (**existing).as_bool().is_none() || publish.is_none() ||
             (**publish).as_bool().is_none()) {
-            return store_failure<Vec<TransactionItem>>(rstd::format(
-                "install transaction journal '{}' contains an invalid item", journal.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "install transaction journal '{}' contains an invalid item", journal.as_path()))));
         }
         auto relative = PathBuf::from(*(**path_value).as_str());
         if (! install_relative_destination_is_valid(relative.as_path())) {
-            return store_failure<Vec<TransactionItem>>(rstd::format(
-                "install transaction journal '{}' contains an unsafe path", journal.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "install transaction journal '{}' contains an unsafe path", journal.as_path()))));
         }
         result.push(TransactionItem {
             .relative     = relative.clone(),
@@ -531,45 +546,49 @@ auto recover_managed_transactions(const InstallLayout& layout) -> InstallStoreRe
     auto metadata = rstd_try(path_metadata(layout.transactions.as_path()));
     if (metadata.is_none()) return Ok(empty {});
     if (! metadata->is_dir() || metadata->is_symlink()) {
-        return store_failure<empty>(rstd::format("install transaction directory '{}' is unsafe",
-                                                 layout.transactions.as_path()));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+            "install transaction directory '{}' is unsafe", layout.transactions.as_path()))));
     }
     auto opened = rstd::fs::read_dir(layout.transactions.as_path());
     if (opened.is_err()) {
-        return store_io_failure<empty>("read install transactions"_str,
-                                       layout.transactions.as_path(),
-                                       rstd::move(opened).unwrap_err());
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Io("read install transactions"_Str,
+                                  PathBuf::from(layout.transactions.as_path()),
+                                  rstd::move(opened).unwrap_err())));
     }
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return store_io_failure<empty>("read install transaction entry"_str,
-                                           layout.transactions.as_path(),
-                                           rstd::move(item).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("read install transaction entry"_Str,
+                                      PathBuf::from(layout.transactions.as_path()),
+                                      rstd::move(item).unwrap_err())));
         }
         auto path      = item->path();
         auto item_type = item->file_type();
         if (item_type.is_err()) {
-            return store_io_failure<empty>("inspect install transaction"_str,
-                                           path.as_path(),
-                                           rstd::move(item_type).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("inspect install transaction"_Str,
+                                      PathBuf::from(path.as_path()),
+                                      rstd::move(item_type).unwrap_err())));
         }
         if (! item_type->is_dir() || item_type->is_symlink()) {
-            return store_failure<empty>(
-                rstd::format("install transaction '{}' is not a real directory", path.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install transaction '{}' is not a real directory", path.as_path()))));
         }
         auto committed          = path.join(PathBuf::from("committed"_str).as_path());
         auto committed_metadata = rstd_try(path_metadata(committed.as_path()));
         if (committed_metadata.is_some()) {
             if (! committed_metadata->is_file() || committed_metadata->is_symlink()) {
-                return store_failure<empty>(
-                    rstd::format("install transaction marker '{}' is unsafe", committed.as_path()));
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                    "install transaction marker '{}' is unsafe", committed.as_path()))));
             }
             auto removed = rstd::fs::remove_dir_all(path.as_path());
             if (removed.is_err()) {
-                return store_io_failure<empty>("clean committed install transaction"_str,
-                                               path.as_path(),
-                                               rstd::move(removed).unwrap_err());
+                return Err(InstallStoreError::Cause(
+                    InstallStoreCause::Io("clean committed install transaction"_Str,
+                                          PathBuf::from(path.as_path()),
+                                          rstd::move(removed).unwrap_err())));
             }
             continue;
         }
@@ -578,15 +597,16 @@ auto recover_managed_transactions(const InstallLayout& layout) -> InstallStoreRe
         if (journal_metadata.is_none()) {
             auto removed = rstd::fs::remove_dir_all(path.as_path());
             if (removed.is_err()) {
-                return store_io_failure<empty>("clean unprepared install transaction"_str,
-                                               path.as_path(),
-                                               rstd::move(removed).unwrap_err());
+                return Err(InstallStoreError::Cause(
+                    InstallStoreCause::Io("clean unprepared install transaction"_Str,
+                                          PathBuf::from(path.as_path()),
+                                          rstd::move(removed).unwrap_err())));
             }
             continue;
         }
         if (! journal_metadata->is_file() || journal_metadata->is_symlink()) {
-            return store_failure<empty>(
-                rstd::format("install transaction journal '{}' is unsafe", journal.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install transaction journal '{}' is unsafe", journal.as_path()))));
         }
         auto items    = rstd_try(parse_transaction_journal(path.as_path()));
         auto failures = rollback_transaction(layout.root.path.as_path(), path.as_path(), items);
@@ -599,9 +619,10 @@ auto recover_managed_transactions(const InstallLayout& layout) -> InstallStoreRe
         }
         auto removed = rstd::fs::remove_dir_all(path.as_path());
         if (removed.is_err()) {
-            return store_io_failure<empty>("clean recovered install transaction"_str,
-                                           path.as_path(),
-                                           rstd::move(removed).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("clean recovered install transaction"_Str,
+                                      PathBuf::from(path.as_path()),
+                                      rstd::move(removed).unwrap_err())));
         }
     }
     (void)rstd::fs::remove_dir(layout.transactions.as_path());
@@ -611,22 +632,24 @@ auto recover_managed_transactions(const InstallLayout& layout) -> InstallStoreRe
 auto create_transaction(ref<rstd::path::Path> path) -> InstallStoreResult<empty> {
     auto made = rstd::fs::create_dir(path);
     if (made.is_err()) {
-        return store_io_failure<empty>(
-            "create install transaction"_str, path, rstd::move(made).unwrap_err());
+        return Err(InstallStoreError::Cause(InstallStoreCause::Io(
+            "create install transaction"_Str, PathBuf::from(path), rstd::move(made).unwrap_err())));
     }
     auto staging = PathBuf::from(path).join(PathBuf::from("new"_str).as_path());
     auto backup  = PathBuf::from(path).join(PathBuf::from("backup"_str).as_path());
     auto created = rstd::fs::create_dir(staging.as_path());
     if (created.is_err()) {
-        return store_io_failure<empty>("create install staging directory"_str,
-                                       staging.as_path(),
-                                       rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create install staging directory"_Str,
+                                                           PathBuf::from(staging.as_path()),
+                                                           rstd::move(created).unwrap_err())));
     }
     created = rstd::fs::create_dir(backup.as_path());
     if (created.is_err()) {
-        return store_io_failure<empty>("create install backup directory"_str,
-                                       backup.as_path(),
-                                       rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create install backup directory"_Str,
+                                                           PathBuf::from(backup.as_path()),
+                                                           rstd::move(created).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -651,9 +674,10 @@ auto execute_transaction(ref<rstd::path::Path>       root,
     auto journal_text = transaction_journal(items);
     auto written      = rstd::fs::write_atomic(journal.as_path(), journal_text.as_str().as_bytes());
     if (written.is_err()) {
-        return store_io_failure<empty>("write install transaction journal"_str,
-                                       journal.as_path(),
-                                       rstd::move(written).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("write install transaction journal"_Str,
+                                                           PathBuf::from(journal.as_path()),
+                                                           rstd::move(written).unwrap_err())));
     }
 
     for (const auto& item : items) {
@@ -784,16 +808,22 @@ auto next_managed_catalog(const InstallLayout&          layout,
 
 auto stage_text(ref<str> contents, ref<rstd::path::Path> staged) -> InstallStoreResult<empty> {
     auto parent = staged.parent();
-    if (parent.is_none()) return store_failure<empty>("staged text has no parent"_str);
+    if (parent.is_none())
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Message("staged text has no parent"_Str)));
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return store_io_failure<empty>(
-            "create staged text parent"_str, *parent, rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create staged text parent"_Str,
+                                                           PathBuf::from(*parent),
+                                                           rstd::move(created).unwrap_err())));
     }
     auto written = rstd::fs::write(staged, contents.as_bytes());
     if (written.is_err()) {
-        return store_io_failure<empty>(
-            "stage install metadata"_str, staged, rstd::move(written).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("stage install metadata"_Str,
+                                                           PathBuf::from(staged),
+                                                           rstd::move(written).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -805,22 +835,22 @@ auto validate_managed_existing(const InstallCatalog&             catalog,
                                bool force) -> InstallStoreResult<empty> {
     auto owner = managed_catalog_entry_owner(catalog, relative);
     if (owner.is_some() && catalog.packages[*owner].identity.id != incoming_id && ! force) {
-        return store_failure<empty>(
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
             rstd::format("destination '{}' is already installed by package '{}'",
                          relative,
-                         catalog.packages[*owner].identity.name.as_str()));
+                         catalog.packages[*owner].identity.name.as_str()))));
     }
     if (metadata.is_some() && owner.is_none() && ! force) {
-        return store_failure<empty>(rstd::format(
-            "destination '{}' is not managed by Lito; use --force to replace it", relative));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+            "destination '{}' is not managed by Lito; use --force to replace it", relative))));
     }
     if (metadata.is_some() && metadata->is_dir() && ! metadata->is_symlink()) {
-        return store_failure<empty>(
-            rstd::format("install destination '{}' is a directory", relative));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            rstd::format("install destination '{}' is a directory", relative))));
     }
     if (metadata.is_some() && metadata->is_symlink() && owner.is_none()) {
-        return store_failure<empty>(
-            rstd::format("install destination '{}' is an unmanaged symbolic link", relative));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            rstd::format("install destination '{}' is an unmanaged symbolic link", relative))));
     }
     return Ok(empty {});
 }
@@ -893,9 +923,9 @@ auto prepare_managed_infos(const InstallLayout&  layout,
         auto destination = layout.root.path.join(relative.as_path());
         auto existing    = rstd_try(path_metadata(destination.as_path()));
         if (existing.is_some() && (! existing->is_file() || existing->is_symlink())) {
-            return store_failure<empty>(
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                 rstd::format("install package info '{}' is not a regular non-symlink file",
-                             destination.as_path()));
+                             destination.as_path()))));
         }
         auto staged = PathBuf::from(transaction)
                           .join(PathBuf::from("new"_str).as_path())
@@ -1021,14 +1051,18 @@ auto managed_install(InstallStoreRequest request) -> InstallStoreResult<InstallS
     auto lock = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
         layout.lock.as_path());
     if (lock.is_err()) {
-        return store_io_failure<InstallStoreSummary>(
-            "open install lock"_str, layout.lock.as_path(), rstd::move(lock).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("open install lock"_Str,
+                                                           PathBuf::from(layout.lock.as_path()),
+                                                           rstd::move(lock).unwrap_err())));
     }
     auto locked =
         rstd::fs::FileLock::acquire(rstd::move(lock).unwrap(), rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return store_io_failure<InstallStoreSummary>(
-            "lock install store"_str, layout.lock.as_path(), rstd::move(locked).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("lock install store"_Str,
+                                                           PathBuf::from(layout.lock.as_path()),
+                                                           rstd::move(locked).unwrap_err())));
     }
     auto lock_guard = rstd::move(locked).unwrap();
     rstd_try(recover_managed_transactions(layout));
@@ -1047,9 +1081,10 @@ auto managed_install(InstallStoreRequest request) -> InstallStoreResult<InstallS
 
     auto transactions_created = rstd::fs::create_dir_all(layout.transactions.as_path());
     if (transactions_created.is_err()) {
-        return store_io_failure<InstallStoreSummary>("create install transaction directory"_str,
-                                                     layout.transactions.as_path(),
-                                                     rstd::move(transactions_created).unwrap_err());
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Io("create install transaction directory"_Str,
+                                  PathBuf::from(layout.transactions.as_path()),
+                                  rstd::move(transactions_created).unwrap_err())));
     }
     rstd_try(validate_directory(layout.transactions.as_path(), "install transaction"_str));
     auto transaction = transaction_path(layout.transactions.as_path());
@@ -1082,9 +1117,10 @@ auto managed_install(InstallStoreRequest request) -> InstallStoreResult<InstallS
     }
     auto removed = rstd::fs::remove_dir_all(transaction.as_path());
     if (removed.is_err()) {
-        return store_io_failure<InstallStoreSummary>("clean install transaction"_str,
-                                                     transaction.as_path(),
-                                                     rstd::move(removed).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("clean install transaction"_Str,
+                                                           PathBuf::from(transaction.as_path()),
+                                                           rstd::move(removed).unwrap_err())));
     }
     (void)rstd::fs::remove_dir(layout.transactions.as_path());
     for (const auto& orphan : *orphans) {
@@ -1096,18 +1132,22 @@ auto managed_install(InstallStoreRequest request) -> InstallStoreResult<InstallS
 auto prefix_install(InstallStoreRequest request) -> InstallStoreResult<InstallStoreSummary> {
     auto prefix = rstd::move(request.destination).as_Prefix().prefix;
     if (prefix.path.is_empty()) {
-        return store_failure<InstallStoreSummary>("install prefix is required"_str);
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Message("install prefix is required"_Str)));
     }
     auto created = rstd::fs::create_dir_all(prefix.path.as_path());
     if (created.is_err()) {
-        return store_io_failure<InstallStoreSummary>(
-            "create install prefix"_str, prefix.path.as_path(), rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create install prefix"_Str,
+                                                           PathBuf::from(prefix.path.as_path()),
+                                                           rstd::move(created).unwrap_err())));
     }
     auto canonical = rstd::fs::canonicalize(prefix.path.as_path());
     if (canonical.is_err()) {
-        return store_io_failure<InstallStoreSummary>("resolve install prefix"_str,
-                                                     prefix.path.as_path(),
-                                                     rstd::move(canonical).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("resolve install prefix"_Str,
+                                                           PathBuf::from(prefix.path.as_path()),
+                                                           rstd::move(canonical).unwrap_err())));
     }
     auto destination =
         InstallDestination::Prefix(InstallPrefix { .path = rstd::move(canonical).unwrap() });
@@ -1117,8 +1157,8 @@ auto prefix_install(InstallStoreRequest request) -> InstallStoreResult<InstallSt
         PathBuf::from(destination.path()).join(PathBuf::from(".lito-install"_str).as_path());
     auto stale = rstd_try(path_metadata(transaction.as_path()));
     if (stale.is_some()) {
-        return store_failure<InstallStoreSummary>(rstd::format(
-            "install prefix contains an unfinished transaction '{}'", transaction.as_path()));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+            "install prefix contains an unfinished transaction '{}'", transaction.as_path()))));
     }
     rstd_try(create_transaction(transaction.as_path()));
 
@@ -1131,9 +1171,9 @@ auto prefix_install(InstallStoreRequest request) -> InstallStoreResult<InstallSt
             auto existing  = rstd_try(path_metadata(installed.as_path()));
             if (existing.is_some() && (! existing->is_file() || existing->is_symlink())) {
                 (void)rstd::fs::remove_dir_all(transaction.as_path());
-                return store_failure<InstallStoreSummary>(rstd::format(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
                     "install prefix destination '{}' is not a regular non-symlink file",
-                    installed.as_path()));
+                    installed.as_path()))));
             }
             auto staged = transaction.join(PathBuf::from("new"_str).as_path()).join(relative);
             auto staged_result = stage_entry(entry,
@@ -1165,9 +1205,10 @@ auto prefix_install(InstallStoreRequest request) -> InstallStoreResult<InstallSt
     }
     auto removed = rstd::fs::remove_dir_all(transaction.as_path());
     if (removed.is_err()) {
-        return store_io_failure<InstallStoreSummary>("clean prefix install transaction"_str,
-                                                     transaction.as_path(),
-                                                     rstd::move(removed).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("clean prefix install transaction"_Str,
+                                                           PathBuf::from(transaction.as_path()),
+                                                           rstd::move(removed).unwrap_err())));
     }
     return Ok(summarize_publication(rstd::move(publication)));
 }
@@ -1178,24 +1219,31 @@ namespace lito
 {
 
 auto create_install_layout(InstallRoot root) -> InstallStoreResult<InstallLayout> {
-    if (root.path.is_empty()) return store_failure<InstallLayout>("install root is required"_str);
+    if (root.path.is_empty())
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Message("install root is required"_Str)));
     auto created = rstd::fs::create_dir_all(root.path.as_path());
     if (created.is_err()) {
-        return store_io_failure<InstallLayout>(
-            "create install root"_str, root.path.as_path(), rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create install root"_Str,
+                                                           PathBuf::from(root.path.as_path()),
+                                                           rstd::move(created).unwrap_err())));
     }
     auto canonical = rstd::fs::canonicalize(root.path.as_path());
     if (canonical.is_err()) {
-        return store_io_failure<InstallLayout>(
-            "resolve install root"_str, root.path.as_path(), rstd::move(canonical).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("resolve install root"_Str,
+                                                           PathBuf::from(root.path.as_path()),
+                                                           rstd::move(canonical).unwrap_err())));
     }
     root.path     = rstd::move(canonical).unwrap();
     auto packages = root.path.join(PathBuf::from("packages"_str).as_path());
     created       = rstd::fs::create_dir_all(packages.as_path());
     if (created.is_err()) {
-        return store_io_failure<InstallLayout>("create install packages directory"_str,
-                                               packages.as_path(),
-                                               rstd::move(created).unwrap_err());
+        return Err(
+            InstallStoreError::Cause(InstallStoreCause::Io("create install packages directory"_Str,
+                                                           PathBuf::from(packages.as_path()),
+                                                           rstd::move(created).unwrap_err())));
     }
     rstd_try(validate_directory(root.path.as_path(), "install root"_str));
     rstd_try(validate_directory(packages.as_path(), "install packages"_str));

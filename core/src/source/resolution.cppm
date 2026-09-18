@@ -65,8 +65,8 @@ auto select_git_source(const SourceResolutionOptions& options,
             source.commit.as_str() != reference.value.as_str())
             continue;
         if (matched.is_some()) {
-            return source_failure<GitSourceSelection>(
-                rstd::format("lock contains more than one Git commit for '{}'", url));
+            return Err(SourceError::Message(
+                rstd::format("lock contains more than one Git commit for '{}'", url)));
         }
         matched = Some(index);
     }
@@ -76,8 +76,8 @@ auto select_git_source(const SourceResolutionOptions& options,
         matched = None();
     }
     if (options.locked && matched.is_none()) {
-        return source_failure<GitSourceSelection>(
-            rstd::format("--locked has no source matching Git dependency '{}'", url));
+        return Err(SourceError::Message(
+            rstd::format("--locked has no source matching Git dependency '{}'", url)));
     }
     auto exact_commit = Option<String> {};
     if (matched.is_some()) {

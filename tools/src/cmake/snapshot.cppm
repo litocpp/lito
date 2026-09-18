@@ -85,8 +85,8 @@ auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
     for (const auto& item : **array) {
         auto text = item.as_str();
         if (text.is_none()) {
-            return cmake_failure<Vec<String>>(
-                rstd::format("{}.{} contains a non-string value", context, key));
+            return Err(lito::tools::ToolError::Message(
+                rstd::format("{}.{} contains a non-string value", context, key)));
         }
         result.push(String::make(*text));
     }
@@ -118,9 +118,9 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
         auto candidate = root.join(path.as_path());
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
-            return cmake_io_failure<Vec<String>>("inspect CMake link input"_str,
-                                                 candidate.as_path(),
-                                                 rstd::move(exists).unwrap_err());
+            return Err(lito::tools::ToolError::Io("inspect CMake link input"_Str,
+                                                  PathBuf::from(candidate.as_path()),
+                                                  rstd::move(exists).unwrap_err()));
         }
         if (! *exists) {
             result.push(token.clone());
@@ -128,9 +128,9 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
         }
         auto canonical = rstd::fs::canonicalize(candidate.as_path());
         if (canonical.is_err()) {
-            return cmake_io_failure<Vec<String>>("resolve CMake link input"_str,
-                                                 candidate.as_path(),
-                                                 rstd::move(canonical).unwrap_err());
+            return Err(lito::tools::ToolError::Io("resolve CMake link input"_Str,
+                                                  PathBuf::from(candidate.as_path()),
+                                                  rstd::move(canonical).unwrap_err()));
         }
         auto text = path_text(canonical->as_path(), "CMake link input"_str);
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -153,9 +153,9 @@ auto read_cmake_state_header(const CMakeWorkArea& area, const Request& requireme
     -> lito::tools::ToolResult<CMakeStateHeader> {
     auto exists = rstd::fs::exists(area.state.as_path());
     if (exists.is_err()) {
-        return cmake_io_failure<CMakeStateHeader>("inspect CMake package state"_str,
-                                                  area.state.as_path(),
-                                                  rstd::move(exists).unwrap_err());
+        return Err(lito::tools::ToolError::Io("inspect CMake package state"_Str,
+                                              PathBuf::from(area.state.as_path()),
+                                              rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(CMakeStateHeader {});
     auto value = read_json(area.state.as_path(), "CMake package state"_str);
@@ -174,14 +174,14 @@ auto read_cmake_state_header(const CMakeWorkArea& area, const Request& requireme
     }
     if (*(**package).as_str() != requirement.package.as_str() ||
         *(**source).as_str() != area.source_identity.as_str()) {
-        return cmake_failure<CMakeStateHeader>(
+        return Err(lito::tools::ToolError::Message(
             rstd::format("CMake work directory '{}' belongs to package '{}' source '{}', not "
                          "package '{}' source '{}'",
                          area.root.as_path(),
                          *(**package).as_str(),
                          *(**source).as_str(),
                          requirement.package.as_str(),
-                         area.source_identity.as_str()));
+                         area.source_identity.as_str())));
     }
     auto cacheable = value->get("cacheable"_str);
     if (cacheable.is_none() || (**cacheable).as_bool().is_none() ||
@@ -223,9 +223,9 @@ auto write_cmake_state(const CMakeWorkArea&  area,
     text.push_ascii(u8('\n'));
     auto written = rstd::fs::write_atomic(area.state.as_path(), text.as_str().as_bytes());
     if (written.is_err()) {
-        return cmake_io_failure<empty>("write CMake package state"_str,
-                                       area.state.as_path(),
-                                       rstd::move(written).unwrap_err());
+        return Err(lito::tools::ToolError::Io("write CMake package state"_Str,
+                                              PathBuf::from(area.state.as_path()),
+                                              rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -233,19 +233,21 @@ auto write_cmake_state(const CMakeWorkArea&  area,
 auto remove_cmake_tree(ref<rstd::path::Path> root, ref<rstd::path::Path> path, ref<str> context)
     -> lito::tools::ToolResult<empty> {
     if (path == root || ! path.starts_with(root)) {
-        return cmake_failure<empty>(rstd::format(
-            "refusing to remove {} '{}' outside CMake package root '{}'", context, path, root));
+        return Err(lito::tools::ToolError::Message(rstd::format(
+            "refusing to remove {} '{}' outside CMake package root '{}'", context, path, root)));
     }
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cmake_io_failure<empty>(
-            rstd::format("inspect {}", context).as_str(), path, rstd::move(exists).unwrap_err());
+        return Err(lito::tools::ToolError::Io((rstd::format("inspect {}", context).as_str()).into(),
+                                              PathBuf::from(path),
+                                              rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(empty {});
     auto removed = rstd::fs::remove_dir_all(path);
     if (removed.is_err()) {
-        return cmake_io_failure<empty>(
-            rstd::format("remove {}", context).as_str(), path, rstd::move(removed).unwrap_err());
+        return Err(lito::tools::ToolError::Io((rstd::format("remove {}", context).as_str()).into(),
+                                              PathBuf::from(path),
+                                              rstd::move(removed).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -334,11 +336,11 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
     auto targets = required_json_array(**usage, "targets"_str, "CMake usage snapshot"_str);
     if (targets.is_err()) return Err(rstd::move(targets).unwrap_err());
     if ((**targets).len() != requirement.targets.len()) {
-        return cmake_failure<Option<CMakeUsageSnapshot>>(
+        return Err(lito::tools::ToolError::Message(
             rstd::format("CMake usage snapshot '{}' has {} targets, expected {}",
                          area.state.as_path(),
                          (**targets).len(),
-                         requirement.targets.len()));
+                         requirement.targets.len())));
     }
     auto parsed_targets = Vec<CMakeTargetUsageSnapshot>::with_capacity((**targets).len());
     for (usize index {}; index < (**targets).len(); ++index) {
@@ -391,8 +393,8 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
         if (*disposition == "provided"_str) {
             parsed_disposition = ExternalAssetDisposition::Provided;
         } else if (*disposition != "materialized"_str) {
-            return cmake_failure<Option<CMakeUsageSnapshot>>(rstd::format(
-                "CMake asset set '{}' has unknown disposition '{}'", *name, *disposition));
+            return Err(lito::tools::ToolError::Message(rstd::format(
+                "CMake asset set '{}' has unknown disposition '{}'", *name, *disposition)));
         }
         auto entries = required_json_array(item, "entries"_str, "CMake asset set"_str);
         if (entries.is_err()) return Err(rstd::move(entries).unwrap_err());

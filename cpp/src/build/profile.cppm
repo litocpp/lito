@@ -162,11 +162,6 @@ auto is_profile_owned_linker_option(ref<str> option) -> bool {
 namespace lito::cpp
 {
 
-template<typename T>
-auto profile_failure(String message) -> lito::manifest::BuildProfileResult<T> {
-    return Err(lito::manifest::BuildProfileError::Message(rstd::move(message)));
-}
-
 auto occurrence_option(const Vec<String>& tokens) -> ref<str> {
     return tokens.is_empty() ? "<structured compiler option>"_str : tokens[usize {}].as_str();
 }
@@ -184,7 +179,7 @@ auto merge_cpp_language_setting(const lito::manifest::BooleanProfileSetting& pol
                                 ref<str>                                     option,
                                 ref<str> source) -> lito::manifest::BuildProfileResult<empty> {
     if (! policy.is_delegated() && policy.default_value() != requested_value) {
-        return profile_failure<empty>(
+        return Err(lito::manifest::BuildProfileError::Message(
             rstd::format("compiler option '{}' from {} sets {} to '{}', but the selected profile "
                          "'{}' fixes it to '{}'",
                          option,
@@ -192,7 +187,7 @@ auto merge_cpp_language_setting(const lito::manifest::BooleanProfileSetting& pol
                          field,
                          language_setting_text(requested_value),
                          profile_name,
-                         language_setting_text(policy.default_value())));
+                         language_setting_text(policy.default_value()))));
     }
     effective = requested_value;
     if (policy.is_delegated()) effective_source = String::make(source);
@@ -231,7 +226,7 @@ auto merge_codegen_setting(const lito::manifest::ProfileSetting<T>& policy,
                            ref<str>                                 option,
                            ref<str> source) -> lito::manifest::BuildProfileResult<empty> {
     if (policy.fixed.is_some() && *policy.fixed != value) {
-        return profile_failure<empty>(
+        return Err(lito::manifest::BuildProfileError::Message(
             rstd::format("compiler option '{}' from {} sets {} to '{}', but the selected profile "
                          "'{}' fixes it to '{}'",
                          option,
@@ -239,7 +234,7 @@ auto merge_codegen_setting(const lito::manifest::ProfileSetting<T>& policy,
                          field,
                          profile_setting_text(value),
                          profile_name,
-                         profile_setting_text(*policy.fixed)));
+                         profile_setting_text(*policy.fixed))));
     }
     effective        = Some<T>(policy.fixed.is_some() ? *policy.fixed : value);
     effective_source = policy.is_delegated() ? Some(String::make(source))
@@ -368,14 +363,14 @@ auto merge_ndebug(const lito::manifest::ProfileSetting<bool>& policy,
                   ref<str> source) -> lito::manifest::BuildProfileResult<bool> {
     if (policy.fixed.is_some()) {
         if (*policy.fixed != value) {
-            return profile_failure<bool>(rstd::format(
+            return Err(lito::manifest::BuildProfileError::Message(rstd::format(
                 "compiler option '{}' from {} sets NDEBUG to {}, but the selected profile '{}' "
                 "fixes it to {}",
                 option,
                 source,
                 value,
                 profile_name,
-                *policy.fixed));
+                *policy.fixed)));
         }
         effective = *policy.fixed ? Some<bool>(true) : None();
         return Ok(true);
@@ -414,14 +409,14 @@ auto merge_link_strip(const lito::manifest::ResolvedBuildProfile& profile,
                       ref<str> source) -> lito::manifest::BuildProfileResult<bool> {
     if (profile.strip.fixed.is_some()) {
         if (*profile.strip.fixed != value) {
-            return profile_failure<bool>(rstd::format(
+            return Err(lito::manifest::BuildProfileError::Message(rstd::format(
                 "linker option '{}' from {} sets strip to '{}', but the selected profile '{}' "
                 "fixes it to '{}'",
                 option,
                 source,
                 profile_setting_text(value),
                 profile_name,
-                profile_setting_text(*profile.strip.fixed)));
+                profile_setting_text(*profile.strip.fixed))));
         }
         effective        = Some(value);
         effective_source = Some(String::make(source));
@@ -437,10 +432,10 @@ auto validate_link_lto(const Option<lito::manifest::Lto>& compile,
                        ref<str>                           language,
                        ref<str> source) -> lito::manifest::BuildProfileResult<empty> {
     if (compile.is_none() || link.is_none() || *compile == *link) return Ok(empty {});
-    return profile_failure<empty>(
+    return Err(lito::manifest::BuildProfileError::Message(
         rstd::format("linker LTO from {} conflicts with the effective {} compiler LTO setting",
                      source,
-                     language));
+                     language)));
 }
 
 auto link_option_sequence_matches(const Vec<String>& tokens,
@@ -618,10 +613,10 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             }
             RSTD_CASE(OwnedSetting, setting, enabled) {
                 if (enabled.is_none()) {
-                    return profile_failure<ProfileSpec>(
+                    return Err(lito::manifest::BuildProfileError::Message(
                         rstd::format("compiler option '{}' from {} overrides a Lito-owned setting",
                                      occurrence_option(occurrence.raw_tokens),
-                                     occurrence.source.as_str()));
+                                     occurrence.source.as_str())));
                 }
                 auto        field            = "RTTI"_str;
                 const auto* policy           = rstd::addressof(selected.rtti);
@@ -761,19 +756,19 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             auto& option = normalized->arguments.tokens[index];
             if (option.as_str() == "-nostdlib++"_str ||
                 option.as_str().starts_with("-stdlib="_str)) {
-                return profile_failure<ProfileSpec>(
+                return Err(lito::manifest::BuildProfileError::Message(
                     rstd::format("linker option '{}' from {} overrides a Lito-owned setting",
                                  option.as_str(),
-                                 input.source.as_str()));
+                                 input.source.as_str())));
             }
             if (is_profile_owned_linker_option(option.as_str())) {
                 const auto typed = belongs_to_profile_option(
                     normalized->arguments.tokens, index, typed_profile_options);
                 if (! typed && ! linker_option_is_delegated(selected, option.as_str())) {
-                    return profile_failure<ProfileSpec>(
+                    return Err(lito::manifest::BuildProfileError::Message(
                         rstd::format("linker option '{}' from {} overrides the selected profile",
                                      option.as_str(),
-                                     input.source.as_str()));
+                                     input.source.as_str())));
                 }
             }
             linker_options.push(rstd::move(option));

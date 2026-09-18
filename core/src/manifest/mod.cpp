@@ -238,8 +238,8 @@ auto assemble_manifest_document(PathBuf                               root,
         auto workspace_value = rstd::move(input.workspace).unwrap();
         auto workspace_name  = rstd::move(workspace_value.name);
         if (! package_name_is_valid(workspace_name.as_str())) {
-            return manifest_schema_failure<ManifestDocument>(
-                "workspace.name must contain only ASCII letters, digits, '-' or '_'"_str);
+            return Err(ManifestSchemaError::Domain(
+                "workspace.name must contain only ASCII letters, digits, '-' or '_'"_Str));
         }
         auto members = declared_paths(
             Some(rstd::move(workspace_value.members)), "workspace.members"_str, true);
@@ -258,8 +258,8 @@ auto assemble_manifest_document(PathBuf                               root,
             const auto require_non_empty = [](const Option<String>& value,
                                               ref<str> context) -> ManifestSchemaResult<empty> {
                 if (value.is_some() && value->is_empty())
-                    return manifest_schema_failure<empty>(
-                        rstd::format("{} must not be empty", context));
+                    return Err(
+                        ManifestSchemaError::Domain(rstd::format("{} must not be empty", context)));
                 return Ok(empty {});
             };
             rstd_try(require_non_empty(defaults.version, "workspace.package.version"_str));
@@ -308,8 +308,8 @@ auto assemble_manifest_document(PathBuf                               root,
     auto package_value = rstd::move(input.package).unwrap();
     auto name          = rstd::move(package_value.name);
     if (! package_name_is_valid(name.as_str())) {
-        return manifest_schema_failure<ManifestDocument>(
-            "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
+        return Err(ManifestSchemaError::Domain(
+            "package.name must contain only ASCII letters, digits, '-' or '_'"_Str));
     }
     auto standard = rstd_try(parse_package_standard(rstd::move(package_value.standard)));
     auto target_language =
@@ -351,8 +351,8 @@ auto assemble_manifest_document(PathBuf                               root,
                                    (plugin.is_some() ? usize(1) : usize {}) +
                                    (proc_macro.is_some() ? usize(1) : usize {});
     if (compile_contracts > usize(1)) {
-        return manifest_schema_failure<ManifestDocument>(
-            "manifest.lib, manifest.plugin and manifest.pmacro are mutually exclusive"_str);
+        return Err(ManifestSchemaError::Domain(
+            "manifest.lib, manifest.plugin and manifest.pmacro are mutually exclusive"_Str));
     }
     const auto has_library    = library.is_some();
     const auto has_plugin     = plugin.is_some();
@@ -378,23 +378,22 @@ auto assemble_manifest_document(PathBuf                               root,
         standard = Some(PackageStandardRequirement::Cpp(CppStandard::Cpp20));
     }
     if (standard.is_some() && ! has_compile_contract) {
-        return manifest_schema_failure<ManifestDocument>(
-            "package.standard requires a compile target"_str);
+        return Err(ManifestSchemaError::Domain("package.standard requires a compile target"_Str));
     }
     if (standard.is_some() && package_standard_language(*standard) == PackageLanguage::C &&
         ! compile_tests.is_empty()) {
-        return manifest_schema_failure<ManifestDocument>(
-            "compile-test is currently only supported by C++ packages"_str);
+        return Err(ManifestSchemaError::Domain(
+            "compile-test is currently only supported by C++ packages"_Str));
     }
     if (script.is_some() && has_compile_contract) {
-        return manifest_schema_failure<ManifestDocument>(
-            "manifest.script cannot be combined with C or C++ targets"_str);
+        return Err(ManifestSchemaError::Domain(
+            "manifest.script cannot be combined with C or C++ targets"_Str));
     }
     if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none() &&
         script.is_none()) {
-        return manifest_schema_failure<ManifestDocument>(
+        return Err(ManifestSchemaError::Domain(
             "manifest must contain at least one of 'lib', 'plugin', 'pmacro', 'bin', 'test', "
-            "'bench' or 'compile-test', provide install.lua, or declare a script package"_str);
+            "'bench' or 'compile-test', provide install.lua, or declare a script package"_Str));
     }
     auto has_benches = false;
     for (const auto& target : targets) {
@@ -458,24 +457,23 @@ auto assemble_manifest_document(PathBuf                               root,
     if (! has_library && (! parsed_usage.public_include_directories.is_empty() ||
                           ! parsed_usage.public_include_directory_requirements.is_empty() ||
                           ! parsed_usage.public_definitions.is_empty())) {
-        return manifest_schema_failure<ManifestDocument>(
-            "usage.public-* requires a library target"_str);
+        return Err(ManifestSchemaError::Domain("usage.public-* requires a library target"_Str));
     }
     auto parsed_dependencies         = rstd::move(dependencies).unwrap();
     auto parsed_dev_dependencies     = rstd::move(dev_dependencies).unwrap();
     auto parsed_runtime_dependencies = rstd::move(runtime_dependencies).unwrap();
     for (const auto& dependency : parsed_dev_dependencies.explicit_dependencies) {
         if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
-            return manifest_schema_failure<ManifestDocument>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "dependency '{}' is declared in both dependencies and dev-dependencies",
-                dependency.name.as_str()));
+                dependency.name.as_str())));
         }
     }
     for (const auto& dependency : parsed_dev_dependencies.workspace_dependencies) {
         if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
-            return manifest_schema_failure<ManifestDocument>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "dependency '{}' is declared in both dependencies and dev-dependencies",
-                dependency.name.as_str()));
+                dependency.name.as_str())));
         }
     }
     auto external_dependencies   = rstd::move(external).unwrap();
@@ -485,8 +483,8 @@ auto assemble_manifest_document(PathBuf                               root,
         const auto reject_public = [](bool     is_public,
                                       ref<str> owner) -> ManifestSchemaResult<empty> {
             if (! is_public) return Ok(empty {});
-            return manifest_schema_failure<empty>(rstd::format(
-                "{}.pub requires the consuming package to have a library target", owner));
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "{}.pub requires the consuming package to have a library target", owner)));
         };
         for (const auto& dependency : parsed_dependencies.explicit_dependencies) {
             rstd_try(reject_public(dependency.is_public.is_some() && *dependency.is_public,
@@ -549,11 +547,11 @@ auto assemble_manifest_document(PathBuf                               root,
                 continue;
             if (requirement.external_source.is_none() ||
                 ! has_external_source(requirement.external_source->as_str())) {
-                return manifest_schema_failure<empty>(rstd::format(
+                return Err(ManifestSchemaError::Domain(rstd::format(
                     "{} references unknown external source '{}'",
                     owner,
                     requirement.external_source.is_some() ? requirement.external_source->as_str()
-                                                          : "<none>"_str));
+                                                          : "<none>"_str)));
             }
         }
         return Ok(empty {});
@@ -573,10 +571,10 @@ auto assemble_manifest_document(PathBuf                               root,
     for (const auto& group : parsed_source_groups) {
         if (group.external_source.is_some() &&
             ! has_external_source(group.external_source->as_str())) {
-            return manifest_schema_failure<ManifestDocument>(
+            return Err(ManifestSchemaError::Domain(
                 rstd::format("source group '{}' references unknown external source '{}'",
                              group.name.as_str(),
-                             group.external_source->as_str()));
+                             group.external_source->as_str())));
         }
     }
     const auto has_source_group = [&](ref<str> name) {
@@ -588,22 +586,22 @@ auto assemble_manifest_document(PathBuf                               root,
         const auto& target_source = package_target_source(manifest_target);
         for (const auto& group : target_source.source_groups) {
             if (! has_source_group(group.as_str())) {
-                return manifest_schema_failure<ManifestDocument>(
+                return Err(ManifestSchemaError::Domain(
                     rstd::format("target '{}::{}' references unknown source group '{}'",
                                  name.as_str(),
                                  package_target_name(manifest_target),
-                                 group.as_str()));
+                                 group.as_str())));
             }
         }
         for (const auto& conditional : target_source.conditions) {
             for (const auto& group : conditional.source_groups) {
                 if (! has_source_group(group.as_str())) {
-                    return manifest_schema_failure<ManifestDocument>(rstd::format(
+                    return Err(ManifestSchemaError::Domain(rstd::format(
                         "target '{}::{}' condition '{}' references unknown source group '{}'",
                         name.as_str(),
                         package_target_name(manifest_target),
                         conditional.source.as_str(),
-                        group.as_str()));
+                        group.as_str())));
                 }
             }
         }
@@ -618,18 +616,18 @@ auto assemble_manifest_document(PathBuf                               root,
             if (source.name == dependency.source->as_str()) found = true;
         }
         if (! found) {
-            return manifest_schema_failure<ManifestDocument>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "CMake external dependency '{}' references unknown external source '{}'",
                 dependency.alias.as_str(),
-                dependency.source->as_str()));
+                dependency.source->as_str())));
         }
     }
     for (auto& dependency : external_dependencies.cargo) {
         if (! has_external_source(dependency.recipe.source.as_str())) {
-            return manifest_schema_failure<ManifestDocument>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "Cargo external dependency '{}' references unknown external source '{}'",
                 dependency.alias.as_str(),
-                dependency.recipe.source.as_str()));
+                dependency.recipe.source.as_str())));
         }
         dependency.declaration_root = Some(root.clone());
     }

@@ -193,16 +193,16 @@ class CompileCacheSession {
         if (force_refresh_) return Ok(CurrentCompileRecord {});
         auto exists = rstd::fs::exists(unit.unit.cache_record.as_path());
         if (exists.is_err()) {
-            return cache_io_failure<CurrentCompileRecord>("inspect compile record"_str,
-                                                          unit.unit.cache_record.as_path(),
-                                                          rstd::move(exists).unwrap_err());
+            return Err(CacheError::Io("inspect compile record"_Str,
+                                      PathBuf::from(unit.unit.cache_record.as_path()),
+                                      rstd::move(exists).unwrap_err()));
         }
         if (! *exists) return Ok(CurrentCompileRecord {});
         auto contents = rstd::fs::read_to_string(unit.unit.cache_record.as_path());
         if (contents.is_err()) {
-            return cache_io_failure<CurrentCompileRecord>("read compile record"_str,
-                                                          unit.unit.cache_record.as_path(),
-                                                          rstd::move(contents).unwrap_err());
+            return Err(CacheError::Io("read compile record"_Str,
+                                      PathBuf::from(unit.unit.cache_record.as_path()),
+                                      rstd::move(contents).unwrap_err()));
         }
         auto parsed = rstd::json::from_str(contents->as_str());
         if (parsed.is_err()) return Ok(CurrentCompileRecord {});
@@ -424,8 +424,8 @@ public:
             auto object = output_exists(decision.object_->as_path());
             if (object.is_err()) return Err(rstd::move(object).unwrap_err());
             if (! *object) {
-                return cache_failure<Option<CachedArtifactIdentity>>(rstd::format(
-                    "compiler did not produce object '{}'", decision.object_->as_path()));
+                return Err(CacheError::Record(rstd::format("compiler did not produce object '{}'",
+                                                           decision.object_->as_path())));
             }
             auto object_digest = output_content_digest(decision.object_->as_path());
             if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
@@ -440,8 +440,8 @@ public:
             auto bmi = output_exists(bmi_artifact->path.as_path());
             if (bmi.is_err()) return Err(rstd::move(bmi).unwrap_err());
             if (! *bmi) {
-                return cache_failure<Option<CachedArtifactIdentity>>(rstd::format(
-                    "compiler did not produce BMI '{}'", bmi_artifact->path.as_path()));
+                return Err(CacheError::Record(rstd::format("compiler did not produce BMI '{}'",
+                                                           bmi_artifact->path.as_path())));
             }
             auto bmi_digest = output_content_digest(bmi_artifact->path.as_path());
             if (bmi_digest.is_err()) return Err(rstd::move(bmi_digest).unwrap_err());
@@ -450,8 +450,7 @@ public:
         auto complete        = complete_receipt_json(decision.receipt_);
         auto complete_object = complete.as_object_mut();
         if (complete_object.is_none()) {
-            return cache_failure<Option<CachedArtifactIdentity>>(
-                "compile cache receipt is not an object"_Str);
+            return Err(CacheError::Record("compile cache receipt is not an object"_Str));
         }
         (**complete_object).insert("content-digests"_Str, Json::Object(rstd::move(digests)));
         for (const auto& output : decision.stale_outputs_) {

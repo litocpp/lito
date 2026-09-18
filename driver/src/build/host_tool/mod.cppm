@@ -25,14 +25,6 @@ namespace lito
 
 using Json = rstd::json::Value;
 
-template<typename T>
-auto host_tool_io_failure(ref<str>               operation,
-                          ref<rstd::path::Path>  path,
-                          rstd::io::error::Error error) -> HostBuildToolResult<T> {
-    return Err(HostBuildToolError::System(
-        SystemError::Io(String::make(operation), PathBuf::from(path), rstd::move(error))));
-}
-
 auto requested_package(const Vec<String>& packages, ref<str> name) noexcept -> bool {
     return packages.iter().any([&](auto package) {
         return (*package) == name;
@@ -82,8 +74,8 @@ auto host_tool_receipt_matches(ref<rstd::path::Path>                           r
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(false);
         }
-        return host_tool_io_failure<bool>(
-            "read host build-tool receipt"_str, receipt, rstd::move(error));
+        return Err(HostBuildToolError::System(lito::system::SystemError::Io(
+            "read host build-tool receipt"_Str, PathBuf::from(receipt), rstd::move(error))));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) return Ok(false);
@@ -144,8 +136,10 @@ auto write_host_tool_receipt(ref<rstd::path::Path>                           rec
     text.push_ascii('\n');
     auto written = rstd::fs::write_atomic(receipt, text.as_str().as_bytes());
     if (written.is_err()) {
-        return host_tool_io_failure<empty>(
-            "write host build-tool receipt"_str, receipt, rstd::move(written).unwrap_err());
+        return Err(HostBuildToolError::System(
+            lito::system::SystemError::Io("write host build-tool receipt"_Str,
+                                          PathBuf::from(receipt),
+                                          rstd::move(written).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -172,10 +166,8 @@ auto select_host_build_tool_archive(const lito::manifest::BuildToolRequirement& 
                 rstd::addressof(archive)));
         }
     }
-    return Err(
-        HostBuildToolError::UnsupportedHost(requirement.alias.clone(),
-                                            host.os.clone(),
-                                            String::make(architecture_name(host.architecture))));
+    return Err(HostBuildToolError::UnsupportedHost(
+        requirement.alias.clone(), host.os.clone(), architecture_name(host.architecture).into()));
 }
 
 auto resolve_host_build_tool_archives(const lito::package::ResolvedPackageGraph& graph,
@@ -313,10 +305,10 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                 rstd_try(resolver.resolve(requested.as_path(), owned.requirement.alias.as_str()));
             auto canonical = rstd::fs::canonicalize(resolved.executable.as_path());
             if (canonical.is_err()) {
-                return host_tool_io_failure<ResolvedHostBuildTools>(
-                    "resolve host build-tool path"_str,
-                    resolved.executable.as_path(),
-                    rstd::move(canonical).unwrap_err());
+                return Err(HostBuildToolError::System(
+                    lito::system::SystemError::Io("resolve host build-tool path"_Str,
+                                                  PathBuf::from(resolved.executable.as_path()),
+                                                  rstd::move(canonical).unwrap_err())));
             }
             auto digest   = rstd_try(executable_digest(canonical->as_path()));
             auto identity = licrypto::sha256_hex(
@@ -400,24 +392,27 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
         auto area    = layout.host_build_tool_root().join(PathBuf::from(key).as_path());
         auto created = rstd::fs::create_dir_all(area.as_path());
         if (created.is_err()) {
-            return host_tool_io_failure<ResolvedHostBuildTools>("create host build-tool store"_str,
-                                                                area.as_path(),
-                                                                rstd::move(created).unwrap_err());
+            return Err(HostBuildToolError::System(
+                lito::system::SystemError::Io("create host build-tool store"_Str,
+                                              PathBuf::from(area.as_path()),
+                                              rstd::move(created).unwrap_err())));
         }
         auto lock_path = area.join(PathBuf::from("lock"_str).as_path());
         auto opened    = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
             lock_path.as_path());
         if (opened.is_err()) {
-            return host_tool_io_failure<ResolvedHostBuildTools>("open host build-tool lock"_str,
-                                                                lock_path.as_path(),
-                                                                rstd::move(opened).unwrap_err());
+            return Err(HostBuildToolError::System(
+                lito::system::SystemError::Io("open host build-tool lock"_Str,
+                                              PathBuf::from(lock_path.as_path()),
+                                              rstd::move(opened).unwrap_err())));
         }
         auto locked = rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(),
                                                   rstd::fs::FileLockMode::Exclusive);
         if (locked.is_err()) {
-            return host_tool_io_failure<ResolvedHostBuildTools>("lock host build-tool store"_str,
-                                                                lock_path.as_path(),
-                                                                rstd::move(locked).unwrap_err());
+            return Err(HostBuildToolError::System(
+                lito::system::SystemError::Io("lock host build-tool store"_Str,
+                                              PathBuf::from(lock_path.as_path()),
+                                              rstd::move(locked).unwrap_err())));
         }
         auto digest           = rstd_try(executable_digest(canonical->as_path()));
         auto receipt_identity = host_tool_receipt_identity(

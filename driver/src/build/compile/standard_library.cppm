@@ -24,18 +24,6 @@ struct StandardModuleRequest {
     const cpp::CompileContext* context {};
 };
 
-auto standard_module_failure(String message) -> BuildResult<empty> {
-    return Err(BuildError::Message(rstd::move(message)));
-}
-
-auto standard_module_failure(ref<str> message) -> BuildResult<empty> {
-    return standard_module_failure(String::make(message));
-}
-
-auto standard_module_failure(cpp::StandardLibraryError error) -> BuildResult<empty> {
-    return Err(rstd::into<BuildError>(rstd::move(error)));
-}
-
 auto has_standard_module_unit(const Vec<cpp::PreparedUnit>& units,
                               ref<str>                      logical_name,
                               ref<str>                      context_identity) -> bool {
@@ -66,15 +54,15 @@ auto append_request(Vec<StandardModuleRequest>&              requests,
                     const cpp::PreparedUnit&                 importer,
                     const cpp::StandardLibraryModuleCatalog* catalog) -> BuildResult<empty> {
     if (catalog != nullptr && catalog->get(logical_name).is_none()) {
-        return standard_module_failure(
+        return Err(BuildError::Message(
             rstd::format("selected {} module manifest '{}' does not provide '{}'",
                          cpp::standard_library_name(catalog->family),
                          catalog->manifest.as_path(),
-                         logical_name));
+                         logical_name)));
     }
     if (importer.unit.context == nullptr || ! importer.unit.context->language.is_Cpp()) {
-        return standard_module_failure(
-            "standard library module importer has no C++ compile context"_str);
+        return Err(
+            BuildError::Message("standard library module importer has no C++ compile context"_Str));
     }
     if (queued(requests, logical_name, importer.unit.standard_library_context_identity.as_str())) {
         return Ok(empty {});
@@ -107,11 +95,8 @@ auto require_cxx23(const cpp::PreparedUnit& importer, ref<str> logical_name) -> 
     if (parsed.is_none() ||
         lito::manifest::cpp_standard_rank(*parsed) <
             lito::manifest::cpp_standard_rank(lito::manifest::CppStandard::Cpp23)) {
-        return standard_module_failure(
-            cpp::StandardLibraryError::LanguageStandard(importer.unit.source.clone(),
-                                                        String::make(logical_name),
-                                                        standard.clone(),
-                                                        "C++23"_Str));
+        return Err(rstd::into<BuildError>(cpp::StandardLibraryError::LanguageStandard(
+            importer.unit.source.clone(), logical_name.into(), standard.clone(), "C++23"_Str)));
     }
     return Ok(empty {});
 }
@@ -127,8 +112,8 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
                                       const BuildLayout&       layout,
                                       const ClangToolchain&    toolchain) -> BuildResult<empty> {
     if (prepared.units.len() != scans.len()) {
-        return standard_module_failure(
-            "standard library module preparation received mismatched units and scans"_str);
+        return Err(BuildError::Message(
+            "standard library module preparation received mismatched units and scans"_Str));
     }
     auto requests = Vec<StandardModuleRequest>::make();
     for (auto unit = cpp::UnitId {}; unit < prepared.units.len(); ++unit) {
@@ -160,8 +145,8 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
         auto catalog = rstd::move(resolved_catalog).unwrap();
         auto entry   = catalog.get(request.logical_name.as_str());
         if (entry.is_none()) {
-            return standard_module_failure(cpp::StandardLibraryError::MissingProvider(
-                catalog.manifest.clone(), request.logical_name.clone()));
+            return Err(rstd::into<BuildError>(cpp::StandardLibraryError::MissingProvider(
+                catalog.manifest.clone(), request.logical_name.clone())));
         }
         auto  context     = request.context->clone();
         auto& cpp_context = context.language.as_Cpp();
@@ -176,8 +161,9 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
             prepared.owned_contexts[prepared.owned_contexts.len() - usize(1)].get();
         auto working = catalog.manifest.as_path().parent();
         if (working.is_none()) {
-            return standard_module_failure(rstd::format(
-                "standard library module manifest '{}' has no parent", catalog.manifest.as_path()));
+            return Err(BuildError::Message(
+                rstd::format("standard library module manifest '{}' has no parent",
+                             catalog.manifest.as_path())));
         }
         auto object        = layout.standard_module_object(request.context_identity.as_str(),
                                                            request.logical_name.as_str());
@@ -219,7 +205,7 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
         auto projected = analysis_service.project(rstd::move(analysis).unwrap(),
                                                   lito::manifest::PackageLanguage::Cpp);
         if (projected.is_err()) {
-            return standard_module_failure(rstd::move(projected).unwrap_err());
+            return Err(BuildError::Message(rstd::move(projected).unwrap_err()));
         }
         auto bound                    = cpp::bind_scan(rstd::move(projected).unwrap(), id);
         unit->source_content_identity = rstd::move(bound.source_content_identity);
@@ -231,23 +217,23 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
         }
         if (provided.is_none() || provided->as_str() != request.logical_name.as_str() ||
             ! is_interface) {
-            return standard_module_failure(
+            return Err(rstd::into<BuildError>(
                 cpp::StandardLibraryError::ProviderMismatch(catalog.manifest.clone(),
                                                             (*entry)->source.clone(),
                                                             request.logical_name.clone(),
                                                             rstd::move(provided),
-                                                            is_interface));
+                                                            is_interface)));
         }
         prepared.units.push(rstd::move(unit).unwrap());
         scans.push(rstd::move(bound.scan));
         const auto& facts = scans[scans.len() - usize(1)].language.as_Cpp().facts;
         for (const auto& required : facts.required_modules) {
             if (catalog.get(required.logical_name.as_str()).is_none()) {
-                return standard_module_failure(
-                    cpp::StandardLibraryError::UndeclaredDependency(catalog.manifest.clone(),
-                                                                    (*entry)->source.clone(),
-                                                                    request.logical_name.clone(),
-                                                                    required.logical_name.clone()));
+                return Err(rstd::into<BuildError>(cpp::StandardLibraryError::UndeclaredDependency(
+                    catalog.manifest.clone(),
+                    (*entry)->source.clone(),
+                    request.logical_name.clone(),
+                    required.logical_name.clone())));
             }
             if (has_standard_module_unit(prepared.units,
                                          required.logical_name.as_str(),

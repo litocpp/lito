@@ -26,13 +26,13 @@ auto path_components(ref<rstd::path::Path> path) -> SourceResult<Vec<String>> {
     for (auto component : components) {
         if (component.is_root_dir() || component.is_cur_dir()) continue;
         if (component.is_parent_dir()) {
-            return source_failure<Vec<String>>(
-                rstd::format("canonical path '{}' contains a parent component", path));
+            return Err(SourceError::Message(
+                rstd::format("canonical path '{}' contains a parent component", path)));
         }
         auto text = component.as_os_str().to_str();
         if (text.is_none()) {
-            return source_failure<Vec<String>>(
-                rstd::format("canonical path '{}' contains a non-UTF-8 component", path));
+            return Err(SourceError::Message(
+                rstd::format("canonical path '{}' contains a non-UTF-8 component", path)));
         }
         result.push(String::make(*text));
     }
@@ -67,8 +67,7 @@ template<typename T>
 auto source_tool_result(ref<str> operation, lito::tools::ToolResult<T> result) -> SourceResult<T> {
     if (result.is_err()) {
         return Err(SourceError::Operation(
-            String::make(operation),
-            Box<dyn<rstd::error::Error>>::make(rstd::move(result).unwrap_err())));
+            operation.into(), Box<dyn<rstd::error::Error>>::make(rstd::move(result).unwrap_err())));
     }
     return Ok(rstd::move(result).unwrap());
 }
@@ -206,8 +205,8 @@ class SourceManager {
         -> SourceResult<lito::tools::GitClient> {
         if (git_.is_none()) {
             if (resolver_ == nullptr) {
-                return source_failure<lito::tools::GitClient>(rstd::format(
-                    "existing-only source resolution cannot resolve Git for '{}'", source));
+                return Err(SourceError::Message(rstd::format(
+                    "existing-only source resolution cannot resolve Git for '{}'", source)));
             }
             const auto requirement = lito::tools::external_source_tool_requirement(
                 lito::tools::HostToolCapability::GitCheckout, owner, source);
@@ -244,9 +243,9 @@ class SourceManager {
         if (located.is_none()) return Ok(None());
         auto canonical = rstd::fs::canonicalize(located->as_path());
         if (canonical.is_err()) {
-            return source_io_failure<Option<PathBuf>>("resolve Git source bundle entry"_str,
-                                                      located->as_path(),
-                                                      rstd::move(canonical).unwrap_err());
+            return Err(SourceError::Io("resolve Git source bundle entry"_Str,
+                                       PathBuf::from(located->as_path()),
+                                       rstd::move(canonical).unwrap_err()));
         }
         auto git = rstd_try(
             git_client(source.is_empty() ? url : source, owner.is_empty() ? "Git"_str : owner));
@@ -254,10 +253,10 @@ class SourceManager {
             source_tool_result("inspect Git source bundle entry"_str,
                                git.head(canonical->as_path(), "Git source bundle inspection"_str)));
         if (current.as_str() != commit) {
-            return source_failure<Option<PathBuf>>(
+            return Err(SourceError::Message(
                 rstd::format("Git source bundle HEAD '{}' does not match locked commit '{}'",
                              current.as_str(),
-                             commit));
+                             commit)));
         }
         return Ok(Some(rstd::move(canonical).unwrap()));
     }
@@ -268,10 +267,10 @@ class SourceManager {
         for (const auto& patch : options_.sources.package_patches) {
             if (patch.source.as_str() != source || patch.package.as_str() != package) continue;
             if (matched.is_some()) {
-                return source_failure<Option<ref<rstd::path::Path>>>(rstd::format(
+                return Err(SourceError::Message(rstd::format(
                     "source configuration contains more than one patch for package '{}' from '{}'",
                     package,
-                    source));
+                    source)));
             }
             matched = Some(patch.path.as_path());
         }
@@ -283,8 +282,8 @@ class SourceManager {
         for (const auto& patch : options_.sources.patches) {
             if (patch.git.as_str() != url) continue;
             if (matched.is_some()) {
-                return source_failure<Option<ref<rstd::path::Path>>>(rstd::format(
-                    "source configuration contains more than one patch for '{}'", url));
+                return Err(SourceError::Message(rstd::format(
+                    "source configuration contains more than one patch for '{}'", url)));
             }
             matched = Some(patch.path.as_path());
         }
@@ -294,8 +293,9 @@ class SourceManager {
     auto canonical_path_source(ref<rstd::path::Path> requested) -> SourceResult<PathBuf> {
         auto canonical = rstd::fs::canonicalize(requested);
         if (canonical.is_err()) {
-            return source_io_failure<PathBuf>(
-                "resolve path source"_str, requested, rstd::move(canonical).unwrap_err());
+            return Err(SourceError::Io("resolve path source"_Str,
+                                       PathBuf::from(requested),
+                                       rstd::move(canonical).unwrap_err()));
         }
         return Ok(rstd::move(canonical).unwrap());
     }
@@ -305,12 +305,12 @@ class SourceManager {
                                  Option<ref<str>>                package = None())
         -> SourceResult<EffectivePackageSource> {
         if (requirement.is_Registry()) {
-            return source_failure<EffectivePackageSource>(
-                "Registry dependency requires RegistrySourceResolver materialization"_str);
+            return Err(SourceError::Message(
+                "Registry dependency requires RegistrySourceResolver materialization"_Str));
         }
         if (requirement.is_Builtin()) {
-            return source_failure<EffectivePackageSource>(
-                "Builtin dependency requires builtin source resolution"_str);
+            return Err(
+                SourceError::Message("Builtin dependency requires builtin source resolution"_Str));
         }
         if (requirement.is_Path()) {
             auto requested =
@@ -363,18 +363,19 @@ class SourceManager {
                 rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
                 return Ok(Option<PathBuf> {});
             }
-            return source_io_failure<Option<PathBuf>>(
-                "inspect Git checkout receipt"_str, receipt.as_path(), rstd::move(error));
+            return Err(SourceError::Io("inspect Git checkout receipt"_Str,
+                                       PathBuf::from(receipt.as_path()),
+                                       rstd::move(error)));
         }
         if (! metadata->is_file()) {
-            return source_failure<Option<PathBuf>>(rstd::format(
-                "Git checkout receipt '{}' must be an ordinary file", receipt.as_path()));
+            return Err(SourceError::Message(rstd::format(
+                "Git checkout receipt '{}' must be an ordinary file", receipt.as_path())));
         }
         auto contents = rstd::fs::read_to_string(receipt.as_path());
         if (contents.is_err()) {
-            return source_io_failure<Option<PathBuf>>("read Git checkout receipt"_str,
-                                                      receipt.as_path(),
-                                                      rstd::move(contents).unwrap_err());
+            return Err(SourceError::Io("read Git checkout receipt"_Str,
+                                       PathBuf::from(receipt.as_path()),
+                                       rstd::move(contents).unwrap_err()));
         }
         if (contents->as_str() != git_checkout_receipt(url, commit).as_str()) {
             return Ok(Option<PathBuf> {});
@@ -387,17 +388,18 @@ class SourceManager {
                 rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
                 return Ok(Option<PathBuf> {});
             }
-            return source_io_failure<Option<PathBuf>>(
-                "inspect Git checkout"_str, checkout.as_path(), rstd::move(error));
+            return Err(SourceError::Io(
+                "inspect Git checkout"_Str, PathBuf::from(checkout.as_path()), rstd::move(error)));
         }
         if (! checkout_metadata->is_dir()) {
-            return source_failure<Option<PathBuf>>(
-                rstd::format("Git checkout '{}' must be a directory", checkout.as_path()));
+            return Err(SourceError::Message(
+                rstd::format("Git checkout '{}' must be a directory", checkout.as_path())));
         }
         auto canonical = rstd::fs::canonicalize(checkout.as_path());
         if (canonical.is_err()) {
-            return source_io_failure<Option<PathBuf>>(
-                "resolve Git checkout"_str, checkout.as_path(), rstd::move(canonical).unwrap_err());
+            return Err(SourceError::Io("resolve Git checkout"_Str,
+                                       PathBuf::from(checkout.as_path()),
+                                       rstd::move(canonical).unwrap_err()));
         }
         return Ok(Some(rstd::move(canonical).unwrap()));
     }
@@ -410,9 +412,9 @@ class SourceManager {
         auto written = rstd::fs::write_atomic(
             receipt.as_path(), git_checkout_receipt(url, commit).as_str().as_bytes());
         if (written.is_err()) {
-            return source_io_failure<empty>("write Git checkout receipt"_str,
-                                            receipt.as_path(),
-                                            rstd::move(written).unwrap_err());
+            return Err(SourceError::Io("write Git checkout receipt"_Str,
+                                       PathBuf::from(receipt.as_path()),
+                                       rstd::move(written).unwrap_err()));
         }
         return Ok(empty {});
     }
@@ -570,16 +572,16 @@ class SourceManager {
         auto database = PathBuf::from(layout.root()).join(PathBuf::from("db"_str).as_path());
         auto created  = rstd::fs::create_dir_all(database.as_path());
         if (created.is_err()) {
-            return source_io_failure<PathBuf>("create Git database cache"_str,
-                                              database.as_path(),
-                                              rstd::move(created).unwrap_err());
+            return Err(SourceError::Io("create Git database cache"_Str,
+                                       PathBuf::from(database.as_path()),
+                                       rstd::move(created).unwrap_err()));
         }
         auto repository = layout.repository(repository_key);
         auto exists     = rstd::fs::exists(repository.as_path());
         if (exists.is_err()) {
-            return source_io_failure<PathBuf>("inspect Git cache repository"_str,
-                                              repository.as_path(),
-                                              rstd::move(exists).unwrap_err());
+            return Err(SourceError::Io("inspect Git cache repository"_Str,
+                                       PathBuf::from(repository.as_path()),
+                                       rstd::move(exists).unwrap_err()));
         }
         if (! *exists) {
             auto git = rstd_try(git_client(url));
@@ -596,8 +598,8 @@ class SourceManager {
             configured = Some(String::make(url));
         }
         if (configured->as_str() != url) {
-            return source_failure<PathBuf>(rstd::format(
-                "Git cache key collision between '{}' and '{}'", configured->as_str(), url));
+            return Err(SourceError::Message(rstd::format(
+                "Git cache key collision between '{}' and '{}'", configured->as_str(), url)));
         }
         return Ok(rstd::move(repository));
     }
@@ -662,17 +664,19 @@ class SourceManager {
         auto checkout = layout.checkout(repository_key, commit);
         auto parent   = checkout.as_path().parent();
         if (parent.is_none()) {
-            return source_failure<PathBuf>("Git checkout cache has no parent directory"_str);
+            return Err(SourceError::Message("Git checkout cache has no parent directory"_Str));
         }
         auto created = rstd::fs::create_dir_all(*parent);
         if (created.is_err()) {
-            return source_io_failure<PathBuf>(
-                "create Git checkout cache"_str, *parent, rstd::move(created).unwrap_err());
+            return Err(SourceError::Io("create Git checkout cache"_Str,
+                                       PathBuf::from(*parent),
+                                       rstd::move(created).unwrap_err()));
         }
         auto exists = rstd::fs::exists(checkout.as_path());
         if (exists.is_err()) {
-            return source_io_failure<PathBuf>(
-                "inspect Git checkout"_str, checkout.as_path(), rstd::move(exists).unwrap_err());
+            return Err(SourceError::Io("inspect Git checkout"_Str,
+                                       PathBuf::from(checkout.as_path()),
+                                       rstd::move(exists).unwrap_err()));
         }
         if (*exists) {
             auto reusable = rstd_try(reusable_git_checkout(layout, repository_key, url, commit));
@@ -687,9 +691,9 @@ class SourceManager {
             }
             auto removed = rstd::fs::remove_dir_all(checkout.as_path());
             if (removed.is_err()) {
-                return source_io_failure<PathBuf>("recover Git checkout"_str,
-                                                  checkout.as_path(),
-                                                  rstd::move(removed).unwrap_err());
+                return Err(SourceError::Io("recover Git checkout"_Str,
+                                           PathBuf::from(checkout.as_path()),
+                                           rstd::move(removed).unwrap_err()));
             }
         }
 
@@ -707,8 +711,8 @@ class SourceManager {
     auto acquire_path_root(PathBuf source_root) -> SourceResult<usize> {
         auto root_text = source_root.as_path().to_str();
         if (root_text.is_none()) {
-            return source_failure<usize>(rstd::format(
-                "normalized source root '{}' is not valid UTF-8", source_root.as_path()));
+            return Err(SourceError::Message(rstd::format(
+                "normalized source root '{}' is not valid UTF-8", source_root.as_path())));
         }
         auto existing = roots_.get(*root_text);
         if (existing.is_some()) return Ok(**existing);
@@ -746,8 +750,8 @@ class SourceManager {
 
         auto root_text = checkout_root.as_path().to_str();
         if (root_text.is_none()) {
-            return source_failure<usize>(
-                rstd::format("Git checkout '{}' is not valid UTF-8", checkout_root.as_path()));
+            return Err(SourceError::Message(
+                rstd::format("Git checkout '{}' is not valid UTF-8", checkout_root.as_path())));
         }
         auto root_key = String::make(*root_text);
         auto index    = entries_.len();
@@ -794,9 +798,9 @@ class SourceManager {
         }
 
         if (options_.materialization == SourceMaterializationPolicy::ExistingOnly) {
-            return source_failure<usize>(
+            return Err(SourceError::Message(
                 rstd::format("existing-only source resolution cannot materialize Git source '{}'",
-                             request_key.as_str()));
+                             request_key.as_str())));
         }
 
         auto session = rstd_try(source_cache_session());
@@ -818,9 +822,9 @@ class SourceManager {
                                                         precise_commit.as_str()));
                 auto canonical      = rstd::fs::canonicalize(local.as_path());
                 if (canonical.is_err()) {
-                    return source_io_failure<usize>("resolve Git checkout"_str,
-                                                    local.as_path(),
-                                                    rstd::move(canonical).unwrap_err());
+                    return Err(SourceError::Io("resolve Git checkout"_Str,
+                                               PathBuf::from(local.as_path()),
+                                               rstd::move(canonical).unwrap_err()));
                 }
                 auto registered = rstd_try(register_git_source(
                     url, reference, rstd::move(precise_commit), rstd::move(canonical).unwrap()));
@@ -830,8 +834,8 @@ class SourceManager {
         }
         if (options_.sources.network == NetworkPolicy::Offline) {
             auto requirement = git_requirement_identity(url, reference);
-            return source_failure<usize>(rstd::format(
-                "offline source resolution cannot fetch Git source '{}'", requirement.as_str()));
+            return Err(SourceError::Message(rstd::format(
+                "offline source resolution cannot fetch Git source '{}'", requirement.as_str())));
         }
         auto precise_commit =
             rstd_try(resolve_commit(repository_path.as_path(), url, reference, pin));
@@ -842,8 +846,9 @@ class SourceManager {
                                            precise_commit.as_str()));
         auto canonical = rstd::fs::canonicalize(local.as_path());
         if (canonical.is_err()) {
-            return source_io_failure<usize>(
-                "resolve Git checkout"_str, local.as_path(), rstd::move(canonical).unwrap_err());
+            return Err(SourceError::Io("resolve Git checkout"_Str,
+                                       PathBuf::from(local.as_path()),
+                                       rstd::move(canonical).unwrap_err()));
         }
         auto registered = rstd_try(register_git_source(
             url, reference, rstd::move(precise_commit), rstd::move(canonical).unwrap()));
@@ -905,9 +910,9 @@ class SourceManager {
         }
         if (precise_commit.is_empty()) {
             if (options_.materialization == SourceMaterializationPolicy::ExistingOnly) {
-                return source_failure<ResolvedPackageSource>(rstd::format(
+                return Err(SourceError::Message(rstd::format(
                     "existing-only source resolution cannot materialize Git source '{}'",
-                    git_requirement_identity(url, reference).as_str()));
+                    git_requirement_identity(url, reference).as_str())));
             }
             auto session = rstd_try(source_cache_session());
             auto cache   = session.open_git_cache();
@@ -925,9 +930,9 @@ class SourceManager {
             }
             if (precise_commit.is_empty() && options_.sources.network == NetworkPolicy::Offline) {
                 auto requirement = git_requirement_identity(url, reference);
-                return source_failure<ResolvedPackageSource>(
+                return Err(SourceError::Message(
                     rstd::format("offline source resolution cannot fetch Git source '{}'",
-                                 requirement.as_str()));
+                                 requirement.as_str())));
             }
             if (precise_commit.is_empty()) {
                 precise_commit = rstd_try(
@@ -1004,36 +1009,36 @@ public:
 
     auto acquire_resolved(ResolvedPackageSource source) -> SourceResult<usize> {
         if (source.identity.is_empty()) {
-            return source_failure<usize>("resolved package source has no identity"_str);
+            return Err(SourceError::Message("resolved package source has no identity"_Str));
         }
         auto metadata = rstd::fs::symlink_metadata(source.root_directory.as_path());
         if (metadata.is_err()) {
-            return source_io_failure<usize>("inspect resolved package source"_str,
-                                            source.root_directory.as_path(),
-                                            rstd::move(metadata).unwrap_err());
+            return Err(SourceError::Io("inspect resolved package source"_Str,
+                                       PathBuf::from(source.root_directory.as_path()),
+                                       rstd::move(metadata).unwrap_err()));
         }
         if (! metadata->is_dir() || metadata->is_symlink()) {
-            return source_failure<usize>(
+            return Err(SourceError::Message(
                 rstd::format("resolved package source '{}' is not an ordinary directory",
-                             source.root_directory.as_path()));
+                             source.root_directory.as_path())));
         }
         return Ok(absorb_entry(ManagedSourceEntry { .source = rstd::move(source) }));
     }
 
     auto replace_resolved(usize source_index, ResolvedPackageSource source) -> SourceResult<empty> {
         if (source_index >= entries_.len() || source.identity.is_empty()) {
-            return source_failure<empty>("resolved package source replacement is invalid"_str);
+            return Err(SourceError::Message("resolved package source replacement is invalid"_Str));
         }
         const auto& existing = entries_[source_index].source;
         if (! (existing.root_directory.as_path().starts_with(source.root_directory.as_path()) &&
                source.root_directory.as_path().starts_with(existing.root_directory.as_path()))) {
-            return source_failure<empty>(
-                "resolved package source replacement changes the source root"_str);
+            return Err(SourceError::Message(
+                "resolved package source replacement changes the source root"_Str));
         }
         auto collision = source_identities_.get(source.identity.as_str());
         if (collision.is_some() && **collision != source_index) {
-            return source_failure<empty>(
-                "resolved package source replacement collides with another source"_str);
+            return Err(SourceError::Message(
+                "resolved package source replacement collides with another source"_Str));
         }
         (void)source_identities_.remove(existing.identity.as_str());
         source_identities_.insert(source.identity.clone(), source_index);
@@ -1049,7 +1054,7 @@ public:
     auto acquire_frontier(Vec<PackageSourceFetchRequest> requests, usize jobs)
         -> SourceResult<Vec<usize>> {
         if (jobs == usize {}) {
-            return source_failure<Vec<usize>>("source fetch jobs must be greater than zero"_str);
+            return Err(SourceError::Message("source fetch jobs must be greater than zero"_Str));
         }
         auto result = Vec<usize>::with_capacity(requests.len());
         if (requests.is_empty()) return Ok(rstd::move(result));
@@ -1154,7 +1159,7 @@ public:
                     return Ok(rstd::move(results));
                 });
             if (submitted.is_err()) {
-                return source_failure<Vec<usize>>("cannot submit package source fetch task"_str);
+                return Err(SourceError::Message("cannot submit package source fetch task"_Str));
             }
         }
         auto outcomes = rstd::move(group).join();
@@ -1163,7 +1168,7 @@ public:
         for (auto& outcome : outcomes) {
             auto value = rstd::move(outcome).into_value();
             if (value.is_none()) {
-                return source_failure<Vec<usize>>("package source fetch task was cancelled"_str);
+                return Err(SourceError::Message("package source fetch task was cancelled"_Str));
             }
             auto task = rstd::move(value).unwrap_unchecked();
             if (task.is_err()) return Err(rstd::move(task).unwrap_err());
@@ -1175,7 +1180,7 @@ public:
         auto unique_indices = Vec<usize>::with_capacity(unique.len());
         for (auto& source : fetched) {
             if (source.is_none()) {
-                return source_failure<Vec<usize>>("package source fetch result is missing"_str);
+                return Err(SourceError::Message("package source fetch result is missing"_Str));
             }
             unique_indices.push(absorb_entry(rstd::move(source).unwrap()));
         }
@@ -1192,8 +1197,7 @@ public:
     auto acquire_external_frontier(Vec<PackageSourceFetchRequest> requests, usize jobs)
         -> SourceResult<Vec<ExternalSourceFetchOutcome>> {
         if (jobs == usize {}) {
-            return source_failure<Vec<ExternalSourceFetchOutcome>>(
-                "source fetch jobs must be greater than zero"_str);
+            return Err(SourceError::Message("source fetch jobs must be greater than zero"_Str));
         }
         auto result = Vec<ExternalSourceFetchOutcome>::with_capacity(requests.len());
         if (requests.is_empty()) return Ok(rstd::move(result));
@@ -1288,8 +1292,7 @@ public:
                     return Ok(rstd::move(results));
                 });
             if (submitted.is_err()) {
-                return source_failure<Vec<ExternalSourceFetchOutcome>>(
-                    "cannot submit external source fetch task"_str);
+                return Err(SourceError::Message("cannot submit external source fetch task"_Str));
             }
         }
         auto outcomes = rstd::move(group).join();
@@ -1298,8 +1301,7 @@ public:
         for (auto& outcome : outcomes) {
             auto value = rstd::move(outcome).into_value();
             if (value.is_none()) {
-                return source_failure<Vec<ExternalSourceFetchOutcome>>(
-                    "external source fetch task was cancelled"_str);
+                return Err(SourceError::Message("external source fetch task was cancelled"_Str));
             }
             auto task = rstd::move(value).unwrap_unchecked();
             if (task.is_err()) return Err(rstd::move(task).unwrap_err());
@@ -1310,8 +1312,7 @@ public:
         }
         for (auto binding : bindings) {
             if (fetched[binding].is_none()) {
-                return source_failure<Vec<ExternalSourceFetchOutcome>>(
-                    "external source fetch result is missing"_str);
+                return Err(SourceError::Message("external source fetch result is missing"_Str));
             }
             result.push(clone_external_outcome(*fetched[binding]));
         }

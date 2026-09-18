@@ -32,11 +32,6 @@ struct RuntimePackageClosure {
 
 using namespace lito::package;
 
-template<typename T>
-auto runtime_failure(String message) -> PackageResult<T> {
-    return Err(PackageError::Message(rstd::move(message)));
-}
-
 class RuntimeClosureResolver {
 public:
     RuntimeClosureResolver(const ResolvedPackageGraph& graph, const TargetInfo* target)
@@ -58,8 +53,8 @@ private:
     auto visit(ref<str> name, RuntimePackageClosure& result) -> PackageResult<empty> {
         auto index = indices_.get(name);
         if (index.is_none()) {
-            return runtime_failure<empty>(
-                rstd::format("runtime package '{}' is missing from the resolved graph", name));
+            return Err(PackageError::Message(
+                rstd::format("runtime package '{}' is missing from the resolved graph", name)));
         }
         if (colors_[**index] == u8(2)) return Ok(empty {});
         if (colors_[**index] == u8(1)) {
@@ -73,16 +68,16 @@ private:
             }
             if (! cycle.is_empty()) cycle.push_str(" -> "_str);
             cycle.push_str(name);
-            return runtime_failure<empty>(
-                rstd::format("runtime dependency cycle: {}", cycle.as_str()));
+            return Err(PackageError::Message(
+                rstd::format("runtime dependency cycle: {}", cycle.as_str())));
         }
 
         const auto& package = graph_.packages[**index];
         if (target_ != nullptr && ! package.manifest.target.matches(*target_)) {
-            return runtime_failure<empty>(
+            return Err(PackageError::Message(
                 rstd::format("runtime package '{}' does not support target '{}'",
                              name,
-                             target_->triple.as_str()));
+                             target_->triple.as_str())));
         }
         colors_[**index] = u8(1);
         active_.push(String::make(name));

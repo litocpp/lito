@@ -95,13 +95,14 @@ using lito::registry::RegistryValueResult;
 
 template<typename T>
 auto metadata_failure(ref<str> context, ref<str> message) -> RegistryValueResult<T> {
-    return lito::registry::registry_value_failure<T>(rstd::format("{} {}", context, message));
+    return Err(
+        lito::registry::RegistryValueError::Message(rstd::format("{} {}", context, message)));
 }
 
 template<typename T>
 auto metadata_failure(ref<str> context, String message) -> RegistryValueResult<T> {
-    return lito::registry::registry_value_failure<T>(
-        rstd::format("{} {}", context, message.as_str()));
+    return Err(lito::registry::RegistryValueError::Message(
+        rstd::format("{} {}", context, message.as_str())));
 }
 
 auto json_object(const Json& value, ref<str> context) -> RegistryValueResult<ref<JsonMap>> {
@@ -386,16 +387,16 @@ auto lito::registry::RegistryTimestamp::parse(ref<str> value)
     if (value.len() != usize(20) || value[usize(4)] != u8('-') || value[usize(7)] != u8('-') ||
         value[usize(10)] != u8('T') || value[usize(13)] != u8(':') || value[usize(16)] != u8(':') ||
         value[usize(19)] != u8('Z')) {
-        return registry_value_failure<RegistryTimestamp>(
-            "timestamp must use canonical UTC second form YYYY-MM-DDTHH:MM:SSZ"_str);
+        return Err(RegistryValueError::Message(
+            "timestamp must use canonical UTC second form YYYY-MM-DDTHH:MM:SSZ"_Str));
     }
     constexpr usize digits[] = { usize(0),  usize(1),  usize(2),  usize(3),  usize(5),
                                  usize(6),  usize(8),  usize(9),  usize(11), usize(12),
                                  usize(14), usize(15), usize(17), usize(18) };
     for (auto index : digits) {
         if (value[index] < u8('0') || value[index] > u8('9')) {
-            return registry_value_failure<RegistryTimestamp>(
-                "timestamp contains a non-decimal date component"_str);
+            return Err(
+                RegistryValueError::Message("timestamp contains a non-decimal date component"_Str));
         }
     }
     const auto number = [&](usize offset, usize count) -> u64 {
@@ -413,8 +414,8 @@ auto lito::registry::RegistryTimestamp::parse(ref<str> value)
     auto second = number(usize(17), usize(2));
     if (year == u64 {} || month < u64(1) || month > u64(12) || hour > u64(23) || minute > u64(59) ||
         second > u64(59)) {
-        return registry_value_failure<RegistryTimestamp>(
-            "timestamp is outside the supported UTC calendar"_str);
+        return Err(
+            RegistryValueError::Message("timestamp is outside the supported UTC calendar"_Str));
     }
     constexpr u8 month_days[] = { u8(31), u8(28), u8(31), u8(30), u8(31), u8(30),
                                   u8(31), u8(31), u8(30), u8(31), u8(30), u8(31) };
@@ -422,8 +423,7 @@ auto lito::registry::RegistryTimestamp::parse(ref<str> value)
     auto leap = (year % u64(4) == u64 {} && year % u64(100) != u64 {}) || year % u64(400) == u64 {};
     if (month == u64(2) && leap) maximum_day = u64(29);
     if (day < u64(1) || day > maximum_day) {
-        return registry_value_failure<RegistryTimestamp>(
-            "timestamp has an invalid calendar day"_str);
+        return Err(RegistryValueError::Message("timestamp has an invalid calendar day"_Str));
     }
     return Ok(RegistryTimestamp(String::make(value)));
 }
@@ -486,8 +486,8 @@ auto lito::registry::parse_package_index(slice<u8> input, const RegistryPackageI
     auto parsed =
         rstd::json::from_slice(input, rstd::json::ParseOptions { .reject_duplicate_keys = true });
     if (parsed.is_err()) {
-        return registry_value_failure<RegistryPackageIndex>(rstd::format(
-            "Registry package index is invalid JSON: {}", rstd::move(parsed).unwrap_err()));
+        return Err(RegistryValueError::Message(rstd::format(
+            "Registry package index is invalid JSON: {}", rstd::move(parsed).unwrap_err())));
     }
     auto document = rstd::move(parsed).unwrap();
     rstd_try(reject_unknown(document,

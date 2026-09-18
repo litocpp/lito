@@ -55,7 +55,7 @@ auto run_cmake(Vec<String>                       arguments,
         return Err(rstd::into<lito::tools::ToolError>(rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
-        return Err(lito::tools::ToolError::Execution(String::make(operation),
+        return Err(lito::tools::ToolError::Execution(operation.into(),
                                                      output->exit_code,
                                                      rstd::move(output->standard_output),
                                                      rstd::move(output->standard_error)));
@@ -301,10 +301,10 @@ endfunction()
     };
     for (const auto& component : requirement.components) {
         if (! safe_cmake_name(component.as_str())) {
-            return cmake_failure<String>(
+            return Err(lito::tools::ToolError::Message(
                 rstd::format("CMake dependency '{}' has unsafe component '{}'",
                              requirement.alias.as_str(),
-                             component.as_str()));
+                             component.as_str())));
         }
     }
     if (requirement.adapter.is_some()) {
@@ -445,9 +445,9 @@ auto write_probe_files(const Request& requirement, const CMakeWorkArea& area)
     for (const auto& directory : directories) {
         auto created = rstd::fs::create_dir_all(directory.as_path());
         if (created.is_err()) {
-            return cmake_io_failure<empty>("create CMake directory"_str,
-                                           directory.as_path(),
-                                           rstd::move(created).unwrap_err());
+            return Err(lito::tools::ToolError::Io("create CMake directory"_Str,
+                                                  PathBuf::from(directory.as_path()),
+                                                  rstd::move(created).unwrap_err()));
         }
     }
     auto cmake_lists = area.query_source.join(PathBuf::from("CMakeLists.txt"_str).as_path());
@@ -457,23 +457,24 @@ auto write_probe_files(const Request& requirement, const CMakeWorkArea& area)
     if (project.is_err()) return Err(rstd::move(project).unwrap_err());
     auto written = rstd::fs::write_atomic(cmake_lists.as_path(), project->as_str().as_bytes());
     if (written.is_err()) {
-        return cmake_io_failure<empty>("write CMake probe project"_str,
-                                       cmake_lists.as_path(),
-                                       rstd::move(written).unwrap_err());
+        return Err(lito::tools::ToolError::Io("write CMake probe project"_Str,
+                                              PathBuf::from(cmake_lists.as_path()),
+                                              rstd::move(written).unwrap_err()));
     }
     written =
         rstd::fs::write_atomic(source.as_path(), ("int main() { return 0; }\n"_str).as_bytes());
     if (written.is_err()) {
-        return cmake_io_failure<empty>(
-            "write CMake probe source"_str, source.as_path(), rstd::move(written).unwrap_err());
+        return Err(lito::tools::ToolError::Io("write CMake probe source"_Str,
+                                              PathBuf::from(source.as_path()),
+                                              rstd::move(written).unwrap_err()));
     }
     written = rstd::fs::write_atomic(
         query_file.as_path(),
         ("{\"requests\":[{\"kind\":\"codemodel\",\"version\":2}]}\n"_str).as_bytes());
     if (written.is_err()) {
-        return cmake_io_failure<empty>("write CMake File API query"_str,
-                                       query_file.as_path(),
-                                       rstd::move(written).unwrap_err());
+        return Err(lito::tools::ToolError::Io("write CMake File API query"_Str,
+                                              PathBuf::from(query_file.as_path()),
+                                              rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }

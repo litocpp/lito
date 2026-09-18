@@ -20,29 +20,13 @@ using Json = rstd::json::Value;
 namespace lito
 {
 
-template<typename T>
-auto processor_failure(String message) -> ArtifactProcessorResult<T> {
-    return Err(ArtifactProcessorError::Invalid(rstd::move(message)));
-}
-
-template<typename T>
-auto processor_failure(ref<str> message) -> ArtifactProcessorResult<T> {
-    return processor_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto processor_io_failure(ref<str>               operation,
-                          ref<rstd::path::Path>  path,
-                          rstd::io::error::Error error) -> ArtifactProcessorResult<T> {
-    return Err(ArtifactProcessorError::System(lito::system::SystemError::Io(
-        String::make(operation), PathBuf::from(path), rstd::move(error))));
-}
-
 auto processor_file_digest(ref<rstd::path::Path> path) -> ArtifactProcessorResult<String> {
     auto bytes = rstd::fs::read(path);
     if (bytes.is_err()) {
-        return processor_io_failure<String>(
-            "read artifact processor file"_str, path, rstd::move(bytes).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("read artifact processor file"_Str,
+                                          PathBuf::from(path),
+                                          rstd::move(bytes).unwrap_err())));
     }
     return Ok(licrypto::sha256_hex(bytes->as_slice()));
 }
@@ -65,8 +49,10 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
     -> ArtifactProcessorResult<ArtifactProcessorFiles> {
     auto contents = rstd::fs::read_to_string(response);
     if (contents.is_err()) {
-        return processor_io_failure<ArtifactProcessorFiles>(
-            "read artifact processor response"_str, response, rstd::move(contents).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("read artifact processor response"_Str,
+                                          PathBuf::from(response),
+                                          rstd::move(contents).unwrap_err())));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -75,32 +61,32 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
     }
     auto object = parsed->as_object();
     if (object.is_none() || (**object).len() != usize(2)) {
-        return processor_failure<ArtifactProcessorFiles>(
-            "artifact processor response must contain only protocol and files"_str);
+        return Err(ArtifactProcessorError::Invalid(
+            "artifact processor response must contain only protocol and files"_Str));
     }
     auto protocol = parsed->get("protocol"_str);
     auto files    = parsed->get("files"_str);
     if (protocol.is_none() || (**protocol).as_u64() != Some(u64(1)) || files.is_none() ||
         (**files).as_array().is_none() || (**(**files).as_array()).is_empty()) {
-        return processor_failure<ArtifactProcessorFiles>(
-            "artifact processor response has an unsupported protocol or empty file set"_str);
+        return Err(ArtifactProcessorError::Invalid(
+            "artifact processor response has an unsupported protocol or empty file set"_Str));
     }
 
     auto canonical_root = rstd::fs::canonicalize(root);
     if (canonical_root.is_err()) {
-        return processor_io_failure<ArtifactProcessorFiles>(
-            "resolve artifact processor output directory"_str,
-            root,
-            rstd::move(canonical_root).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("resolve artifact processor output directory"_Str,
+                                          PathBuf::from(root),
+                                          rstd::move(canonical_root).unwrap_err())));
     }
     auto declarations  = Vec<ArtifactProcessorFileDeclaration>::make();
     auto primary_count = usize {};
     for (const auto& value : **(**files).as_array()) {
         auto item = value.as_object();
         if (item.is_none() || (**item).len() != usize(5)) {
-            return processor_failure<ArtifactProcessorFiles>(
+            return Err(ArtifactProcessorError::Invalid(
                 "artifact processor file entry must contain path, role, content-type, primary, "
-                "and publish"_str);
+                "and publish"_Str));
         }
         auto path_value    = value.get("path"_str);
         auto role_value    = value.get("role"_str);
@@ -112,61 +98,61 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
             (**content_value).as_str().is_none() || primary_value.is_none() ||
             (**primary_value).as_bool().is_none() || publish_value.is_none() ||
             (**publish_value).as_bool().is_none()) {
-            return processor_failure<ArtifactProcessorFiles>(
-                "artifact processor file entry has an invalid field type"_str);
+            return Err(ArtifactProcessorError::Invalid(
+                "artifact processor file entry has an invalid field type"_Str));
         }
         auto relative = PathBuf::from(*(**path_value).as_str());
         if (! relative.as_path().is_safe_relative()) {
-            return processor_failure<ArtifactProcessorFiles>(
+            return Err(ArtifactProcessorError::Invalid(
                 rstd::format("artifact processor output path '{}' is not a safe relative path",
-                             relative.as_path()));
+                             relative.as_path())));
         }
         if (relative.as_path() == PathBuf::from("response.json"_str).as_path() ||
             relative.as_path() == PathBuf::from("receipt.json"_str).as_path()) {
-            return processor_failure<ArtifactProcessorFiles>(rstd::format(
-                "artifact processor output path '{}' is reserved", relative.as_path()));
+            return Err(ArtifactProcessorError::Invalid(rstd::format(
+                "artifact processor output path '{}' is reserved", relative.as_path())));
         }
         for (const auto& prior : declarations) {
             if (prior.relative.as_path() == relative.as_path()) {
-                return processor_failure<ArtifactProcessorFiles>(
+                return Err(ArtifactProcessorError::Invalid(
                     rstd::format("artifact processor output path '{}' is declared more than once",
-                                 relative.as_path()));
+                                 relative.as_path())));
             }
         }
         auto role = artifact_file_role_from_name(*(**role_value).as_str());
         if (role.is_none()) {
-            return processor_failure<ArtifactProcessorFiles>(rstd::format(
-                "artifact processor output role '{}' is unknown", *(**role_value).as_str()));
+            return Err(ArtifactProcessorError::Invalid(rstd::format(
+                "artifact processor output role '{}' is unknown", *(**role_value).as_str())));
         }
         auto content_type = String::make(*(**content_value).as_str());
         if (content_type.is_empty()) {
-            return processor_failure<ArtifactProcessorFiles>(
-                "artifact processor output content-type must not be empty"_str);
+            return Err(ArtifactProcessorError::Invalid(
+                "artifact processor output content-type must not be empty"_Str));
         }
         auto requested = PathBuf::from(root).join(relative.as_path());
         auto metadata  = rstd::fs::symlink_metadata(requested.as_path());
         if (metadata.is_err()) {
-            return processor_io_failure<ArtifactProcessorFiles>(
-                "inspect artifact processor output"_str,
-                requested.as_path(),
-                rstd::move(metadata).unwrap_err());
+            return Err(ArtifactProcessorError::System(
+                lito::system::SystemError::Io("inspect artifact processor output"_Str,
+                                              PathBuf::from(requested.as_path()),
+                                              rstd::move(metadata).unwrap_err())));
         }
         if (! metadata->is_file() || metadata->is_symlink()) {
-            return processor_failure<ArtifactProcessorFiles>(
+            return Err(ArtifactProcessorError::Invalid(
                 rstd::format("artifact processor output '{}' is not a regular non-symlink file",
-                             requested.as_path()));
+                             requested.as_path())));
         }
         auto canonical = rstd::fs::canonicalize(requested.as_path());
         if (canonical.is_err()) {
-            return processor_io_failure<ArtifactProcessorFiles>(
-                "resolve artifact processor output"_str,
-                requested.as_path(),
-                rstd::move(canonical).unwrap_err());
+            return Err(ArtifactProcessorError::System(
+                lito::system::SystemError::Io("resolve artifact processor output"_Str,
+                                              PathBuf::from(requested.as_path()),
+                                              rstd::move(canonical).unwrap_err())));
         }
         if (canonical->as_path().strip_prefix(canonical_root->as_path()).is_none()) {
-            return processor_failure<ArtifactProcessorFiles>(
+            return Err(ArtifactProcessorError::Invalid(
                 rstd::format("artifact processor output '{}' escapes its staging directory",
-                             requested.as_path()));
+                             requested.as_path())));
         }
         const auto is_primary = *(**primary_value).as_bool();
         if (is_primary) ++primary_count;
@@ -180,14 +166,14 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
         });
     }
     if (primary_count != usize(1)) {
-        return processor_failure<ArtifactProcessorFiles>(
-            "artifact processor response must declare exactly one primary file"_str);
+        return Err(ArtifactProcessorError::Invalid(
+            "artifact processor response must declare exactly one primary file"_Str));
     }
     for (const auto& declaration : declarations) {
         if (declaration.primary &&
             (declaration.role != ArtifactFileRole::Runtime || ! declaration.publish)) {
-            return processor_failure<ArtifactProcessorFiles>(
-                "artifact processor primary file must be a published runtime"_str);
+            return Err(ArtifactProcessorError::Invalid(
+                "artifact processor primary file must be a published runtime"_Str));
         }
     }
     auto identity = "lito-artifact-processor-output-v1\n"_Str;
@@ -338,26 +324,26 @@ auto execute_artifact_processor(BuiltArtifact                                   
     auto staging = layout.artifact_processor_result(raw.target, staging_identity.as_str());
     auto exists  = rstd::fs::exists(staging.as_path());
     if (exists.is_err()) {
-        return processor_io_failure<ArtifactProcessorOutcome>(
-            "inspect artifact processor staging directory"_str,
-            staging.as_path(),
-            rstd::move(exists).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("inspect artifact processor staging directory"_Str,
+                                          PathBuf::from(staging.as_path()),
+                                          rstd::move(exists).unwrap_err())));
     }
     if (*exists) {
         auto removed = rstd::fs::remove_dir_all(staging.as_path());
         if (removed.is_err()) {
-            return processor_io_failure<ArtifactProcessorOutcome>(
-                "remove stale artifact processor staging directory"_str,
-                staging.as_path(),
-                rstd::move(removed).unwrap_err());
+            return Err(ArtifactProcessorError::System(lito::system::SystemError::Io(
+                "remove stale artifact processor staging directory"_Str,
+                PathBuf::from(staging.as_path()),
+                rstd::move(removed).unwrap_err())));
         }
     }
     auto created = rstd::fs::create_dir_all(staging.as_path());
     if (created.is_err()) {
-        return processor_io_failure<ArtifactProcessorOutcome>(
-            "create artifact processor staging directory"_str,
-            staging.as_path(),
-            rstd::move(created).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("create artifact processor staging directory"_Str,
+                                          PathBuf::from(staging.as_path()),
+                                          rstd::move(created).unwrap_err())));
     }
     auto response = staging.join(PathBuf::from("response.json"_str).as_path());
     auto command  = rstd::process::Command::make(processor.primary.path.as_path().as_os_str());
@@ -383,9 +369,10 @@ auto execute_artifact_processor(BuiltArtifact                                   
     lito::system::apply_command_environment(command, environment);
     auto status = command.status();
     if (status.is_err()) {
-        return processor_io_failure<ArtifactProcessorOutcome>("execute artifact processor"_str,
-                                                              processor.primary.path.as_path(),
-                                                              rstd::move(status).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("execute artifact processor"_Str,
+                                          PathBuf::from(processor.primary.path.as_path()),
+                                          rstd::move(status).unwrap_err())));
     }
     if (! status->success()) {
         auto code = status->code();
@@ -397,33 +384,33 @@ auto execute_artifact_processor(BuiltArtifact                                   
     auto receipt_text = artifact_processor_receipt(identity.as_str(), files.identity.as_str());
     auto written      = rstd::fs::write_atomic(receipt.as_path(), receipt_text.as_str().as_bytes());
     if (written.is_err()) {
-        return processor_io_failure<ArtifactProcessorOutcome>(
-            "write artifact processor receipt"_str,
-            receipt.as_path(),
-            rstd::move(written).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("write artifact processor receipt"_Str,
+                                          PathBuf::from(receipt.as_path()),
+                                          rstd::move(written).unwrap_err())));
     }
     auto final_exists = rstd::fs::exists(final.as_path());
     if (final_exists.is_err()) {
-        return processor_io_failure<ArtifactProcessorOutcome>(
-            "inspect artifact processor result directory"_str,
-            final.as_path(),
-            rstd::move(final_exists).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("inspect artifact processor result directory"_Str,
+                                          PathBuf::from(final.as_path()),
+                                          rstd::move(final_exists).unwrap_err())));
     }
     if (*final_exists) {
         auto removed = rstd::fs::remove_dir_all(final.as_path());
         if (removed.is_err()) {
-            return processor_io_failure<ArtifactProcessorOutcome>(
-                "replace artifact processor result directory"_str,
-                final.as_path(),
-                rstd::move(removed).unwrap_err());
+            return Err(ArtifactProcessorError::System(
+                lito::system::SystemError::Io("replace artifact processor result directory"_Str,
+                                              PathBuf::from(final.as_path()),
+                                              rstd::move(removed).unwrap_err())));
         }
     }
     auto published = rstd::fs::rename(staging.as_path(), final.as_path());
     if (published.is_err()) {
-        return processor_io_failure<ArtifactProcessorOutcome>(
-            "publish artifact processor result directory"_str,
-            final.as_path(),
-            rstd::move(published).unwrap_err());
+        return Err(ArtifactProcessorError::System(
+            lito::system::SystemError::Io("publish artifact processor result directory"_Str,
+                                          PathBuf::from(final.as_path()),
+                                          rstd::move(published).unwrap_err())));
     }
     return Ok(ArtifactProcessorOutcome {
         .artifact =

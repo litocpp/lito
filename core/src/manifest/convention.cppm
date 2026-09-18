@@ -51,29 +51,29 @@ auto discover_install_script(ref<rstd::path::Path> package_root)
     auto requested = PathBuf::from(package_root).join(PathBuf::from("install.lua"_str).as_path());
     auto exists    = rstd::fs::exists(requested.as_path());
     if (exists.is_err()) {
-        return manifest_io_failure<Option<PathBuf>>("install script"_str,
-                                                    "inspect file"_str,
-                                                    requested.as_path(),
-                                                    rstd::move(exists).unwrap_err());
+        return Err(ManifestSchemaError::Io("install script"_Str,
+                                           "inspect file"_Str,
+                                           PathBuf::from(requested.as_path()),
+                                           rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(None());
     auto metadata = rstd::fs::symlink_metadata(requested.as_path());
     if (metadata.is_err()) {
-        return manifest_io_failure<Option<PathBuf>>("install script"_str,
-                                                    "inspect file"_str,
-                                                    requested.as_path(),
-                                                    rstd::move(metadata).unwrap_err());
+        return Err(ManifestSchemaError::Io("install script"_Str,
+                                           "inspect file"_Str,
+                                           PathBuf::from(requested.as_path()),
+                                           rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
-        return manifest_schema_failure<Option<PathBuf>>(rstd::format(
-            "install script '{}' must be a regular file and not a symlink", requested.as_path()));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "install script '{}' must be a regular file and not a symlink", requested.as_path())));
     }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return manifest_io_failure<Option<PathBuf>>("install script"_str,
-                                                    "resolve file"_str,
-                                                    requested.as_path(),
-                                                    rstd::move(canonical).unwrap_err());
+        return Err(ManifestSchemaError::Io("install script"_Str,
+                                           "resolve file"_Str,
+                                           PathBuf::from(requested.as_path()),
+                                           rstd::move(canonical).unwrap_err()));
     }
     return Ok(Some(rstd::move(canonical).unwrap()));
 }
@@ -92,15 +92,15 @@ auto conventional_source(ref<rstd::path::Path> source_root, ref<rstd::path::Path
     -> ManifestSchemaResult<ConventionalSource> {
     auto relative = path.strip_prefix(source_root);
     if (relative.is_none() || relative->is_empty()) {
-        return manifest_schema_failure<ConventionalSource>(
+        return Err(ManifestSchemaError::Domain(
             rstd::format("conventional benchmark source '{}' is outside package source root '{}'",
                          path,
-                         source_root));
+                         source_root)));
     }
     auto text = relative->to_str();
     if (text.is_none()) {
-        return manifest_schema_failure<ConventionalSource>(
-            rstd::format("conventional benchmark source '{}' is not valid UTF-8", path));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("conventional benchmark source '{}' is not valid UTF-8", path)));
     }
     return Ok(ConventionalSource {
         .key  = String::make(*text),
@@ -113,26 +113,26 @@ auto collect_conventional_sources(ref<rstd::path::Path>    source_root,
                                   Vec<ConventionalSource>& sources) -> ManifestSchemaResult<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return manifest_io_failure<empty>("conventional benchmark"_str,
-                                          "enumerate directory"_str,
-                                          directory,
-                                          rstd::move(opened).unwrap_err());
+        return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                           "enumerate directory"_Str,
+                                           PathBuf::from(directory),
+                                           rstd::move(opened).unwrap_err()));
     }
     auto stream = rstd::move(opened).unwrap();
     for (auto item : stream) {
         if (item.is_err()) {
-            return manifest_io_failure<empty>("conventional benchmark"_str,
-                                              "enumerate directory"_str,
-                                              directory,
-                                              rstd::move(item).unwrap_err());
+            return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                               "enumerate directory"_Str,
+                                               PathBuf::from(directory),
+                                               rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
-            return manifest_io_failure<empty>("conventional benchmark"_str,
-                                              "inspect entry"_str,
-                                              entry.path().as_path(),
-                                              rstd::move(type).unwrap_err());
+            return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                               "inspect entry"_Str,
+                                               PathBuf::from(entry.path().as_path()),
+                                               rstd::move(type).unwrap_err()));
         }
         auto path = entry.path();
         if (type->is_dir()) {
@@ -154,11 +154,11 @@ auto collect_conventional_sources(ref<rstd::path::Path>    source_root,
 auto path_name(ref<rstd::path::Path> path, ref<str> context) -> ManifestSchemaResult<String> {
     auto name = path.file_name();
     if (name.is_none())
-        return manifest_schema_failure<String>(rstd::format("{} '{}' has no name", context, path));
+        return Err(ManifestSchemaError::Domain(rstd::format("{} '{}' has no name", context, path)));
     auto text = name->to_str();
     if (text.is_none()) {
-        return manifest_schema_failure<String>(
-            rstd::format("{} '{}' is not valid UTF-8", context, path));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{} '{}' is not valid UTF-8", context, path)));
     }
     return Ok(String::make(*text));
 }
@@ -167,13 +167,13 @@ auto file_stem(ref<rstd::path::Path> path) -> ManifestSchemaResult<String> {
     auto name      = rstd_try(path_name(path, "benchmark source"_str));
     auto extension = path.extension();
     if (extension.is_none()) {
-        return manifest_schema_failure<String>(
-            rstd::format("benchmark source '{}' has no extension", path));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("benchmark source '{}' has no extension", path)));
     }
     auto extension_text = extension->to_str();
     if (extension_text.is_none() || name.len() <= extension_text->len() + usize(1)) {
-        return manifest_schema_failure<String>(
-            rstd::format("benchmark source '{}' has no target name", path));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("benchmark source '{}' has no target name", path)));
     }
     name.truncate(name.len() - extension_text->len() - usize(1));
     return Ok(rstd::move(name));
@@ -193,23 +193,23 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
     auto directory = PathBuf::from(package_root).join(PathBuf::from("benches"_str).as_path());
     auto exists    = rstd::fs::exists(directory.as_path());
     if (exists.is_err()) {
-        return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
-                                                               "inspect directory"_str,
-                                                               directory.as_path(),
-                                                               rstd::move(exists).unwrap_err());
+        return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                           "inspect directory"_Str,
+                                           PathBuf::from(directory.as_path()),
+                                           rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(rstd::move(result));
 
     auto metadata = rstd::fs::metadata(directory.as_path());
     if (metadata.is_err()) {
-        return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
-                                                               "inspect directory"_str,
-                                                               directory.as_path(),
-                                                               rstd::move(metadata).unwrap_err());
+        return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                           "inspect directory"_Str,
+                                           PathBuf::from(directory.as_path()),
+                                           rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return manifest_schema_failure<Vec<PackageTargetManifest>>(
-            rstd::format("benchmark path '{}' is not a directory", directory.as_path()));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("benchmark path '{}' is not a directory", directory.as_path())));
     }
     auto nested_manifest = try_locate_manifest(directory.as_path());
     if (nested_manifest.is_err()) {
@@ -220,36 +220,36 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
     auto candidates = Vec<ConventionalBenchmark>::make();
     auto opened     = rstd::fs::read_dir(directory.as_path());
     if (opened.is_err()) {
-        return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
-                                                               "enumerate directory"_str,
-                                                               directory.as_path(),
-                                                               rstd::move(opened).unwrap_err());
+        return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                           "enumerate directory"_Str,
+                                           PathBuf::from(directory.as_path()),
+                                           rstd::move(opened).unwrap_err()));
     }
     auto stream = rstd::move(opened).unwrap();
     for (auto item : stream) {
         if (item.is_err()) {
-            return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
-                                                                   "enumerate directory"_str,
-                                                                   directory.as_path(),
-                                                                   rstd::move(item).unwrap_err());
+            return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                               "enumerate directory"_Str,
+                                               PathBuf::from(directory.as_path()),
+                                               rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
-            return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
-                                                                   "inspect entry"_str,
-                                                                   entry.path().as_path(),
-                                                                   rstd::move(type).unwrap_err());
+            return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                               "inspect entry"_Str,
+                                               PathBuf::from(entry.path().as_path()),
+                                               rstd::move(type).unwrap_err()));
         }
         auto path = entry.path();
         if (type->is_file()) {
             if (! runnable_manifest_source(path.as_path())) continue;
             auto name = rstd_try(file_stem(path.as_path()));
             if (! package_name_is_valid(name.as_str())) {
-                return manifest_schema_failure<Vec<PackageTargetManifest>>(rstd::format(
+                return Err(ManifestSchemaError::Domain(rstd::format(
                     "conventional benchmark source '{}' infers invalid target name '{}'",
                     path.as_path(),
-                    name.as_str()));
+                    name.as_str())));
             }
             auto source  = rstd_try(conventional_source(source_root, path.as_path()));
             auto sources = Vec<PathBuf>::make();
@@ -269,36 +269,34 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
 
         auto name = rstd_try(path_name(path.as_path(), "benchmark directory"_str));
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<Vec<PackageTargetManifest>>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "conventional benchmark directory '{}' infers invalid target name '{}'",
                 path.as_path(),
-                name.as_str()));
+                name.as_str())));
         }
         auto child = rstd::fs::read_dir(path.as_path());
         if (child.is_err()) {
-            return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
-                                                                   "enumerate directory"_str,
-                                                                   path.as_path(),
-                                                                   rstd::move(child).unwrap_err());
+            return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                               "enumerate directory"_Str,
+                                               PathBuf::from(path.as_path()),
+                                               rstd::move(child).unwrap_err()));
         }
         auto child_stream = rstd::move(child).unwrap();
         auto main_sources = usize {};
         for (auto child_item : child_stream) {
             if (child_item.is_err()) {
-                return manifest_io_failure<Vec<PackageTargetManifest>>(
-                    "conventional benchmark"_str,
-                    "enumerate directory"_str,
-                    path.as_path(),
-                    rstd::move(child_item).unwrap_err());
+                return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                                   "enumerate directory"_Str,
+                                                   PathBuf::from(path.as_path()),
+                                                   rstd::move(child_item).unwrap_err()));
             }
             auto child_entry = rstd::move(child_item).unwrap();
             auto child_type  = child_entry.file_type();
             if (child_type.is_err()) {
-                return manifest_io_failure<Vec<PackageTargetManifest>>(
-                    "conventional benchmark"_str,
-                    "inspect entry"_str,
-                    child_entry.path().as_path(),
-                    rstd::move(child_type).unwrap_err());
+                return Err(ManifestSchemaError::Io("conventional benchmark"_Str,
+                                                   "inspect entry"_Str,
+                                                   PathBuf::from(child_entry.path().as_path()),
+                                                   rstd::move(child_type).unwrap_err()));
             }
             if (! child_type->is_file() ||
                 ! runnable_manifest_source(child_entry.path().as_path())) {
@@ -309,9 +307,9 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
         }
         if (main_sources == usize {}) continue;
         if (main_sources != usize(1)) {
-            return manifest_schema_failure<Vec<PackageTargetManifest>>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "conventional benchmark directory '{}' contains more than one main source",
-                path.as_path()));
+                path.as_path())));
         }
         auto sources = Vec<ConventionalSource>::make();
         rstd_try(collect_conventional_sources(source_root, path.as_path(), sources));
@@ -335,8 +333,8 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
         });
     for (usize index {}; index < candidates.len(); ++index) {
         if (index != usize {} && candidates[index - usize(1)].name == candidates[index].name) {
-            return manifest_schema_failure<Vec<PackageTargetManifest>>(rstd::format(
-                "conventional benches repeat target name '{}'", candidates[index].name.as_str()));
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "conventional benches repeat target name '{}'", candidates[index].name.as_str())));
         }
         if (explicit_benchmark_name(explicit_targets, candidates[index].name.as_str())) continue;
         result.push(PackageTargetManifest::Benchmark(

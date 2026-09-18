@@ -18,19 +18,6 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto script_failure(String message) -> InstallScriptResult<T> {
-    return Err(InstallScriptError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto script_io_failure(ref<str>               operation,
-                       ref<rstd::path::Path>  path,
-                       rstd::io::error::Error source) -> InstallScriptResult<T> {
-    return Err(
-        InstallScriptError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto recipe_path(String value, ref<str> context) -> luato::Result<PathBuf> {
     auto path = PathBuf::from(rstd::move(value));
     if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) {
@@ -493,8 +480,8 @@ public:
 
     auto finish() -> InstallScriptResult<InstallRecipe> {
         if (recipe_.is_none()) {
-            return script_failure<InstallRecipe>(rstd::format(
-                "install script '{}' did not call lito.install", package_.script->as_path()));
+            return Err(InstallScriptError::Message(rstd::format(
+                "install script '{}' did not call lito.install", package_.script->as_path())));
         }
         return Ok(rstd::move(recipe_).unwrap());
     }
@@ -516,26 +503,29 @@ private:
         auto source   = package_.root.join(input->as_path());
         auto metadata = rstd::fs::symlink_metadata(source.as_path());
         if (metadata.is_err()) {
-            return script_io_failure<InstallScriptInput>(
-                "inspect install input"_str, source.as_path(), rstd::move(metadata).unwrap_err());
+            return Err(InstallScriptError::Io("inspect install input"_Str,
+                                              PathBuf::from(source.as_path()),
+                                              rstd::move(metadata).unwrap_err()));
         }
         if (! metadata->is_file() || metadata->is_symlink()) {
-            return script_failure<InstallScriptInput>(rstd::format(
-                "install input '{}' is not a regular non-symlink file", source.as_path()));
+            return Err(InstallScriptError::Message(rstd::format(
+                "install input '{}' is not a regular non-symlink file", source.as_path())));
         }
         auto canonical = rstd::fs::canonicalize(source.as_path());
         if (canonical.is_err()) {
-            return script_io_failure<InstallScriptInput>(
-                "resolve install input"_str, source.as_path(), rstd::move(canonical).unwrap_err());
+            return Err(InstallScriptError::Io("resolve install input"_Str,
+                                              PathBuf::from(source.as_path()),
+                                              rstd::move(canonical).unwrap_err()));
         }
         if (canonical->as_path().strip_prefix(package_.root.as_path()).is_none()) {
-            return script_failure<InstallScriptInput>(
-                rstd::format("install input '{}' escapes package root", source.as_path()));
+            return Err(InstallScriptError::Message(
+                rstd::format("install input '{}' escapes package root", source.as_path())));
         }
         auto contents = rstd::fs::read_to_string(canonical->as_path());
         if (contents.is_err()) {
-            return script_io_failure<InstallScriptInput>(
-                "read install input"_str, canonical->as_path(), rstd::move(contents).unwrap_err());
+            return Err(InstallScriptError::Io("read install input"_Str,
+                                              PathBuf::from(canonical->as_path()),
+                                              rstd::move(contents).unwrap_err()));
         }
         return Ok(InstallScriptInput {
             .source   = rstd::move(canonical).unwrap(),
@@ -556,8 +546,8 @@ export namespace lito
 auto execute_install_script(const PackageInstallInput& package, const InstallScriptContext& context)
     -> InstallScriptResult<InstallRecipe> {
     if (package.script.is_none()) {
-        return script_failure<InstallRecipe>(
-            rstd::format("package '{}' has no install script", package.name.as_str()));
+        return Err(InstallScriptError::Message(
+            rstd::format("package '{}' has no install script", package.name.as_str())));
     }
     auto session = InstallScriptSession(package);
     auto state   = luato::State::create(luato::StateOptions::build_script());

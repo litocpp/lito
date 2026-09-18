@@ -1671,7 +1671,7 @@ auto optional_jobs(const Matches& matches, const ArgKey<usize>& key)
 auto required_string(const Matches& matches, const ArgKey<String>& key, ref<str> name)
     -> Result<String, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
-    if (value.is_none()) return Err(CliDecodeError::MissingValue(String::make(name)));
+    if (value.is_none()) return Err(CliDecodeError::MissingValue(name.into()));
     return Ok((**value).clone());
 }
 

@@ -222,11 +222,6 @@ auto builtin_build_profile_names() noexcept -> ref<str> {
 
 using namespace lito::manifest;
 
-template<typename T>
-auto build_profile_failure(String message) -> BuildProfileResult<T> {
-    return Err(BuildProfileError::Message(rstd::move(message)));
-}
-
 auto definition(const ProjectProfile& project, ref<str> name)
     -> Option<ref<BuildProfileDefinition>> {
     for (const auto& candidate : project.build_profiles) {
@@ -294,12 +289,11 @@ auto resolve_base_profile(const ProjectProfile& project) -> ResolvedBaseProfile 
 auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> path)
     -> BuildProfileResult<ResolvedBuildProfile> {
     if (name == "base"_str) {
-        return build_profile_failure<ResolvedBuildProfile>(
-            "profile 'base' is the common profile root and cannot be selected or inherited"_Str);
+        return Err(BuildProfileError::Message(
+            "profile 'base' is the common profile root and cannot be selected or inherited"_Str));
     }
     auto cycle = inherited_cycle(path, name);
-    if (cycle.is_some())
-        return build_profile_failure<ResolvedBuildProfile>(rstd::move(cycle).unwrap());
+    if (cycle.is_some()) return Err(BuildProfileError::Message(rstd::move(cycle).unwrap()));
     path.push(String::make(name));
 
     auto declared = definition(project, name);
@@ -345,11 +339,11 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
             message.push_str(", "_str);
             message.push_str(candidate.name.as_str());
         }
-        return build_profile_failure<ResolvedBuildProfile>(rstd::move(message));
+        return Err(BuildProfileError::Message(rstd::move(message)));
     }
     if ((**declared).inherits.is_none()) {
-        return build_profile_failure<ResolvedBuildProfile>(
-            rstd::format("custom profile '{}' must declare inherits", name));
+        return Err(BuildProfileError::Message(
+            rstd::format("custom profile '{}' must declare inherits", name)));
     }
     auto inherited =
         rstd_try(resolve_profile(project, (**declared).inherits->as_str(), rstd::move(path)));
@@ -395,23 +389,23 @@ auto validate_build_profiles(const ProjectProfile& project) -> BuildProfileResul
     for (usize index {}; index < project.build_profiles.len(); ++index) {
         const auto& profile = project.build_profiles[index];
         if (! valid_build_profile_name(profile.name.as_str())) {
-            return build_profile_failure<empty>(
-                rstd::format("invalid build profile name '{}'", profile.name.as_str()));
+            return Err(BuildProfileError::Message(
+                rstd::format("invalid build profile name '{}'", profile.name.as_str())));
         }
         for (usize prior {}; prior < index; ++prior) {
             if (project.build_profiles[prior].name == profile.name) {
-                return build_profile_failure<empty>(rstd::format(
-                    "build profile '{}' is declared more than once", profile.name.as_str()));
+                return Err(BuildProfileError::Message(rstd::format(
+                    "build profile '{}' is declared more than once", profile.name.as_str())));
             }
         }
         const auto builtin = is_builtin_profile(profile.name.as_str());
         if (builtin && profile.inherits.is_some()) {
-            return build_profile_failure<empty>(rstd::format(
-                "built-in profile '{}' cannot declare inherits", profile.name.as_str()));
+            return Err(BuildProfileError::Message(rstd::format(
+                "built-in profile '{}' cannot declare inherits", profile.name.as_str())));
         }
         if (! builtin && profile.inherits.is_none()) {
-            return build_profile_failure<empty>(
-                rstd::format("custom profile '{}' must declare inherits", profile.name.as_str()));
+            return Err(BuildProfileError::Message(
+                rstd::format("custom profile '{}' must declare inherits", profile.name.as_str())));
         }
         rstd_try(resolve_profile(project, profile.name.as_str(), Vec<String>::make()));
     }
@@ -421,8 +415,8 @@ auto validate_build_profiles(const ProjectProfile& project) -> BuildProfileResul
 auto resolve_build_profile(const ProjectProfile& project, const BuildProfileName& name)
     -> BuildProfileResult<ResolvedBuildProfile> {
     if (name.as_str() == "base"_str) {
-        return build_profile_failure<ResolvedBuildProfile>(
-            "profile 'base' is the common profile root and cannot be selected"_Str);
+        return Err(BuildProfileError::Message(
+            "profile 'base' is the common profile root and cannot be selected"_Str));
     }
     rstd_try(validate_build_profiles(project));
     return resolve_profile(project, name.as_str(), Vec<String>::make());

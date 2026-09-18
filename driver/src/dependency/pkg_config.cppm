@@ -21,7 +21,7 @@ namespace lito
 auto pkg_config_error(ref<str> context, lito::tools::ToolError error)
     -> lito::dependency::DependencyError {
     return lito::dependency::DependencyError::Provider(
-        String::make(context), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
+        context.into(), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
 }
 
 auto pkg_config_version_operator(lito::dependency::PkgConfigVersionOperator value)
@@ -89,10 +89,10 @@ auto resolve_pkg_config_dependencies(
     if (declarations.is_empty()) return Ok(rstd::move(result));
     if (platform.effective_target.triple != platform.compiler_default.triple.as_str() &&
         ! config.target_configured) {
-        return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("target '{}' requires explicit pkg-config executable, library-path, or "
                          "sysroot configuration",
-                         platform.effective_target.triple.as_str()));
+                         platform.effective_target.triple.as_str())));
     }
     auto       requested = config.executable.is_empty() ? tool_resolver.tools().pkg_config.as_path()
                                                         : config.executable.as_path();
@@ -157,8 +157,8 @@ auto resolve_pkg_config_dependencies(
             };
             auto normalized = normalize_clang_link_arguments(rstd::move(link_arguments));
             if (normalized.is_err()) {
-                return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
-                    rstd::format("{}", rstd::move(normalized).unwrap_err()));
+                return Err(lito::dependency::DependencyError::Message(
+                    rstd::format("{}", rstd::move(normalized).unwrap_err())));
             }
             link_arguments    = rstd::move(normalized->arguments);
             link_requirements = rstd::move(normalized->requirements);

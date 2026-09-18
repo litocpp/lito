@@ -26,7 +26,8 @@ auto plan_cmake_package(const Request&                requirement,
                         ref<rstd::path::Path>         profile_cmake_root,
                         usize jobs = usize(1)) -> lito::tools::ToolResult<CMakePackagePlan> {
     if (jobs == usize {}) {
-        return cmake_failure<CMakePackagePlan>("CMake build jobs must be greater than zero"_str);
+        return Err(
+            lito::tools::ToolError::Message("CMake build jobs must be greater than zero"_Str));
     }
     auto area =
         work_area(requirement, provider, toolchain, profile, effective_target, profile_cmake_root);
@@ -72,7 +73,8 @@ auto identify_cmake_provider(Provider provider, const ResolvedProcessEnvironment
     }
     provider.identity = String::make(output->standard_output.as_str().trim_ascii());
     if (provider.identity.is_empty()) {
-        return cmake_failure<Provider>("CMake provider returned an empty identity"_str);
+        return Err(
+            lito::tools::ToolError::Message("CMake provider returned an empty identity"_Str));
     }
     return Ok(rstd::move(provider));
 }
@@ -88,23 +90,24 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
     const auto& area        = plan.area;
     auto        created     = rstd::fs::create_dir_all(area.root.as_path());
     if (created.is_err()) {
-        return cmake_io_failure<CMakeUsageSnapshot>("create CMake work directory"_str,
-                                                    area.root.as_path(),
-                                                    rstd::move(created).unwrap_err());
+        return Err(lito::tools::ToolError::Io("create CMake work directory"_Str,
+                                              PathBuf::from(area.root.as_path()),
+                                              rstd::move(created).unwrap_err()));
     }
     auto lock_file = rstd::fs::File::create(area.lock.as_path());
     if (lock_file.is_err()) {
-        return cmake_io_failure<CMakeUsageSnapshot>("open CMake dependency lock"_str,
-                                                    area.lock.as_path(),
-                                                    rstd::move(lock_file).unwrap_err());
+        return Err(lito::tools::ToolError::Io("open CMake dependency lock"_Str,
+                                              PathBuf::from(area.lock.as_path()),
+                                              rstd::move(lock_file).unwrap_err()));
     }
     auto locked = rstd::fs::FileLock::acquire(rstd::move(lock_file).unwrap(),
                                               rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return cmake_io_failure<CMakeUsageSnapshot>(
-            rstd::format("lock CMake dependency '{}'", requirement.alias.as_str()).as_str(),
-            area.lock.as_path(),
-            rstd::move(locked).unwrap_err());
+        return Err(lito::tools::ToolError::Io(
+            (rstd::format("lock CMake dependency '{}'", requirement.alias.as_str()).as_str())
+                .into(),
+            PathBuf::from(area.lock.as_path()),
+            rstd::move(locked).unwrap_err()));
     }
     rstd_try(prepare_cmake_state(area, requirement));
     auto cacheable =
@@ -230,17 +233,18 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
         }
     }
     if (snapshots.is_none()) {
-        return cmake_failure<CMakeUsageSnapshot>(rstd::format(
-            "CMake package '{}' plan produced no usage snapshot", requirement.package.as_str()));
+        return Err(lito::tools::ToolError::Message(rstd::format(
+            "CMake package '{}' plan produced no usage snapshot", requirement.package.as_str())));
     }
     auto version_path =
         area.query_build.join(PathBuf::from("lito-package-version.txt"_str).as_path());
     auto version = rstd::fs::read_to_string(version_path.as_path());
     if (version.is_err()) {
-        return cmake_io_failure<CMakeUsageSnapshot>(
-            rstd::format("read CMake package '{}' version", requirement.package.as_str()).as_str(),
-            version_path.as_path(),
-            rstd::move(version).unwrap_err());
+        return Err(lito::tools::ToolError::Io(
+            (rstd::format("read CMake package '{}' version", requirement.package.as_str()).as_str())
+                .into(),
+            PathBuf::from(version_path.as_path()),
+            rstd::move(version).unwrap_err()));
     }
     auto normalized_version = String::make(version->as_str().trim_ascii());
     if (normalized_version.is_empty()) normalized_version = "unknown"_Str;

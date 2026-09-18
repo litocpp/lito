@@ -254,7 +254,7 @@ auto FetchUrl::try_from(Url value) -> Result<FetchUrl, UrlError> {
     if (value.fragment().is_some()) return Err(UrlError::FragmentNotAllowed());
     if (value.scheme() != "http"_str && value.scheme() != "https"_str &&
         value.scheme() != "file"_str) {
-        return Err(UrlError::UnsupportedFetchScheme(String::make(value.scheme())));
+        return Err(UrlError::UnsupportedFetchScheme(value.scheme().into()));
     }
     if (value.scheme() != "file"_str && value.authority().is_empty()) {
         return Err(UrlError::MissingAuthority());
@@ -268,7 +268,7 @@ auto HttpsUrl::parse(ref<str> value) -> Result<HttpsUrl, UrlError> {
 
 auto HttpsUrl::try_from(FetchUrl value) -> Result<HttpsUrl, UrlError> {
     if (value.url()->scheme() != "https"_str) {
-        return Err(UrlError::HttpsRequired(String::make(value.url()->scheme())));
+        return Err(UrlError::HttpsRequired(value.url()->scheme().into()));
     }
     return Ok(HttpsUrl(rstd::move(value)));
 }
@@ -383,7 +383,7 @@ auto lito::parse::json::required_member(const rstd::json::Value& value,
     -> ParseResult<ref<rstd::json::Value>> {
     rstd_try(object(value, path));
     auto member = value.get(key);
-    if (member.is_none()) return Err(Error::MissingField(path.clone(), String::make(key)));
+    if (member.is_none()) return Err(Error::MissingField(path.clone(), key.into()));
     return Ok(*member);
 }
 
@@ -611,7 +611,7 @@ auto lito::parse::toml::required_member(const rstd::toml::Value& value,
     -> ParseResult<ref<rstd::toml::Value>> {
     rstd_try(table(value, path));
     auto member = value.get(key);
-    if (member.is_none()) return Err(Error::MissingField(path.clone(), String::make(key)));
+    if (member.is_none()) return Err(Error::MissingField(path.clone(), key.into()));
     return Ok(*member);
 }
 

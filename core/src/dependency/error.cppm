@@ -35,16 +35,6 @@ class DependencyError {
 template<typename T>
 using DependencyResult = Result<T, DependencyError>;
 
-template<typename T>
-auto dependency_failure(String message) -> DependencyResult<T> {
-    return Err(DependencyError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto dependency_failure(ref<str> message) -> DependencyResult<T> {
-    return Err(DependencyError::Message(String::make(message)));
-}
-
 } // namespace lito::dependency
 
 export namespace rstd

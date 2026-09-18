@@ -114,9 +114,9 @@ auto prepare_external_source_task(ExternalSourceTask task)
             source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
         } else {
             if (task.acquired.is_none()) {
-                return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
+                return Err(lito::dependency::DependencyError::Message(
                     rstd::format("external source for CMake dependency '{}' was not fetched",
-                                 declaration.alias.as_str()));
+                                 declaration.alias.as_str())));
             }
             auto value = rstd::move(task.acquired).unwrap();
             source     = PreparedCMakeDependencySource::Directory(
@@ -168,10 +168,10 @@ auto prepare_external_source_task(ExternalSourceTask task)
                 "resolve CMake adapter"_Str, rstd::move(path), rstd::move(canonical).unwrap_err()));
         }
         if (! canonical->as_path().starts_with(adapter_root)) {
-            return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("CMake adapter '{}' escapes declaration root '{}'",
                              canonical->as_path(),
-                             adapter_root));
+                             adapter_root)));
         }
         auto contents = rstd::fs::read_to_string(canonical->as_path());
         if (contents.is_err()) {
@@ -288,8 +288,8 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             return prepare_external_source_task(rstd::move(task));
         });
         if (submitted.is_err()) {
-            return lito::dependency::dependency_failure<PreparedExternalDependencySources>(
-                "cannot submit external source fetch task"_str);
+            return Err(lito::dependency::DependencyError::Message(
+                "cannot submit external source fetch task"_Str));
         }
     }
     auto outcomes = rstd::move(group).join();
@@ -297,8 +297,8 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
     for (auto& outcome : outcomes) {
         auto value = rstd::move(outcome).into_value();
         if (value.is_none()) {
-            return lito::dependency::dependency_failure<PreparedExternalDependencySources>(
-                "external source fetch task was cancelled"_str);
+            return Err(lito::dependency::DependencyError::Message(
+                "external source fetch task was cancelled"_Str));
         }
         auto prepared = rstd::move(value).unwrap_unchecked();
         if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
@@ -342,17 +342,17 @@ auto resolve_external_acquisition_plan(const lito::package::ResolvedPackageGraph
                 break;
             }
             if (url.is_none()) {
-                return lito::dependency::dependency_failure<ExternalAcquisitionPlan>(
+                return Err(lito::dependency::DependencyError::Message(
                     rstd::format("external source '{}:{}' has no archive for architecture '{}'",
                                  graph.packages[source.package].manifest.name.as_str(),
                                  source.name.as_str(),
-                                 architecture_name(platform.effective_target.architecture)));
+                                 architecture_name(platform.effective_target.architecture))));
             }
         } else {
-            return lito::dependency::dependency_failure<ExternalAcquisitionPlan>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("external source '{}:{}' was not acquired",
                              graph.packages[source.package].manifest.name.as_str(),
-                             source.name.as_str()));
+                             source.name.as_str())));
         }
         plan.archives.push(ExternalArchiveAcquisition {
             .owner = ExternalArchiveOwner::PackageExternal(index),
@@ -460,14 +460,13 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
             }
         }
         if (selected == nullptr) {
-            return lito::dependency::dependency_failure<SelectedCMakeDependencyRequirement>(
-                rstd::format(
-                    "CMake dependency '{}' has no archive for target '{}' (architecture '{}'); "
-                    "available architectures: {}",
-                    requirement.alias.as_str(),
-                    platform.effective_target.triple.as_str(),
-                    architecture_name(platform.effective_target.architecture),
-                    available.as_str()));
+            return Err(lito::dependency::DependencyError::Message(rstd::format(
+                "CMake dependency '{}' has no archive for target '{}' (architecture '{}'); "
+                "available architectures: {}",
+                requirement.alias.as_str(),
+                platform.effective_target.triple.as_str(),
+                architecture_name(platform.effective_target.architecture),
+                available.as_str())));
         }
         source =
             SelectedCMakeDependencySource::Archive(selected->url.clone(), selected->sha256.clone());
@@ -516,9 +515,9 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
 auto materialize_cmake_requirement(const SelectedCMakeDependencyRequirement& requirement)
     -> lito::dependency::DependencyResult<ResolvedCMakeDependencyRequirement> {
     if (requirement.source.is_Archive()) {
-        return lito::dependency::dependency_failure<ResolvedCMakeDependencyRequirement>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("CMake dependency '{}' archive source has not been materialized",
-                         requirement.alias.as_str()));
+                         requirement.alias.as_str())));
     }
     auto source = ResolvedCMakeDependencySource::Find();
     if (requirement.source.is_Directory()) {

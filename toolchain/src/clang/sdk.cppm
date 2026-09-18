@@ -19,16 +19,6 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto sdk_failure(String message) -> ToolchainResult<T> {
-    return Err(ToolchainError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto sdk_failure(ref<str> message) -> ToolchainResult<T> {
-    return sdk_failure<T>(String::make(message));
-}
-
 auto require_sdk_file(ref<rstd::path::Path> path, ref<str> description) -> ToolchainResult<empty> {
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
@@ -37,7 +27,8 @@ auto require_sdk_file(ref<rstd::path::Path> path, ref<str> description) -> Toolc
                                       rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file()) {
-        return sdk_failure<empty>(rstd::format("{} '{}' is not a file", description, path));
+        return Err(
+            ToolchainError::Message(rstd::format("{} '{}' is not a file", description, path)));
     }
     return Ok(empty {});
 }
@@ -51,7 +42,8 @@ auto require_sdk_directory(ref<rstd::path::Path> path, ref<str> description)
                                       rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return sdk_failure<empty>(rstd::format("{} '{}' is not a directory", description, path));
+        return Err(
+            ToolchainError::Message(rstd::format("{} '{}' is not a directory", description, path)));
     }
     return Ok(empty {});
 }
@@ -67,8 +59,8 @@ auto require_contained_sdk_file(ref<rstd::path::Path> prefix,
                                       rstd::move(canonical).unwrap_err()));
     }
     if (! canonical->as_path().starts_with(prefix)) {
-        return sdk_failure<empty>(rstd::format(
-            "{} '{}' escapes LLVM SDK prefix '{}'", description, canonical->as_path(), prefix));
+        return Err(ToolchainError::Message(rstd::format(
+            "{} '{}' escapes LLVM SDK prefix '{}'", description, canonical->as_path(), prefix)));
     }
     return Ok(empty {});
 }
@@ -84,8 +76,8 @@ auto require_contained_sdk_directory(ref<rstd::path::Path> prefix,
                                       rstd::move(canonical).unwrap_err()));
     }
     if (! canonical->as_path().starts_with(prefix)) {
-        return sdk_failure<PathBuf>(rstd::format(
-            "{} '{}' escapes LLVM SDK prefix '{}'", description, canonical->as_path(), prefix));
+        return Err(ToolchainError::Message(rstd::format(
+            "{} '{}' escapes LLVM SDK prefix '{}'", description, canonical->as_path(), prefix)));
     }
     return Ok(rstd::move(canonical).unwrap());
 }
@@ -154,7 +146,7 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
         if (output.is_err())
             return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
         if (output->exit_code != i32 {}) {
-            return Err(ToolchainError::Execution(String::make(description),
+            return Err(ToolchainError::Execution(description.into(),
                                                  output->exit_code,
                                                  rstd::move(output->standard_output),
                                                  rstd::move(output->standard_error)));
@@ -227,7 +219,8 @@ auto attach_clang_plugin_sdk(cpp::CompileContext& context,
                              const ClangSdk&      sdk,
                              bool                 include_directory) -> ToolchainResult<empty> {
     if (! context.language.is_Cpp()) {
-        return sdk_failure<empty>("Clang compiler plugins require a C++ compile context"_str);
+        return Err(
+            ToolchainError::Message("Clang compiler plugins require a C++ compile context"_Str));
     }
     if (include_directory) {
         auto& includes = context.language.as_Cpp().options.preprocessor.include_directories;
@@ -272,13 +265,13 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
                        const ResolvedProcessEnvironment& environment) -> ToolchainResult<ClangSdk> {
     auto binary_directory = compiler.path.as_path().parent();
     if (binary_directory.is_none()) {
-        return sdk_failure<ClangSdk>(
-            rstd::format("Clang executable '{}' has no parent directory", compiler.path.as_path()));
+        return Err(ToolchainError::Message(rstd::format(
+            "Clang executable '{}' has no parent directory", compiler.path.as_path())));
     }
     auto prefix = (*binary_directory).parent();
     if (prefix.is_none()) {
-        return sdk_failure<ClangSdk>(
-            rstd::format("Clang executable '{}' has no SDK prefix", compiler.path.as_path()));
+        return Err(ToolchainError::Message(
+            rstd::format("Clang executable '{}' has no SDK prefix", compiler.path.as_path())));
     }
     auto target = parse_target_info(compiler.target.as_str());
     if (target.is_err()) return Err(ToolchainError::Platform(rstd::move(target).unwrap_err()));
@@ -363,10 +356,10 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     if (toolchain.is_err()) return Err(rstd::move(toolchain).unwrap_err());
     auto version_marker = rstd::format("clang version {}", expected_version);
     if (! toolchain->compiler_identity().version.as_str().contains(version_marker.as_str())) {
-        return sdk_failure<LlvmSdkCertification>(
+        return Err(ToolchainError::Message(
             rstd::format("LLVM SDK compiler version does not match catalog version '{}': {}",
                          expected_version,
-                         toolchain->compiler_identity().version.as_str()));
+                         toolchain->compiler_identity().version.as_str())));
     }
     auto sdk = inspect_clang_sdk(toolchain->compiler_identity(),
                                  toolchain->target_info(),
@@ -390,12 +383,12 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     auto ar_version = probe_llvm_tool(toolchain_spec.ar.as_path(), "llvm-ar --version"_str);
     if (ar_version.is_err()) return Err(rstd::move(ar_version).unwrap_err());
     if (! ar_version->as_str().contains("LLVM"_str)) {
-        return sdk_failure<LlvmSdkCertification>("configured archiver is not llvm-ar"_str);
+        return Err(ToolchainError::Message("configured archiver is not llvm-ar"_Str));
     }
     auto strip_version = probe_llvm_tool(strip.as_path(), "llvm-strip --version"_str);
     if (strip_version.is_err()) return Err(rstd::move(strip_version).unwrap_err());
     if (! strip_version->as_str().contains("LLVM"_str)) {
-        return sdk_failure<LlvmSdkCertification>("configured strip tool is not llvm-strip"_str);
+        return Err(ToolchainError::Message("configured strip tool is not llvm-strip"_Str));
     }
     auto formatter = lito::tools::ClangFormat::create(format.as_path(), certification_environment);
     if (formatter.is_err()) {
@@ -409,8 +402,8 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         rstd::move(llvm_version_command), "llvm-config --version"_str, certification_environment);
     if (llvm_version.is_err()) return Err(rstd::move(llvm_version).unwrap_err());
     if (llvm_version->as_str() != expected_version) {
-        return sdk_failure<LlvmSdkCertification>(rstd::format(
-            "llvm-config reports '{}', expected '{}'", llvm_version->as_str(), expected_version));
+        return Err(ToolchainError::Message(rstd::format(
+            "llvm-config reports '{}', expected '{}'", llvm_version->as_str(), expected_version)));
     }
     auto probe_directory = rstd::fs::TempDir::make("lito-llvm-sdk-certify"_str);
     if (probe_directory.is_err()) {

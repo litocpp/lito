@@ -48,10 +48,10 @@ auto acquired_git_fetch_identity(const AcquiredSource& source, ref<str> url)
     auto prefix = rstd::format("git+{}#", url);
     auto commit = source.identity.as_str().strip_prefix(prefix.as_str());
     if (commit.is_none() || commit->is_empty()) {
-        return source_failure<Option<FetchIdentity>>(
+        return Err(SourceError::Message(
             rstd::format("acquired Git source '{}' has no exact commit for '{}'",
                          source.identity.as_str(),
-                         url));
+                         url)));
     }
     return Ok(Some(git_fetch_identity(url, *commit)));
 }
@@ -151,9 +151,9 @@ auto reusable_archive_materialization(const ArchiveMaterializationLayout& layout
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(Option<AcquiredSource> {});
         }
-        return source_io_failure<Option<AcquiredSource>>("read archive materialization receipt"_str,
-                                                         layout.receipt.as_path(),
-                                                         rstd::move(error));
+        return Err(SourceError::Io("read archive materialization receipt"_Str,
+                                   PathBuf::from(layout.receipt.as_path()),
+                                   rstd::move(error)));
     }
     auto parts = current->as_str().split_once("\n"_str);
     if (parts.is_none() || parts->get<0>() != "lito-archive-materialization-v2"_str) {
@@ -169,8 +169,9 @@ auto reusable_archive_materialization(const ArchiveMaterializationLayout& layout
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(Option<AcquiredSource> {});
         }
-        return source_io_failure<Option<AcquiredSource>>(
-            "resolve archive materialization"_str, candidate.as_path(), rstd::move(error));
+        return Err(SourceError::Io("resolve archive materialization"_Str,
+                                   PathBuf::from(candidate.as_path()),
+                                   rstd::move(error)));
     }
     auto canonical_extracted = rstd::fs::canonicalize(layout.extracted.as_path());
     if (canonical_extracted.is_err()) {
@@ -178,8 +179,9 @@ auto reusable_archive_materialization(const ArchiveMaterializationLayout& layout
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(Option<AcquiredSource> {});
         }
-        return source_io_failure<Option<AcquiredSource>>(
-            "resolve archive extraction"_str, layout.extracted.as_path(), rstd::move(error));
+        return Err(SourceError::Io("resolve archive extraction"_Str,
+                                   PathBuf::from(layout.extracted.as_path()),
+                                   rstd::move(error)));
     }
     auto metadata = rstd::fs::metadata(canonical->as_path());
     if (metadata.is_err()) {
@@ -187,8 +189,9 @@ auto reusable_archive_materialization(const ArchiveMaterializationLayout& layout
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(Option<AcquiredSource> {});
         }
-        return source_io_failure<Option<AcquiredSource>>(
-            "inspect archive materialization"_str, canonical->as_path(), rstd::move(error));
+        return Err(SourceError::Io("inspect archive materialization"_Str,
+                                   PathBuf::from(canonical->as_path()),
+                                   rstd::move(error)));
     }
     if (! metadata->is_dir() ||
         ! canonical->as_path().starts_with(canonical_extracted->as_path())) {
@@ -206,23 +209,23 @@ auto inspect_archive_materialization(ref<rstd::path::Path> materialization_root,
     auto layout  = archive_materialization_layout(materialization_root, identity);
     auto created = rstd::fs::create_dir_all(layout.area.as_path());
     if (created.is_err()) {
-        return source_io_failure<Option<AcquiredSource>>("create archive materialization area"_str,
-                                                         layout.area.as_path(),
-                                                         rstd::move(created).unwrap_err());
+        return Err(SourceError::Io("create archive materialization area"_Str,
+                                   PathBuf::from(layout.area.as_path()),
+                                   rstd::move(created).unwrap_err()));
     }
     auto opened = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
         layout.lock.as_path());
     if (opened.is_err()) {
-        return source_io_failure<Option<AcquiredSource>>("open archive materialization lock"_str,
-                                                         layout.lock.as_path(),
-                                                         rstd::move(opened).unwrap_err());
+        return Err(SourceError::Io("open archive materialization lock"_Str,
+                                   PathBuf::from(layout.lock.as_path()),
+                                   rstd::move(opened).unwrap_err()));
     }
     auto locked =
         rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return source_io_failure<Option<AcquiredSource>>("lock archive materialization"_str,
-                                                         layout.lock.as_path(),
-                                                         rstd::move(locked).unwrap_err());
+        return Err(SourceError::Io("lock archive materialization"_Str,
+                                   PathBuf::from(layout.lock.as_path()),
+                                   rstd::move(locked).unwrap_err()));
     }
     return reusable_archive_materialization(layout, identity);
 }
@@ -236,23 +239,23 @@ auto materialize_archive(lito::tools::acquisition::VerifiedFile            file,
     auto layout  = archive_materialization_layout(materialization_root, file.identity.as_str());
     auto created = rstd::fs::create_dir_all(layout.area.as_path());
     if (created.is_err()) {
-        return source_io_failure<AcquiredSource>("create archive materialization area"_str,
-                                                 layout.area.as_path(),
-                                                 rstd::move(created).unwrap_err());
+        return Err(SourceError::Io("create archive materialization area"_Str,
+                                   PathBuf::from(layout.area.as_path()),
+                                   rstd::move(created).unwrap_err()));
     }
     auto opened = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(
         layout.lock.as_path());
     if (opened.is_err()) {
-        return source_io_failure<AcquiredSource>("open archive materialization lock"_str,
-                                                 layout.lock.as_path(),
-                                                 rstd::move(opened).unwrap_err());
+        return Err(SourceError::Io("open archive materialization lock"_Str,
+                                   PathBuf::from(layout.lock.as_path()),
+                                   rstd::move(opened).unwrap_err()));
     }
     auto locked =
         rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return source_io_failure<AcquiredSource>("lock archive materialization"_str,
-                                                 layout.lock.as_path(),
-                                                 rstd::move(locked).unwrap_err());
+        return Err(SourceError::Io("lock archive materialization"_Str,
+                                   PathBuf::from(layout.lock.as_path()),
+                                   rstd::move(locked).unwrap_err()));
     }
 
     auto reusable = rstd_try(reusable_archive_materialization(layout, file.identity.as_str()));
@@ -260,17 +263,16 @@ auto materialize_archive(lito::tools::acquisition::VerifiedFile            file,
 
     auto receipt_exists = rstd::fs::exists(layout.receipt.as_path());
     if (receipt_exists.is_err()) {
-        return source_io_failure<AcquiredSource>("inspect archive materialization receipt"_str,
-                                                 layout.receipt.as_path(),
-                                                 rstd::move(receipt_exists).unwrap_err());
+        return Err(SourceError::Io("inspect archive materialization receipt"_Str,
+                                   PathBuf::from(layout.receipt.as_path()),
+                                   rstd::move(receipt_exists).unwrap_err()));
     }
     if (*receipt_exists) {
         auto removed = rstd::fs::remove_file(layout.receipt.as_path());
         if (removed.is_err()) {
-            return source_io_failure<AcquiredSource>(
-                "invalidate archive materialization receipt"_str,
-                layout.receipt.as_path(),
-                rstd::move(removed).unwrap_err());
+            return Err(SourceError::Io("invalidate archive materialization receipt"_Str,
+                                       PathBuf::from(layout.receipt.as_path()),
+                                       rstd::move(removed).unwrap_err()));
         }
     }
 
@@ -281,13 +283,13 @@ auto materialize_archive(lito::tools::acquisition::VerifiedFile            file,
     }
     auto relative = extracted->root.as_path().strip_prefix(layout.extracted.as_path());
     if (relative.is_none()) {
-        return source_failure<AcquiredSource>(rstd::format(
-            "archive root '{}' is outside materialization area", extracted->root.as_path()));
+        return Err(SourceError::Message(rstd::format(
+            "archive root '{}' is outside materialization area", extracted->root.as_path())));
     }
     auto relative_text = relative->is_empty() ? "."_str : relative->to_str().unwrap_or(""_str);
     if (relative_text.is_empty()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("archive root '{}' is not valid UTF-8", extracted->root.as_path()));
+        return Err(SourceError::Message(
+            rstd::format("archive root '{}' is not valid UTF-8", extracted->root.as_path())));
     }
     auto receipt_text = "lito-archive-materialization-v2\n"_Str;
     receipt_text.push_str(relative_text);
@@ -295,9 +297,9 @@ auto materialize_archive(lito::tools::acquisition::VerifiedFile            file,
     auto written =
         rstd::fs::write_atomic(layout.receipt.as_path(), receipt_text.as_str().as_bytes());
     if (written.is_err()) {
-        return source_io_failure<AcquiredSource>("publish archive receipt"_str,
-                                                 layout.receipt.as_path(),
-                                                 rstd::move(written).unwrap_err());
+        return Err(SourceError::Io("publish archive receipt"_Str,
+                                   PathBuf::from(layout.receipt.as_path()),
+                                   rstd::move(written).unwrap_err()));
     }
     auto archive = rstd::move(extracted).unwrap();
     return Ok(AcquiredSource {
@@ -323,8 +325,7 @@ auto cache_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                             SourceEventSink                   observer      = {})
     -> SourceResult<Vec<lito::tools::acquisition::VerifiedFile>> {
     if (jobs == usize {}) {
-        return source_failure<Vec<lito::tools::acquisition::VerifiedFile>>(
-            "archive source fetch jobs must be greater than zero"_str);
+        return Err(SourceError::Message("archive source fetch jobs must be greater than zero"_Str));
     }
     auto unique       = Vec<ArchiveSourceFetchRequest>::make();
     auto request_keys = rstd::collections::BTreeMap<String, usize>::make();
@@ -389,8 +390,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                               const PackageSourceConfig&        source_config = {},
                               SourceEventSink observer = {}) -> SourceResult<Vec<AcquiredSource>> {
     if (jobs == usize {}) {
-        return source_failure<Vec<AcquiredSource>>(
-            "archive source fetch jobs must be greater than zero"_str);
+        return Err(SourceError::Message("archive source fetch jobs must be greater than zero"_Str));
     }
     auto result = Vec<AcquiredSource>::with_capacity(requests.len());
     if (requests.is_empty()) return Ok(rstd::move(result));
@@ -498,16 +498,16 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                         });
                     });
                 if (submitted.is_err()) {
-                    return source_failure<Vec<AcquiredSource>>(
-                        "cannot submit archive materialization task"_str);
+                    return Err(
+                        SourceError::Message("cannot submit archive materialization task"_Str));
                 }
             }
             auto outcomes = rstd::move(group).join();
             for (auto& outcome : outcomes) {
                 auto value = rstd::move(outcome).into_value();
                 if (value.is_none()) {
-                    return source_failure<Vec<AcquiredSource>>(
-                        "archive materialization task was cancelled"_str);
+                    return Err(
+                        SourceError::Message("archive materialization task was cancelled"_Str));
                 }
                 auto task = rstd::move(value).unwrap_unchecked();
                 if (task.is_err()) return Err(rstd::move(task).unwrap_err());
@@ -518,8 +518,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     }
     for (auto binding : bindings) {
         if (materialized[binding].is_none()) {
-            return source_failure<Vec<AcquiredSource>>(
-                "archive materialization result is missing"_str);
+            return Err(SourceError::Message("archive materialization result is missing"_Str));
         }
         const auto& source = *materialized[binding];
         result.push(AcquiredSource {

@@ -76,8 +76,8 @@ auto lito::registry::RegistryPackageSpec::parse(ref<str> value)
     }
     auto selector = separated->template get<1>();
     if (selector.is_empty() || selector.contains("@"_str)) {
-        return registry_value_failure<RegistryPackageSpec>(
-            "Registry package selector must not be empty or contain '@'"_str);
+        return Err(RegistryValueError::Message(
+            "Registry package selector must not be empty or contain '@'"_Str));
     }
     auto requirement = VersionRequirement::parse(selector);
     if (requirement.is_ok()) {
@@ -87,8 +87,8 @@ auto lito::registry::RegistryPackageSpec::parse(ref<str> value)
         });
     }
     if (! valid_registry_tag(selector)) {
-        return registry_value_failure<RegistryPackageSpec>(
-            "Registry package selector is neither a version requirement nor a valid tag"_str);
+        return Err(RegistryValueError::Message(
+            "Registry package selector is neither a version requirement nor a valid tag"_Str));
     }
     return Ok(RegistryPackageSpec {
         .package  = rstd::move(package).unwrap(),

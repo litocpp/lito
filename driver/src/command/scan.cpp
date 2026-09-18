@@ -24,20 +24,10 @@ using JsonArray = rstd::json::Array;
 namespace lito
 {
 
-template<typename T>
-auto scan_failure(String message) -> CommandResult<T> {
-    return Err(CommandError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto scan_failure(ref<str> message) -> CommandResult<T> {
-    return Err(CommandError::Message(String::make(message)));
-}
-
 auto scan_path(ref<rstd::path::Path> path) -> CommandResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return scan_failure<String>(rstd::format("scan path '{}' is not valid UTF-8", path));
+        return Err(CommandError::Message(rstd::format("scan path '{}' is not valid UTF-8", path)));
     }
     return Ok(String::make(*text));
 }
@@ -69,16 +59,16 @@ auto scan_output_format_name(ScanOutputFormat format) -> ref<str> {
 auto parse_scan_output_format(ref<str> name) -> CommandResult<ScanOutputFormat> {
     if (name == "lito"_str) return Ok(ScanOutputFormat::Lito);
     if (name == "p1689"_str) return Ok(ScanOutputFormat::P1689);
-    return scan_failure<ScanOutputFormat>(
-        rstd::format("unknown scan output format '{}'; expected lito or p1689", name));
+    return Err(CommandError::Message(
+        rstd::format("unknown scan output format '{}'; expected lito or p1689", name)));
 }
 
 auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     if (request.selection.root.is_empty()) {
-        return scan_failure<ScanReport>("scan directory is required"_str);
+        return Err(CommandError::Message("scan directory is required"_Str));
     }
     if (request.source.is_empty()) {
-        return scan_failure<ScanReport>("scan source is required"_str);
+        return Err(CommandError::Message("scan source is required"_Str));
     }
 
     auto requested_source = request.source.as_path().is_absolute()
@@ -146,10 +136,10 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     const auto& target          = metadata.targets[source_target];
     auto        relative_source = source.as_path().strip_prefix(target.source_root.as_path());
     if (relative_source.is_none() || relative_source->is_empty()) {
-        return scan_failure<ScanReport>(
+        return Err(CommandError::Message(
             rstd::format("source '{}' has no build-relative path in target '{}'",
                          source.as_path(),
-                         lito::package::package_target_id_text(target.id).as_str()));
+                         lito::package::package_target_id_text(target.id).as_str())));
     }
     auto primary_output = project.layout.object(target.id, *relative_source);
     if (primary_output.is_err()) {
@@ -172,7 +162,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
         },
         metadata.targets[source_target].language);
     if (projected.is_err()) {
-        return scan_failure<ScanReport>(rstd::move(projected).unwrap_err());
+        return Err(CommandError::Message(rstd::move(projected).unwrap_err()));
     }
 
     return Ok(ScanReport {
@@ -206,7 +196,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         for (const auto& imported : cpp_facts->required_modules) {
             if (! imported.imported) continue;
             if (imported.import_locations.is_empty()) {
-                return scan_failure<String>("typed import has no source location"_str);
+                return Err(CommandError::Message("typed import has no source location"_Str));
             }
             for (const auto& location : imported.import_locations) {
                 auto required = JsonMap::make();
@@ -348,7 +338,7 @@ auto scan_report_json(const ScanReport& report, ScanOutputFormat format) -> Comm
     case ScanOutputFormat::Lito: return lito_scan_report_json(report);
     case ScanOutputFormat::P1689: return p1689_scan_report_json(report);
     }
-    return scan_failure<String>("unsupported scan output format"_str);
+    return Err(CommandError::Message("unsupported scan output format"_Str));
 }
 
 } // namespace lito

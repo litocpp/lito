@@ -386,7 +386,7 @@ sources = ["src/extra.cpp"]
     auto product_state = output.join(PathBuf::from(".lito/build-product.json"_str).as_path());
     auto product_json  = rstd::fs::read_to_string(product_state.as_path());
     ASSERT_TRUE(product_json.is_ok());
-    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 2"_str));
+    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 7"_str));
     EXPECT_TRUE(product_json->as_str().contains("\"install-files\""_str));
     EXPECT_TRUE(product_json->as_str().contains("\"modified-seconds\""_str));
     EXPECT_FALSE(product_json->as_str().contains("\"sha256\""_str));
@@ -409,7 +409,7 @@ sources = ["src/extra.cpp"]
     ASSERT_TRUE(
         rstd::fs::write(
             product_state.as_path(),
-            R"({"schema":2,"schema":2,"state":"building","generation":"duplicate"})"_str.as_bytes())
+            R"({"schema":7,"schema":7,"state":"building","generation":"duplicate"})"_str.as_bytes())
             .is_ok());
     auto duplicate =
         lito::load_completed_build_product(fixture.as_path(), output.as_path(), "release"_str);

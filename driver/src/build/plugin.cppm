@@ -21,21 +21,11 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto plugin_failure(String message) -> BuildResult<T> {
-    return Err(BuildError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto plugin_failure(ref<str> message) -> BuildResult<T> {
-    return plugin_failure<T>(String::make(message));
-}
-
 auto plugin_file_digest(ref<rstd::path::Path> path, ref<str> operation) -> BuildResult<String> {
     auto data = rstd::fs::read(path);
     if (data.is_err()) {
         return Err(BuildError::System(lito::system::SystemError::Io(
-            String::make(operation), PathBuf::from(path), rstd::move(data).unwrap_err())));
+            operation.into(), PathBuf::from(path), rstd::move(data).unwrap_err())));
     }
     return Ok(licrypto::sha256_hex(data->as_slice()));
 }
@@ -76,9 +66,9 @@ auto compiler_plugin_link_inputs(cpp::TargetId               target,
         const auto dependency = input.as_Target().target;
         if (dependency >= package.targets.len() || dependency >= libraries.len() ||
             libraries[dependency].is_none()) {
-            return plugin_failure<Vec<ResolvedLinkInput>>(rstd::format(
+            return Err(BuildError::Message(rstd::format(
                 "compiler plugin target '{}' has an unavailable host link dependency",
-                lito::package::package_target_id_text(package.targets[target].id).as_str()));
+                lito::package::package_target_id_text(package.targets[target].id).as_str())));
         }
         const auto shared =
             package.targets[dependency].artifact_kind == cpp::ArtifactKind::SharedLibrary;
@@ -122,9 +112,9 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
         const auto& spec = package.targets[target];
         if (spec.artifact_kind != cpp::ArtifactKind::CompilerPlugin) continue;
         if (target >= libraries.len() || libraries[target].is_none()) {
-            return plugin_failure<Vec<BuiltCompilerPlugin>>(
+            return Err(BuildError::Message(
                 rstd::format("compiler plugin target '{}' has no support archive",
-                             lito::package::package_target_id_text(spec.id).as_str()));
+                             lito::package::package_target_id_text(spec.id).as_str())));
         }
         auto plugin_stem = spec.archive_stem.clone();
         plugin_stem.push_str("-plugin"_str);
@@ -133,8 +123,7 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
         auto output = layout.compiler_plugin(spec.id, filename.as_str());
         auto parent = output.as_path().parent();
         if (parent.is_none()) {
-            return plugin_failure<Vec<BuiltCompilerPlugin>>(
-                "compiler plugin output has no parent directory"_str);
+            return Err(BuildError::Message("compiler plugin output has no parent directory"_Str));
         }
         auto created = rstd::fs::create_dir_all(*parent);
         if (created.is_err()) {
@@ -246,14 +235,14 @@ auto compiler_plugin_for_package(const Vec<BuiltCompilerPlugin>& products, ref<s
     for (const auto& product : products) {
         if (product.target.package != package) continue;
         if (result != nullptr) {
-            return plugin_failure<const BuiltCompilerPlugin*>(
-                rstd::format("compiler plugin package '{}' has more than one product", package));
+            return Err(BuildError::Message(
+                rstd::format("compiler plugin package '{}' has more than one product", package)));
         }
         result = rstd::addressof(product);
     }
     if (result == nullptr) {
-        return plugin_failure<const BuiltCompilerPlugin*>(
-            rstd::format("compiler plugin package '{}' is unavailable", package));
+        return Err(BuildError::Message(
+            rstd::format("compiler plugin package '{}' is unavailable", package)));
     }
     return Ok(result);
 }
@@ -272,23 +261,23 @@ auto attach_target_compiler_plugins(const cpp::PackageSpec&         package,
             for (const auto& candidate : products) {
                 if (candidate.target.package != dependency.package.as_str()) continue;
                 if (product != nullptr) {
-                    return plugin_failure<empty>(rstd::format(
+                    return Err(BuildError::Message(rstd::format(
                         "compiler plugin package '{}' provides more than one selected product",
-                        dependency.package.as_str()));
+                        dependency.package.as_str())));
                 }
                 product = rstd::addressof(candidate);
             }
             if (product == nullptr) {
-                return plugin_failure<empty>(
+                return Err(BuildError::Message(
                     rstd::format("target '{}' has no compiler plugin product for dependency '{}'",
                                  lito::package::package_target_id_text(spec.id).as_str(),
-                                 dependency.package.as_str()));
+                                 dependency.package.as_str())));
             }
             for (auto unit : target_units[target]) {
                 auto invocation = compile_plan_invocation(compile_plan, unit);
                 if (invocation == nullptr) {
-                    return plugin_failure<empty>(
-                        "compiler plugin target invocation is unavailable"_str);
+                    return Err(BuildError::Message(
+                        "compiler plugin target invocation is unavailable"_Str));
                 }
                 auto attached =
                     toolchain.attach_compile_plugin(*invocation,

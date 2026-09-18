@@ -22,21 +22,11 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto proc_macro_failure(String message) -> BuildResult<T> {
-    return Err(BuildError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto proc_macro_failure(ref<str> message) -> BuildResult<T> {
-    return proc_macro_failure<T>(String::make(message));
-}
-
 auto create_parent(ref<rstd::path::Path> path) -> BuildResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
-        return proc_macro_failure<empty>(
-            rstd::format("proc-macro artifact '{}' has no parent directory", path));
+        return Err(BuildError::Message(
+            rstd::format("proc-macro artifact '{}' has no parent directory", path)));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
@@ -64,7 +54,7 @@ auto file_digest(ref<rstd::path::Path> path, ref<str> operation) -> BuildResult<
     auto data = rstd::fs::read(path);
     if (data.is_err()) {
         return Err(BuildError::System(lito::system::SystemError::Io(
-            String::make(operation), PathBuf::from(path), rstd::move(data).unwrap_err())));
+            operation.into(), PathBuf::from(path), rstd::move(data).unwrap_err())));
     }
     return Ok(licrypto::sha256_hex(data->as_slice()));
 }
@@ -119,9 +109,9 @@ auto append_link_inputs(Vec<ResolvedLinkInput>&     output,
         const auto dependency = input.as_Target().target;
         if (dependency >= package.targets.len() || dependency >= libraries.len() ||
             libraries[dependency].is_none()) {
-            return proc_macro_failure<empty>(rstd::format(
+            return Err(BuildError::Message(rstd::format(
                 "proc-macro target '{}' has an unavailable host link dependency",
-                lito::package::package_target_id_text(package.targets[target].id).as_str()));
+                lito::package::package_target_id_text(package.targets[target].id).as_str())));
         }
         const auto shared =
             package.targets[dependency].artifact_kind == cpp::ArtifactKind::SharedLibrary;
@@ -146,14 +136,14 @@ auto provider_target(ref<str> package_name, const cpp::PackageSpec& package)
             candidate.artifact_kind != cpp::ArtifactKind::ProcMacroProvider)
             continue;
         if (result.is_some()) {
-            return proc_macro_failure<cpp::TargetId>(rstd::format(
-                "proc-macro package '{}' has more than one provider target", package_name));
+            return Err(BuildError::Message(rstd::format(
+                "proc-macro package '{}' has more than one provider target", package_name)));
         }
         result = Some(target);
     }
     if (result.is_none()) {
-        return proc_macro_failure<cpp::TargetId>(
-            rstd::format("proc-macro package '{}' has no built provider target", package_name));
+        return Err(BuildError::Message(
+            rstd::format("proc-macro package '{}' has no built provider target", package_name)));
     }
     return Ok(*result);
 }
@@ -200,8 +190,8 @@ auto provider_link_policy(const Vec<cpp::TargetId>& providers, const cpp::Packag
 auto json_string(ref<rstd::path::Path> path) -> BuildResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return proc_macro_failure<String>(
-            rstd::format("proc-macro source path '{}' is not valid UTF-8", path));
+        return Err(BuildError::Message(
+            rstd::format("proc-macro source path '{}' is not valid UTF-8", path)));
     }
     auto output = "\""_Str;
     for (auto byte : *text) {
@@ -293,14 +283,14 @@ auto transform_proc_macro_provider_sources(const BuildLayout&              layou
             }
         }
         if (! declares_support) {
-            return proc_macro_failure<bool>(rstd::format(
+            return Err(BuildError::Message(rstd::format(
                 "proc-macro target '{}' does not depend on compiler plugin package '{}'",
                 lito::package::package_target_id_text(target.id).as_str(),
-                support->target.package.as_str()));
+                support->target.package.as_str())));
         }
         if (target_units[provider].len() != target.sources.len()) {
-            return proc_macro_failure<bool>(
-                "proc-macro provider source preparation does not match target sources"_str);
+            return Err(BuildError::Message(
+                "proc-macro provider source preparation does not match target sources"_Str));
         }
         for (auto index = usize {}; index < target.sources.len(); ++index) {
             auto&      source   = target.sources[index];
@@ -384,14 +374,14 @@ auto select_proc_macro_sources(const cpp::PackageSpec&      package,
         const auto& target_spec = package.targets[target];
         if (target_spec.proc_macro_dependencies.is_empty()) continue;
         if (target_spec.language != lito::manifest::PackageLanguage::Cpp) {
-            return proc_macro_failure<Vec<u8>>(
+            return Err(BuildError::Message(
                 rstd::format("C target '{}' cannot use proc-macro dependencies",
-                             lito::package::package_target_id_text(target_spec.id).as_str()));
+                             lito::package::package_target_id_text(target_spec.id).as_str())));
         }
         for (auto unit : target_units[target]) {
             if (unit >= scans.len() || ! scans[unit].language.is_Cpp()) {
-                return proc_macro_failure<Vec<u8>>(
-                    "proc-macro source selection does not match C++ scan results"_str);
+                return Err(BuildError::Message(
+                    "proc-macro source selection does not match C++ scan results"_Str));
             }
             for (const auto& attribute : scans[unit].language.as_Cpp().facts.scoped_attributes) {
                 if (attribute.scope == "pmacro"_str &&
@@ -415,17 +405,17 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                                   const Vec<BuiltProcMacroAggregate>& aggregates)
     -> BuildResult<bool> {
     if (source_selection.len() != units.len()) {
-        return proc_macro_failure<bool>(
-            "proc-macro source selection does not match prepared units"_str);
+        return Err(
+            BuildError::Message("proc-macro source selection does not match prepared units"_Str));
     }
     auto transformed = false;
     for (auto target : plan.target_order) {
         auto& target_spec = package.targets[target];
         if (target_spec.proc_macro_dependencies.is_empty()) continue;
         if (target_spec.language != lito::manifest::PackageLanguage::Cpp) {
-            return proc_macro_failure<bool>(
+            return Err(BuildError::Message(
                 rstd::format("C target '{}' cannot use proc-macro dependencies",
-                             lito::package::package_target_id_text(target_spec.id).as_str()));
+                             lito::package::package_target_id_text(target_spec.id).as_str())));
         }
         auto identity = proc_macro_aggregate_identity(target_spec.proc_macro_dependencies);
         const BuiltProcMacroAggregate* aggregate = nullptr;
@@ -436,13 +426,13 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
             }
         }
         if (aggregate == nullptr) {
-            return proc_macro_failure<bool>(
+            return Err(BuildError::Message(
                 rstd::format("target '{}' has no matching host proc-macro aggregate",
-                             lito::package::package_target_id_text(target_spec.id).as_str()));
+                             lito::package::package_target_id_text(target_spec.id).as_str())));
         }
         if (target_units[target].len() != target_spec.sources.len()) {
-            return proc_macro_failure<bool>(
-                "proc-macro source preparation does not match target sources"_str);
+            return Err(BuildError::Message(
+                "proc-macro source preparation does not match target sources"_Str));
         }
         for (auto source_index = usize {}; source_index < target_spec.sources.len();
              ++source_index) {
@@ -534,8 +524,8 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                 }
                 const auto pending = expansion_status->as_str().trim_ascii();
                 if (pending != "pending"_str && pending != "complete"_str) {
-                    return proc_macro_failure<bool>(
-                        "proc-macro expansion returned an invalid status"_str);
+                    return Err(
+                        BuildError::Message("proc-macro expansion returned an invalid status"_Str));
                 }
                 auto current = rstd::fs::read_to_string(output->as_path());
                 if (current.is_err()) {
@@ -555,8 +545,8 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                 source_overlay = Some(overlay->clone());
             }
             if (! stable) {
-                return proc_macro_failure<bool>(
-                    recursion_failure(source.path.as_path(), expansion_stack));
+                return Err(
+                    BuildError::Message(recursion_failure(source.path.as_path(), expansion_stack)));
             }
             rstd_try(write_overlay(overlay->as_path(), source.path.as_path(), output->as_path()));
             source.origin_identity = producer_identity.clone();
@@ -610,8 +600,8 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
         return Ok(rstd::move(output));
     }
     if (platform.effective_target.platform == lito::system::TargetPlatform::Macos) {
-        return proc_macro_failure<BuiltProcMacroProducts>(
-            "proc-macro Clang plugin linking is not yet validated on macOS"_str);
+        return Err(BuildError::Message(
+            "proc-macro Clang plugin linking is not yet validated on macOS"_Str));
     }
 
     const auto* support_product =
@@ -624,15 +614,14 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
         }
     }
     if (support.is_none()) {
-        return proc_macro_failure<BuiltProcMacroProducts>(
-            "pmacro compiler plugin target is missing from the host package"_str);
+        return Err(BuildError::Message(
+            "pmacro compiler plugin target is missing from the host package"_Str));
     }
     const auto  support_target = *support;
     const auto& context        = plan.contexts[support_target];
     if (support_target >= libraries.len() || libraries[support_target].is_none() ||
         libraries[support_target]->as_path() != support_product->support_archive.as_path()) {
-        return proc_macro_failure<BuiltProcMacroProducts>(
-            "pmacro compiler-support target has no host archive"_str);
+        return Err(BuildError::Message("pmacro compiler-support target has no host archive"_Str));
     }
     auto        support_content_identity   = rstd_try(file_digest(
         support_product->support_archive.as_path(), "read pmacro compiler-support archive"_str));
@@ -648,9 +637,9 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
     for (auto provider : provider_targets) {
         const auto& target = package.targets[provider];
         if (provider >= libraries.len() || libraries[provider].is_none()) {
-            return proc_macro_failure<BuiltProcMacroProducts>(
+            return Err(BuildError::Message(
                 rstd::format("proc-macro target '{}' has no provider archive",
-                             lito::package::package_target_id_text(target.id).as_str()));
+                             lito::package::package_target_id_text(target.id).as_str())));
         }
         auto archive = libraries[provider]->clone();
         auto identity =
@@ -697,8 +686,7 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
                 }
             }
             if (product == nullptr) {
-                return proc_macro_failure<BuiltProcMacroProducts>(
-                    "proc-macro provider product is missing"_str);
+                return Err(BuildError::Message("proc-macro provider product is missing"_Str));
             }
             aggregate_targets.emplace_back(target);
             append_unique_path_input(

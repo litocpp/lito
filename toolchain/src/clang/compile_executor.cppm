@@ -28,8 +28,8 @@ auto command_length(const Vec<String>& arguments) -> usize {
 auto response_file_path(ref<rstd::path::Path> staged_object) -> ToolchainResult<PathBuf> {
     auto text = staged_object.to_str();
     if (text.is_none()) {
-        return failure<PathBuf>(
-            rstd::format("staged object path '{}' is not valid UTF-8", staged_object));
+        return Err(ToolchainError::Message(
+            rstd::format("staged object path '{}' is not valid UTF-8", staged_object)));
     }
     return Ok(PathBuf::from(rstd::format("{}.rsp", *text)));
 }
@@ -51,7 +51,7 @@ auto write_response_file(const CompileInvocation& invocation) -> ToolchainResult
 #if defined(_WIN32)
     if (command_length(invocation.arguments) <= WINDOWS_DIRECT_COMMAND_LIMIT) return Ok(None());
     if (invocation.arguments.is_empty()) {
-        return failure<Option<PathBuf>>("compile invocation has no executable"_str);
+        return Err(ToolchainError::Message("compile invocation has no executable"_Str));
     }
     auto path_result = response_file_path(invocation.staged_object.as_path());
     if (path_result.is_err()) return Err(rstd::move(path_result).unwrap_err());
@@ -61,8 +61,9 @@ auto write_response_file(const CompileInvocation& invocation) -> ToolchainResult
         append_response_argument(contents, invocation.arguments[index].as_str());
     auto written = rstd::fs::write_atomic(path.as_path(), contents.as_str().as_bytes());
     if (written.is_err()) {
-        return io_failure<Option<PathBuf>>(
-            "write compiler response file"_str, path.as_path(), rstd::move(written).unwrap_err());
+        return Err(ToolchainError::Io("write compiler response file"_Str,
+                                      PathBuf::from(path.as_path()),
+                                      rstd::move(written).unwrap_err()));
     }
     return Ok(Some(rstd::move(path)));
 #else
@@ -75,8 +76,8 @@ auto response_command(const CompileInvocation& invocation, ref<rstd::path::Path>
     -> ToolchainResult<Vec<String>> {
     auto text = response_file.to_str();
     if (text.is_none()) {
-        return failure<Vec<String>>(
-            rstd::format("compiler response file '{}' is not valid UTF-8", response_file));
+        return Err(ToolchainError::Message(
+            rstd::format("compiler response file '{}' is not valid UTF-8", response_file)));
     }
     auto result = Vec<String>::with_capacity(usize(2));
     result.push(invocation.arguments[usize {}].clone());
@@ -134,8 +135,8 @@ public:
             if (verified.is_err()) return Err(rstd::move(verified).unwrap_err());
             if (invocation.staged_bmi.is_some()) {
                 if (invocation.final_bmi.is_none()) {
-                    return failure<CompileCommandResult>(
-                        "compile invocation has a staged BMI without a final output"_str);
+                    return Err(ToolchainError::Message(
+                        "compile invocation has a staged BMI without a final output"_Str));
                 }
                 verified = verify_staged_output(invocation.staged_bmi->as_path());
                 if (verified.is_err()) return Err(rstd::move(verified).unwrap_err());

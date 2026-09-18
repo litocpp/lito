@@ -33,10 +33,10 @@ auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
             }
             auto inspected = rstd::fs::metadata(generated_root->as_path());
             if (inspected.is_err() || ! inspected->is_dir()) {
-                return build_script_failure<empty>(
+                return Err(BuildScriptError::Message(
                     rstd::format("generated source root '{}' for package '{}' does not exist",
                                  generated_root->as_path(),
-                                 target.id.package.as_str()));
+                                 target.id.package.as_str())));
             }
             group.root = generated_root->clone();
             group.identity =
@@ -49,20 +49,20 @@ auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
             auto requested = generated.join(requirement.path.as_path());
             auto canonical = rstd::fs::canonicalize(requested.as_path());
             if (canonical.is_err()) {
-                return build_script_failure<empty>(
+                return Err(BuildScriptError::Message(
                     rstd::format("generated private include directory '{}' does not exist",
-                                 requested.as_path()));
+                                 requested.as_path())));
             }
             if (canonical->as_path().strip_prefix(generated.as_path()).is_none()) {
-                return build_script_failure<empty>(
+                return Err(BuildScriptError::Message(
                     rstd::format("generated private include directory '{}' escapes package root",
-                                 requested.as_path()));
+                                 requested.as_path())));
             }
             auto inspected = rstd::fs::metadata(canonical->as_path());
             if (inspected.is_err() || ! inspected->is_dir()) {
-                return build_script_failure<empty>(
+                return Err(BuildScriptError::Message(
                     rstd::format("generated private include directory '{}' is not a directory",
-                                 canonical->as_path()));
+                                 canonical->as_path())));
             }
             auto repeated = false;
             for (const auto& include : target.usage.private_include_directories) {
@@ -93,18 +93,18 @@ auto has_generated_inputs(const cpp::PackageMetadata&       metadata,
 auto build_script_exists(ref<rstd::path::Path> script) -> BuildScriptResult<bool> {
     auto exists = rstd::fs::exists(script);
     if (exists.is_err()) {
-        return build_script_io_failure<bool>(
-            "inspect build script"_str, script, rstd::move(exists).unwrap_err());
+        return Err(BuildScriptError::Io(
+            "inspect build script"_Str, PathBuf::from(script), rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(false);
     auto metadata = rstd::fs::metadata(script);
     if (metadata.is_err()) {
-        return build_script_io_failure<bool>(
-            "inspect build script"_str, script, rstd::move(metadata).unwrap_err());
+        return Err(BuildScriptError::Io(
+            "inspect build script"_Str, PathBuf::from(script), rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file()) {
-        return build_script_failure<bool>(
-            rstd::format("build script '{}' is not a regular file", script));
+        return Err(BuildScriptError::Message(
+            rstd::format("build script '{}' is not a regular file", script)));
     }
     return Ok(true);
 }
@@ -191,14 +191,14 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
                 }
             }
             if (expected.is_some()) {
-                return build_script_failure<BuildScriptDeclaration>(rstd::format(
+                return Err(BuildScriptError::Message(rstd::format(
                     "generated build inputs for package '{}' require build script '{}'",
                     candidate.id.package.as_str(),
-                    *expected));
+                    *expected)));
             }
-            return build_script_failure<BuildScriptDeclaration>(rstd::format(
+            return Err(BuildScriptError::Message(rstd::format(
                 "generated build inputs for package '{}' have no local build-script owner",
-                candidate.id.package.as_str()));
+                candidate.id.package.as_str())));
         }
     }
 

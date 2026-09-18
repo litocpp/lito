@@ -21,8 +21,8 @@ public:
     static auto parse(ref<str> value) -> RegistryValueResult<RegistryBlobSize> {
         auto parsed = lito::parse::parse_canonical_u64_decimal(value);
         if (parsed.is_err()) {
-            return registry_value_failure<RegistryBlobSize>(
-                "blob size must be a canonical unsigned decimal string"_str);
+            return Err(RegistryValueError::Message(
+                "blob size must be a canonical unsigned decimal string"_Str));
         }
         return Ok(RegistryBlobSize(*parsed));
     }
@@ -43,8 +43,8 @@ public:
 
     static auto parse(ref<str> value) -> RegistryValueResult<RegistryArchiveFormat> {
         if (value != TAR_ZSTD_V1) {
-            return registry_value_failure<RegistryArchiveFormat>(
-                "archive format is not supported by this Lito"_str);
+            return Err(
+                RegistryValueError::Message("archive format is not supported by this Lito"_Str));
         }
         return Ok(RegistryArchiveFormat {});
     }

@@ -113,18 +113,18 @@ auto lito::registry::RegistryIndexEndpointTemplate::parse(ref<str> value)
     constexpr auto placeholder = "{package}"_str;
     auto           position    = value.find(placeholder);
     if (position.is_none()) {
-        return registry_value_failure<RegistryIndexEndpointTemplate>(rstd::format(
-            "registry endpoint must contain exactly one '{}' placeholder", placeholder));
+        return Err(RegistryValueError::Message(rstd::format(
+            "registry endpoint must contain exactly one '{}' placeholder", placeholder)));
     }
     auto suffix = value.get(*position + placeholder.len(), value.len()).unwrap();
     if (suffix.contains(placeholder)) {
-        return registry_value_failure<RegistryIndexEndpointTemplate>(rstd::format(
-            "registry endpoint must contain exactly one '{}' placeholder", placeholder));
+        return Err(RegistryValueError::Message(rstd::format(
+            "registry endpoint must contain exactly one '{}' placeholder", placeholder)));
     }
     auto candidate = replace_registry_endpoint_placeholder(value, placeholder, "value"_str);
     if (! valid_registry_endpoint(value, rstd::move(candidate))) {
-        return registry_value_failure<RegistryIndexEndpointTemplate>(
-            "registry endpoint must be an absolute HTTPS URL without a fragment"_str);
+        return Err(RegistryValueError::Message(
+            "registry endpoint must be an absolute HTTPS URL without a fragment"_Str));
     }
     return Ok(RegistryIndexEndpointTemplate(String::make(value)));
 }
@@ -138,15 +138,15 @@ auto lito::registry::RegistryIndexEndpointTemplate::render(const RegistryPackage
 auto lito::registry::RegistryDownloadEndpointTemplate::parse(ref<str> value)
     -> RegistryValueResult<RegistryDownloadEndpointTemplate> {
     if (! value.contains("{package}"_str) || ! value.contains("{version}"_str)) {
-        return registry_value_failure<RegistryDownloadEndpointTemplate>(
-            "registry download endpoint must contain '{package}' and '{version}' placeholders"_str);
+        return Err(RegistryValueError::Message(
+            "registry download endpoint must contain '{package}' and '{version}' placeholders"_Str));
     }
     auto candidate = replace_registry_endpoint_placeholder(value, "{package}"_str, "package"_str);
     candidate =
         replace_registry_endpoint_placeholder(candidate.as_str(), "{version}"_str, "1.0.0"_str);
     if (! valid_registry_endpoint(value, rstd::move(candidate))) {
-        return registry_value_failure<RegistryDownloadEndpointTemplate>(
-            "registry download endpoint must be an absolute HTTPS URL without a query, fragment, or unknown placeholder"_str);
+        return Err(RegistryValueError::Message(
+            "registry download endpoint must be an absolute HTTPS URL without a query, fragment, or unknown placeholder"_Str));
     }
     return Ok(RegistryDownloadEndpointTemplate(String::make(value)));
 }
@@ -188,8 +188,8 @@ auto lito::registry::RegistryFixedEndpoint::parse(ref<str> value)
         (parsed->url()->scheme() != "https"_str &&
          (parsed->url()->scheme() != "http"_str ||
           ! loopback_api_authority(parsed->url()->authority())))) {
-        return registry_value_failure<RegistryFixedEndpoint>(
-            "registry API endpoint must be HTTPS, except HTTP on a loopback address"_str);
+        return Err(RegistryValueError::Message(
+            "registry API endpoint must be HTTPS, except HTTP on a loopback address"_Str));
     }
     return Ok(RegistryFixedEndpoint(rstd::move(parsed).unwrap()));
 }

@@ -58,17 +58,6 @@ class ToolchainError {
               (Execution,
                (String operation; i32 exit_code; String standard_output; String standard_error;)),
               (Message, (String message;)))
-
-public:
-    template<typename Kind>
-    static auto make(Kind, ref<str> message) -> ToolchainError {
-        return Message(String::make(message));
-    }
-
-    template<typename Kind>
-    static auto make(Kind, String message) -> ToolchainError {
-        return Message(rstd::move(message));
-    }
 };
 
 template<typename T>

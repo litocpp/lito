@@ -12,8 +12,7 @@ inline constexpr ref<str> MANIFEST_NAMES[] = { "lito.toml"_str, "tenon.toml"_str
 
 auto locator_io(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
     -> ManifestLocatorError {
-    return ManifestLocatorError::Io(
-        String::make(operation), PathBuf::from(path), rstd::move(source));
+    return ManifestLocatorError::Io(operation.into(), PathBuf::from(path), rstd::move(source));
 }
 
 auto manifest_directory(ref<rstd::path::Path> requested_directory)

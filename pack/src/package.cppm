@@ -47,16 +47,6 @@ auto pack_package(PackPackageRequest request) -> lito::package::PackageResult<Pa
 namespace
 {
 
-template<typename T>
-auto pack_failure(String message) -> lito::package::PackageResult<T> {
-    return Err(lito::package::PackageError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto pack_failure(ref<str> message) -> lito::package::PackageResult<T> {
-    return pack_failure<T>(String::make(message));
-}
-
 auto select_publish_package(lito::workspace::WorkspaceCatalog& catalog,
                             const Option<String>&              requested)
     -> lito::package::PackageResult<lito::manifest::PackageManifest> {
@@ -66,13 +56,13 @@ auto select_publish_package(lito::workspace::WorkspaceCatalog& catalog,
     } else if (catalog.names().len() == usize(1)) {
         name = Some(catalog.names()[usize {}].clone());
     } else {
-        return pack_failure<lito::manifest::PackageManifest>(
-            "workspace package publishing requires exactly one --package"_str);
+        return Err(lito::package::PackageError::Message(
+            "workspace package publishing requires exactly one --package"_Str));
     }
     auto package = catalog.take_package(name->as_str());
     if (package.is_none()) {
-        return pack_failure<lito::manifest::PackageManifest>(
-            rstd::format("project has no publish package named '{}'", name->as_str()));
+        return Err(lito::package::PackageError::Message(
+            rstd::format("project has no publish package named '{}'", name->as_str())));
     }
     return Ok(rstd::move(package).unwrap());
 }
@@ -91,20 +81,21 @@ auto lito::pack_package(PackPackageRequest request)
     auto manifest = rstd_try(select_publish_package(project.primary, request.package));
     auto name     = lito::registry::RegistryPackageName::parse(manifest.name.as_str());
     if (name.is_err()) {
-        return pack_failure<PackPackageSummary>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("package '{}' cannot be published to a Registry: {}",
                          manifest.name.as_str(),
-                         rstd::move(name).unwrap_err()));
+                         rstd::move(name).unwrap_err())));
     }
     if (manifest.version.value.is_none()) {
-        return pack_failure<PackPackageSummary>("published package requires a version"_str);
+        return Err(
+            lito::package::PackageError::Message("published package requires a version"_Str));
     }
     auto version = lito::registry::SemanticVersion::parse(manifest.version.value->as_str());
     if (version.is_err()) {
-        return pack_failure<PackPackageSummary>(
+        return Err(lito::package::PackageError::Message(
             rstd::format("package version '{}' cannot be published to a Registry: {}",
                          manifest.version.value->as_str(),
-                         rstd::move(version).unwrap_err()));
+                         rstd::move(version).unwrap_err())));
     }
     auto standalone = lito::manifest::serialize_standalone_package_manifest(
         manifest,
@@ -134,7 +125,7 @@ auto lito::pack_package(PackPackageRequest request)
             .archive        = Some(output.clone()),
         });
     if (files.is_err()) {
-        return pack_failure<PackPackageSummary>(rstd::move(files).unwrap_err().message);
+        return Err(lito::package::PackageError::Message(rstd::move(files).unwrap_err().message));
     }
     auto paths       = files->paths();
     auto directories = as<Clone>(files->directories()).clone();
@@ -150,7 +141,7 @@ auto lito::pack_package(PackPackageRequest request)
     auto built = lito::registry::PackageArchiveBuilder::build(
         *files, *standalone, package, exact, output.clone(), {}, request.external_inputs);
     if (built.is_err()) {
-        return pack_failure<PackPackageSummary>(rstd::move(built).unwrap_err().message);
+        return Err(lito::package::PackageError::Message(rstd::move(built).unwrap_err().message));
     }
     return Ok(PackPackageSummary {
         .package     = rstd::move(package),

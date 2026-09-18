@@ -237,7 +237,7 @@ auto CompilerArgumentSchema::build() && -> CompilerArgumentResult<CompilerArgume
                 for (auto candidate = usize {}; candidate < limit; ++candidate) {
                     if (definitions_[candidate_definition].spellings[candidate].value.as_str() ==
                         value) {
-                        return Err(CompilerArgumentError::DuplicateSpelling(String::make(value)));
+                        return Err(CompilerArgumentError::DuplicateSpelling(value.into()));
                     }
                 }
             }

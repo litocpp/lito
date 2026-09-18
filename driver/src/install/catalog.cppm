@@ -25,24 +25,6 @@ namespace lito
 
 inline constexpr auto INSTALL_PACKAGE_INFO_SCHEMA = u64(2);
 
-template<typename T>
-auto catalog_failure(String message) -> InstallStoreResult<T> {
-    return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::move(message))));
-}
-
-template<typename T>
-auto catalog_failure(ref<str> message) -> InstallStoreResult<T> {
-    return catalog_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto catalog_io_failure(ref<str>               operation,
-                        ref<rstd::path::Path>  path,
-                        rstd::io::error::Error error) -> InstallStoreResult<T> {
-    return Err(InstallStoreError::Cause(
-        InstallStoreCause::Io(String::make(operation), PathBuf::from(path), rstd::move(error))));
-}
-
 auto known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> InstallStoreResult<empty> {
     return Ok(rstd_try(
@@ -170,8 +152,8 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
     auto schema = rstd_try(required_member(value, "schema"_str, "install package info"_str));
     auto number = schema->as_u64();
     if (number.is_none() || *number != INSTALL_PACKAGE_INFO_SCHEMA) {
-        return catalog_failure<InstallPackageInfo>(
-            rstd::format("install package info '{}' uses an unsupported schema", path));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            rstd::format("install package info '{}' uses an unsupported schema", path))));
     }
 
     auto package_value =
@@ -190,20 +172,20 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
     auto source_identity = rstd_try(install_source_identity(provenance));
     auto expected_id     = rstd_try(install_package_id(name.as_str(), source_identity.as_str()));
     if (id != expected_id.as_str()) {
-        return catalog_failure<InstallPackageInfo>(
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
             rstd::format("install package info '{}' has package id '{}', expected '{}'",
                          path,
                          id.as_str(),
-                         expected_id.as_str()));
+                         expected_id.as_str()))));
     }
     auto filename = path.file_name();
     auto text     = filename.is_some() ? filename->to_str() : None();
     auto stem     = text.is_some() ? text->strip_suffix(".info"_str) : None();
     if (stem.is_none() || *stem != id.as_str()) {
-        return catalog_failure<InstallPackageInfo>(
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
             rstd::format("install package info filename '{}' does not match package id '{}'",
                          path,
-                         id.as_str()));
+                         id.as_str()))));
     }
 
     auto layout_text = rstd_try(required_string(value, "layout"_str, "install package info"_str));
@@ -211,16 +193,16 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
     if (layout_text == "isolated-prefix"_str) {
         layout = InstallManagedPackageLayout::IsolatedPrefix;
     } else if (layout_text != "direct-bin"_str) {
-        return catalog_failure<InstallPackageInfo>(rstd::format(
-            "install package info '{}' has unknown layout '{}'", path, layout_text.as_str()));
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+            "install package info '{}' has unknown layout '{}'", path, layout_text.as_str()))));
     }
 
     auto entries_value =
         rstd_try(required_member(value, "entries"_str, "install package info"_str));
     auto entries_array = entries_value->as_array();
     if (entries_array.is_none() || (**entries_array).is_empty()) {
-        return catalog_failure<InstallPackageInfo>(
-            "install package info.entries must be a non-empty array"_str);
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            "install package info.entries must be a non-empty array"_Str)));
     }
     auto entries = Vec<InstallOwnedEntry>::with_capacity((**entries_array).len());
     for (const auto& item : **entries_array) {
@@ -239,8 +221,8 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
             PathBuf::from(rstd_try(required_string(item, "physical"_str, "installed entry"_str)));
         if (! install_relative_destination_is_valid(logical.as_path()) ||
             ! install_relative_destination_is_valid(physical.as_path())) {
-            return catalog_failure<InstallPackageInfo>(
-                rstd::format("install package info '{}' contains an unsafe entry path", path));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install package info '{}' contains an unsafe entry path", path))));
         }
         auto kind_text = rstd_try(required_string(item, "kind"_str, "installed entry"_str));
         auto kind      = InstallOwnedEntryKind::File;
@@ -250,15 +232,17 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
             link = Some(PathBuf::from(
                 rstd_try(required_string(item, "link-target"_str, "installed entry"_str))));
             if (! relative_link_target_is_valid(link->as_path())) {
-                return catalog_failure<InstallPackageInfo>(
-                    rstd::format("install package info '{}' contains an unsafe link target", path));
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                    "install package info '{}' contains an unsafe link target", path))));
             }
         } else if (kind_text != "file"_str) {
-            return catalog_failure<InstallPackageInfo>(rstd::format(
-                "install package info '{}' has unknown entry kind '{}'", path, kind_text.as_str()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                rstd::format("install package info '{}' has unknown entry kind '{}'",
+                             path,
+                             kind_text.as_str()))));
         } else if (item.get("link-target"_str).is_some()) {
-            return catalog_failure<InstallPackageInfo>(
-                "regular installed entry may not contain link-target"_str);
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                "regular installed entry may not contain link-target"_Str)));
         }
         auto production_value =
             rstd_try(required_member(item, "production"_str, "installed entry"_str));
@@ -275,16 +259,16 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
         if (production_kind == "link"_str) {
             production.kind = InstallOwnedProductionKind::Link;
             if ((**production_value->as_object()).len() != usize(1)) {
-                return catalog_failure<InstallPackageInfo>(
-                    "link production may only contain kind"_str);
+                return Err(InstallStoreError::Cause(
+                    InstallStoreCause::Message("link production may only contain kind"_Str)));
             }
         } else if (production_kind == "lito-link"_str) {
             production.kind = InstallOwnedProductionKind::LitoLink;
             auto variant    = rstd_try(required_string(
                 *production_value, "variant"_str, "installed entry.production"_str));
             if (variant != "install"_str) {
-                return catalog_failure<InstallPackageInfo>(
-                    "lito-link production variant must be 'install'"_str);
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                    "lito-link production variant must be 'install'"_Str)));
             }
             production.variant_identity = rstd_try(required_string(
                 *production_value, "variant-identity"_str, "installed entry.production"_str));
@@ -294,8 +278,8 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
                 *production_value, "runtime-search"_str, "installed entry.production"_str));
             auto runtime_array          = runtime_value->as_array();
             if (runtime_array.is_none() || (**runtime_array).is_empty()) {
-                return catalog_failure<InstallPackageInfo>(
-                    "lito-link production runtime-search must be a non-empty array"_str);
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+                    "lito-link production runtime-search must be a non-empty array"_Str)));
             }
             auto paths = Vec<lito::artifact::OriginRelativeRuntimePath>::make();
             for (const auto& runtime : **runtime_array) {
@@ -305,42 +289,42 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
                 auto anchor = rstd_try(required_string(
                     runtime, "anchor"_str, "installed entry.production.runtime-search"_str));
                 if (anchor != "origin"_str) {
-                    return catalog_failure<InstallPackageInfo>(
-                        "runtime search anchor must be 'origin'"_str);
+                    return Err(InstallStoreError::Cause(
+                        InstallStoreCause::Message("runtime search anchor must be 'origin'"_Str)));
                 }
                 auto parsed_path = lito::artifact::make_origin_relative_runtime_path(
                     PathBuf::from(rstd_try(required_string(
                         runtime, "path"_str, "installed entry.production.runtime-search"_str))));
                 if (parsed_path.is_err()) {
-                    return catalog_failure<InstallPackageInfo>(
+                    return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                         rstd::format("installed runtime search path is invalid: {}",
-                                     rstd::move(parsed_path).unwrap_err()));
+                                     rstd::move(parsed_path).unwrap_err()))));
                 }
                 paths.push(rstd::move(parsed_path).unwrap());
             }
             auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
             if (runpath.is_err()) {
-                return catalog_failure<InstallPackageInfo>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed runtime search policy is invalid: {}",
-                                 rstd::move(runpath).unwrap_err()));
+                                 rstd::move(runpath).unwrap_err()))));
             }
             production.runtime_search = Some(rstd::move(runpath).unwrap());
         } else if (production_kind == "copy"_str) {
             if ((**production_value->as_object()).len() != usize(1)) {
-                return catalog_failure<InstallPackageInfo>(
-                    "copy production may only contain kind"_str);
+                return Err(InstallStoreError::Cause(
+                    InstallStoreCause::Message("copy production may only contain kind"_Str)));
             }
         } else {
-            return catalog_failure<InstallPackageInfo>(rstd::format(
-                "installed entry has unknown production '{}'", production_kind.as_str()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "installed entry has unknown production '{}'", production_kind.as_str()))));
         }
 
         auto transforms_value =
             rstd_try(required_member(item, "transforms"_str, "installed entry"_str));
         auto transforms_array = transforms_value->as_array();
         if (transforms_array.is_none()) {
-            return catalog_failure<InstallPackageInfo>(
-                "installed entry.transforms must be an array"_str);
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Message("installed entry.transforms must be an array"_Str)));
         }
         auto transforms = Vec<lito::artifact::StripMode>::make();
         for (const auto& transform : **transforms_array) {
@@ -349,8 +333,8 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
             auto transform_kind =
                 rstd_try(required_string(transform, "kind"_str, "installed entry.transform"_str));
             if (transform_kind != "strip"_str) {
-                return catalog_failure<InstallPackageInfo>(rstd::format(
-                    "installed entry has unknown transform '{}'", transform_kind.as_str()));
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                    "installed entry has unknown transform '{}'", transform_kind.as_str()))));
             }
             auto mode =
                 rstd_try(required_string(transform, "mode"_str, "installed entry.transform"_str));
@@ -359,8 +343,8 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
             } else if (mode == "symbols"_str) {
                 transforms.push(lito::artifact::StripMode::Symbols);
             } else {
-                return catalog_failure<InstallPackageInfo>(
-                    rstd::format("installed strip transform has unknown mode '{}'", mode.as_str()));
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                    "installed strip transform has unknown mode '{}'", mode.as_str()))));
             }
         }
         entries.push(InstallOwnedEntry {
@@ -378,8 +362,8 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
         rstd_try(required_member(value, "runtime-dependencies"_str, "install package info"_str));
     auto dependencies_array = dependencies_value->as_array();
     if (dependencies_array.is_none()) {
-        return catalog_failure<InstallPackageInfo>(
-            "install package info.runtime-dependencies must be an array"_str);
+        return Err(InstallStoreError::Cause(InstallStoreCause::Message(
+            "install package info.runtime-dependencies must be an array"_Str)));
     }
     auto dependencies =
         Vec<InstallStoredRuntimeDependency>::with_capacity((**dependencies_array).len());
@@ -397,11 +381,11 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
         auto expected = rstd_try(
             install_package_id(dependency.name.as_str(), dependency.source_identity.as_str()));
         if (dependency.package_id != expected.as_str()) {
-            return catalog_failure<InstallPackageInfo>(
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                 rstd::format("installed runtime dependency '{}' has package id '{}', expected '{}'",
                              dependency.name.as_str(),
                              dependency.package_id.as_str(),
-                             expected.as_str()));
+                             expected.as_str()))));
         }
         dependencies.push(rstd::move(dependency));
     }
@@ -432,45 +416,45 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
     auto destinations = rstd::collections::BTreeMap<String, String>::make();
     for (const auto& package : catalog.packages) {
         if (identities.contains_key(package.identity.id.as_str())) {
-            return catalog_failure<empty>(rstd::format("installed package id '{}' is repeated",
-                                                       package.identity.id.as_str()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "installed package id '{}' is repeated", package.identity.id.as_str()))));
         }
         identities.insert(package.identity.id.clone(), package.identity.name.clone());
         for (const auto& entry : package.entries) {
             if (entry.kind == InstallOwnedEntryKind::SoftLink &&
                 (entry.production.kind != InstallOwnedProductionKind::Link ||
                  ! entry.transforms.is_empty())) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed symbolic link '{}' has invalid production metadata",
-                                 entry.physical_destination.as_path()));
+                                 entry.physical_destination.as_path()))));
             }
             if (entry.kind == InstallOwnedEntryKind::File &&
                 entry.production.kind == InstallOwnedProductionKind::Link) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed file '{}' has link production metadata",
-                                 entry.physical_destination.as_path()));
+                                 entry.physical_destination.as_path()))));
             }
             if (entry.production.kind == InstallOwnedProductionKind::LitoLink &&
                 entry.production.runtime_search.is_none()) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed file '{}' has incomplete Lito link metadata",
-                                 entry.physical_destination.as_path()));
+                                 entry.physical_destination.as_path()))));
             }
             for (auto transform : entry.transforms) {
                 if (transform == lito::artifact::StripMode::None) {
-                    return catalog_failure<empty>(
+                    return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                         rstd::format("installed file '{}' has an empty strip transform",
-                                     entry.physical_destination.as_path()));
+                                     entry.physical_destination.as_path()))));
                 }
             }
             auto key   = entry.physical_destination.as_path().to_string_lossy();
             auto owner = destinations.get(key.as_str());
             if (owner.is_some()) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed destination '{}' is owned by both '{}' and '{}'",
                                  entry.physical_destination.as_path(),
                                  **owner,
-                                 package.identity.name.as_str()));
+                                 package.identity.name.as_str()))));
             }
             destinations.insert(rstd::move(key), package.identity.name.clone());
 
@@ -478,9 +462,9 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
                 if (entry.kind != InstallOwnedEntryKind::File ||
                     entry.physical_destination.as_path() != entry.logical_destination.as_path() ||
                     ! install_path_is_under_bin(entry.logical_destination.as_path())) {
-                    return catalog_failure<empty>(
+                    return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                         rstd::format("direct-bin package '{}' has an invalid owned entry",
-                                     package.identity.name.as_str()));
+                                     package.identity.name.as_str()))));
                 }
                 continue;
             }
@@ -489,18 +473,18 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
                 expected.push(PathBuf::from(package.identity.id.as_str()).as_path());
                 expected.push(entry.logical_destination.as_path());
                 if (expected.as_path() != entry.physical_destination.as_path()) {
-                    return catalog_failure<empty>(
+                    return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                         rstd::format("isolated package '{}' has an invalid private entry",
-                                     package.identity.name.as_str()));
+                                     package.identity.name.as_str()))));
                 }
                 continue;
             }
             if (! install_path_is_under_bin(entry.logical_destination.as_path()) ||
                 entry.physical_destination.as_path() != entry.logical_destination.as_path() ||
                 entry.link_target.is_none()) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("isolated package '{}' has an invalid public link",
-                                 package.identity.name.as_str()));
+                                 package.identity.name.as_str()))));
             }
             const InstallOwnedEntry* private_entry = nullptr;
             for (const auto& candidate : package.entries) {
@@ -512,9 +496,9 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
                 }
             }
             if (private_entry == nullptr) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("public link '{}' has no private executable entry",
-                                 entry.physical_destination.as_path()));
+                                 entry.physical_destination.as_path()))));
             }
             auto public_path = layout.root.path.join(entry.physical_destination.as_path());
             auto parent      = public_path.as_path().parent();
@@ -523,9 +507,9 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
                                    ? rstd::path::lexically_relative(*parent, target_path.as_path())
                                    : Option<PathBuf> {};
             if (expected.is_none() || expected->as_path() != entry.link_target->as_path()) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("public link '{}' has an invalid relative target",
-                                 entry.physical_destination.as_path()));
+                                 entry.physical_destination.as_path()))));
             }
         }
     }
@@ -534,10 +518,10 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
         auto dependency_ids = rstd::collections::BTreeMap<String, empty>::make();
         for (const auto& dependency : package.runtime_dependencies) {
             if (dependency_ids.contains_key(dependency.package_id.as_str())) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed package '{}' repeats runtime dependency '{}'",
                                  package.identity.name.as_str(),
-                                 dependency.name.as_str()));
+                                 dependency.name.as_str()))));
             }
             dependency_ids.insert(dependency.package_id.clone(), empty {});
             const InstallPackageInfo* target = nullptr;
@@ -548,17 +532,17 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
                 }
             }
             if (target == nullptr) {
-                return catalog_failure<empty>(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(
                     rstd::format("installed package '{}' requires missing runtime package '{}'",
                                  package.identity.name.as_str(),
-                                 dependency.name.as_str()));
+                                 dependency.name.as_str()))));
             }
             if (target->identity.name != dependency.name.as_str() ||
                 target->identity.source_identity != dependency.source_identity.as_str()) {
-                return catalog_failure<empty>(rstd::format(
+                return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
                     "installed package '{}' runtime dependency '{}' has an identity mismatch",
                     package.identity.name.as_str(),
-                    dependency.name.as_str()));
+                    dependency.name.as_str()))));
             }
         }
     }
@@ -582,17 +566,19 @@ auto load_managed_install_catalog(const InstallLayout& layout)
     -> InstallStoreResult<InstallCatalog> {
     auto opened = rstd::fs::read_dir(layout.packages_directory.as_path());
     if (opened.is_err()) {
-        return catalog_io_failure<InstallCatalog>("read install packages"_str,
-                                                  layout.packages_directory.as_path(),
-                                                  rstd::move(opened).unwrap_err());
+        return Err(InstallStoreError::Cause(
+            InstallStoreCause::Io("read install packages"_Str,
+                                  PathBuf::from(layout.packages_directory.as_path()),
+                                  rstd::move(opened).unwrap_err())));
     }
     auto paths   = Vec<PathBuf>::make();
     auto entries = rstd::move(opened).unwrap();
     for (auto item : entries) {
         if (item.is_err()) {
-            return catalog_io_failure<InstallCatalog>("read install package entry"_str,
-                                                      layout.packages_directory.as_path(),
-                                                      rstd::move(item).unwrap_err());
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Io("read install package entry"_Str,
+                                      PathBuf::from(layout.packages_directory.as_path()),
+                                      rstd::move(item).unwrap_err())));
         }
         auto path      = item->path();
         auto extension = path.as_path().extension();
@@ -607,18 +593,21 @@ auto load_managed_install_catalog(const InstallLayout& layout)
     for (const auto& path : paths) {
         auto metadata = rstd::fs::symlink_metadata(path.as_path());
         if (metadata.is_err()) {
-            return catalog_io_failure<InstallCatalog>("inspect install package info"_str,
-                                                      path.as_path(),
-                                                      rstd::move(metadata).unwrap_err());
+            return Err(
+                InstallStoreError::Cause(InstallStoreCause::Io("inspect install package info"_Str,
+                                                               PathBuf::from(path.as_path()),
+                                                               rstd::move(metadata).unwrap_err())));
         }
         if (! metadata->is_file() || metadata->is_symlink()) {
-            return catalog_failure<InstallCatalog>(rstd::format(
-                "install package info '{}' is not a regular non-symlink file", path.as_path()));
+            return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::format(
+                "install package info '{}' is not a regular non-symlink file", path.as_path()))));
         }
         auto contents = rstd::fs::read_to_string(path.as_path());
         if (contents.is_err()) {
-            return catalog_io_failure<InstallCatalog>(
-                "read install package info"_str, path.as_path(), rstd::move(contents).unwrap_err());
+            return Err(
+                InstallStoreError::Cause(InstallStoreCause::Io("read install package info"_Str,
+                                                               PathBuf::from(path.as_path()),
+                                                               rstd::move(contents).unwrap_err())));
         }
         auto json = rstd::json::from_str(contents->as_str());
         if (json.is_err()) {

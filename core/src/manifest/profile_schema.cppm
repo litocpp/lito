@@ -30,8 +30,8 @@ auto parse_profile_optimization(const wire::ProfileValue& value, ref<str> contex
     auto text = value.text.as_ref();
     if (text.is_some() && *text == "s"_str) return Ok(Optimization::Size);
     if (text.is_some() && *text == "z"_str) return Ok(Optimization::SizeMin);
-    return manifest_schema_failure<Optimization>(
-        rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context));
+    return Err(
+        ManifestSchemaError::Domain(rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context)));
 }
 
 auto parse_profile_debug(const wire::ProfileValue& value, ref<str> context)
@@ -57,10 +57,10 @@ auto parse_profile_debug(const wire::ProfileValue& value, ref<str> context)
     }
     if (text.is_some() && *text == "limited"_str) return Ok(DebugInfo::Limited);
     if (text.is_some() && *text == "full"_str) return Ok(DebugInfo::Full);
-    return manifest_schema_failure<DebugInfo>(
+    return Err(ManifestSchemaError::Domain(
         rstd::format("{} must be false, true, 0, 1, 2, 'none', 'line-directives-only', "
                      "'line-tables-only', 'limited', or 'full'",
-                     context));
+                     context)));
 }
 
 auto parse_profile_strip(const wire::ProfileValue& value, ref<str> context)
@@ -72,8 +72,8 @@ auto parse_profile_strip(const wire::ProfileValue& value, ref<str> context)
     if (text.is_some() && *text == "none"_str) return Ok(StripMode::None);
     if (text.is_some() && *text == "debuginfo"_str) return Ok(StripMode::DebugInfo);
     if (text.is_some() && *text == "symbols"_str) return Ok(StripMode::Symbols);
-    return manifest_schema_failure<StripMode>(
-        rstd::format("{} must be false, true, 'none', 'debuginfo', or 'symbols'", context));
+    return Err(ManifestSchemaError::Domain(
+        rstd::format("{} must be false, true, 'none', 'debuginfo', or 'symbols'", context)));
 }
 
 auto parse_profile_lto(const wire::ProfileValue& value, ref<str> context)
@@ -84,16 +84,16 @@ auto parse_profile_lto(const wire::ProfileValue& value, ref<str> context)
     if (text.is_some() && *text == "off"_str) return Ok(Lto::Off);
     if (text.is_some() && *text == "thin"_str) return Ok(Lto::Thin);
     if (text.is_some() && *text == "fat"_str) return Ok(Lto::Fat);
-    return manifest_schema_failure<Lto>(
-        rstd::format("{} must be false, true, 'off', 'thin', or 'fat'", context));
+    return Err(ManifestSchemaError::Domain(
+        rstd::format("{} must be false, true, 'off', 'thin', or 'fat'", context)));
 }
 
 auto parse_build_profile(ref<str> name, wire::BuildProfile value)
     -> ManifestSchemaResult<BuildProfileDefinition> {
     auto context = rstd::format("manifest.profile.{}", name);
     if (! valid_build_profile_name(name)) {
-        return manifest_schema_failure<BuildProfileDefinition>(
-            rstd::format("{} is not a valid build profile name", context.as_str()));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} is not a valid build profile name", context.as_str())));
     }
     auto result = BuildProfileDefinition {
         .name =
@@ -105,14 +105,14 @@ auto parse_build_profile(ref<str> name, wire::BuildProfile value)
     if (inherits.is_some()) {
         auto text = inherits->as_str();
         if (text == "base"_str) {
-            return manifest_schema_failure<BuildProfileDefinition>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "{}.inherits cannot name the non-selectable base profile; inherit debug, release, "
                 "or plain instead",
-                context.as_str()));
+                context.as_str())));
         }
         if (! valid_build_profile_name(text)) {
-            return manifest_schema_failure<BuildProfileDefinition>(
-                rstd::format("{}.inherits must name a valid build profile", context.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.inherits must name a valid build profile", context.as_str())));
         }
         result.inherits = Some(BuildProfileName {
             .value = String::make(text),
@@ -145,14 +145,14 @@ auto parse_project_profile(Option<wire::Profiles> value)
     }
     if (value->exceptions.is_some()) {
         if (profile.base.exceptions.is_some())
-            return manifest_schema_failure<Option<ProjectProfile>>(
-                "manifest.profile.exceptions conflicts with manifest.profile.base.exceptions"_str);
+            return Err(ManifestSchemaError::Domain(
+                "manifest.profile.exceptions conflicts with manifest.profile.base.exceptions"_Str));
         profile.base.exceptions = value->exceptions;
     }
     if (value->rtti.is_some()) {
         if (profile.base.rtti.is_some())
-            return manifest_schema_failure<Option<ProjectProfile>>(
-                "manifest.profile.rtti conflicts with manifest.profile.base.rtti"_str);
+            return Err(ManifestSchemaError::Domain(
+                "manifest.profile.rtti conflicts with manifest.profile.base.rtti"_Str));
         profile.base.rtti = value->rtti;
     }
     for (auto key : value->named.keys()) {

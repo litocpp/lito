@@ -33,33 +33,30 @@ struct InstallPlan {
 namespace lito
 {
 
-template<typename T>
-auto materialize_failure(String message) -> InstallMaterializeResult<T> {
-    return Err(InstallMaterializeError::Message(rstd::move(message)));
-}
-
 auto source_file(const InstallRecipe& recipe, ref<rstd::path::Path> relative)
     -> InstallMaterializeResult<PathBuf> {
     auto requested = recipe.root.join(relative);
     auto metadata  = rstd::fs::symlink_metadata(requested.as_path());
     if (metadata.is_err()) {
-        return materialize_failure<PathBuf>(rstd::format("cannot inspect package file '{}': {}",
-                                                         requested.as_path(),
-                                                         rstd::move(metadata).unwrap_err()));
+        return Err(
+            InstallMaterializeError::Message(rstd::format("cannot inspect package file '{}': {}",
+                                                          requested.as_path(),
+                                                          rstd::move(metadata).unwrap_err())));
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
-        return materialize_failure<PathBuf>(rstd::format(
-            "package file '{}' is not a regular non-symlink file", requested.as_path()));
+        return Err(InstallMaterializeError::Message(rstd::format(
+            "package file '{}' is not a regular non-symlink file", requested.as_path())));
     }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return materialize_failure<PathBuf>(rstd::format("cannot resolve package file '{}': {}",
-                                                         requested.as_path(),
-                                                         rstd::move(canonical).unwrap_err()));
+        return Err(
+            InstallMaterializeError::Message(rstd::format("cannot resolve package file '{}': {}",
+                                                          requested.as_path(),
+                                                          rstd::move(canonical).unwrap_err())));
     }
     if (canonical->as_path().strip_prefix(recipe.root.as_path()).is_none()) {
-        return materialize_failure<PathBuf>(
-            rstd::format("package file '{}' escapes package root", requested.as_path()));
+        return Err(InstallMaterializeError::Message(
+            rstd::format("package file '{}' escapes package root", requested.as_path())));
     }
     return Ok(rstd::move(canonical).unwrap());
 }
@@ -68,9 +65,9 @@ auto append_entry(Vec<InstallEntry>& entries, InstallEntry entry)
     -> InstallMaterializeResult<empty> {
     for (const auto& prior : entries) {
         if (prior.relative_destination.as_path() == entry.relative_destination.as_path()) {
-            return materialize_failure<empty>(
+            return Err(InstallMaterializeError::Message(
                 rstd::format("install destination '{}' is declared more than once",
-                             entry.relative_destination.as_path()));
+                             entry.relative_destination.as_path())));
         }
     }
     entries.push(rstd::move(entry));
@@ -85,9 +82,9 @@ auto artifact_for(const CompletedBuildProduct&          product,
     for (const auto& variant : requirements.artifact_link_variants) {
         if (variant.target != target) continue;
         if (expected != nullptr) {
-            return materialize_failure<const BuiltArtifact*>(
+            return Err(InstallMaterializeError::Message(
                 rstd::format("install requirements repeat link variant for '{}'",
-                             lito::package::package_target_id_text(target)));
+                             lito::package::package_target_id_text(target))));
         }
         expected = rstd::addressof(variant);
     }
@@ -100,9 +97,9 @@ auto artifact_for(const CompletedBuildProduct&          product,
              artifact.install_link->identity != expected->policy.identity.as_str()))
             continue;
         if (result != nullptr) {
-            return materialize_failure<const BuiltArtifact*>(
+            return Err(InstallMaterializeError::Message(
                 rstd::format("build returned duplicate artifact for '{}'",
-                             lito::package::package_target_id_text(target)));
+                             lito::package::package_target_id_text(target))));
         }
         result = rstd::addressof(artifact);
     }
@@ -110,9 +107,9 @@ auto artifact_for(const CompletedBuildProduct&          product,
                                    ? cpp::ArtifactKind::SharedLibrary
                                    : cpp::ArtifactKind::Executable;
     if (result == nullptr || result->kind != expected_kind) {
-        return materialize_failure<const BuiltArtifact*>(
+        return Err(InstallMaterializeError::Message(
             rstd::format("build did not return the installable artifact for '{}'",
-                         lito::package::package_target_id_text(target)));
+                         lito::package::package_target_id_text(target))));
     }
     return Ok(result);
 }
@@ -142,8 +139,8 @@ auto validate_product_file(const CompletedBuildProduct& product,
                            ref<str> context) -> InstallMaterializeResult<empty> {
     auto validated = validate_completed_build_product_file(product, path, context);
     if (validated.is_err()) {
-        return materialize_failure<empty>(rstd::format("cannot use completed build product: {}",
-                                                       rstd::move(validated).unwrap_err()));
+        return Err(InstallMaterializeError::Message(rstd::format(
+            "cannot use completed build product: {}", rstd::move(validated).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -153,8 +150,8 @@ auto pkg_config_path_value(ref<rstd::path::Path> path, ref<str> context)
     auto value = path.to_string_lossy();
     for (auto byte : value.as_str().as_bytes()) {
         if (byte == u8('\n') || byte == u8('\r')) {
-            return materialize_failure<String>(
-                rstd::format("{} '{}' contains a line break", context, path));
+            return Err(InstallMaterializeError::Message(
+                rstd::format("{} '{}' contains a line break", context, path)));
         }
     }
     return Ok(rstd::move(value));
@@ -272,8 +269,8 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                     product, file.path.as_path(), "completed build artifact companion"_str));
                 auto name = file.path.as_path().file_name();
                 if (name.is_none()) {
-                    return materialize_failure<InstallPlan>(rstd::format(
-                        "artifact companion '{}' has no file name", file.path.as_path()));
+                    return Err(InstallMaterializeError::Message(rstd::format(
+                        "artifact companion '{}' has no file name", file.path.as_path())));
                 }
                 auto destination = destination_parent.is_some()
                                        ? PathBuf::from(*destination_parent).join(*name)
@@ -292,14 +289,14 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
             for (const auto& runtime : product.target_runtimes) {
                 if (runtime.name != requested.name.as_str()) continue;
                 if (resolved != nullptr) {
-                    return materialize_failure<InstallPlan>(rstd::format(
-                        "build returned duplicate target runtime '{}'", requested.name));
+                    return Err(InstallMaterializeError::Message(rstd::format(
+                        "build returned duplicate target runtime '{}'", requested.name)));
                 }
                 resolved = rstd::addressof(runtime);
             }
             if (resolved == nullptr) {
-                return materialize_failure<InstallPlan>(
-                    rstd::format("build did not return target runtime '{}'", requested.name));
+                return Err(InstallMaterializeError::Message(
+                    rstd::format("build did not return target runtime '{}'", requested.name)));
             }
             rstd_try(validate_product_file(
                 product, resolved->path.as_path(), "completed build target runtime"_str));
@@ -316,7 +313,7 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
             auto set = product.external_assets.resolve(requested.dependency.as_str(),
                                                        requested.set.as_str());
             if (set.is_err()) {
-                return materialize_failure<InstallPlan>(rstd::move(set).unwrap_err());
+                return Err(InstallMaterializeError::Message(rstd::move(set).unwrap_err()));
             }
             const auto* resolved_set = *set;
             if (resolved_set->disposition == ExternalAssetDisposition::Provided) continue;
@@ -356,12 +353,12 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
             if (requested.strip.is_some()) {
                 for (usize index {}; index < strip_matches.len(); ++index) {
                     if (strip_matches[index] == usize(1)) continue;
-                    return materialize_failure<InstallPlan>(rstd::format(
+                    return Err(InstallMaterializeError::Message(rstd::format(
                         "external asset strip path '{}:{}:{}' matched {} catalog entries",
                         requested.dependency.as_str(),
                         requested.set.as_str(),
                         requested.strip->files[index].as_path(),
-                        strip_matches[index]));
+                        strip_matches[index])));
                 }
             }
         }
@@ -369,18 +366,18 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
             auto input    = rstd_try(source_file(recipe, configured.input.as_path()));
             auto contents = rstd::fs::read_to_string(input.as_path());
             if (contents.is_err()) {
-                return materialize_failure<InstallPlan>(
+                return Err(InstallMaterializeError::Message(
                     rstd::format("cannot read install template '{}': {}",
                                  input.as_path(),
-                                 rstd::move(contents).unwrap_err()));
+                                 rstd::move(contents).unwrap_err())));
             }
             auto rendered =
                 render_configure_template(contents->as_str(), configured.values, input.as_path());
             if (rendered.is_err()) {
-                return materialize_failure<InstallPlan>(
+                return Err(InstallMaterializeError::Message(
                     rstd::format("cannot render install template '{}': {}",
                                  input.as_path(),
-                                 rstd::move(rendered).unwrap_err()));
+                                 rstd::move(rendered).unwrap_err())));
             }
             auto bytes = Vec<u8>::with_capacity(rendered->len());
             for (auto byte : rendered->as_str().as_bytes()) bytes.push(rstd::move(byte));
@@ -427,10 +424,10 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
         sort_entries(entries);
         auto provenance = install_source_provenance(recipe.source);
         if (provenance.is_err()) {
-            return materialize_failure<InstallPlan>(
+            return Err(InstallMaterializeError::Message(
                 rstd::format("package '{}' install source is invalid: {}",
                              recipe.owner.as_str(),
-                             rstd::move(provenance).unwrap_err()));
+                             rstd::move(provenance).unwrap_err())));
         }
         plan.packages.push(InstallPackageRecord {
             .name                 = rstd::move(recipe.owner),

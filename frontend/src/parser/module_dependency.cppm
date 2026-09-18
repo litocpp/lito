@@ -15,16 +15,6 @@ namespace lito::frontend::parser
 namespace preprocessor = lito::frontend::preprocessor;
 namespace lexical      = lito::frontend::lexical;
 
-template<typename T>
-auto frontend_failure(String message) -> lexical::Result<T> {
-    return Err(lexical::Error::make(rstd::move(message)));
-}
-
-template<typename T>
-auto frontend_failure(ref<str> message) -> lexical::Result<T> {
-    return Err(lexical::Error::make(message));
-}
-
 struct PendingImport {
     String                      logical_name;
     lexical::SourceLocation     location;
@@ -59,8 +49,8 @@ auto primary_module(ref<str> declared) -> String {
 auto normalized_import(ref<str> imported, ref<str> declared) -> lexical::Result<String> {
     if (imported.is_empty() || imported[usize {}] != u8(':')) return Ok(String::make(imported));
     if (declared.is_empty()) {
-        return frontend_failure<String>(
-            "relative partition import appears before a named module declaration"_Str);
+        return Err(lexical::Error::make(
+            "relative partition import appears before a named module declaration"_Str));
     }
     auto result = primary_module(declared);
     result.push_str(imported);
@@ -315,8 +305,8 @@ private:
         if (keyword == "module"_str) {
             if (name.as_str() == ":private"_str) return Ok(empty {});
             if (! declared_.is_empty()) {
-                return frontend_failure<empty>(
-                    "multiple named module declarations in one translation unit"_str);
+                return Err(lexical::Error::make(
+                    "multiple named module declarations in one translation unit"_Str));
             }
             declared_ = name.clone();
             if (exported) {

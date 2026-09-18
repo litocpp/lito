@@ -38,7 +38,7 @@ auto git_output(Vec<String>                       arguments,
                 const ResolvedProcessEnvironment& environment) -> ToolResult<String> {
     auto output = rstd_try(git_run(rstd::move(arguments), operation, environment));
     if (output.exit_code != i32 {}) {
-        return Err(ToolError::Execution(String::make(operation),
+        return Err(ToolError::Execution(operation.into(),
                                         output.exit_code,
                                         rstd::move(output.standard_output),
                                         rstd::move(output.standard_error)));

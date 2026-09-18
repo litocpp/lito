@@ -20,23 +20,6 @@ using JsonMap   = rstd::json::Map;
 export namespace lito::tools::cmake
 {
 
-template<typename T>
-auto cmake_failure(String message) -> lito::tools::ToolResult<T> {
-    return Err(lito::tools::ToolError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto cmake_failure(ref<str> message) -> lito::tools::ToolResult<T> {
-    return Err(lito::tools::ToolError::Message(String::make(message)));
-}
-
-template<typename T>
-auto cmake_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
-    -> lito::tools::ToolResult<T> {
-    return Err(lito::tools::ToolError::Io(
-        String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto emit_cmake(const Option<EventSink>& observer,
                 EventKind                kind,
                 ref<str>                 target,
@@ -63,11 +46,12 @@ auto execute_observed(const Option<EventSink>& observer,
 auto path_text(ref<rstd::path::Path> path, ref<str> context) -> lito::tools::ToolResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return cmake_failure<String>(
-            rstd::format("{} path '{}' is not valid UTF-8", context, path));
+        return Err(lito::tools::ToolError::Message(
+            rstd::format("{} path '{}' is not valid UTF-8", context, path)));
     }
     if (text->contains(";"_str)) {
-        return cmake_failure<String>(rstd::format("{} path '{}' contains ';'", context, path));
+        return Err(lito::tools::ToolError::Message(
+            rstd::format("{} path '{}' contains ';'", context, path)));
     }
     return Ok(String::make(*text));
 }
@@ -101,7 +85,8 @@ auto cmake_path_literal(ref<rstd::path::Path> path, ref<str> context)
     if (value.contains("\""_str) || value.contains(";"_str) || value.contains("\n"_str) ||
         value.contains("\r"_str) ||
         (! rstd::path::is_separator(U'\\') && value.contains("\\"_str))) {
-        return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
+        return Err(
+            lito::tools::ToolError::Message(rstd::format("{} contains CMake syntax", context)));
     }
     auto quoted = "\""_Str;
     for (auto character : value.chars()) {
@@ -244,8 +229,8 @@ auto clone_profile(const ProfileConfiguration& profile) -> ProfileConfiguration 
 
 auto cmake_package_path_component(ref<str> package) -> lito::tools::ToolResult<String> {
     if (! lito::dependency::cmake_package_name_is_valid(package)) {
-        return cmake_failure<String>(
-            rstd::format("CMake package '{}' cannot own a work directory", package));
+        return Err(lito::tools::ToolError::Message(
+            rstd::format("CMake package '{}' cannot own a work directory", package)));
     }
     auto result = String::make(package);
     auto lower  = result.clone();

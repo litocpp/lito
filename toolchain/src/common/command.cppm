@@ -8,16 +8,6 @@ import lito.system;
 using namespace rstd::prelude;
 using namespace lito::system;
 
-namespace lito::toolchain::command
-{
-
-template<typename T>
-auto failure(String message) -> ToolchainResult<T> {
-    return Err(ToolchainError::Message(rstd::move(message)));
-}
-
-} // namespace lito::toolchain::command
-
 export namespace lito::toolchain::command
 {
 
@@ -38,7 +28,8 @@ auto resolve_path(ref<rstd::path::Path> path, ref<str> name) -> ToolchainResult<
 auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> ToolchainResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(rstd::format("tool path '{}' is not valid UTF-8", path));
+        return Err(
+            ToolchainError::Message(rstd::format("tool path '{}' is not valid UTF-8", path)));
     }
     arguments.push(String::make(*text));
     return Ok(empty {});
@@ -48,7 +39,8 @@ auto push_path_option(Vec<String>& arguments, ref<str> prefix, ref<rstd::path::P
     -> ToolchainResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(rstd::format("tool option path '{}' is not valid UTF-8", path));
+        return Err(ToolchainError::Message(
+            rstd::format("tool option path '{}' is not valid UTF-8", path)));
     }
     arguments.push(rstd::format("{}{}", prefix, *text));
     return Ok(empty {});
@@ -67,7 +59,7 @@ auto tool_output_raw(Vec<String>                       arguments,
     }
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make(description),
+        return Err(ToolchainError::Execution(description.into(),
                                              value.exit_code,
                                              rstd::move(value.standard_output),
                                              rstd::move(value.standard_error)));

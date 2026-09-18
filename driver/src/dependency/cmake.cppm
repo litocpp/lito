@@ -145,7 +145,7 @@ auto ResolvedCMakeDependencyRequirement::clone() const -> ResolvedCMakeDependenc
 auto cmake_error(ref<str> context, lito::tools::ToolError error)
     -> lito::dependency::DependencyError {
     return lito::dependency::DependencyError::Provider(
-        String::make(context), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
+        context.into(), Box<dyn<rstd::error::Error>>::make(rstd::move(error)));
 }
 
 template<typename T>
@@ -248,12 +248,12 @@ auto same_cmake_cache(const Vec<lito::dependency::CMakeCacheEntry>& left,
 
 auto cmake_package_conflict(ref<str> package, ref<str> left, ref<str> right, ref<str> field)
     -> lito::dependency::DependencyError {
-    return lito::dependency::dependency_failure<empty>(
-               rstd::format("CMake package '{}' has conflicting {} in aliases '{}' and '{}'",
-                            package,
-                            field,
-                            left,
-                            right))
+    return Err(lito::dependency::DependencyError::Message(
+                   rstd::format("CMake package '{}' has conflicting {} in aliases '{}' and '{}'",
+                                package,
+                                field,
+                                left,
+                                right)))
         .unwrap_err();
 }
 
@@ -394,8 +394,8 @@ auto identify_cmake_provider(lito::dependency::CMakeProviderConfig provider,
 auto resolve_cmake_package(const Vec<ResolvedCMakeDependencyRequirement>& requirements)
     -> lito::dependency::DependencyResult<ResolvedCMakePackage> {
     if (requirements.is_empty()) {
-        return lito::dependency::dependency_failure<ResolvedCMakePackage>(
-            "CMake package resolution requires at least one declaration"_str);
+        return Err(lito::dependency::DependencyError::Message(
+            "CMake package resolution requires at least one declaration"_Str));
     }
     const auto& first  = requirements[usize {}];
     auto        merged = first.clone();
@@ -405,10 +405,10 @@ auto resolve_cmake_package(const Vec<ResolvedCMakeDependencyRequirement>& requir
     merged.host_tools.clear();
     for (const auto& requirement : requirements) {
         if (requirement.package != first.package.as_str()) {
-            return lito::dependency::dependency_failure<ResolvedCMakePackage>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("cannot merge CMake packages '{}' and '{}'",
                              first.package.as_str(),
-                             requirement.package.as_str()));
+                             requirement.package.as_str())));
         }
         if (! same_cmake_source(first.source, requirement.source)) {
             return Err(cmake_package_conflict(first.package.as_str(),
@@ -484,11 +484,11 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
                         const Option<PathBuf>&                       find_install_prefix)
     -> lito::dependency::DependencyResult<CMakePackagePlan> {
     if (effective_target != default_target.triple.as_str() && android.is_none()) {
-        return lito::dependency::dependency_failure<CMakePackagePlan>(rstd::format(
+        return Err(lito::dependency::DependencyError::Message(rstd::format(
             "CMake dependency '{}' cannot resolve cross target '{}' without an explicit CMake "
             "toolchain file",
             requirement.alias.as_str(),
-            effective_target));
+            effective_target)));
     }
     auto planned =
         lito::tools::cmake::plan_cmake_package(cmake_request(requirement, find_install_prefix),
@@ -529,11 +529,11 @@ auto materialize_cmake_usage_impl(const CMakePackagePlan&                       
     const auto& tool = plan.tool;
     if (snapshots.targets.len() != requirement.targets.len() ||
         consumptions.len() != requirement.targets.len()) {
-        return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("CMake package '{}' usage snapshot has {} targets, expected {}",
                          requirement.package.as_str(),
                          snapshots.targets.len(),
-                         requirement.targets.len()));
+                         requirement.targets.len())));
     }
     auto targets = Vec<cpp::ExternalTargetUsage>::with_capacity(requirement.targets.len());
     for (usize index {}; index < requirement.targets.len(); ++index) {
@@ -629,11 +629,11 @@ auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
                              const ResolvedCMakeDependencyRequirement& consumer)
     -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
     if (snapshots.targets.len() != plan.tool.requirement.targets.len()) {
-        return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("CMake package '{}' usage snapshot has {} targets, expected {}",
                          plan.tool.requirement.package.as_str(),
                          snapshots.targets.len(),
-                         plan.tool.requirement.targets.len()));
+                         plan.tool.requirement.targets.len())));
     }
     auto requirement       = cmake_request(consumer, plan.tool.requirement.find_install_prefix);
     requirement.components = as<Clone>(plan.tool.requirement.components).clone();
@@ -649,10 +649,10 @@ auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
             }
         }
         if (index.is_none()) {
-            return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("CMake package '{}' projection is missing target '{}'",
                              consumer.package.as_str(),
-                             target.name.as_str()));
+                             target.name.as_str())));
         }
         const auto& snapshot = snapshots.targets[*index];
         projected_targets.push(lito::tools::cmake::CMakeTargetUsageSnapshot {
@@ -675,10 +675,10 @@ auto materialize_cmake_usage(const CMakePackagePlan&                   plan,
             }
         }
         if (selected == nullptr) {
-            return lito::dependency::dependency_failure<cpp::ExternalDependencyUsage>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("CMake package '{}' projection is missing host tool '{}'",
                              consumer.package.as_str(),
-                             tool.name.as_str()));
+                             tool.name.as_str())));
         }
         projected_tools.push(lito::tools::cmake::CMakeHostToolSnapshot {
             .name       = selected->name.clone(),

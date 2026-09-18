@@ -19,16 +19,11 @@ using StringSet  = rstd::collections::BTreeMap<String, empty>;
 using namespace lito;
 using namespace lito::workspace;
 
-template<typename T>
-auto catalog_failure(String message) -> WorkspaceResult<T> {
-    return Err(WorkspaceError::Message(rstd::move(message)));
-}
-
 auto path_text(ref<rstd::path::Path> path) -> WorkspaceResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return catalog_failure<String>(
-            rstd::format("workspace path '{}' is not valid UTF-8", path));
+        return Err(
+            WorkspaceError::Message(rstd::format("workspace path '{}' is not valid UTF-8", path)));
     }
     return Ok(String::make(*text));
 }
@@ -91,17 +86,17 @@ public:
         -> WorkspaceResult<WorkspaceCatalog> {
         if (manifest.license.source == lito::manifest::PackageLicenseSource::Workspace &&
             manifest.license.value.is_none()) {
-            return catalog_failure<WorkspaceCatalog>(
+            return Err(WorkspaceError::Message(
                 rstd::format("package '{}' inherits package.license but is not a member of a "
                              "containing workspace",
-                             manifest.name.as_str()));
+                             manifest.name.as_str())));
         }
         if (manifest.authors.source == lito::manifest::PackageAuthorsSource::Workspace &&
             manifest.authors.values.is_empty()) {
-            return catalog_failure<WorkspaceCatalog>(
+            return Err(WorkspaceError::Message(
                 rstd::format("package '{}' inherits package.authors but is not a member of a "
                              "containing workspace",
-                             manifest.name.as_str()));
+                             manifest.name.as_str())));
         }
         if (! manifest.workspace_dependencies.is_empty() ||
             ! manifest.workspace_dev_dependencies.is_empty() ||
@@ -109,10 +104,10 @@ public:
             ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
             ! manifest.workspace_cmake_external_dependencies.is_empty() ||
             ! manifest.workspace_cargo_external_dependencies.is_empty()) {
-            return catalog_failure<WorkspaceCatalog>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "package '{}' inherits workspace dependencies but is not a member of a "
                 "containing workspace",
-                manifest.name.as_str()));
+                manifest.name.as_str())));
         }
         auto catalog           = WorkspaceCatalog {};
         catalog.name_          = manifest.name.clone();
@@ -196,8 +191,8 @@ auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
         auto key       = path_text(directory.as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (directories.contains_key(key->as_str())) {
-            return catalog_failure<WorkspaceCatalog>(rstd::format(
-                "workspace member directory '{}' is listed more than once", declared.as_path()));
+            return Err(WorkspaceError::Message(rstd::format(
+                "workspace member directory '{}' is listed more than once", declared.as_path())));
         }
 
         auto manifest = lito::manifest::PackageManifest {};
@@ -210,23 +205,23 @@ auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
             }
             auto loaded = rstd::move(document).unwrap();
             if (loaded.kind != lito::manifest::ManifestKind::Package || loaded.package.is_none()) {
-                return catalog_failure<WorkspaceCatalog>(rstd::format(
-                    "workspace member '{}' must contain a package manifest", declared.as_path()));
+                return Err(WorkspaceError::Message(rstd::format(
+                    "workspace member '{}' must contain a package manifest", declared.as_path())));
             }
             manifest = rstd::move(loaded.package).unwrap();
         }
 
         if (manifest.profile.is_some()) {
-            return catalog_failure<WorkspaceCatalog>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "workspace member '{}' declares [profile]; project profile must be declared at "
                 "the workspace root",
-                manifest.name.as_str()));
+                manifest.name.as_str())));
         }
 
         rstd_try(resolve_workspace_member(manifest, workspace));
         if (catalog.packages_.contains_key(manifest.name.as_str())) {
-            return catalog_failure<WorkspaceCatalog>(rstd::format(
-                "workspace contains more than one package named '{}'", manifest.name.as_str()));
+            return Err(WorkspaceError::Message(rstd::format(
+                "workspace contains more than one package named '{}'", manifest.name.as_str())));
         }
         directories.insert(rstd::move(key).unwrap(), empty {});
         auto member_key = path_text(manifest.root.as_path());
@@ -245,19 +240,19 @@ auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
         auto key = path_text(member->as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (defaults.contains_key(key->as_str())) {
-            return catalog_failure<WorkspaceCatalog>(
+            return Err(WorkspaceError::Message(
                 rstd::format("workspace default member directory '{}' is listed more than once",
-                             declared.as_path()));
+                             declared.as_path())));
         }
         if (! catalog.member_roots_.contains_key(key->as_str())) {
-            return catalog_failure<WorkspaceCatalog>(
+            return Err(WorkspaceError::Message(
                 rstd::format("workspace default member '{}' is not listed in workspace.members",
-                             declared.as_path()));
+                             declared.as_path())));
         }
         auto name = member_names.get(key->as_str());
         if (name.is_none()) {
-            return catalog_failure<WorkspaceCatalog>(rstd::format(
-                "workspace default member '{}' has no package identity", declared.as_path()));
+            return Err(WorkspaceError::Message(rstd::format(
+                "workspace default member '{}' has no package identity", declared.as_path())));
         }
         catalog.default_names_.push((**name).clone());
         defaults.insert(rstd::move(key).unwrap(), empty {});
@@ -281,68 +276,68 @@ auto validate_associated_catalog(const WorkspaceCatalog&        primary,
                                  const WorkspaceCatalog&        associated,
                                  lito::package::ProjectRootRole role) -> WorkspaceResult<empty> {
     if (role != lito::package::ProjectRootRole::AssociatedTest) {
-        return catalog_failure<empty>("invalid associated catalog role"_Str);
+        return Err(WorkspaceError::Message("invalid associated catalog role"_Str));
     }
     const auto kind = role;
     if (associated.profile_declared_) {
-        return catalog_failure<empty>(rstd::format(
+        return Err(WorkspaceError::Message(rstd::format(
             "associated {} manifest '{}' declares [profile]; project profile belongs to '{}'",
             kind,
             associated.manifest_path_.as_path(),
-            primary.manifest_path_.as_path()));
+            primary.manifest_path_.as_path())));
     }
 
     if (! primary.workspace_ && primary.names_.len() == usize(1)) {
         const auto root = primary.packages_.get(primary.names_[usize {}].as_str());
         if (root.is_some() && associated_package_matches(**root, role)) {
-            return catalog_failure<empty>(
+            return Err(WorkspaceError::Message(
                 rstd::format("primary package '{}' is already a {} artifact and cannot attach '{}'",
                              (**root).name.as_str(),
                              kind,
-                             associated.manifest_path_.as_path()));
+                             associated.manifest_path_.as_path())));
         }
     }
 
     for (const auto& name : associated.names_) {
         const auto package = associated.packages_.get(name.as_str());
         if (package.is_none()) {
-            return catalog_failure<empty>(
-                rstd::format("associated {} catalog is missing package '{}'", kind, name.as_str()));
+            return Err(WorkspaceError::Message(rstd::format(
+                "associated {} catalog is missing package '{}'", kind, name.as_str())));
         }
         const auto& manifest = **package;
         if (! associated_package_matches(manifest, role)) {
-            return catalog_failure<empty>(
+            return Err(WorkspaceError::Message(
                 rstd::format("associated {} package '{}' at '{}' may only declare {}",
                              kind,
                              manifest.name.as_str(),
                              manifest.manifest_path.as_path(),
-                             associated_declarations(role)));
+                             associated_declarations(role))));
         }
         if (! associated.workspace_ &&
             manifest.version.source == lito::manifest::PackageVersionSource::Workspace &&
             manifest.version.value.is_none()) {
-            return catalog_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "associated {} package '{}' at '{}' cannot inherit a workspace version",
                 kind,
                 manifest.name.as_str(),
-                manifest.manifest_path.as_path()));
+                manifest.manifest_path.as_path())));
         }
         if (primary.packages_.contains_key(name.as_str())) {
-            return catalog_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "associated {} package '{}' at '{}' conflicts with primary project manifest '{}'",
                 kind,
                 name.as_str(),
                 manifest.manifest_path.as_path(),
-                primary.manifest_path_.as_path()));
+                primary.manifest_path_.as_path())));
         }
         if (primary.contains_package_root(manifest.root.as_path())) {
-            return catalog_failure<empty>(rstd::format(
+            return Err(WorkspaceError::Message(rstd::format(
                 "associated {} package '{}' at '{}' is already owned by primary project "
                 "manifest '{}'",
                 kind,
                 name.as_str(),
                 manifest.manifest_path.as_path(),
-                primary.manifest_path_.as_path()));
+                primary.manifest_path_.as_path())));
         }
     }
     return Ok(empty {});
@@ -361,10 +356,10 @@ auto try_load_associated_catalog(const WorkspaceCatalog&        primary,
     if (located->is_none()) return Ok(None());
     const auto& location = **located;
     if (! same_path(location.directory.as_path(), root.as_path())) {
-        return catalog_failure<Option<WorkspaceCatalog>>(rstd::format(
+        return Err(WorkspaceError::Message(rstd::format(
             "associated manifest directory '{}' must be the exact project directory '{}'",
             location.directory.as_path(),
-            root.as_path()));
+            root.as_path())));
     }
     if (primary.contains_package_root(location.directory.as_path())) return Ok(None());
 
@@ -436,8 +431,7 @@ auto resolve_project_entry(ref<rstd::path::Path> requested_root)
         });
     }
     if (document.kind != lito::manifest::ManifestKind::Package || document.package.is_none()) {
-        return catalog_failure<ResolvedProjectEntry>(
-            "project manifest has no package or workspace"_Str);
+        return Err(WorkspaceError::Message("project manifest has no package or workspace"_Str));
     }
     auto package   = rstd::move(document.package).unwrap();
     auto workspace = rstd_try(try_containing_workspace(package));

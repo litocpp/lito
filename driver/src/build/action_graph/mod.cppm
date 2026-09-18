@@ -127,16 +127,6 @@ private:
 namespace lito
 {
 
-template<typename T>
-auto action_graph_failure(String message) -> BuildResult<T> {
-    return Err(BuildError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto action_graph_failure(ref<str> message) -> BuildResult<T> {
-    return action_graph_failure<T>(String::make(message));
-}
-
 auto artifact_kind_name(BuildArtifactKind kind) noexcept -> ref<str> {
     switch (kind) {
     case BuildArtifactKind::Source: return "source"_str;
@@ -199,8 +189,8 @@ auto same_artifacts(const Vec<BuildArtifactId>& left, const Vec<BuildArtifactId>
 
 auto BuildActionGraph::add_artifact(BuildArtifactSpec spec) -> BuildResult<BuildArtifactId> {
     if (spec.identity.is_empty() || spec.domain.value.is_empty()) {
-        return action_graph_failure<BuildArtifactId>(
-            "build artifact identity and execution domain must not be empty"_str);
+        return Err(BuildError::Message(
+            "build artifact identity and execution domain must not be empty"_Str));
     }
     for (usize index {}; index < artifacts_.len(); ++index) {
         const auto& existing = artifacts_[index];
@@ -209,10 +199,10 @@ auto BuildActionGraph::add_artifact(BuildArtifactSpec spec) -> BuildResult<Build
             continue;
         }
         if (existing.kind != spec.kind || ! same_path(existing.path, spec.path)) {
-            return action_graph_failure<BuildArtifactId>(
+            return Err(BuildError::Message(
                 rstd::format("artifact '{}' in execution domain '{}' has conflicting declarations",
                              spec.identity.as_str(),
-                             spec.domain.value.as_str()));
+                             spec.domain.value.as_str())));
         }
         if (spec.initially_ready) artifacts_[index].ready = true;
         return Ok(BuildArtifactId { .value = index });
@@ -231,40 +221,40 @@ auto BuildActionGraph::add_artifact(BuildArtifactSpec spec) -> BuildResult<Build
 
 auto BuildActionGraph::add_action(BuildActionSpec spec) -> BuildResult<BuildActionId> {
     if (spec.identity.is_empty() || spec.domain.value.is_empty() || spec.outputs.is_empty()) {
-        return action_graph_failure<BuildActionId>(
-            "build action identity, execution domain and outputs must not be empty"_str);
+        return Err(BuildError::Message(
+            "build action identity, execution domain and outputs must not be empty"_Str));
     }
     for (auto input : spec.inputs) {
         if (input.value >= artifacts_.len()) {
-            return action_graph_failure<BuildActionId>(
+            return Err(BuildError::Message(
                 rstd::format("{} action '{}' references an unknown input artifact",
                              action_kind_name(spec.kind),
-                             spec.identity.as_str()));
+                             spec.identity.as_str())));
         }
         if ((spec.kind == BuildActionKind::Compile || spec.kind == BuildActionKind::Archive ||
              spec.kind == BuildActionKind::Link) &&
             artifacts_[input.value].domain.value != spec.domain.value.as_str()) {
-            return action_graph_failure<BuildActionId>(rstd::format(
+            return Err(BuildError::Message(rstd::format(
                 "{} action '{}' cannot consume artifact '{}' from execution domain '{}'",
                 action_kind_name(spec.kind),
                 spec.identity.as_str(),
                 artifacts_[input.value].identity.as_str(),
-                artifacts_[input.value].domain.value.as_str()));
+                artifacts_[input.value].domain.value.as_str())));
         }
     }
     for (auto output : spec.outputs) {
         if (output.value >= artifacts_.len()) {
-            return action_graph_failure<BuildActionId>(
+            return Err(BuildError::Message(
                 rstd::format("{} action '{}' references an unknown output artifact",
                              action_kind_name(spec.kind),
-                             spec.identity.as_str()));
+                             spec.identity.as_str())));
         }
         if (artifacts_[output.value].domain.value != spec.domain.value.as_str()) {
-            return action_graph_failure<BuildActionId>(rstd::format(
+            return Err(BuildError::Message(rstd::format(
                 "{} action '{}' and output artifact '{}' use different execution domains",
                 action_kind_name(spec.kind),
                 spec.identity.as_str(),
-                artifacts_[output.value].identity.as_str()));
+                artifacts_[output.value].identity.as_str())));
         }
     }
     for (usize index {}; index < actions_.len(); ++index) {
@@ -275,10 +265,10 @@ auto BuildActionGraph::add_action(BuildActionSpec spec) -> BuildResult<BuildActi
         }
         if (existing.kind != spec.kind || ! same_artifacts(existing.inputs, spec.inputs) ||
             ! same_artifacts(existing.outputs, spec.outputs)) {
-            return action_graph_failure<BuildActionId>(
+            return Err(BuildError::Message(
                 rstd::format("action '{}' in execution domain '{}' has conflicting declarations",
                              spec.identity.as_str(),
-                             spec.domain.value.as_str()));
+                             spec.domain.value.as_str())));
         }
         return Ok(BuildActionId { .value = index });
     }
@@ -287,12 +277,12 @@ auto BuildActionGraph::add_action(BuildActionSpec spec) -> BuildResult<BuildActi
     for (auto output : spec.outputs) {
         auto& artifact = artifacts_[output.value];
         if (artifact.producer.is_some()) {
-            return action_graph_failure<BuildActionId>(
-                rstd::format("artifact '{}' already has a producer", artifact.identity.as_str()));
+            return Err(BuildError::Message(
+                rstd::format("artifact '{}' already has a producer", artifact.identity.as_str())));
         }
         if (artifact.ready) {
-            return action_graph_failure<BuildActionId>(rstd::format(
-                "produced artifact '{}' cannot be initially ready", artifact.identity.as_str()));
+            return Err(BuildError::Message(rstd::format(
+                "produced artifact '{}' cannot be initially ready", artifact.identity.as_str())));
         }
     }
 
@@ -351,11 +341,11 @@ auto BuildActionGraph::validate() const -> BuildResult<empty> {
         for (auto input : actions_[index].inputs) {
             const auto& artifact = artifacts_[input.value];
             if (artifact.producer.is_none() && ! artifact.ready) {
-                return action_graph_failure<empty>(
+                return Err(BuildError::Message(
                     rstd::format("{} action '{}' consumes artifact '{}' without a producer",
                                  action_kind_name(actions_[index].kind),
                                  actions_[index].identity.as_str(),
-                                 artifact.identity.as_str()));
+                                 artifact.identity.as_str())));
             }
         }
     }
@@ -365,15 +355,15 @@ auto BuildActionGraph::validate() const -> BuildResult<empty> {
         ++visited;
         for (auto dependent : actions_[current.value].dependents) {
             if (indegree[dependent.value] == usize {}) {
-                return action_graph_failure<empty>(
-                    "build action graph contains an invalid reverse edge"_str);
+                return Err(
+                    BuildError::Message("build action graph contains an invalid reverse edge"_Str));
             }
             --indegree[dependent.value];
             if (indegree[dependent.value] == usize {}) ready.emplace_back(dependent);
         }
     }
     if (visited != actions_.len()) {
-        return action_graph_failure<empty>("build action graph contains a dependency cycle"_str);
+        return Err(BuildError::Message("build action graph contains a dependency cycle"_Str));
     }
     return Ok(empty {});
 }
@@ -398,12 +388,12 @@ auto BuildActionGraph::ready_actions() const -> Vec<BuildActionId> {
 
 auto BuildActionGraph::mark_running(BuildActionId id) -> BuildResult<empty> {
     if (id.value >= actions_.len()) {
-        return action_graph_failure<empty>("cannot start an unknown build action"_str);
+        return Err(BuildError::Message("cannot start an unknown build action"_Str));
     }
     auto& action = actions_[id.value];
     if (action.state != BuildActionState::Ready) {
-        return action_graph_failure<empty>(
-            rstd::format("build action '{}' is not ready", action.identity.as_str()));
+        return Err(BuildError::Message(
+            rstd::format("build action '{}' is not ready", action.identity.as_str())));
     }
     action.state = BuildActionState::Running;
     return Ok(empty {});
@@ -411,12 +401,12 @@ auto BuildActionGraph::mark_running(BuildActionId id) -> BuildResult<empty> {
 
 auto BuildActionGraph::mark_succeeded(BuildActionId id) -> BuildResult<empty> {
     if (id.value >= actions_.len()) {
-        return action_graph_failure<empty>("cannot complete an unknown build action"_str);
+        return Err(BuildError::Message("cannot complete an unknown build action"_Str));
     }
     auto& action = actions_[id.value];
     if (action.state != BuildActionState::Running && action.state != BuildActionState::Ready) {
-        return action_graph_failure<empty>(
-            rstd::format("build action '{}' is not running", action.identity.as_str()));
+        return Err(BuildError::Message(
+            rstd::format("build action '{}' is not running", action.identity.as_str())));
     }
     action.state = BuildActionState::Succeeded;
     for (auto output : action.outputs) artifacts_[output.value].ready = true;
@@ -433,12 +423,12 @@ auto BuildActionGraph::mark_succeeded(BuildActionId id) -> BuildResult<empty> {
 
 auto BuildActionGraph::mark_failed(BuildActionId id) -> BuildResult<empty> {
     if (id.value >= actions_.len()) {
-        return action_graph_failure<empty>("cannot fail an unknown build action"_str);
+        return Err(BuildError::Message("cannot fail an unknown build action"_Str));
     }
     auto& action = actions_[id.value];
     if (action.state != BuildActionState::Running && action.state != BuildActionState::Ready) {
-        return action_graph_failure<empty>(
-            rstd::format("build action '{}' is not running", action.identity.as_str()));
+        return Err(BuildError::Message(
+            rstd::format("build action '{}' is not running", action.identity.as_str())));
     }
     action.state = BuildActionState::Failed;
     auto pending = action.dependents.clone();

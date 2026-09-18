@@ -18,28 +18,10 @@ using JsonMap = rstd::json::Map;
 
 namespace cargo = lito::tools::cargo;
 
-template<typename T>
-auto cargo_flatpak_failure(String message) -> cargo::FlatpakExportResult<T> {
-    return Err(cargo::FlatpakExportError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto cargo_flatpak_failure(ref<str> message) -> cargo::FlatpakExportResult<T> {
-    return cargo_flatpak_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto cargo_flatpak_io_failure(ref<str>               operation,
-                              ref<rstd::path::Path>  path,
-                              rstd::io::error::Error source) -> cargo::FlatpakExportResult<T> {
-    return Err(cargo::FlatpakExportError::Io(
-        String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto toml_table(const Toml& value, ref<str> context) -> cargo::FlatpakExportResult<ref<Table>> {
     auto table = value.as_table();
     if (table.is_none()) {
-        return cargo_flatpak_failure<ref<Table>>(rstd::format("{} must be a table", context));
+        return Err(cargo::FlatpakExportError::Message(rstd::format("{} must be a table", context)));
     }
     return Ok(*table);
 }
@@ -48,8 +30,8 @@ auto toml_array(const Toml& value, ref<str> context)
     -> cargo::FlatpakExportResult<ref<rstd::toml::Array>> {
     auto array = value.as_array();
     if (array.is_none()) {
-        return cargo_flatpak_failure<ref<rstd::toml::Array>>(
-            rstd::format("{} must be an array", context));
+        return Err(
+            cargo::FlatpakExportError::Message(rstd::format("{} must be an array", context)));
     }
     return Ok(*array);
 }
@@ -59,7 +41,8 @@ auto required_toml_member(const Toml& value, ref<str> key, ref<str> context)
     rstd_try(toml_table(value, context));
     auto member = value.get(key);
     if (member.is_none()) {
-        return cargo_flatpak_failure<ref<Toml>>(rstd::format("{} is missing '{}'", context, key));
+        return Err(
+            cargo::FlatpakExportError::Message(rstd::format("{} is missing '{}'", context, key)));
     }
     return Ok(*member);
 }
@@ -69,8 +52,8 @@ auto required_toml_string(const Toml& value, ref<str> key, ref<str> context)
     auto member = rstd_try(required_toml_member(value, key, context));
     auto text   = (*member).as_str();
     if (text.is_none() || text->is_empty()) {
-        return cargo_flatpak_failure<String>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("{}.{} must be a non-empty string", context, key)));
     }
     return Ok(String::make(*text));
 }
@@ -81,8 +64,8 @@ auto optional_toml_string(const Toml& value, ref<str> key, ref<str> context)
     if (member.is_none()) return Ok(None());
     auto text = (**member).as_str();
     if (text.is_none() || text->is_empty()) {
-        return cargo_flatpak_failure<Option<String>>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("{}.{} must be a non-empty string", context, key)));
     }
     return Ok(Some(String::make(*text)));
 }
@@ -107,22 +90,22 @@ auto decode_query_value(ref<str> value, ref<str> source) -> cargo::FlatpakExport
             continue;
         }
         if (index + usize(2) >= value.len()) {
-            return cargo_flatpak_failure<String>(
-                rstd::format("Cargo Git source '{}' has invalid percent encoding", source));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("Cargo Git source '{}' has invalid percent encoding", source)));
         }
         auto high = hex_value(value[index + usize(1)]);
         auto low  = hex_value(value[index + usize(2)]);
         if (high.is_none() || low.is_none()) {
-            return cargo_flatpak_failure<String>(
-                rstd::format("Cargo Git source '{}' has invalid percent encoding", source));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("Cargo Git source '{}' has invalid percent encoding", source)));
         }
         bytes.push(*high * u8(16) + *low);
         index += usize(2);
     }
     auto decoded = String::from_utf8(rstd::move(bytes));
     if (decoded.is_err()) {
-        return cargo_flatpak_failure<String>(
-            rstd::format("Cargo Git source '{}' has a non-UTF-8 selector", source));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git source '{}' has a non-UTF-8 selector", source)));
     }
     return Ok(rstd::move(decoded).unwrap());
 }
@@ -138,8 +121,8 @@ auto parse_git_selector(Option<ref<str>> query, ref<str> source)
         remaining  = split.is_some() ? split->template get<1>() : ref<str> {};
         auto pair  = item.split_once("="_str);
         if (pair.is_none() || pair->template get<0>().is_empty()) {
-            return cargo_flatpak_failure<Option<cargo::GitSelector>>(
-                rstd::format("Cargo Git source '{}' has an invalid selector", source));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("Cargo Git source '{}' has an invalid selector", source)));
         }
         auto kind = lito::source::GitReferenceKind::DefaultBranch;
         auto key  = pair->template get<0>();
@@ -153,13 +136,13 @@ auto parse_git_selector(Option<ref<str>> query, ref<str> source)
             continue;
         }
         if (result.is_some()) {
-            return cargo_flatpak_failure<Option<cargo::GitSelector>>(rstd::format(
-                "Cargo Git source '{}' contains more than one reference selector", source));
+            return Err(cargo::FlatpakExportError::Message(rstd::format(
+                "Cargo Git source '{}' contains more than one reference selector", source)));
         }
         auto value = rstd_try(decode_query_value(pair->template get<1>(), source));
         if (value.is_empty()) {
-            return cargo_flatpak_failure<Option<cargo::GitSelector>>(
-                rstd::format("Cargo Git source '{}' has an empty selector", source));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("Cargo Git source '{}' has an empty selector", source)));
         }
         result = Some(cargo::GitSelector { kind, rstd::move(value) });
     }
@@ -169,8 +152,8 @@ auto parse_git_selector(Option<ref<str>> query, ref<str> source)
 auto canonical_git_url(ref<str> value, ref<str> source) -> cargo::FlatpakExportResult<String> {
     auto parsed = lito::parse::FetchUrl::parse(value);
     if (parsed.is_err()) {
-        return cargo_flatpak_failure<String>(
-            rstd::format("Cargo Git source '{}' has an invalid repository URL", source));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git source '{}' has an invalid repository URL", source)));
     }
     auto result = String::make(value);
     while (result.as_str().ends_with("/"_str)) result.truncate(result.len() - usize(1));
@@ -192,8 +175,8 @@ auto parse_git_source(ref<str> source) -> cargo::FlatpakExportResult<cargo::GitS
     auto hash = raw.rsplit_once("#"_str);
     if (hash.is_none() || hash->template get<0>().contains("#"_str) ||
         ! lito::source::git_commit_is_valid(hash->template get<1>())) {
-        return cargo_flatpak_failure<cargo::GitSource>(
-            rstd::format("Cargo Git source '{}' must end with a full 40-digit commit", source));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git source '{}' must end with a full 40-digit commit", source)));
     }
     auto repository = hash->template get<0>();
     auto query      = repository.split_once("?"_str);
@@ -217,8 +200,8 @@ auto parse_locked_source(ref<str> source) -> cargo::FlatpakExportResult<cargo::L
     if (source.starts_with("git+"_str)) {
         return Ok(cargo::LockedSource::Git(rstd_try(parse_git_source(source))));
     }
-    return cargo_flatpak_failure<cargo::LockedSource>(
-        rstd::format("Cargo source '{}' is not supported for Flatpak export", source));
+    return Err(cargo::FlatpakExportError::Message(
+        rstd::format("Cargo source '{}' is not supported for Flatpak export", source)));
 }
 
 auto package_context(ref<str> name, ref<str> version) -> String {
@@ -229,8 +212,8 @@ auto cargo::parse_locked_document(ref<rstd::path::Path> path)
     -> FlatpakExportResult<LockedDocument> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return cargo_flatpak_io_failure<LockedDocument>(
-            "read Cargo lock"_str, path, rstd::move(contents).unwrap_err());
+        return Err(cargo::FlatpakExportError::Io(
+            "read Cargo lock"_Str, PathBuf::from(path), rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -241,7 +224,7 @@ auto cargo::parse_locked_document(ref<rstd::path::Path> path)
     auto version_value = rstd_try(required_toml_member(document, "version"_str, "Cargo.lock"_str));
     auto version       = version_value->as_integer();
     if (version.is_none() || (version->to_primitive() != 3 && version->to_primitive() != 4)) {
-        return cargo_flatpak_failure<LockedDocument>("Cargo.lock version must be 3 or 4"_str);
+        return Err(cargo::FlatpakExportError::Message("Cargo.lock version must be 3 or 4"_Str));
     }
     auto package_values = rstd_try(
         toml_array(*rstd_try(required_toml_member(document, "package"_str, "Cargo.lock"_str)),
@@ -260,11 +243,11 @@ auto cargo::parse_locked_document(ref<rstd::path::Path> path)
         if (source_text.is_some()) {
             auto parsed_source = parse_locked_source(source_text->as_str());
             if (parsed_source.is_err()) {
-                return cargo_flatpak_failure<LockedDocument>(
+                return Err(cargo::FlatpakExportError::Message(
                     rstd::format("{} has an invalid source '{}': {}",
                                  package_context(name.as_str(), version_text.as_str()).as_str(),
                                  source_text->as_str(),
-                                 rstd::move(parsed_source).unwrap_err()));
+                                 rstd::move(parsed_source).unwrap_err())));
             }
             source = Some(rstd::move(parsed_source).unwrap());
         }
@@ -273,16 +256,16 @@ auto cargo::parse_locked_document(ref<rstd::path::Path> path)
             auto parsed_checksum = lito::parse::parse_sha256(
                 checksum_text->as_str(), lito::parse::Sha256TextMode::Canonical);
             if (parsed_checksum.is_err()) {
-                return cargo_flatpak_failure<LockedDocument>(
+                return Err(cargo::FlatpakExportError::Message(
                     rstd::format("{} has an invalid checksum",
-                                 package_context(name.as_str(), version_text.as_str()).as_str()));
+                                 package_context(name.as_str(), version_text.as_str()).as_str())));
             }
             checksum = Some(rstd::move(parsed_checksum).unwrap());
         }
         if (source.is_some() && source->is_CratesIo() && checksum.is_none()) {
             auto package = package_context(name.as_str(), version_text.as_str());
-            return cargo_flatpak_failure<LockedDocument>(
-                rstd::format("{} is missing checksum", package.as_str()));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("{} is missing checksum", package.as_str())));
         }
         packages.push(LockedPackage {
             .name     = rstd::move(name),
@@ -339,8 +322,8 @@ struct ScannedRepository {
 auto read_toml_file(ref<rstd::path::Path> path) -> cargo::FlatpakExportResult<Toml> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return cargo_flatpak_io_failure<Toml>(
-            "read Cargo manifest"_str, path, rstd::move(contents).unwrap_err());
+        return Err(cargo::FlatpakExportError::Io(
+            "read Cargo manifest"_Str, PathBuf::from(path), rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -354,29 +337,31 @@ auto child_directories(ref<rstd::path::Path> directory)
     -> cargo::FlatpakExportResult<Vec<PathBuf>> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return cargo_flatpak_io_failure<Vec<PathBuf>>(
-            "enumerate Cargo Git checkout"_str, directory, rstd::move(opened).unwrap_err());
+        return Err(cargo::FlatpakExportError::Io("enumerate Cargo Git checkout"_Str,
+                                                 PathBuf::from(directory),
+                                                 rstd::move(opened).unwrap_err()));
     }
     auto result  = Vec<PathBuf>::make();
     auto entries = rstd::move(opened).unwrap();
     for (auto next : entries) {
         if (next.is_err()) {
-            return cargo_flatpak_io_failure<Vec<PathBuf>>(
-                "enumerate Cargo Git checkout"_str, directory, rstd::move(next).unwrap_err());
+            return Err(cargo::FlatpakExportError::Io("enumerate Cargo Git checkout"_Str,
+                                                     PathBuf::from(directory),
+                                                     rstd::move(next).unwrap_err()));
         }
         auto entry = rstd::move(next).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
             auto path = entry.path();
-            return cargo_flatpak_io_failure<Vec<PathBuf>>("inspect Cargo Git checkout entry"_str,
-                                                          path.as_path(),
-                                                          rstd::move(type).unwrap_err());
+            return Err(cargo::FlatpakExportError::Io("inspect Cargo Git checkout entry"_Str,
+                                                     PathBuf::from(path.as_path()),
+                                                     rstd::move(type).unwrap_err()));
         }
         if (! type->is_dir() || type->is_symlink()) continue;
         auto name = entry.file_name().into_string();
         if (name.is_err()) {
-            return cargo_flatpak_failure<Vec<PathBuf>>(
-                rstd::format("Cargo Git checkout '{}' contains a non-UTF-8 directory", directory));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("Cargo Git checkout '{}' contains a non-UTF-8 directory", directory)));
         }
         auto text = name->as_str();
         if (text == ".git"_str || text == "target"_str) continue;
@@ -395,8 +380,8 @@ auto scan_repository_directory(ref<rstd::path::Path> directory,
     auto workspace = rstd::move(inherited_workspace);
     if (metadata.is_ok()) {
         if (! metadata->is_file() || metadata->is_symlink()) {
-            return cargo_flatpak_failure<empty>(
-                rstd::format("Cargo manifest '{}' must be a regular file", manifest.as_path()));
+            return Err(cargo::FlatpakExportError::Message(
+                rstd::format("Cargo manifest '{}' must be a regular file", manifest.as_path())));
         }
         auto document        = rstd_try(read_toml_file(manifest.as_path()));
         auto root_table      = rstd_try(toml_table(document, "Cargo manifest"_str));
@@ -409,15 +394,15 @@ auto scan_repository_directory(ref<rstd::path::Path> directory,
         if (package.is_some()) {
             auto name = rstd_try(required_toml_string(**package, "name"_str, "Cargo package"_str));
             if (packages.contains_key(name.as_str())) {
-                return cargo_flatpak_failure<empty>(rstd::format(
+                return Err(cargo::FlatpakExportError::Message(rstd::format(
                     "Cargo Git checkout '{}' contains more than one package named '{}'",
                     root,
-                    name.as_str()));
+                    name.as_str())));
             }
             auto relative = directory.strip_prefix(root);
             if (relative.is_none()) {
-                return cargo_flatpak_failure<empty>(rstd::format(
-                    "Cargo package directory '{}' escapes checkout '{}'", directory, root));
+                return Err(cargo::FlatpakExportError::Message(rstd::format(
+                    "Cargo package directory '{}' escapes checkout '{}'", directory, root)));
             }
             packages.insert(
                 rstd::move(name),
@@ -431,8 +416,9 @@ auto scan_repository_directory(ref<rstd::path::Path> directory,
     } else {
         auto error = rstd::move(metadata).unwrap_err();
         if (error.kind() != rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
-            return cargo_flatpak_io_failure<empty>(
-                "inspect Cargo manifest"_str, manifest.as_path(), rstd::move(error));
+            return Err(cargo::FlatpakExportError::Io("inspect Cargo manifest"_Str,
+                                                     PathBuf::from(manifest.as_path()),
+                                                     rstd::move(error)));
         }
     }
     auto children = rstd_try(child_directories(directory));
@@ -450,8 +436,8 @@ auto scan_repository(const cargo::GitCheckout& checkout)
     rstd_try(scan_repository_directory(
         checkout.root.as_path(), checkout.root.as_path(), None(), packages));
     if (packages.is_empty()) {
-        return cargo_flatpak_failure<ScannedRepository>(
-            rstd::format("Cargo Git checkout '{}' contains no packages", checkout.root.as_path()));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git checkout '{}' contains no packages", checkout.root.as_path())));
     }
     return Ok(ScannedRepository {
         .key      = rstd::format("{}\n{}", checkout.url.as_str(), checkout.commit.as_str()),
@@ -571,13 +557,13 @@ auto git_repository_name(ref<str> url, ref<str> commit) -> cargo::FlatpakExportR
     auto slash = url.rsplit_once("/"_str);
     auto name  = slash.is_some() ? slash->template get<1>() : ref<str> {};
     if (name.is_empty()) {
-        return cargo_flatpak_failure<String>(
-            rstd::format("Cargo Git URL '{}' has no repository name", url));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git URL '{}' has no repository name", url)));
     }
     auto prefix = commit.get(usize {}, usize(7));
     if (prefix.is_none()) {
-        return cargo_flatpak_failure<String>(
-            rstd::format("Cargo Git commit '{}' is too short", commit));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git commit '{}' is too short", commit)));
     }
     return Ok(rstd::format("{}-{}", name, *prefix));
 }
@@ -601,14 +587,14 @@ auto checkout_for(const Vec<cargo::GitCheckout>& checkouts, ref<str> url, ref<st
     for (const auto& checkout : checkouts) {
         if (checkout.url.as_str() != url || checkout.commit.as_str() != commit) continue;
         if (matched.is_some()) {
-            return cargo_flatpak_failure<ref<cargo::GitCheckout>>(rstd::format(
-                "Cargo Git source '{}#{}' has more than one materialized checkout", url, commit));
+            return Err(cargo::FlatpakExportError::Message(rstd::format(
+                "Cargo Git source '{}#{}' has more than one materialized checkout", url, commit)));
         }
         matched = Some(ref<cargo::GitCheckout>::from_raw_parts(rstd::addressof(checkout)));
     }
     if (matched.is_none()) {
-        return cargo_flatpak_failure<ref<cargo::GitCheckout>>(
-            rstd::format("Cargo Git source '{}#{}' has no materialized checkout", url, commit));
+        return Err(cargo::FlatpakExportError::Message(
+            rstd::format("Cargo Git source '{}#{}' has no materialized checkout", url, commit)));
     }
     return Ok(*matched);
 }
@@ -676,11 +662,11 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
     -> FlatpakExportResult<lito::flatpak::SourceSet> {
     auto expected_requests = locked_git_requests(document);
     if (expected_requests.len() != checkouts.len()) {
-        return cargo_flatpak_failure<lito::flatpak::SourceSet>(
+        return Err(cargo::FlatpakExportError::Message(
             rstd::format("Cargo.lock '{}' requires {} Git checkouts but {} were provided",
                          document.path.as_path(),
                          expected_requests.len(),
-                         checkouts.len()));
+                         checkouts.len())));
     }
 
     auto result            = lito::flatpak::SourceSet {};
@@ -741,10 +727,10 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
         auto        existing = git_sources.get(git.url.as_str());
         if (existing.is_some() && ((**existing).commit != git.commit ||
                                    ! selector_equal((**existing).selector, git.selector))) {
-            return cargo_flatpak_failure<lito::flatpak::SourceSet>(
+            return Err(cargo::FlatpakExportError::Message(
                 rstd::format("Cargo.lock '{}' uses Git source '{}' with incompatible selectors",
                              document.path.as_path(),
-                             git.url.as_str()));
+                             git.url.as_str())));
         }
         if (existing.is_none()) git_sources.insert(git.url.clone(), git.clone());
 
@@ -752,11 +738,11 @@ auto cargo::project_flatpak_sources(const LockedDocument&   document,
             scanned_repository_for(repositories, checkouts, git.url.as_str(), git.commit.as_str()));
         auto scanned = repository->packages.get(package.name.as_str());
         if (scanned.is_none()) {
-            return cargo_flatpak_failure<lito::flatpak::SourceSet>(
+            return Err(cargo::FlatpakExportError::Message(
                 rstd::format("{} was not found in Git checkout '{}#{}'",
                              origin.as_str(),
                              git.url.as_str(),
-                             git.commit.as_str()));
+                             git.commit.as_str())));
         }
         auto repository_name = rstd_try(git_repository_name(git.url.as_str(), git.commit.as_str()));
         auto source_path     = PathBuf::from("flatpak-cargo/git"_str)

@@ -18,21 +18,6 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 
-namespace lito
-{
-
-template<typename T>
-auto compile_failure(String message) -> BuildResult<T> {
-    return Err(BuildError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto compile_failure(ref<str> message) -> BuildResult<T> {
-    return Err(BuildError::Message(String::make(message)));
-}
-
-} // namespace lito
-
 export namespace lito
 {
 
@@ -51,13 +36,11 @@ auto resolve_compile_execution(const CompileExecutionPolicy& policy)
         if (available.is_ok()) jobs = available->get();
     }
     if (jobs == usize {}) {
-        return compile_failure<ResolvedCompileExecution>(
-            "compile jobs must be greater than zero"_str);
+        return Err(BuildError::Message("compile jobs must be greater than zero"_Str));
     }
     auto max_in_flight = policy.max_in_flight.is_some() ? *policy.max_in_flight : jobs;
     if (max_in_flight == usize {}) {
-        return compile_failure<ResolvedCompileExecution>(
-            "compile task capacity must be greater than zero"_str);
+        return Err(BuildError::Message("compile task capacity must be greater than zero"_Str));
     }
     return Ok(ResolvedCompileExecution {
         .jobs          = jobs,
@@ -101,8 +84,8 @@ public:
 
     static auto create(usize jobs, usize max_in_flight) -> BuildResult<CompileExecutor> {
         if (jobs == usize {} || max_in_flight == usize {}) {
-            return compile_failure<CompileExecutor>(
-                "compile execution requires non-zero jobs and capacity"_str);
+            return Err(
+                BuildError::Message("compile execution requires non-zero jobs and capacity"_Str));
         }
         auto pool = rstd::thread::ThreadPoolBuilder::make()
                         .worker_count(jobs)
@@ -163,12 +146,12 @@ public:
         if (submitted.is_ok()) return Ok(empty {});
         auto error = rstd::move(submitted).unwrap_err_unchecked();
         if (error == rstd::thread::BlockingTaskSetSubmitError::Full) {
-            return compile_failure<empty>("compile task set is full"_str);
+            return Err(BuildError::Message("compile task set is full"_Str));
         }
         if (error == rstd::thread::BlockingTaskSetSubmitError::Cancelled) {
-            return compile_failure<empty>("compile task set is cancelled"_str);
+            return Err(BuildError::Message("compile task set is cancelled"_Str));
         }
-        return compile_failure<empty>("compile task set is closed"_str);
+        return Err(BuildError::Message("compile task set is closed"_Str));
     }
 
     auto recv() -> BuildResult<CompileWorkerResult> {
@@ -180,17 +163,16 @@ public:
                 fields->statistics.completion_wait.saturating_add(started.elapsed());
         }
         if (completion.is_none()) {
-            return compile_failure<CompileWorkerResult>(
-                "compile task set closed before a completion arrived"_str);
+            return Err(
+                BuildError::Message("compile task set closed before a completion arrived"_Str));
         }
         auto value = rstd::move(completion).unwrap_unchecked();
         if (value.is_cancelled()) {
-            return compile_failure<CompileWorkerResult>("compile task was cancelled"_str);
+            return Err(BuildError::Message("compile task was cancelled"_Str));
         }
         auto result = rstd::move(value).into_value();
         if (result.is_none()) {
-            return compile_failure<CompileWorkerResult>(
-                "compile task completed without a result"_str);
+            return Err(BuildError::Message("compile task completed without a result"_Str));
         }
         return Ok(rstd::move(result).unwrap_unchecked());
     }

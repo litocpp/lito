@@ -125,16 +125,6 @@ namespace
 
 using namespace lito::registry;
 
-template<typename T>
-auto graph_failure(String message) -> RegistryGraphResult<T> {
-    return Err(RegistryGraphError { .message = rstd::move(message) });
-}
-
-template<typename T>
-auto graph_failure(ref<str> message) -> RegistryGraphResult<T> {
-    return graph_failure<T>(String::make(message));
-}
-
 auto configured_registry(const lito::config::LitoBootstrapConfig& config, ref<str> selector)
     -> Option<ref<lito::config::NamedRegistryConfig>> {
     return config.resolve_registry(selector);
@@ -158,13 +148,14 @@ auto requirement_registry(const lito::config::LitoBootstrapConfig& config,
                         ? configured_registry(config, requirement.registry->as_str())
                         : config.default_registry();
     if (selected.is_none()) {
-        return graph_failure<ref<lito::config::NamedRegistryConfig>>(
-            requirement.registry.is_some()
-                ? rstd::format("Registry dependency '{}' selects unknown Registry '{}'",
-                               requirement.package.as_str(),
-                               requirement.registry->as_str())
-                : rstd::format("Registry dependency '{}' has no configured default Registry",
-                               requirement.package.as_str()));
+        return Err(RegistryGraphError {
+            .message =
+                requirement.registry.is_some()
+                    ? rstd::format("Registry dependency '{}' selects unknown Registry '{}'",
+                                   requirement.package.as_str(),
+                                   requirement.registry->as_str())
+                    : rstd::format("Registry dependency '{}' has no configured default Registry",
+                                   requirement.package.as_str()) });
     }
     return Ok(*selected);
 }
@@ -227,8 +218,8 @@ auto lito::registry::RegistryGraphClient::resolve_registry_callback(
     Option<ref<str>> selector) noexcept -> RegistryGraphResult<Option<RegistryId>> {
     auto& self = *static_cast<RegistryGraphClient*>(context);
     if (self.config_ == nullptr) {
-        return graph_failure<Option<RegistryId>>(
-            "Registry graph client has no bootstrap config"_str);
+        return Err(
+            RegistryGraphError { .message = "Registry graph client has no bootstrap config"_Str });
     }
     auto selected = selector.is_some() ? self.config_->resolve_registry(*selector)
                                        : self.config_->default_registry();
@@ -258,9 +249,10 @@ auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequi
                 for (const auto& release : index.releases()) {
                     if (! root.requirement.matches(release.version)) continue;
                     if (provided.is_some()) {
-                        return graph_failure<Vec<RegistryReleasePin>>(rstd::format(
-                            "provided Registry package '{}' has more than one matching release",
-                            root.package.name.as_str()));
+                        return Err(RegistryGraphError {
+                            .message = rstd::format(
+                                "provided Registry package '{}' has more than one matching release",
+                                root.package.name.as_str()) });
                     }
                     provided = Some(RegistryReleasePin {
                         .release =
@@ -278,16 +270,18 @@ auto lito::registry::RegistryGraphClient::resolve_locked(Vec<RegistrySolverRequi
             }
         }
         if (pin.is_none()) {
-            return graph_failure<Vec<RegistryReleasePin>>(rstd::format(
-                "lock has no exact Registry release for package '{}'", root.package.name.as_str()));
+            return Err(RegistryGraphError {
+                .message = rstd::format("lock has no exact Registry release for package '{}'",
+                                        root.package.name.as_str()) });
         }
         if (! root.requirement.matches((*pin)->release.version)) {
-            return graph_failure<Vec<RegistryReleasePin>>(
-                rstd::format("locked Registry package '{}@{}' does not satisfy '{}' from {}",
-                             root.package.name.as_str(),
-                             (*pin)->release.version.text().as_str(),
-                             root.requirement.text(),
-                             root.source.as_str()));
+            return Err(RegistryGraphError {
+                .message =
+                    rstd::format("locked Registry package '{}@{}' does not satisfy '{}' from {}",
+                                 root.package.name.as_str(),
+                                 (*pin)->release.version.text().as_str(),
+                                 root.requirement.text(),
+                                 root.source.as_str()) });
         }
     }
     return Ok(rstd::move(result));
@@ -299,8 +293,9 @@ auto lito::registry::RegistryGraphClient::materialize(Vec<RegistryReleasePin> pa
     for (auto& selected : packages) {
         auto config = configured_registry(*config_, selected.release.package.registry);
         if (config.is_none()) {
-            return graph_failure<Vec<ResolvedRegistryGraphSource>>(rstd::format(
-                "Registry '{}' is not configured", selected.release.package.registry.as_str()));
+            return Err(RegistryGraphError {
+                .message = rstd::format("Registry '{}' is not configured",
+                                        selected.release.package.registry.as_str()) });
         }
         auto sources = RegistrySourceResolver(cache_root_.clone(),
                                               (**config).effective_endpoints()->download.clone(),
@@ -325,8 +320,8 @@ auto lito::registry::RegistryGraphClient::materialize(Vec<RegistryReleasePin> pa
 auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement> requirements)
     -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>> {
     if (config_ == nullptr) {
-        return graph_failure<Vec<ResolvedRegistryGraphSource>>(
-            "Registry graph client has no bootstrap config"_str);
+        return Err(
+            RegistryGraphError { .message = "Registry graph client has no bootstrap config"_Str });
     }
     auto roots = Vec<RegistrySolverRequirement>::with_capacity(requirements.len());
     for (const auto& requirement : requirements) {
@@ -374,13 +369,14 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
             policy_.index = RegistryIndexUpdatePolicy::Refresh;
             solved        = RegistryVersionSolver::solve(input, provider);
         } else {
-            return graph_failure<Vec<ResolvedRegistryGraphSource>>(
-                rstd::format("Registry version resolution failed: {}", error));
+            return Err(RegistryGraphError {
+                .message = rstd::format("Registry version resolution failed: {}", error) });
         }
     }
     if (solved.is_err()) {
-        return graph_failure<Vec<ResolvedRegistryGraphSource>>(rstd::format(
-            "Registry version resolution failed: {}", rstd::move(solved).unwrap_err()));
+        return Err(
+            RegistryGraphError { .message = rstd::format("Registry version resolution failed: {}",
+                                                         rstd::move(solved).unwrap_err()) });
     }
 
     auto graph    = rstd::move(solved).unwrap();
@@ -403,26 +399,26 @@ auto lito::registry::RegistryGraphClient::resolve_package(const RegistryPackageS
                                                           ref<str>                   source)
     -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>> {
     if (config_ == nullptr) {
-        return graph_failure<Vec<ResolvedRegistryGraphSource>>(
-            "Registry graph client has no bootstrap config"_str);
+        return Err(
+            RegistryGraphError { .message = "Registry graph client has no bootstrap config"_Str });
     }
     auto selected = registry.is_some() ? configured_registry(*config_, registry->as_str())
                                        : config_->default_registry();
     if (selected.is_none()) {
-        return graph_failure<Vec<ResolvedRegistryGraphSource>>(
-            registry.is_some()
-                ? rstd::format("Registry package '{}' selects unknown Registry '{}'",
-                               spec.package.as_str(),
-                               registry->as_str())
-                : rstd::format("Registry package '{}' has no configured default Registry",
-                               spec.package.as_str()));
+        return Err(RegistryGraphError {
+            .message =
+                registry.is_some()
+                    ? rstd::format("Registry package '{}' selects unknown Registry '{}'",
+                                   spec.package.as_str(),
+                                   registry->as_str())
+                    : rstd::format("Registry package '{}' has no configured default Registry",
+                                   spec.package.as_str()) });
     }
     auto requirement = Option<VersionRequirement> {};
     if (spec.selector.is_Requirement()) {
         requirement = Some(spec.selector.as_Requirement().requirement.clone());
     } else {
-        return graph_failure<Vec<ResolvedRegistryGraphSource>>(
-            "Registry named tags are not supported"_str);
+        return Err(RegistryGraphError { .message = "Registry named tags are not supported"_Str });
     }
     auto requirements = Vec<RegistryGraphRequirement>::make();
     development_packages_.push(RegistryPackageId {

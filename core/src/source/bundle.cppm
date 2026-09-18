@@ -97,8 +97,9 @@ auto locate_source_bundle(const Vec<PathBuf>& roots, const FetchIdentity& identi
         auto path   = SourceBundleLayout(root.clone()).fetch(identity);
         auto exists = rstd::fs::exists(path.as_path());
         if (exists.is_err()) {
-            return source_io_failure<Option<PathBuf>>(
-                "inspect source bundle entry"_str, path.as_path(), rstd::move(exists).unwrap_err());
+            return Err(SourceError::Io("inspect source bundle entry"_Str,
+                                       PathBuf::from(path.as_path()),
+                                       rstd::move(exists).unwrap_err()));
         }
         if (*exists) return Ok(Some(rstd::move(path)));
     }

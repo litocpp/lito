@@ -52,16 +52,6 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto build_failure(String message) -> BuildResult<T> {
-    return Err(BuildError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto build_failure(ref<str> message) -> BuildResult<T> {
-    return Err(BuildError::Message(String::make(message)));
-}
-
 auto emit(const BuildRequest&   request,
           BuildEventKind        kind,
           ref<str>              target,
@@ -90,9 +80,9 @@ auto build_archive_target(const BuildRequest&                        request,
     for (auto unit : target_units) {
         objects.push(units[unit].unit.object.clone());
         if (unit >= object_identities.len() || object_identities[unit].is_none()) {
-            return build_failure<PathBuf>(
+            return Err(BuildError::Message(
                 rstd::format("archive input '{}' has no compiled object identity",
-                             units[unit].unit.object.as_path()));
+                             units[unit].unit.object.as_path())));
         }
         inputs.push(object_identities[unit]->clone());
     }
@@ -143,10 +133,10 @@ auto append_target_link_inputs(const cpp::PackageSpec&     package,
         if ((dependency_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary &&
              dependency_spec.artifact_kind != cpp::ArtifactKind::SharedLibrary) ||
             library_paths[dependency].is_none()) {
-            return build_failure<empty>(
+            return Err(BuildError::Message(
                 rstd::format("target '{}' depends on unavailable library target '{}'",
                              lito::package::package_target_id_text(target_spec.id).as_str(),
-                             lito::package::package_target_id_text(dependency_spec.id).as_str()));
+                             lito::package::package_target_id_text(dependency_spec.id).as_str())));
         }
         if (dependency_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
             link_inputs.push(
@@ -188,12 +178,12 @@ auto build_link_target(const BuildRequest&                 request,
                 continue;
             }
             if (library_paths[candidate].is_none()) {
-                return build_failure<BuiltArtifact>(
+                return Err(BuildError::Message(
                     rstd::format("test target '{}' has no attachment archive for '{}'",
                                  lito::package::package_target_id_text(target_spec.id).as_str(),
                                  lito::package::package_target_id_text(
                                      candidate_spec.test_attachment->library_target)
-                                     .as_str()));
+                                     .as_str())));
             }
             link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                 .path = (*library_paths[candidate]).clone(),
@@ -272,7 +262,7 @@ auto build_link_target(const BuildRequest&                 request,
     }
     if (plan.profile->strip != lito::artifact::StripMode::None) {
         if (stripper.is_none()) {
-            return build_failure<BuiltArtifact>("strip tool was not resolved"_str);
+            return Err(BuildError::Message("strip tool was not resolved"_Str));
         }
         emit(request, BuildEventKind::Strip, target_identity.as_str(), executable_path.as_path());
         auto stripped = toolchain.strip_artifact(executable_path.as_path(),
@@ -470,19 +460,19 @@ auto execute_native_action_graph(NativeActionGraph&                   actions,
             continue;
         }
         if (ready.is_empty()) break;
-        return build_failure<CompileActionSessionResult>(
-            "native action graph has a ready action without an execution adapter"_str);
+        return Err(BuildError::Message(
+            "native action graph has a ready action without an execution adapter"_Str));
     }
     if (stop_targets.is_empty()) {
         for (const auto& action : *actions.graph.actions()) {
             if (action.state != BuildActionState::Succeeded) {
-                return build_failure<CompileActionSessionResult>(
-                    rstd::format("native action '{}' did not complete", action.identity.as_str()));
+                return Err(BuildError::Message(
+                    rstd::format("native action '{}' did not complete", action.identity.as_str())));
             }
         }
     } else if (! stop_targets_succeeded()) {
-        return build_failure<CompileActionSessionResult>(
-            "native action graph stopped before its requested targets completed"_str);
+        return Err(BuildError::Message(
+            "native action graph stopped before its requested targets completed"_Str));
     }
     return session.finish();
 }
@@ -536,12 +526,11 @@ auto resolve_scan_execution(const ScanExecutionPolicy& policy)
         if (available.is_ok()) jobs = available->get();
     }
     if (jobs == usize {}) {
-        return build_failure<ResolvedScanExecution>("scan jobs must be greater than zero"_str);
+        return Err(BuildError::Message("scan jobs must be greater than zero"_Str));
     }
     auto max_in_flight = policy.max_in_flight.is_some() ? *policy.max_in_flight : jobs;
     if (max_in_flight == usize {}) {
-        return build_failure<ResolvedScanExecution>(
-            "scan task capacity must be greater than zero"_str);
+        return Err(BuildError::Message("scan task capacity must be greater than zero"_Str));
     }
     return Ok(ResolvedScanExecution {
         .jobs          = jobs,
@@ -561,7 +550,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                  BuildStageTimingReport                    stage_timing,
                                  bool prepared_defaults = false) -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
-        return build_failure<BuildSummary>("build project root is required"_str);
+        return Err(BuildError::Message("build project root is required"_Str));
     }
     auto tool_resolver = lito::tools::ToolResolver(
         process_environment, request.tools.clone(), request.tool_reporter);
@@ -637,10 +626,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto& layout    = project.layout;
     if (supplied_prepared && ! prepared_defaults) {
         if (profile.as_str() != metadata.default_profile.as_str()) {
-            return build_failure<BuildSummary>(
+            return Err(BuildError::Message(
                 rstd::format("prepared project profile '{}' cannot satisfy requested profile '{}'",
                              metadata.default_profile.as_str(),
-                             profile.as_str()));
+                             profile.as_str())));
         }
         auto requested_layout = BuildLayout::resolve(metadata.root.as_path(),
                                                      request.build_directory.as_path(),
@@ -654,16 +643,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                    rstd::move(canonical_output).unwrap_err())));
         }
         if (canonical_output->as_path() != layout.output()) {
-            return build_failure<BuildSummary>(
+            return Err(BuildError::Message(
                 rstd::format("prepared project output '{}' cannot satisfy requested output '{}'",
                              layout.output(),
-                             canonical_output->as_path()));
+                             canonical_output->as_path())));
         }
     }
     auto target_prepare_started = rstd::time::Instant::now();
     auto created_profiler       = ScanProfiler::create();
     if (created_profiler.is_err()) {
-        return build_failure<BuildSummary>(rstd::move(created_profiler).unwrap_err_unchecked());
+        return Err(BuildError::Message(rstd::move(created_profiler).unwrap_err_unchecked()));
     }
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
@@ -699,14 +688,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 }
             }
             if (target == nullptr) {
-                return build_failure<BuildSummary>(
-                    rstd::format("requested install link variant target '{}' is not selected",
-                                 lito::package::package_target_id_text(requested.target).as_str()));
+                return Err(BuildError::Message(rstd::format(
+                    "requested install link variant target '{}' is not selected",
+                    lito::package::package_target_id_text(requested.target).as_str())));
             }
             if (target->artifact_kind != cpp::ArtifactKind::Executable) {
-                return build_failure<BuildSummary>(
-                    rstd::format("requested install link variant target '{}' is not an executable",
-                                 lito::package::package_target_id_text(requested.target).as_str()));
+                return Err(BuildError::Message(rstd::format(
+                    "requested install link variant target '{}' is not an executable",
+                    lito::package::package_target_id_text(requested.target).as_str())));
             }
         }
     auto selected_packages = Vec<cpp::SelectedPackageMetadata>::make();
@@ -811,9 +800,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto script_declaration        = rstd_try(rstd::move(script_declaration_result));
     auto host_tool_targets         = script_declaration.host_tool_targets();
     if (project.platform.cross && ! host_tool_targets.is_empty()) {
-        return build_failure<BuildSummary>(rstd::format(
+        return Err(BuildError::Message(rstd::format(
             "host-tool target '{}' requires a host execution domain for cross builds",
-            lito::package::package_target_id_text(host_tool_targets[usize {}]).as_str()));
+            lito::package::package_target_id_text(host_tool_targets[usize {}]).as_str())));
     }
     auto host_selection = cpp::SourceTargetSelection {
         .profile          = native_target_plan.profile,
@@ -830,9 +819,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         host_selection = rstd::move(resolved_host).unwrap();
         for (auto target : host_selection.target_order) {
             if (! cpp::has_deferred_generated_sources(metadata.targets[target])) continue;
-            return build_failure<BuildSummary>(rstd::format(
+            return Err(BuildError::Message(rstd::format(
                 "host-tool target '{}' cannot consume generated sources produced after scan",
-                lito::package::package_target_id_text(metadata.targets[target].id).as_str()));
+                lito::package::package_target_id_text(metadata.targets[target].id).as_str())));
         }
     }
 
@@ -919,7 +908,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto& scans                = prepared_build.scans;
     auto  preparation_finished = profiler.complete(prepare_span);
     if (preparation_finished.is_err()) {
-        return build_failure<BuildSummary>(rstd::move(preparation_finished).unwrap_err_unchecked());
+        return Err(BuildError::Message(rstd::move(preparation_finished).unwrap_err_unchecked()));
     }
 
     auto standard_modules = prepare_standard_library_modules(
@@ -944,7 +933,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (! host_selection.target_order.is_empty()) {
         auto incremental = semantic_scan_graph.snapshot(units, scans);
         if (incremental.is_err()) {
-            return build_failure<BuildSummary>(rstd::move(incremental).unwrap_err());
+            return Err(BuildError::Message(rstd::move(incremental).unwrap_err()));
         }
         auto convention_valid = profiler.measure(ScanProbe::Conventions, [&] {
             return cpp::validate_module_conventions(package, units, scans);
@@ -1092,7 +1081,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (standard_modules.is_err()) return Err(rstd::move(standard_modules).unwrap_err());
     auto finalized_scan_graph = rstd::move(semantic_scan_graph).finalize(units, scans);
     if (finalized_scan_graph.is_err()) {
-        return build_failure<BuildSummary>(rstd::move(finalized_scan_graph).unwrap_err());
+        return Err(BuildError::Message(rstd::move(finalized_scan_graph).unwrap_err()));
     }
     auto incremental_graph = rstd::move(finalized_scan_graph).unwrap();
     auto convention_valid  = profiler.measure(ScanProbe::Conventions, [&] {
@@ -1112,29 +1101,29 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto scan_graph_statistics = semantic_graph.statistics;
     auto completed_scan        = profiler.complete(scan_span);
     if (completed_scan.is_err()) {
-        return build_failure<BuildSummary>(rstd::move(completed_scan).unwrap_err_unchecked());
+        return Err(BuildError::Message(rstd::move(completed_scan).unwrap_err_unchecked()));
     }
     auto finished_profile = profiler.finish();
     if (finished_profile.is_err()) {
-        return build_failure<BuildSummary>(rstd::move(finished_profile).unwrap_err_unchecked());
+        return Err(BuildError::Message(rstd::move(finished_profile).unwrap_err_unchecked()));
     }
     auto scan_profile   = rstd::move(finished_profile).unwrap_unchecked();
     auto source_release = analysis_service.release_source_cache();
     if (source_release.is_err()) {
         auto error = rstd::move(source_release).unwrap_err();
         if (error.kind == frontend::SourceCacheReleaseErrorKind::Closed) {
-            return build_failure<BuildSummary>("source cache was already released"_str);
+            return Err(BuildError::Message("source cache was already released"_Str));
         }
-        return build_failure<BuildSummary>(
+        return Err(BuildError::Message(
             rstd::format("cannot release source cache while {} cache entries and {} source loads "
                          "are in flight",
                          error.in_flight_entries,
-                         error.active_loads));
+                         error.active_loads)));
     }
     auto source_release_receipt = rstd::move(source_release).unwrap();
     if (! source_release_receipt.released_immediately()) {
-        return build_failure<BuildSummary>(
-            "source cache memory domain is retained by an active consumer"_str);
+        return Err(BuildError::Message(
+            "source cache memory domain is retained by an active consumer"_Str));
     }
     analysis_service.record_source_release(rstd::move(source_release_receipt));
     auto frontend_statistics                            = analysis_service.statistics();
@@ -1203,8 +1192,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto rebuild_after_source_transformation = [&]() -> BuildResult<empty> {
         auto authoritative_profiler_result = ScanProfiler::create();
         if (authoritative_profiler_result.is_err()) {
-            return build_failure<empty>(
-                rstd::move(authoritative_profiler_result).unwrap_err_unchecked());
+            return Err(BuildError::Message(
+                rstd::move(authoritative_profiler_result).unwrap_err_unchecked()));
         }
         auto authoritative_profiler = rstd::move(authoritative_profiler_result).unwrap_unchecked();
         auto authoritative_observer = FrontendProfileObserver::make(authoritative_profiler);
@@ -1216,9 +1205,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 if (! authoritative_frontend.add_source_overlay(
                         source.transformed->logical_path.as_path(),
                         source.transformed->physical_path.as_path())) {
-                    return build_failure<empty>(
+                    return Err(BuildError::Message(
                         rstd::format("cannot register transformed source overlay for '{}'",
-                                     source.transformed->logical_path.as_path()));
+                                     source.transformed->logical_path.as_path())));
                 }
             }
         }
@@ -1252,18 +1241,18 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 auto projected = authoritative_analysis.project(rstd::move(analyzed).unwrap(),
                                                                 target_spec.language);
                 if (projected.is_err()) {
-                    return build_failure<empty>(rstd::move(projected).unwrap_err());
+                    return Err(BuildError::Message(rstd::move(projected).unwrap_err()));
                 }
                 source.scan_artifact = Some(rstd::move(projected).unwrap());
                 auto completed = authoritative_graph.complete(graph_unit, *source.scan_artifact);
                 if (completed.is_err()) {
-                    return build_failure<empty>(rstd::move(completed).unwrap_err());
+                    return Err(BuildError::Message(rstd::move(completed).unwrap_err()));
                 }
             }
         }
         auto discovery_finished = authoritative_graph.finish_discovery();
         if (discovery_finished.is_err()) {
-            return build_failure<empty>(rstd::move(discovery_finished).unwrap_err());
+            return Err(BuildError::Message(rstd::move(discovery_finished).unwrap_err()));
         }
 
         auto authoritative_units = prepare_build_units(package, package_plan, layout, toolchain);
@@ -1278,7 +1267,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
         auto authoritative_incremental = rstd::move(authoritative_graph).finalize(units, scans);
         if (authoritative_incremental.is_err()) {
-            return build_failure<empty>(rstd::move(authoritative_incremental).unwrap_err());
+            return Err(BuildError::Message(rstd::move(authoritative_incremental).unwrap_err()));
         }
         auto authoritative_conventions = cpp::validate_module_conventions(package, units, scans);
         if (authoritative_conventions.is_err()) {
@@ -1292,18 +1281,19 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         scan_graph_statistics            = authoritative_semantics->statistics;
         auto authoritative_span_finished = authoritative_profiler.complete(authoritative_span);
         if (authoritative_span_finished.is_err()) {
-            return build_failure<empty>(
-                rstd::move(authoritative_span_finished).unwrap_err_unchecked());
+            return Err(BuildError::Message(
+                rstd::move(authoritative_span_finished).unwrap_err_unchecked()));
         }
         auto authoritative_release = authoritative_analysis.release_source_cache();
         if (authoritative_release.is_err()) {
-            return build_failure<empty>("cannot release authoritative source cache"_str);
+            return Err(BuildError::Message("cannot release authoritative source cache"_Str));
         }
         authoritative_analysis.record_source_release(rstd::move(authoritative_release).unwrap());
         frontend_statistics.add(authoritative_analysis.statistics());
         auto authoritative_profile = authoritative_profiler.finish();
         if (authoritative_profile.is_err()) {
-            return build_failure<empty>(rstd::move(authoritative_profile).unwrap_err_unchecked());
+            return Err(
+                BuildError::Message(rstd::move(authoritative_profile).unwrap_err_unchecked()));
         }
         scan_profile = rstd::move(authoritative_profile).unwrap_unchecked();
         scanned += scans.len();
@@ -1358,8 +1348,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             if (! pending) break;
             if (ready.is_empty()) {
-                return build_failure<BuildSummary>(
-                    "proc-macro sources have cyclic expansion dependencies"_str);
+                return Err(BuildError::Message(
+                    "proc-macro sources have cyclic expansion dependencies"_Str));
             }
 
             auto available = compile_plan_available_prerequisites(actions.compile, ready);
@@ -1502,8 +1492,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             if (plugin_targets[target] == u8 {}) continue;
             const auto kind = package.targets[target].artifact_kind;
             if (kind == cpp::ArtifactKind::SharedLibrary) {
-                return build_failure<BuildSummary>(
-                    "compiler plugin host dependency cannot be a shared library"_str);
+                return Err(BuildError::Message(
+                    "compiler plugin host dependency cannot be a shared library"_Str));
             }
             if (kind != cpp::ArtifactKind::StaticLibrary &&
                 kind != cpp::ArtifactKind::CompilerPlugin) {
@@ -1569,8 +1559,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 rstd_try(rebuild_after_source_transformation());
                 if (actions.compile.nodes.len() != expected_units ||
                     object_identities.len() != actions.compile.nodes.len()) {
-                    return build_failure<BuildSummary>(
-                        "proc-macro provider transformation changed compile unit alignment"_str);
+                    return Err(BuildError::Message(
+                        "proc-macro provider transformation changed compile unit alignment"_Str));
                 }
                 completed_selection.clear();
                 for (const auto& identity : object_identities) {
@@ -1593,8 +1583,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (project.configuration.toolchain.wasm.is_some() &&
         project.configuration.toolchain.wasm->processor.is_some()) {
         if (plugin_host.is_none()) {
-            return build_failure<BuildSummary>(
-                "configured artifact processor was not built for the host"_str);
+            return Err(BuildError::Message(
+                "configured artifact processor was not built for the host"_Str));
         }
         const auto& package_name = *project.configuration.toolchain.wasm->processor;
         for (const auto& candidate : plugin_host->product.artifacts) {
@@ -1603,16 +1593,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 continue;
             }
             if (configured_artifact_processor != nullptr) {
-                return build_failure<BuildSummary>(rstd::format(
+                return Err(BuildError::Message(rstd::format(
                     "artifact processor package '{}' produced more than one host executable",
-                    package_name.as_str()));
+                    package_name.as_str())));
             }
             configured_artifact_processor = rstd::addressof(candidate);
         }
         if (configured_artifact_processor == nullptr) {
-            return build_failure<BuildSummary>(
+            return Err(BuildError::Message(
                 rstd::format("artifact processor package '{}' did not produce a host executable",
-                             package_name.as_str()));
+                             package_name.as_str())));
         }
     }
     const auto selected_product =
@@ -1672,9 +1662,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             for (const auto& requested : *artifact_link_variants) {
                 if (requested.target != target_spec.id) continue;
                 if (install_variant != nullptr) {
-                    return build_failure<empty>(rstd::format(
+                    return Err(BuildError::Message(rstd::format(
                         "target '{}' has more than one requested install link variant",
-                        lito::package::package_target_id_text(target_spec.id).as_str()));
+                        lito::package::package_target_id_text(target_spec.id).as_str())));
                 }
                 install_variant = rstd::addressof(requested);
             }
@@ -1795,9 +1785,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 continue;
             }
             if (library_paths[target].is_none()) {
-                return build_failure<BuildSummary>(rstd::format(
+                return Err(BuildError::Message(rstd::format(
                     "selected static WebAssembly target '{}' has no archive link input",
-                    lito::package::package_target_id_text(target_spec.id).as_str()));
+                    lito::package::package_target_id_text(target_spec.id).as_str())));
             }
             auto artifact_index = Option<usize> {};
             for (usize index {}; index < artifacts.len(); ++index) {
@@ -1806,16 +1796,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                     continue;
                 }
                 if (artifact_index.is_some()) {
-                    return build_failure<BuildSummary>(rstd::format(
+                    return Err(BuildError::Message(rstd::format(
                         "selected static WebAssembly target '{}' produced duplicate archives",
-                        lito::package::package_target_id_text(target_spec.id).as_str()));
+                        lito::package::package_target_id_text(target_spec.id).as_str())));
                 }
                 artifact_index = Some(index);
             }
             if (artifact_index.is_none()) {
-                return build_failure<BuildSummary>(
+                return Err(BuildError::Message(
                     rstd::format("selected static WebAssembly target '{}' was not recorded",
-                                 lito::package::package_target_id_text(target_spec.id).as_str()));
+                                 lito::package::package_target_id_text(target_spec.id).as_str())));
             }
             auto module_name =
                 lito::artifact::product_name(lito::artifact::ProductKind::SharedLibrary,
@@ -1944,16 +1934,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             if (package.targets[target].id == provider.target) {
                 if (library_paths[target].is_none() ||
                     library_paths[target]->as_path() != provider.archive.as_path()) {
-                    return build_failure<BuildSummary>(
-                        "proc-macro provider product does not match its target archive"_str);
+                    return Err(BuildError::Message(
+                        "proc-macro provider product does not match its target archive"_Str));
                 }
                 recorded = true;
                 break;
             }
         }
         if (! recorded) {
-            return build_failure<BuildSummary>(
-                "proc-macro provider product has no package target"_str);
+            return Err(
+                BuildError::Message("proc-macro provider product has no package target"_Str));
         }
     }
     if (plugin_host.is_some()) {
@@ -2093,7 +2083,7 @@ auto build_prepared_project(const BuildRequest&               request,
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
     auto total_started = rstd::time::Instant::now();
     if (request.selection.root.is_empty()) {
-        return build_failure<BuildSummary>("build project root is required"_str);
+        return Err(BuildError::Message("build project root is required"_Str));
     }
     const auto profile =
         request.profile.is_some()

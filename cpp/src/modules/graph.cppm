@@ -20,16 +20,6 @@ using StringSet   = rstd::collections::BTreeMap<String, empty>;
 namespace lito::cpp
 {
 
-template<typename T>
-auto graph_failure(String message) -> ModuleResult<T> {
-    return Err(ModuleError::Graph(rstd::move(message)));
-}
-
-template<typename T>
-auto graph_failure(ref<str> message) -> ModuleResult<T> {
-    return Err(ModuleError::Graph(String::make(message)));
-}
-
 auto contains_target(const Vec<TargetId>& values, TargetId value) -> bool {
     return values.iter().any([&](auto item) {
         return (*item) == value;
@@ -48,9 +38,9 @@ auto provider_for(ref<str>                 logical_name,
                   const Vec<PreparedUnit>& units) -> ModuleResult<UnitId> {
     auto candidates = providers.get(logical_name);
     if (candidates.is_none()) {
-        return graph_failure<UnitId>(rstd::format("missing module provider '{}' imported by '{}'",
-                                                  logical_name,
-                                                  units[importer].unit.source.as_path()));
+        return Err(ModuleError::Graph(rstd::format("missing module provider '{}' imported by '{}'",
+                                                   logical_name,
+                                                   units[importer].unit.source.as_path())));
     }
     for (auto candidate : **candidates) {
         if (units[candidate].unit.owner.is_Project()) return Ok(candidate);
@@ -60,10 +50,10 @@ auto provider_for(ref<str>                 logical_name,
             return Ok(candidate);
         }
     }
-    return graph_failure<UnitId>(rstd::format(
+    return Err(ModuleError::Graph(rstd::format(
         "standard library module '{}' has no provider compatible with source '{}' context",
         logical_name,
-        units[importer].unit.source.as_path()));
+        units[importer].unit.source.as_path())));
 }
 
 auto directly_visible(const PackagePlan& package, TargetId importer, TargetId provider) -> bool {
@@ -114,8 +104,8 @@ auto visit(UnitId                   unit,
     auto& color = colors[unit];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return graph_failure<empty>(
-            rstd::format("module import cycle at '{}'", units[unit].unit.source.as_path()));
+        return Err(ModuleError::Graph(
+            rstd::format("module import cycle at '{}'", units[unit].unit.source.as_path())));
     }
 
     color = 1;
@@ -863,13 +853,11 @@ auto resolve_semantic_build(const PackagePlan&           package,
                             const BmiFormatIdentity&     format)
     -> ModuleResult<ResolvedSemanticBuildGraph> {
     if (units.len() != scans.len() || units.len() != incremental.units.len()) {
-        return graph_failure<ResolvedSemanticBuildGraph>(
-            "semantic graph received mismatched units and scans"_str);
+        return Err(ModuleError::Graph("semantic graph received mismatched units and scans"_Str));
     }
     if (package.public_targets.len() != package.package->targets.len() ||
         package.visible_targets.len() != package.package->targets.len()) {
-        return graph_failure<ResolvedSemanticBuildGraph>(
-            "semantic graph received an invalid package plan"_str);
+        return Err(ModuleError::Graph("semantic graph received an invalid package plan"_Str));
     }
 
     auto c_units   = Vec<UnitId>::make();
@@ -877,14 +865,13 @@ auto resolve_semantic_build(const PackagePlan&           package,
     for (auto unit = UnitId {}; unit < scans.len(); ++unit) {
         const auto& scan = scans[unit];
         if (scan.unit != unit) {
-            return graph_failure<ResolvedSemanticBuildGraph>(
-                "semantic graph received unordered scan results"_str);
+            return Err(ModuleError::Graph("semantic graph received unordered scan results"_Str));
         }
         if (scan.language.is_C() != units[unit].unit.language.is_C() ||
             scan.language.is_C() != units[unit].unit.context->language.is_C() ||
             scan.language.is_C() == incremental.units[unit].cpp) {
-            return graph_failure<ResolvedSemanticBuildGraph>(rstd::format(
-                "source '{}' has inconsistent language facts", units[unit].unit.source.as_path()));
+            return Err(ModuleError::Graph(rstd::format(
+                "source '{}' has inconsistent language facts", units[unit].unit.source.as_path())));
         }
         if (scan.language.is_C())
             c_units.emplace_back(unit);
@@ -912,11 +899,11 @@ auto resolve_semantic_build(const PackagePlan&           package,
                     units[other].unit.standard_library_context_identity.as_str() ==
                     units[scan.unit].unit.standard_library_context_identity.as_str();
                 if (! project_conflict && ! same_context) continue;
-                return graph_failure<ResolvedSemanticBuildGraph>(
-                    rstd::format("duplicate module provider '{}': '{}' and '{}'",
-                                 provided.logical_name.as_str(),
-                                 units[other].unit.source.as_path(),
-                                 units[scan.unit].unit.source.as_path()));
+                return Err(
+                    ModuleError::Graph(rstd::format("duplicate module provider '{}': '{}' and '{}'",
+                                                    provided.logical_name.as_str(),
+                                                    units[other].unit.source.as_path(),
+                                                    units[scan.unit].unit.source.as_path())));
             }
             (**existing).emplace_back(scan.unit);
             continue;
@@ -939,8 +926,8 @@ auto resolve_semantic_build(const PackagePlan&           package,
         auto primary_target   = project_target(units[*primary_provider].unit);
         auto partition_target = project_target(units[scan.unit].unit);
         if (primary_target.is_none() || partition_target.is_none()) {
-            return graph_failure<ResolvedSemanticBuildGraph>(
-                "standard library modules cannot participate in project partitions"_str);
+            return Err(ModuleError::Graph(
+                "standard library modules cannot participate in project partitions"_Str));
         }
         const auto& primary_affiliation =
             package.package->targets[*primary_target].module_affiliation;
@@ -950,17 +937,16 @@ auto resolve_semantic_build(const PackagePlan&           package,
             (primary_affiliation.is_none() || partition_affiliation.is_none() ||
              ! module_name_belongs(primary_affiliation->as_str(), primary_name) ||
              ! module_name_belongs(partition_affiliation->as_str(), primary_name))) {
-            return graph_failure<ResolvedSemanticBuildGraph>(
-                rstd::format("partition '{}' has primary module '{}' with a "
-                             "different named-module affiliation",
-                             provided.logical_name.as_str(),
-                             primary_name));
+            return Err(
+                ModuleError::Graph(rstd::format("partition '{}' has primary module '{}' with a "
+                                                "different named-module affiliation",
+                                                provided.logical_name.as_str(),
+                                                primary_name)));
         }
         const auto& primary_context   = *units[*primary_provider].unit.context;
         const auto& partition_context = *units[scan.unit].unit.context;
         if (! primary_context.language.is_Cpp() || ! partition_context.language.is_Cpp()) {
-            return graph_failure<ResolvedSemanticBuildGraph>(
-                "C source unexpectedly provided a C++ module"_str);
+            return Err(ModuleError::Graph("C source unexpectedly provided a C++ module"_Str));
         }
         const auto& primary_cpp   = primary_context.language.as_Cpp();
         const auto& partition_cpp = partition_context.language.as_Cpp();
@@ -971,14 +957,14 @@ auto resolve_semantic_build(const PackagePlan&           package,
                                                             partition_cpp.options);
         if (! compatibility.compatible()) {
             const auto& difference = compatibility.differences[usize {}];
-            return graph_failure<ResolvedSemanticBuildGraph>(
+            return Err(ModuleError::Graph(
                 rstd::format("partition '{}' and primary module '{}' have incompatible {}: "
                              "primary '{}', partition '{}'",
                              provided.logical_name.as_str(),
                              primary_name,
                              difference.field,
                              difference.provider.as_str(),
-                             difference.consumer.as_str()));
+                             difference.consumer.as_str())));
         }
     }
 
@@ -1003,17 +989,17 @@ auto resolve_semantic_build(const PackagePlan&           package,
             if (importer_target.is_some() && provider_target.is_some() &&
                 (*importer_target >= package.visible_targets.len() ||
                  ! contains_target(package.visible_targets[*importer_target], *provider_target))) {
-                return graph_failure<ResolvedSemanticBuildGraph>(
+                return Err(ModuleError::Graph(
                     rstd::format("module '{}' from target '{}' is not visible to target '{}'",
                                  required.logical_name.as_str(),
                                  package.package->targets[*provider_target].id.name.as_str(),
-                                 package.package->targets[*importer_target].id.name.as_str()));
+                                 package.package->targets[*importer_target].id.name.as_str())));
             }
             const auto& provider_context = *units[provider_unit].unit.context;
             const auto& importer_context = *units[scan.unit].unit.context;
             if (! provider_context.language.is_Cpp() || ! importer_context.language.is_Cpp()) {
-                return graph_failure<ResolvedSemanticBuildGraph>(
-                    "C source unexpectedly participated in the C++ module graph"_str);
+                return Err(ModuleError::Graph(
+                    "C source unexpectedly participated in the C++ module graph"_Str));
             }
             const auto& provider_cpp  = provider_context.language.as_Cpp();
             const auto& importer_cpp  = importer_context.language.as_Cpp();
@@ -1024,14 +1010,14 @@ auto resolve_semantic_build(const PackagePlan&           package,
                                                                 importer_cpp.options);
             if (! compatibility.compatible()) {
                 const auto& difference = compatibility.differences[usize {}];
-                return graph_failure<ResolvedSemanticBuildGraph>(
+                return Err(ModuleError::Graph(
                     rstd::format("module '{}' imported by '{}' has incompatible {}: provider '{}', "
                                  "consumer '{}'",
                                  required.logical_name.as_str(),
                                  units[scan.unit].unit.source.as_path(),
                                  difference.field,
                                  difference.provider.as_str(),
-                                 difference.consumer.as_str()));
+                                 difference.consumer.as_str())));
             }
             if (names.contains_key(required.logical_name.as_str())) continue;
             names.insert(required.logical_name.clone(), empty {});
@@ -1125,12 +1111,12 @@ auto resolve_semantic_build(const PackagePlan&           package,
                 contains_unit(public_target_units[*importer_target], scan.unit) &&
                 *importer_target != *provider_target &&
                 ! contains_target(package.public_targets[*importer_target], *provider_target)) {
-                return graph_failure<ResolvedSemanticBuildGraph>(rstd::format(
+                return Err(ModuleError::Graph(rstd::format(
                     "module '{}' export-imports module '{}' from target '{}', but that target is "
                     "not a public dependency",
                     facts.provided->logical_name.as_str(),
                     required.logical_name.as_str(),
-                    package.package->targets[*provider_target].id.name.as_str()));
+                    package.package->targets[*provider_target].id.name.as_str())));
             }
             if (directly_visible(package, *importer_target, *provider_target) ||
                 publicly_reexported(
@@ -1142,12 +1128,12 @@ auto resolve_semantic_build(const PackagePlan&           package,
                 contains_target(package.visible_targets[*importer_target], *provider_target)) {
                 continue;
             }
-            return graph_failure<ResolvedSemanticBuildGraph>(rstd::format(
+            return Err(ModuleError::Graph(rstd::format(
                 "module '{}' from target '{}' is not directly visible or re-exported to target "
                 "'{}'",
                 required.logical_name.as_str(),
                 package.package->targets[*provider_target].id.name.as_str(),
-                package.package->targets[*importer_target].id.name.as_str()));
+                package.package->targets[*importer_target].id.name.as_str())));
         }
     }
 

@@ -19,23 +19,11 @@ using StringMap = rstd::collections::BTreeMap<String, String>;
 namespace lito
 {
 
-template<typename T>
-auto discovery_failure(String message) -> cpp::SourceDiscoveryResult<T> {
-    return Err(cpp::SourceDiscoveryError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto discovery_io_failure(ref<str>               operation,
-                          ref<rstd::path::Path>  path,
-                          rstd::io::error::Error source) -> cpp::SourceDiscoveryResult<T> {
-    return Err(cpp::SourceDiscoveryError::Io(
-        String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto path_text(ref<rstd::path::Path> path) -> cpp::SourceDiscoveryResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return discovery_failure<String>(rstd::format("source path '{}' is not valid UTF-8", path));
+        return Err(cpp::SourceDiscoveryError::Message(
+            rstd::format("source path '{}' is not valid UTF-8", path)));
     }
     return Ok(String::make(*text));
 }
@@ -52,29 +40,31 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root,
     auto requested = PathBuf::from(source_root).join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return discovery_io_failure<cpp::ResolvedSource>(
-            "resolve declared"_str, requested.as_path(), rstd::move(canonical).unwrap_err());
+        return Err(cpp::SourceDiscoveryError::Io("resolve declared"_Str,
+                                                 PathBuf::from(requested.as_path()),
+                                                 rstd::move(canonical).unwrap_err()));
     }
     auto resolved = rstd::move(canonical).unwrap();
     auto relative = resolved.as_path().strip_prefix(source_root);
     if (relative.is_none() || (*relative).is_empty()) {
-        return discovery_failure<cpp::ResolvedSource>(
+        return Err(cpp::SourceDiscoveryError::Message(
             rstd::format("declared source '{}' resolves outside package source root '{}'",
                          declared,
-                         source_root));
+                         source_root)));
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
-        return discovery_io_failure<cpp::ResolvedSource>(
-            "inspect declared"_str, resolved.as_path(), rstd::move(metadata).unwrap_err());
+        return Err(cpp::SourceDiscoveryError::Io("inspect declared"_Str,
+                                                 PathBuf::from(resolved.as_path()),
+                                                 rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file()) {
-        return discovery_failure<cpp::ResolvedSource>(
-            rstd::format("declared source '{}' is not a file", declared));
+        return Err(cpp::SourceDiscoveryError::Message(
+            rstd::format("declared source '{}' is not a file", declared)));
     }
     if (extension_required && ! lito::manifest::supported_manifest_source(resolved.as_path())) {
-        return discovery_failure<cpp::ResolvedSource>(
-            rstd::format("unsupported source extension: {}", declared));
+        return Err(cpp::SourceDiscoveryError::Message(
+            rstd::format("unsupported source extension: {}", declared)));
     }
     const auto dialect = lito::manifest::objective_cpp_manifest_source(resolved.as_path())
                              ? cpp::CppSourceDialect::ObjectiveCpp
@@ -94,21 +84,21 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
                               Vec<SourceEntry>&     entries) -> cpp::SourceDiscoveryResult<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return discovery_io_failure<empty>(
-            "enumerate"_str, directory, rstd::move(opened).unwrap_err());
+        return Err(cpp::SourceDiscoveryError::Io(
+            "enumerate"_Str, PathBuf::from(directory), rstd::move(opened).unwrap_err()));
     }
     auto stream = rstd::move(opened).unwrap();
     for (auto item : stream) {
         if (item.is_err()) {
-            return discovery_io_failure<empty>(
-                "enumerate"_str, directory, rstd::move(item).unwrap_err());
+            return Err(cpp::SourceDiscoveryError::Io(
+                "enumerate"_Str, PathBuf::from(directory), rstd::move(item).unwrap_err()));
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
             auto path = entry.path();
-            return discovery_io_failure<empty>(
-                "inspect entry"_str, path.as_path(), rstd::move(type).unwrap_err());
+            return Err(cpp::SourceDiscoveryError::Io(
+                "inspect entry"_Str, PathBuf::from(path.as_path()), rstd::move(type).unwrap_err()));
         }
         auto path = entry.path();
         if (type->is_dir()) {
@@ -120,14 +110,15 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
             continue;
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return discovery_io_failure<empty>(
-                "resolve candidate"_str, path.as_path(), rstd::move(canonical).unwrap_err());
+            return Err(cpp::SourceDiscoveryError::Io("resolve candidate"_Str,
+                                                     PathBuf::from(path.as_path()),
+                                                     rstd::move(canonical).unwrap_err()));
         }
         auto resolved = rstd::move(canonical).unwrap();
         auto relative = resolved.as_path().strip_prefix(source_root);
         if (relative.is_none() || (*relative).is_empty()) {
-            return discovery_failure<empty>(rstd::format(
-                "source candidate '{}' resolves outside package root", path.as_path()));
+            return Err(cpp::SourceDiscoveryError::Message(rstd::format(
+                "source candidate '{}' resolves outside package root", path.as_path())));
         }
         auto key = path_text(*relative);
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
@@ -181,8 +172,8 @@ struct DiscoveryCandidate {
 auto source_key(ref<rstd::path::Path> path) -> cpp::SourceDiscoveryResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return discovery_failure<String>(
-            rstd::format("module source '{}' is not valid UTF-8", path));
+        return Err(cpp::SourceDiscoveryError::Message(
+            rstd::format("module source '{}' is not valid UTF-8", path)));
     }
     return Ok(String::make(*text));
 }
@@ -201,18 +192,19 @@ auto enqueue_candidate(cpp::TargetId            target,
         auto existing_name = path_names.get(path.as_str());
         if (existing_name.is_some() &&
             (**existing_name).as_str() != source.expected_module->as_str()) {
-            return discovery_failure<empty>(
+            return Err(cpp::SourceDiscoveryError::Message(
                 rstd::format("module convention maps both '{}' and '{}' to '{}'",
                              (**existing_name).as_str(),
                              source.expected_module->as_str(),
-                             source.canonical_path.as_path()));
+                             source.canonical_path.as_path())));
         }
         auto existing_path = name_paths.get(source.expected_module->as_str());
         if (existing_path.is_some() && (**existing_path).as_str() != path.as_str()) {
-            return discovery_failure<empty>(rstd::format("module '{}' maps to both '{}' and '{}'",
-                                                         source.expected_module->as_str(),
-                                                         (**existing_path).as_str(),
-                                                         path.as_str()));
+            return Err(cpp::SourceDiscoveryError::Message(
+                rstd::format("module '{}' maps to both '{}' and '{}'",
+                             source.expected_module->as_str(),
+                             (**existing_path).as_str(),
+                             path.as_str())));
         }
         path_names.insert(path.clone(), source.expected_module->clone());
         name_paths.insert(source.expected_module->clone(), path.clone());
@@ -407,12 +399,12 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
                 ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
                 : lito::manifest::cpp_manifest_source(source.canonical_path.as_path());
         if (! language_matches) {
-            return discovery_failure<empty>(
+            return Err(cpp::SourceDiscoveryError::Message(
                 rstd::format("target '{}::{}' is a {} target and cannot compile source '{}'",
                              target.id.package.as_str(),
                              target.id.name.as_str(),
                              lito::manifest::package_language_name(target.language),
-                             source.canonical_path.as_path()));
+                             source.canonical_path.as_path())));
         }
         auto key = path_text(source.canonical_path.as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
@@ -420,13 +412,13 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
         auto owner      = group.is_empty() ? "target sources"_str : group;
         auto first      = owners.get(source_key.as_str());
         if (first.is_some()) {
-            return discovery_failure<empty>(rstd::format(
+            return Err(cpp::SourceDiscoveryError::Message(rstd::format(
                 "target '{}::{}' source groups '{}' and '{}' repeat physical source '{}'",
                 target.id.package.as_str(),
                 target.id.name.as_str(),
                 (**first).as_str(),
                 owner,
-                source.canonical_path.as_path()));
+                source.canonical_path.as_path())));
         }
         if (! group.is_empty()) {
             auto virtual_root = PathBuf::from("source-groups"_str);
@@ -580,8 +572,8 @@ auto resolve_source_target(const cpp::PackageMetadata&          package,
         for (const auto& candidate : discovered->sources) {
             if (candidate.canonical_path.as_path() != source) continue;
             if (exact.is_some() && *exact != target) {
-                return discovery_failure<cpp::TargetId>(
-                    rstd::format("source '{}' belongs to multiple selected targets", source));
+                return Err(cpp::SourceDiscoveryError::Message(
+                    rstd::format("source '{}' belongs to multiple selected targets", source)));
             }
             exact = Some(target);
         }
@@ -596,8 +588,8 @@ auto resolve_source_target(const cpp::PackageMetadata&          package,
         if (source.strip_prefix(root).is_none()) continue;
         auto root_length = root.as_os_str().as_encoded_bytes().len();
         if (selected.is_some() && root_length == selected_root_length) {
-            return discovery_failure<cpp::TargetId>(
-                rstd::format("source '{}' belongs to multiple selected targets", source));
+            return Err(cpp::SourceDiscoveryError::Message(
+                rstd::format("source '{}' belongs to multiple selected targets", source)));
         }
         if (selected.is_none() || root_length > selected_root_length) {
             selected             = Some(target);
@@ -605,15 +597,15 @@ auto resolve_source_target(const cpp::PackageMetadata&          package,
         }
     }
     if (selected.is_none()) {
-        return discovery_failure<cpp::TargetId>(
-            rstd::format("source '{}' is outside the selected package targets", source));
+        return Err(cpp::SourceDiscoveryError::Message(
+            rstd::format("source '{}' is outside the selected package targets", source)));
     }
     auto relative = source.strip_prefix(package.targets[*selected].source_root.as_path());
     if (relative.is_none() || relative->is_empty()) {
-        return discovery_failure<cpp::TargetId>(rstd::format(
+        return Err(cpp::SourceDiscoveryError::Message(rstd::format(
             "source '{}' does not name a file inside target '{}'",
             source,
-            lito::package::package_target_id_text(package.targets[*selected].id).as_str()));
+            lito::package::package_target_id_text(package.targets[*selected].id).as_str())));
     }
     return Ok(*selected);
 }
@@ -931,9 +923,9 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                         : nullptr;
             if (candidate.source.module_context_required &&
                 (cpp_facts == nullptr || cpp_facts->provided.is_none())) {
-                auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
+                auto failed = Err(cpp::SourceDiscoveryError::Message(
                     rstd::format("runnable module entry '{}' must declare a module",
-                                 candidate.source.canonical_path.as_path()));
+                                 candidate.source.canonical_path.as_path())));
                 return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
             }
             if (candidate.source.expected_module.is_some()) {
@@ -943,19 +935,19 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                     auto actual = cpp_facts != nullptr && cpp_facts->provided.is_some()
                                       ? cpp_facts->provided->logical_name.as_str()
                                       : "<none>"_str;
-                    auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
+                    auto failed = Err(cpp::SourceDiscoveryError::Message(
                         rstd::format("module convention expected '{}' to provide '{}', but "
                                      "native preprocessing reported '{}'",
                                      candidate.source.canonical_path.as_path(),
                                      candidate.source.expected_module->as_str(),
-                                     actual));
+                                     actual)));
                     return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
                 if (candidate.source.expected_module->as_str() == target.source.module->as_str() &&
                     ! cpp_facts->provided->is_interface) {
-                    auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
+                    auto failed = Err(cpp::SourceDiscoveryError::Message(
                         rstd::format("primary module source '{}' is not an interface",
-                                     candidate.source.canonical_path.as_path()));
+                                     candidate.source.canonical_path.as_path())));
                     return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
             }

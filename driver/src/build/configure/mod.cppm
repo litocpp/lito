@@ -32,8 +32,8 @@ public:
         for (const auto& name : selected_packages) {
             auto source_root = find_package_root(metadata, name.as_str());
             if (source_root.is_none()) {
-                return build_script_failure<ConfigureSession>(rstd::format(
-                    "selected build-script package '{}' has no package root", name.as_str()));
+                return Err(BuildScriptError::Message(rstd::format(
+                    "selected build-script package '{}' has no package root", name.as_str())));
             }
             auto generated = rstd_try(layout.create_generated_package_directory(name.as_str()));
             packages.push(ConfigurePackage {
@@ -71,8 +71,8 @@ public:
             }
         }
         if (owner == nullptr) {
-            return build_script_failure<ConfigureOutcome>(
-                rstd::format("package '{}' is not a selected root package", package_name));
+            return Err(BuildScriptError::Message(
+                rstd::format("package '{}' is not a selected root package", package_name)));
         }
 
         auto input_relative =
@@ -81,33 +81,31 @@ public:
         auto input_requested = owner->source_root.join(input_relative->as_path());
         auto input           = rstd::fs::canonicalize(input_requested.as_path());
         if (input.is_err()) {
-            return build_script_io_failure<ConfigureOutcome>("resolve configure_file input"_str,
-                                                             input_requested.as_path(),
-                                                             rstd::move(input).unwrap_err());
+            return Err(BuildScriptError::Io("resolve configure_file input"_Str,
+                                            PathBuf::from(input_requested.as_path()),
+                                            rstd::move(input).unwrap_err()));
         }
         if (input->as_path().strip_prefix(owner->source_root.as_path()).is_none()) {
-            return build_script_failure<ConfigureOutcome>(
+            return Err(BuildScriptError::Message(
                 rstd::format("configure_file input '{}' escapes package '{}'",
                              input_requested.as_path(),
-                             package_name));
+                             package_name)));
         }
         auto input_metadata = rstd::fs::metadata(input->as_path());
         if (input_metadata.is_err()) {
-            return build_script_io_failure<ConfigureOutcome>(
-                "inspect configure_file input"_str,
-                input->as_path(),
-                rstd::move(input_metadata).unwrap_err());
+            return Err(BuildScriptError::Io("inspect configure_file input"_Str,
+                                            PathBuf::from(input->as_path()),
+                                            rstd::move(input_metadata).unwrap_err()));
         }
         if (! input_metadata->is_file()) {
-            return build_script_failure<ConfigureOutcome>(
-                rstd::format("configure_file input '{}' is not a regular file", input->as_path()));
+            return Err(BuildScriptError::Message(
+                rstd::format("configure_file input '{}' is not a regular file", input->as_path())));
         }
         auto template_text = rstd::fs::read_to_string(input->as_path());
         if (template_text.is_err()) {
-            return build_script_io_failure<ConfigureOutcome>(
-                "read configure_file input"_str,
-                input->as_path(),
-                rstd::move(template_text).unwrap_err());
+            return Err(BuildScriptError::Io("read configure_file input"_Str,
+                                            PathBuf::from(input->as_path()),
+                                            rstd::move(template_text).unwrap_err()));
         }
         auto rendered =
             render_configure_template(template_text->as_str(), values, input->as_path());
@@ -120,50 +118,47 @@ public:
         auto requested = owner->generated_root.join(output_relative->as_path());
         auto parent    = requested.as_path().parent();
         if (parent.is_none()) {
-            return build_script_failure<ConfigureOutcome>(
-                "configure_file output has no parent"_str);
+            return Err(BuildScriptError::Message("configure_file output has no parent"_Str));
         }
         auto parent_created = rstd::fs::create_dir_all(*parent);
         if (parent_created.is_err()) {
-            return build_script_io_failure<ConfigureOutcome>(
-                "create configure_file output parent"_str,
-                *parent,
-                rstd::move(parent_created).unwrap_err());
+            return Err(BuildScriptError::Io("create configure_file output parent"_Str,
+                                            PathBuf::from(*parent),
+                                            rstd::move(parent_created).unwrap_err()));
         }
         auto canonical_parent = rstd::fs::canonicalize(*parent);
         if (canonical_parent.is_err()) {
-            return build_script_io_failure<ConfigureOutcome>(
-                "resolve configure_file output parent"_str,
-                *parent,
-                rstd::move(canonical_parent).unwrap_err());
+            return Err(BuildScriptError::Io("resolve configure_file output parent"_Str,
+                                            PathBuf::from(*parent),
+                                            rstd::move(canonical_parent).unwrap_err()));
         }
         if (canonical_parent->as_path().strip_prefix(owner->generated_root.as_path()).is_none()) {
-            return build_script_failure<ConfigureOutcome>(rstd::format(
-                "configure_file output '{}' escapes generated package root", requested.as_path()));
+            return Err(BuildScriptError::Message(rstd::format(
+                "configure_file output '{}' escapes generated package root", requested.as_path())));
         }
         auto file_name = requested.as_path().file_name();
         if (file_name.is_none()) {
-            return build_script_failure<ConfigureOutcome>(
-                "configure_file output has no file name"_str);
+            return Err(BuildScriptError::Message("configure_file output has no file name"_Str));
         }
         auto output   = canonical_parent->join(PathBuf::from(*file_name).as_path());
         auto existing = rstd::fs::symlink_metadata(output.as_path());
         if (existing.is_ok() && (! existing->is_file() || existing->is_symlink())) {
-            return build_script_failure<ConfigureOutcome>(rstd::format(
-                "configure_file output '{}' is not a regular non-symlink file", output.as_path()));
+            return Err(BuildScriptError::Message(rstd::format(
+                "configure_file output '{}' is not a regular non-symlink file", output.as_path())));
         }
         if (existing.is_err()) {
             auto error = rstd::move(existing).unwrap_err();
             if (error.kind() !=
                 rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
-                return build_script_io_failure<ConfigureOutcome>(
-                    "inspect configure_file output"_str, output.as_path(), rstd::move(error));
+                return Err(BuildScriptError::Io("inspect configure_file output"_Str,
+                                                PathBuf::from(output.as_path()),
+                                                rstd::move(error)));
             }
         }
         for (const auto& claimed : claimed_) {
             if (claimed.as_path() == output.as_path()) {
-                return build_script_failure<ConfigureOutcome>(rstd::format(
-                    "configure_file output '{}' is claimed more than once", output.as_path()));
+                return Err(BuildScriptError::Message(rstd::format(
+                    "configure_file output '{}' is claimed more than once", output.as_path())));
             }
         }
         rstd_try(output_registry_->claim(
@@ -172,9 +167,9 @@ public:
         auto written =
             rstd::fs::write_atomic_if_changed(output.as_path(), rendered->as_str().as_bytes());
         if (written.is_err()) {
-            return build_script_io_failure<ConfigureOutcome>("write configure_file output"_str,
-                                                             output.as_path(),
-                                                             rstd::move(written).unwrap_err());
+            return Err(BuildScriptError::Io("write configure_file output"_Str,
+                                            PathBuf::from(output.as_path()),
+                                            rstd::move(written).unwrap_err()));
         }
         claimed_.push(output.clone());
         current_.push(OwnedOutput {
@@ -218,39 +213,37 @@ public:
                     rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
                     continue;
                 }
-                return build_script_io_failure<BuildScriptReport>(
-                    "inspect stale configure output"_str, requested.as_path(), rstd::move(error));
+                return Err(BuildScriptError::Io("inspect stale configure output"_Str,
+                                                PathBuf::from(requested.as_path()),
+                                                rstd::move(error)));
             }
             auto parent = requested.as_path().parent();
             if (parent.is_none()) {
-                return build_script_failure<BuildScriptReport>(
-                    "stale configure output has no parent"_str);
+                return Err(BuildScriptError::Message("stale configure output has no parent"_Str));
             }
             auto canonical_parent = rstd::fs::canonicalize(*parent);
             if (canonical_parent.is_err()) {
-                return build_script_io_failure<BuildScriptReport>(
-                    "resolve stale configure output parent"_str,
-                    *parent,
-                    rstd::move(canonical_parent).unwrap_err());
+                return Err(BuildScriptError::Io("resolve stale configure output parent"_Str,
+                                                PathBuf::from(*parent),
+                                                rstd::move(canonical_parent).unwrap_err()));
             }
             if (canonical_parent->as_path()
                     .strip_prefix(owner->generated_root.as_path())
                     .is_none()) {
-                return build_script_failure<BuildScriptReport>(
+                return Err(BuildScriptError::Message(
                     rstd::format("stale configure output '{}' escapes generated package root",
-                                 requested.as_path()));
+                                 requested.as_path())));
             }
             if (! metadata->is_file() || metadata->is_symlink()) {
-                return build_script_failure<BuildScriptReport>(
+                return Err(BuildScriptError::Message(
                     rstd::format("stale configure output '{}' is not an owned regular file",
-                                 requested.as_path()));
+                                 requested.as_path())));
             }
             auto removed = rstd::fs::remove_file(requested.as_path());
             if (removed.is_err()) {
-                return build_script_io_failure<BuildScriptReport>(
-                    "remove stale configure output"_str,
-                    requested.as_path(),
-                    rstd::move(removed).unwrap_err());
+                return Err(BuildScriptError::Io("remove stale configure output"_Str,
+                                                PathBuf::from(requested.as_path()),
+                                                rstd::move(removed).unwrap_err()));
             }
             auto directory = rstd::move(canonical_parent).unwrap();
             while (directory.as_path() != owner->generated_root.as_path()) {
@@ -279,22 +272,20 @@ public:
             }
         }
         auto parent = receipt_.as_path().parent();
-        if (parent.is_none())
-            return build_script_failure<BuildScriptReport>("receipt has no parent"_str);
+        if (parent.is_none()) return Err(BuildScriptError::Message("receipt has no parent"_Str));
         auto created = rstd::fs::create_dir_all(*parent);
         if (created.is_err()) {
-            return build_script_io_failure<BuildScriptReport>(
-                "create configure receipt directory"_str,
-                *parent,
-                rstd::move(created).unwrap_err());
+            return Err(BuildScriptError::Io("create configure receipt directory"_Str,
+                                            PathBuf::from(*parent),
+                                            rstd::move(created).unwrap_err()));
         }
         auto text = encode_receipt(current_);
         auto written =
             rstd::fs::write_atomic_if_changed(receipt_.as_path(), text.as_str().as_bytes());
         if (written.is_err()) {
-            return build_script_io_failure<BuildScriptReport>("write configure receipt"_str,
-                                                              receipt_.as_path(),
-                                                              rstd::move(written).unwrap_err());
+            return Err(BuildScriptError::Io("write configure receipt"_Str,
+                                            PathBuf::from(receipt_.as_path()),
+                                            rstd::move(written).unwrap_err()));
         }
         return Ok(rstd::move(report_));
     }

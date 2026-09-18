@@ -56,8 +56,7 @@ private:
 using namespace lito::package;
 
 auto catalog_failure(ref<str> source, String message) -> luato::Result<luato::LuaModuleSource> {
-    return Err(
-        luato::Error::make(luato::ErrorKind::Module, String::make(source), rstd::move(message)));
+    return Err(luato::Error::make(luato::ErrorKind::Module, source.into(), rstd::move(message)));
 }
 
 auto source_tree_file(const lito::source::SourceTree& tree, ref<str> path) -> Option<slice<u8>> {

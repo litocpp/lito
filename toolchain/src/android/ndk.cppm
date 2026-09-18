@@ -296,37 +296,20 @@ struct Impl<error::Error, lito::AndroidNdkError> : ImplBase<lito::AndroidNdkErro
 namespace lito
 {
 
-template<typename T>
-auto android_failure(String message) -> AndroidNdkResult<T> {
-    return Err(AndroidNdkError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto android_failure(ref<str> message) -> AndroidNdkResult<T> {
-    return android_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto android_io_failure(ref<str>               operation,
-                        ref<rstd::path::Path>  path,
-                        rstd::io::error::Error source) -> AndroidNdkResult<T> {
-    return Err(
-        AndroidNdkError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto parse_decimal(ref<str> value, ref<str> context) -> AndroidNdkResult<u64> {
-    if (value.is_empty()) return android_failure<u64>(rstd::format("{} is empty", context));
+    if (value.is_empty())
+        return Err(AndroidNdkError::Message(rstd::format("{} is empty", context)));
     if (value.len() > usize(1) && value.as_bytes()[usize {}] == u8('0')) {
-        return android_failure<u64>(rstd::format("{} has a leading zero", context));
+        return Err(AndroidNdkError::Message(rstd::format("{} has a leading zero", context)));
     }
     auto result = u64 {};
     for (const auto byte : value.as_bytes()) {
         if (byte < u8('0') || byte > u8('9')) {
-            return android_failure<u64>(rstd::format("{} is not numeric", context));
+            return Err(AndroidNdkError::Message(rstd::format("{} is not numeric", context)));
         }
         const auto digit = u64((byte - u8('0')).to_primitive());
         if (result > (u64::MAX - digit) / u64(10)) {
-            return android_failure<u64>(rstd::format("{} is out of range", context));
+            return Err(AndroidNdkError::Message(rstd::format("{} is out of range", context)));
         }
         result = result * u64(10) + digit;
     }
@@ -354,8 +337,9 @@ auto property(ref<str> document, ref<str> key) -> Option<String> {
 auto read_text(ref<rstd::path::Path> path, ref<str> description) -> AndroidNdkResult<String> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return android_io_failure<String>(
-            rstd::format("read {}", description).as_str(), path, rstd::move(contents).unwrap_err());
+        return Err(AndroidNdkError::Io((rstd::format("read {}", description).as_str()).into(),
+                                       PathBuf::from(path),
+                                       rstd::move(contents).unwrap_err()));
     }
     return Ok(rstd::move(contents).unwrap());
 }
@@ -364,13 +348,13 @@ auto require_directory(ref<rstd::path::Path> path, ref<str> description)
     -> AndroidNdkResult<empty> {
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
-        return android_io_failure<empty>(rstd::format("inspect {}", description).as_str(),
-                                         path,
-                                         rstd::move(metadata).unwrap_err());
+        return Err(AndroidNdkError::Io((rstd::format("inspect {}", description).as_str()).into(),
+                                       PathBuf::from(path),
+                                       rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return android_failure<empty>(
-            rstd::format("{} '{}' is not a directory", description, path));
+        return Err(AndroidNdkError::Message(
+            rstd::format("{} '{}' is not a directory", description, path)));
     }
     return Ok(empty {});
 }
@@ -380,22 +364,23 @@ auto require_contained_file(ref<rstd::path::Path> root,
                             ref<str>              description) -> AndroidNdkResult<empty> {
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
-        return android_io_failure<empty>(rstd::format("inspect {}", description).as_str(),
-                                         path,
-                                         rstd::move(metadata).unwrap_err());
+        return Err(AndroidNdkError::Io((rstd::format("inspect {}", description).as_str()).into(),
+                                       PathBuf::from(path),
+                                       rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file()) {
-        return android_failure<empty>(rstd::format("{} '{}' is not a file", description, path));
+        return Err(
+            AndroidNdkError::Message(rstd::format("{} '{}' is not a file", description, path)));
     }
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
-        return android_io_failure<empty>(rstd::format("resolve {}", description).as_str(),
-                                         path,
-                                         rstd::move(canonical).unwrap_err());
+        return Err(AndroidNdkError::Io((rstd::format("resolve {}", description).as_str()).into(),
+                                       PathBuf::from(path),
+                                       rstd::move(canonical).unwrap_err()));
     }
     if (! canonical->as_path().starts_with(root)) {
-        return android_failure<empty>(
-            rstd::format("{} '{}' escapes Android NDK root '{}'", description, path, root));
+        return Err(AndroidNdkError::Message(
+            rstd::format("{} '{}' escapes Android NDK root '{}'", description, path, root)));
     }
     return Ok(empty {});
 }
@@ -404,13 +389,15 @@ auto append_file_identity(String& output, ref<str> label, ref<rstd::path::Path> 
     -> AndroidNdkResult<empty> {
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
-        return android_io_failure<empty>(
-            "inspect NDK identity file"_str, path, rstd::move(metadata).unwrap_err());
+        return Err(AndroidNdkError::Io("inspect NDK identity file"_Str,
+                                       PathBuf::from(path),
+                                       rstd::move(metadata).unwrap_err()));
     }
     auto modified = metadata->modified();
     if (modified.is_err()) {
-        return android_io_failure<empty>(
-            "read NDK identity file timestamp"_str, path, rstd::move(modified).unwrap_err());
+        return Err(AndroidNdkError::Io("read NDK identity file timestamp"_Str,
+                                       PathBuf::from(path),
+                                       rstd::move(modified).unwrap_err()));
     }
     auto timestamp = modified->as_unix_time();
     output.push_str(
@@ -423,7 +410,7 @@ auto append_file_identity(String& output, ref<str> label, ref<rstd::path::Path> 
 auto json_member(const Json& value, ref<str> key, ref<str> context) -> AndroidNdkResult<ref<Json>> {
     auto member = value.get(key);
     if (member.is_none()) {
-        return android_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
+        return Err(AndroidNdkError::Message(rstd::format("{} is missing '{}'", context, key)));
     }
     return Ok(*member);
 }
@@ -432,8 +419,8 @@ auto json_string(const Json& value, ref<str> key, ref<str> context) -> AndroidNd
     auto member = rstd_try(json_member(value, key, context));
     auto text   = member->as_str();
     if (text.is_none() || text->is_empty()) {
-        return android_failure<String>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
+        return Err(AndroidNdkError::Message(
+            rstd::format("{}.{} must be a non-empty string", context, key)));
     }
     return Ok(String::make(*text));
 }
@@ -442,7 +429,7 @@ auto json_bool(const Json& value, ref<str> key, ref<str> context) -> AndroidNdkR
     auto member = rstd_try(json_member(value, key, context));
     auto result = member->as_bool();
     if (result.is_none()) {
-        return android_failure<bool>(rstd::format("{}.{} must be a bool", context, key));
+        return Err(AndroidNdkError::Message(rstd::format("{}.{} must be a bool", context, key)));
     }
     return Ok(*result);
 }
@@ -451,8 +438,8 @@ auto json_u32(const Json& value, ref<str> key, ref<str> context) -> AndroidNdkRe
     auto member = rstd_try(json_member(value, key, context));
     auto result = member->as_u64();
     if (result.is_none() || *result > u64(u32::MAX.to_primitive())) {
-        return android_failure<u32>(
-            rstd::format("{}.{} must be a 32-bit unsigned integer", context, key));
+        return Err(AndroidNdkError::Message(
+            rstd::format("{}.{} must be a 32-bit unsigned integer", context, key)));
     }
     return Ok(u32(result->to_primitive()));
 }
@@ -465,15 +452,15 @@ auto parse_abis(ref<str> text, ref<rstd::path::Path> path) -> AndroidNdkResult<V
     auto document = rstd::move(parsed).unwrap();
     auto object   = document.as_object();
     if (object.is_none())
-        return android_failure<Vec<AndroidNdkAbi>>("NDK ABI metadata root must be an object"_str);
+        return Err(AndroidNdkError::Message("NDK ABI metadata root must be an object"_Str));
     auto result = Vec<AndroidNdkAbi>::make();
     auto keys   = (**object).keys();
     for (auto key : keys) {
         auto value   = document.get((*key).as_str());
         auto context = rstd::format("NDK ABI '{}'", (*key).as_str());
         if ((**value).as_object().is_none()) {
-            return android_failure<Vec<AndroidNdkAbi>>(
-                rstd::format("{} must be an object", context.as_str()));
+            return Err(
+                AndroidNdkError::Message(rstd::format("{} must be an object", context.as_str())));
         }
         result.push(AndroidNdkAbi {
             .name        = (*key).clone(),
@@ -484,8 +471,7 @@ auto parse_abis(ref<str> text, ref<rstd::path::Path> path) -> AndroidNdkResult<V
             .deprecated        = rstd_try(json_bool(**value, "deprecated"_str, context.as_str())),
         });
     }
-    if (result.is_empty())
-        return android_failure<Vec<AndroidNdkAbi>>("NDK ABI metadata is empty"_str);
+    if (result.is_empty()) return Err(AndroidNdkError::Message("NDK ABI metadata is empty"_Str));
     rstd::slice_::sort_unstable_by(result.as_mut_slice().as_mut_ref(),
                                    [](const AndroidNdkAbi& left, const AndroidNdkAbi& right) {
                                        return left.name < right.name;
@@ -501,14 +487,12 @@ auto parse_platforms(ref<str> text, ref<rstd::path::Path> path)
     }
     auto document = rstd::move(parsed).unwrap();
     if (document.as_object().is_none()) {
-        return android_failure<AndroidNdkPlatforms>(
-            "NDK platform metadata root must be an object"_str);
+        return Err(AndroidNdkError::Message("NDK platform metadata root must be an object"_Str));
     }
     auto minimum = rstd_try(json_u32(document, "min"_str, "NDK platform metadata"_str));
     auto maximum = rstd_try(json_u32(document, "max"_str, "NDK platform metadata"_str));
     if (minimum == u32 {} || minimum > maximum) {
-        return android_failure<AndroidNdkPlatforms>(
-            "NDK platform metadata has an invalid API range"_str);
+        return Err(AndroidNdkError::Message("NDK platform metadata has an invalid API range"_Str));
     }
     return Ok(AndroidNdkPlatforms { .minimum = minimum, .maximum = maximum });
 }
@@ -518,10 +502,10 @@ auto host_tag(const lito::system::HostInfo& host) -> AndroidNdkResult<String> {
         host.architecture == lito::system::Architecture::X86_64) {
         return Ok("linux-x86_64"_Str);
     }
-    return android_failure<String>(
-        rstd::format("Android NDK is not certified for host '{}-{}'",
-                     host.os.as_str(),
-                     lito::system::architecture_name(host.architecture)));
+    return Err(
+        AndroidNdkError::Message(rstd::format("Android NDK is not certified for host '{}-{}'",
+                                              host.os.as_str(),
+                                              lito::system::architecture_name(host.architecture))));
 }
 
 auto official_clang_prefix(ref<str> abi) -> Option<ref<str>> {
@@ -540,17 +524,17 @@ export namespace lito
 auto parse_android_ndk_revision(ref<str> value) -> AndroidNdkResult<AndroidNdkRevision> {
     auto first = value.split_once("."_str);
     if (first.is_none()) {
-        return android_failure<AndroidNdkRevision>(
-            rstd::format("Android NDK revision '{}' must have three numeric components", value));
+        return Err(AndroidNdkError::Message(
+            rstd::format("Android NDK revision '{}' must have three numeric components", value)));
     }
     auto second = first->get<1>().split_once("."_str);
     if (second.is_none()) {
-        return android_failure<AndroidNdkRevision>(
-            rstd::format("Android NDK revision '{}' must have three numeric components", value));
+        return Err(AndroidNdkError::Message(
+            rstd::format("Android NDK revision '{}' must have three numeric components", value)));
     }
     if (second->get<1>().contains("."_str)) {
-        return android_failure<AndroidNdkRevision>(
-            rstd::format("Android NDK revision '{}' must have three numeric components", value));
+        return Err(AndroidNdkError::Message(
+            rstd::format("Android NDK revision '{}' must have three numeric components", value)));
     }
     return Ok(AndroidNdkRevision {
         .major = rstd_try(parse_decimal(first->get<0>(), "Android NDK major revision"_str)),
@@ -564,8 +548,9 @@ auto open_android_ndk(ref<rstd::path::Path> root, const lito::system::HostInfo& 
     -> AndroidNdkResult<AndroidNdkDistribution> {
     auto canonical = rstd::fs::canonicalize(root);
     if (canonical.is_err()) {
-        return android_io_failure<AndroidNdkDistribution>(
-            "resolve Android NDK root"_str, root, rstd::move(canonical).unwrap_err());
+        return Err(AndroidNdkError::Io("resolve Android NDK root"_Str,
+                                       PathBuf::from(root),
+                                       rstd::move(canonical).unwrap_err()));
     }
     rstd_try(require_directory(canonical->as_path(), "Android NDK root"_str));
     auto source_properties = canonical->join(PathBuf::from("source.properties"_str).as_path());
@@ -578,8 +563,8 @@ auto open_android_ndk(ref<rstd::path::Path> root, const lito::system::HostInfo& 
         rstd_try(read_text(platforms_path.as_path(), "NDK platform metadata"_str));
     auto revision_text = property(source_text.as_str(), "Pkg.Revision"_str);
     if (revision_text.is_none()) {
-        return android_failure<AndroidNdkDistribution>(
-            "Android NDK source.properties is missing Pkg.Revision"_str);
+        return Err(
+            AndroidNdkError::Message("Android NDK source.properties is missing Pkg.Revision"_Str));
     }
     auto release_name = property(source_text.as_str(), "Pkg.ReleaseName"_str);
     if (release_name.is_none()) release_name = Some("unknown"_Str);
@@ -647,30 +632,30 @@ auto resolve_android_target(const AndroidNdkDistribution&             distributi
     -> AndroidNdkResult<ResolvedAndroidTarget> {
     auto prefix = official_clang_prefix(request.abi.as_str());
     if (prefix.is_none()) {
-        return android_failure<ResolvedAndroidTarget>(rstd::format(
+        return Err(AndroidNdkError::Message(rstd::format(
             "Android ABI '{}' is not supported; expected armeabi-v7a, arm64-v8a, x86, or x86_64",
-            request.abi.as_str()));
+            request.abi.as_str())));
     }
     const AndroidNdkAbi* metadata = nullptr;
     for (const auto& abi : distribution.abis()) {
         if (abi.name == request.abi.as_str()) metadata = rstd::addressof(abi);
     }
     if (metadata == nullptr || ! metadata->default_supported || metadata->deprecated) {
-        return android_failure<ResolvedAndroidTarget>(
-            rstd::format("Android ABI '{}' is not enabled by NDK {}",
-                         request.abi.as_str(),
-                         distribution.revision().text.as_str()));
+        return Err(
+            AndroidNdkError::Message(rstd::format("Android ABI '{}' is not enabled by NDK {}",
+                                                  request.abi.as_str(),
+                                                  distribution.revision().text.as_str())));
     }
     auto minimum = distribution.platforms().minimum;
     if (metadata->minimum_api > minimum) minimum = metadata->minimum_api;
     if (request.minimum_api < minimum || request.minimum_api > distribution.platforms().maximum) {
-        return android_failure<ResolvedAndroidTarget>(
+        return Err(AndroidNdkError::Message(
             rstd::format("Android ABI '{}' API {} is outside NDK {} supported range {}..{}",
                          request.abi.as_str(),
                          request.minimum_api,
                          distribution.revision().text.as_str(),
                          minimum,
-                         distribution.platforms().maximum));
+                         distribution.platforms().maximum)));
     }
     auto clang_target = rstd::format("{}{}", *prefix, request.minimum_api);
     auto target_info  = lito::system::parse_target_info(clang_target.as_str());

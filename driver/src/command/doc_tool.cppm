@@ -30,16 +30,6 @@ namespace lito
 inline constexpr auto LITODOC_REPOSITORY = "https://github.com/litocpp/litodoc.git"_str;
 inline constexpr auto LITODOC_COMMIT     = "c5ed1284fd371fa66eba1027551d4fd951358811"_str;
 
-template<typename T>
-auto doc_tool_failure(String message) -> DocResult<T> {
-    return Err(DocError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto doc_tool_failure(ref<str> message) -> DocResult<T> {
-    return doc_tool_failure<T>(String::make(message));
-}
-
 auto json_protocol_contains(const Json& value, ref<str> key, u64 expected) -> bool {
     auto member = value.get(key);
     if (member.is_none() || (**member).as_array().is_none()) return false;
@@ -109,8 +99,8 @@ auto probe_doc_tool(ref<rstd::path::Path>             executable,
     -> DocResult<DocToolCapabilities> {
     auto executable_text = executable.to_str();
     if (executable_text.is_none()) {
-        return doc_tool_failure<DocToolCapabilities>(
-            rstd::format("litodoc executable '{}' is not valid UTF-8", executable));
+        return Err(DocError::Message(
+            rstd::format("litodoc executable '{}' is not valid UTF-8", executable)));
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable_text));
@@ -172,13 +162,15 @@ auto create_doc_tool_root(ref<str> key) -> DocResult<PathBuf> {
                        .join(PathBuf::from(key).as_path());
     auto created = rstd::fs::create_dir_all(root.as_path());
     if (created.is_err()) {
-        return Err(doc_io_failure(
-            "create litodoc tool cache"_str, root.as_path(), rstd::move(created).unwrap_err()));
+        return Err(DocError::Io("create litodoc tool cache"_Str,
+                                rstd::path::PathBuf::from(root.as_path()),
+                                rstd::move(created).unwrap_err()));
     }
     auto canonical = rstd::fs::canonicalize(root.as_path());
     if (canonical.is_err()) {
-        return Err(doc_io_failure(
-            "resolve litodoc tool cache"_str, root.as_path(), rstd::move(canonical).unwrap_err()));
+        return Err(DocError::Io("resolve litodoc tool cache"_Str,
+                                rstd::path::PathBuf::from(root.as_path()),
+                                rstd::move(canonical).unwrap_err()));
     }
     return Ok(rstd::move(canonical).unwrap());
 }
@@ -188,14 +180,16 @@ auto acquire_doc_tool_lock(ref<rstd::path::Path> root) -> DocResult<rstd::fs::Fi
     auto opened =
         rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(path.as_path());
     if (opened.is_err()) {
-        return Err(doc_io_failure(
-            "open litodoc tool lock"_str, path.as_path(), rstd::move(opened).unwrap_err()));
+        return Err(DocError::Io("open litodoc tool lock"_Str,
+                                rstd::path::PathBuf::from(path.as_path()),
+                                rstd::move(opened).unwrap_err()));
     }
     auto locked =
         rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return Err(doc_io_failure(
-            "lock litodoc tool cache"_str, path.as_path(), rstd::move(locked).unwrap_err()));
+        return Err(DocError::Io("lock litodoc tool cache"_Str,
+                                rstd::path::PathBuf::from(path.as_path()),
+                                rstd::move(locked).unwrap_err()));
     }
     return Ok(rstd::move(locked).unwrap());
 }
@@ -215,7 +209,9 @@ auto receipt_tool(ref<rstd::path::Path> receipt, ref<str> expected_key)
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(None());
         }
-        return Err(doc_io_failure("read litodoc tool receipt"_str, receipt, rstd::move(error)));
+        return Err(DocError::Io("read litodoc tool receipt"_Str,
+                                rstd::path::PathBuf::from(receipt),
+                                rstd::move(error)));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) return Ok(None());
@@ -253,8 +249,8 @@ auto write_tool_receipt(ref<rstd::path::Path>      path,
                         const DocToolCapabilities& capabilities) -> DocResult<empty> {
     auto executable_text = executable.to_str();
     if (executable_text.is_none()) {
-        return doc_tool_failure<empty>(
-            rstd::format("litodoc executable '{}' is not valid UTF-8", executable));
+        return Err(DocError::Message(
+            rstd::format("litodoc executable '{}' is not valid UTF-8", executable)));
     }
     auto root = JsonMap::make();
     root.insert("format"_Str, Json::String("lito-doc-tool"_Str));
@@ -269,8 +265,9 @@ auto write_tool_receipt(ref<rstd::path::Path>      path,
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     auto written = rstd::fs::write_atomic(path, text.as_str().as_bytes());
     if (written.is_err()) {
-        return Err(doc_io_failure(
-            "write litodoc tool receipt"_str, path, rstd::move(written).unwrap_err()));
+        return Err(DocError::Io("write litodoc tool receipt"_Str,
+                                rstd::path::PathBuf::from(path),
+                                rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -285,8 +282,9 @@ auto append_unique_path(Vec<PathBuf>& paths, ref<rstd::path::Path> path) -> void
 auto doc_tool_file_digest(ref<rstd::path::Path> path) -> DocResult<String> {
     auto opened = rstd::fs::File::open(path);
     if (opened.is_err()) {
-        return Err(
-            doc_io_failure("open litodoc executable"_str, path, rstd::move(opened).unwrap_err()));
+        return Err(DocError::Io("open litodoc executable"_Str,
+                                rstd::path::PathBuf::from(path),
+                                rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
     auto state  = licrypto::Sha256::make();
@@ -294,8 +292,9 @@ auto doc_tool_file_digest(ref<rstd::path::Path> path) -> DocResult<String> {
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
         if (read.is_err()) {
-            return Err(
-                doc_io_failure("read litodoc executable"_str, path, rstd::move(read).unwrap_err()));
+            return Err(DocError::Io("read litodoc executable"_Str,
+                                    rstd::path::PathBuf::from(path),
+                                    rstd::move(read).unwrap_err()));
         }
         if (*read == usize {}) break;
         state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
@@ -313,13 +312,15 @@ auto copy_doc_tool_file(ref<rstd::path::Path> source, ref<rstd::path::Path> dest
     auto parent  = destination.parent().unwrap();
     auto created = rstd::fs::create_dir_all(parent);
     if (created.is_err()) {
-        return Err(doc_io_failure(
-            "create litodoc artifact directory"_str, parent, rstd::move(created).unwrap_err()));
+        return Err(DocError::Io("create litodoc artifact directory"_Str,
+                                rstd::path::PathBuf::from(parent),
+                                rstd::move(created).unwrap_err()));
     }
     auto copied = rstd::fs::copy(source, destination);
     if (copied.is_err()) {
-        return Err(doc_io_failure(
-            "copy litodoc artifact"_str, destination, rstd::move(copied).unwrap_err()));
+        return Err(DocError::Io("copy litodoc artifact"_Str,
+                                rstd::path::PathBuf::from(destination),
+                                rstd::move(copied).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -334,8 +335,9 @@ auto published_doc_tool(ref<rstd::path::Path> tool_root,
     auto final_executable = final.join(PathBuf::from("bin/litodoc"_str).as_path());
     auto exists           = rstd::fs::exists(final.as_path());
     if (exists.is_err()) {
-        return Err(doc_io_failure(
-            "inspect litodoc artifact"_str, final.as_path(), rstd::move(exists).unwrap_err()));
+        return Err(DocError::Io("inspect litodoc artifact"_Str,
+                                rstd::path::PathBuf::from(final.as_path()),
+                                rstd::move(exists).unwrap_err()));
     }
     if (*exists) {
         auto actual_executable = doc_tool_file_digest(final_executable.as_path());
@@ -347,45 +349,46 @@ auto published_doc_tool(ref<rstd::path::Path> tool_root,
         }
         auto removed = rstd::fs::remove_dir_all(final.as_path());
         if (removed.is_err()) {
-            return Err(doc_io_failure("replace invalid litodoc artifact"_str,
-                                      final.as_path(),
-                                      rstd::move(removed).unwrap_err()));
+            return Err(DocError::Io("replace invalid litodoc artifact"_Str,
+                                    rstd::path::PathBuf::from(final.as_path()),
+                                    rstd::move(removed).unwrap_err()));
         }
     }
     auto created = rstd::fs::create_dir_all(artifacts.as_path());
     if (created.is_err()) {
-        return Err(doc_io_failure("create litodoc artifact store"_str,
-                                  artifacts.as_path(),
-                                  rstd::move(created).unwrap_err()));
+        return Err(DocError::Io("create litodoc artifact store"_Str,
+                                rstd::path::PathBuf::from(artifacts.as_path()),
+                                rstd::move(created).unwrap_err()));
     }
     auto staging_name = identity.clone();
     staging_name.push_str(".staging"_str);
     auto staging        = artifacts.join(PathBuf::from(rstd::move(staging_name)).as_path());
     auto staging_exists = rstd::fs::exists(staging.as_path());
     if (staging_exists.is_err()) {
-        return Err(doc_io_failure("inspect litodoc artifact staging"_str,
-                                  staging.as_path(),
-                                  rstd::move(staging_exists).unwrap_err()));
+        return Err(DocError::Io("inspect litodoc artifact staging"_Str,
+                                rstd::path::PathBuf::from(staging.as_path()),
+                                rstd::move(staging_exists).unwrap_err()));
     }
     if (*staging_exists) {
         auto removed = rstd::fs::remove_dir_all(staging.as_path());
         if (removed.is_err()) {
-            return Err(doc_io_failure("clear litodoc artifact staging"_str,
-                                      staging.as_path(),
-                                      rstd::move(removed).unwrap_err()));
+            return Err(DocError::Io("clear litodoc artifact staging"_Str,
+                                    rstd::path::PathBuf::from(staging.as_path()),
+                                    rstd::move(removed).unwrap_err()));
         }
     }
     auto staged_executable = staging.join(PathBuf::from("bin/litodoc"_str).as_path());
     rstd_try(copy_doc_tool_file(executable, staged_executable.as_path()));
     auto staged_executable_digest = rstd_try(doc_tool_file_digest(staged_executable.as_path()));
     if (staged_executable_digest.as_str() != executable_digest) {
-        return doc_tool_failure<PublishedDocTool>(
-            "published litodoc artifact identity changed while copying"_str);
+        return Err(
+            DocError::Message("published litodoc artifact identity changed while copying"_Str));
     }
     auto renamed = rstd::fs::rename(staging.as_path(), final.as_path());
     if (renamed.is_err()) {
-        return Err(doc_io_failure(
-            "publish litodoc artifact"_str, final.as_path(), rstd::move(renamed).unwrap_err()));
+        return Err(DocError::Io("publish litodoc artifact"_Str,
+                                rstd::path::PathBuf::from(final.as_path()),
+                                rstd::move(renamed).unwrap_err()));
     }
     return Ok(PublishedDocTool {
         .executable = rstd::move(final_executable),
@@ -504,8 +507,8 @@ auto resolve_doc_tool(const BuildRequest&               request,
         }
     }
     if (executable.is_none()) {
-        return doc_tool_failure<ResolvedDocTool>(
-            "litodoc tool build did not produce the litodoc executable"_str);
+        return Err(
+            DocError::Message("litodoc tool build did not produce the litodoc executable"_Str));
     }
     auto capabilities = probe_doc_tool(executable->as_path(), project.compiler, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());

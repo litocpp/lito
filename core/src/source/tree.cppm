@@ -115,11 +115,11 @@ auto materialize_source_tree(const SourceTree& tree, ref<rstd::path::Path> desti
 using namespace lito::source;
 
 auto invalid_source_path(ref<str> path, ref<str> reason) -> SourceTreeResult<SourcePath> {
-    return Err(SourceTreeError::InvalidPath(String::make(path), String::make(reason)));
+    return Err(SourceTreeError::InvalidPath(path.into(), reason.into()));
 }
 
 auto invalid_source_path(ref<str> path, String reason) -> SourceTreeResult<SourcePath> {
-    return Err(SourceTreeError::InvalidPath(String::make(path), rstd::move(reason)));
+    return Err(SourceTreeError::InvalidPath(path.into(), rstd::move(reason)));
 }
 
 auto reserved_windows_component(ref<str> component) noexcept -> bool {
@@ -146,7 +146,7 @@ auto validate_unicode_codepoints(ref<str> path) -> SourceTreeResult<empty> {
         if (value <= 0x1f || (value >= 0x7f && value <= 0x9f) ||
             (value >= 0xfdd0 && value <= 0xfdef) || (value & 0xffff) >= 0xfffe) {
             return Err(SourceTreeError::InvalidPath(
-                String::make(path), "path contains a forbidden Unicode codepoint"_Str));
+                path.into(), "path contains a forbidden Unicode codepoint"_Str));
         }
     }
     return Ok(empty {});
@@ -225,7 +225,7 @@ auto lito::source::SourcePath::from_relative_path(ref<rstd::path::Path> value)
 }
 
 auto source_tree_conflict(ref<str> path, String reason) -> SourceTreeResult<empty> {
-    return Err(SourceTreeError::Conflict(String::make(path), rstd::move(reason)));
+    return Err(SourceTreeError::Conflict(path.into(), rstd::move(reason)));
 }
 
 auto entry_kind_name(SourceEntryKind kind) -> ref<str> {
@@ -356,13 +356,6 @@ auto lito::source::SourceTree::clone() const -> SourceTree {
     return SourceTree(rstd::move(entries));
 }
 
-auto source_tree_io_failure(ref<str>               operation,
-                            ref<rstd::path::Path>  path,
-                            rstd::io::error::Error error) -> SourceTreeError {
-    return SourceTreeError::Io(
-        String::make(operation), rstd::path::PathBuf::from(path), rstd::move(error));
-}
-
 auto cleanup_materialization(ref<rstd::path::Path> destination) noexcept -> void {
     auto removed = rstd::fs::remove_dir_all(destination);
     if (removed.is_err()) {
@@ -396,9 +389,9 @@ auto ensure_directories(ref<rstd::path::Path>     destination,
         if (contains_directory(directories.as_slice(), relative_path.as_path())) continue;
         auto created = rstd::fs::create_dir(target_path.as_path());
         if (created.is_err()) {
-            return Err(source_tree_io_failure("create source directory"_str,
-                                              target_path.as_path(),
-                                              rstd::move(created).unwrap_err()));
+            return Err(SourceTreeError::Io("create source directory"_Str,
+                                           rstd::path::PathBuf::from(target_path.as_path()),
+                                           rstd::move(created).unwrap_err()));
         }
         directories.push(relative_path.clone());
     }
@@ -410,18 +403,18 @@ auto lito::source::materialize_source_tree(const SourceTree&     tree,
     -> SourceTreeResult<SourceMaterialization> {
     auto exists = rstd::fs::exists(destination);
     if (exists.is_err()) {
-        return Err(source_tree_io_failure("inspect materialization destination"_str,
-                                          destination,
-                                          rstd::move(exists).unwrap_err()));
+        return Err(SourceTreeError::Io("inspect materialization destination"_Str,
+                                       rstd::path::PathBuf::from(destination),
+                                       rstd::move(exists).unwrap_err()));
     }
     if (*exists) {
         return Err(SourceTreeError::DestinationExists(rstd::path::PathBuf::from(destination)));
     }
     auto created = rstd::fs::create_dir(destination);
     if (created.is_err()) {
-        return Err(source_tree_io_failure("create materialization destination"_str,
-                                          destination,
-                                          rstd::move(created).unwrap_err()));
+        return Err(SourceTreeError::Io("create materialization destination"_Str,
+                                       rstd::path::PathBuf::from(destination),
+                                       rstd::move(created).unwrap_err()));
     }
 
     auto directories = Vec<rstd::path::PathBuf>::make();
@@ -447,15 +440,17 @@ auto lito::source::materialize_source_tree(const SourceTree&     tree,
         }
         auto file = rstd::fs::File::create_new(path.as_path());
         if (file.is_err()) {
-            auto error = source_tree_io_failure(
-                "create source file"_str, path.as_path(), rstd::move(file).unwrap_err());
+            auto error = SourceTreeError::Io("create source file"_Str,
+                                             rstd::path::PathBuf::from(path.as_path()),
+                                             rstd::move(file).unwrap_err());
             cleanup_materialization(destination);
             return Err(rstd::move(error));
         }
         auto written = rstd::move(file).unwrap().write_all(entry.contents());
         if (written.is_err()) {
-            auto error = source_tree_io_failure(
-                "write file"_str, path.as_path(), rstd::move(written).unwrap_err());
+            auto error = SourceTreeError::Io("write file"_Str,
+                                             rstd::path::PathBuf::from(path.as_path()),
+                                             rstd::move(written).unwrap_err());
             cleanup_materialization(destination);
             return Err(rstd::move(error));
         }
@@ -464,9 +459,9 @@ auto lito::source::materialize_source_tree(const SourceTree&     tree,
             auto permission = rstd::fs::set_permissions(
                 path.as_path(), rstd::fs::Permissions::from_mode(u32(0755)));
             if (permission.is_err()) {
-                auto error = source_tree_io_failure("set executable permissions"_str,
-                                                    path.as_path(),
-                                                    rstd::move(permission).unwrap_err());
+                auto error = SourceTreeError::Io("set executable permissions"_Str,
+                                                 rstd::path::PathBuf::from(path.as_path()),
+                                                 rstd::move(permission).unwrap_err());
                 cleanup_materialization(destination);
                 return Err(rstd::move(error));
             }

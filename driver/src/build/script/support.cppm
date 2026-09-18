@@ -19,66 +19,17 @@ namespace lito
 {
 
 using Json = rstd::json::Value;
-template<typename T>
-auto build_script_failure(String message) -> BuildScriptResult<T> {
-    return Err(BuildScriptError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto build_script_failure(ref<str> message) -> BuildScriptResult<T> {
-    return Err(BuildScriptError::Message(String::make(message)));
-}
-
-template<typename T>
-auto build_script_io_failure(ref<str>               operation,
-                             ref<rstd::path::Path>  path,
-                             rstd::io::error::Error error) -> BuildScriptResult<T> {
-    return Err(
-        BuildScriptError::Io(String::make(operation), PathBuf::from(path), rstd::move(error)));
-}
-
-template<typename T>
-auto action_failure(BuildToolActionError error) -> BuildScriptResult<T> {
-    return Err(BuildScriptError::BuildToolAction(rstd::move(error)));
-}
-
-template<typename T>
-auto action_request_failure(String message) -> BuildScriptResult<T> {
-    return action_failure<T>(BuildToolActionError::InvalidRequest(rstd::move(message)));
-}
-
-template<typename T>
-auto action_request_failure(ref<str> message) -> BuildScriptResult<T> {
-    return action_request_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto action_receipt_failure(ref<str>               operation,
-                            ref<rstd::path::Path>  path,
-                            rstd::io::error::Error error) -> BuildScriptResult<T> {
-    return action_failure<T>(BuildToolActionError::Receipt(
-        String::make(operation), PathBuf::from(path), rstd::move(error)));
-}
-
-template<typename T>
-auto action_publication_failure(ref<str>               operation,
-                                ref<rstd::path::Path>  path,
-                                rstd::io::error::Error error) -> BuildScriptResult<T> {
-    return action_failure<T>(BuildToolActionError::Publication(
-        String::make(operation), PathBuf::from(path), rstd::move(error)));
-}
-
 auto normal_relative_path(String text, ref<str> context) -> BuildScriptResult<PathBuf> {
     auto path = PathBuf::from(rstd::move(text));
     if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) {
-        return build_script_failure<PathBuf>(
-            rstd::format("{} must be a non-empty relative path", context));
+        return Err(BuildScriptError::Message(
+            rstd::format("{} must be a non-empty relative path", context)));
     }
     auto components = path.as_path().components();
     for (auto component : components) {
         if (component.is_normal()) continue;
-        return build_script_failure<PathBuf>(
-            rstd::format("{} contains a non-normal path component", context));
+        return Err(BuildScriptError::Message(
+            rstd::format("{} contains a non-normal path component", context)));
     }
     return Ok(rstd::move(path));
 }
@@ -92,12 +43,12 @@ public:
         key.push_str(relative.to_string_lossy().as_str());
         auto existing = owners_.get(key.as_str());
         if (existing.is_some()) {
-            return build_script_failure<empty>(
+            return Err(BuildScriptError::Message(
                 rstd::format("generated output '{}:{}' is claimed by build scripts '{}' and '{}'",
                              package,
                              relative,
                              **existing,
-                             owner));
+                             owner)));
         }
         owners_.insert(rstd::move(key), String::make(owner));
         return Ok(empty {});
@@ -156,14 +107,14 @@ auto package_component_is_valid(ref<str> package) noexcept -> bool {
 auto load_receipt(ref<rstd::path::Path> path) -> BuildScriptResult<Vec<OwnedOutput>> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return build_script_io_failure<Vec<OwnedOutput>>(
-            "inspect configure receipt"_str, path, rstd::move(exists).unwrap_err());
+        return Err(BuildScriptError::Io(
+            "inspect configure receipt"_Str, PathBuf::from(path), rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(Vec<OwnedOutput>::make());
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return build_script_io_failure<Vec<OwnedOutput>>(
-            "read configure receipt"_str, path, rstd::move(contents).unwrap_err());
+        return Err(BuildScriptError::Io(
+            "read configure receipt"_Str, PathBuf::from(path), rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -174,8 +125,8 @@ auto load_receipt(ref<rstd::path::Path> path) -> BuildScriptResult<Vec<OwnedOutp
     auto outputs  = document.get("outputs"_str);
     if (version.is_none() || (**version).as_i64() != Some(i64(1)) || outputs.is_none() ||
         (**outputs).as_array().is_none()) {
-        return build_script_failure<Vec<OwnedOutput>>(
-            rstd::format("configure receipt '{}' has an unsupported schema", path));
+        return Err(BuildScriptError::Message(
+            rstd::format("configure receipt '{}' has an unsupported schema", path)));
     }
 
     auto result = Vec<OwnedOutput>::make();
@@ -185,15 +136,15 @@ auto load_receipt(ref<rstd::path::Path> path) -> BuildScriptResult<Vec<OwnedOutp
         auto        package  = item.get("package"_str);
         auto        relative = item.get("path"_str);
         if (package.is_none() || relative.is_none()) {
-            return build_script_failure<Vec<OwnedOutput>>(
-                rstd::format("configure receipt '{}' has an invalid output entry", path));
+            return Err(BuildScriptError::Message(
+                rstd::format("configure receipt '{}' has an invalid output entry", path)));
         }
         auto package_text  = (**package).as_str();
         auto relative_text = (**relative).as_str();
         if (package_text.is_none() || relative_text.is_none() ||
             ! package_component_is_valid(*package_text)) {
-            return build_script_failure<Vec<OwnedOutput>>(
-                rstd::format("configure receipt '{}' has an invalid output entry", path));
+            return Err(BuildScriptError::Message(
+                rstd::format("configure receipt '{}' has an invalid output entry", path)));
         }
         auto path_value =
             normal_relative_path(String::make(*relative_text), "configure receipt output path"_str);

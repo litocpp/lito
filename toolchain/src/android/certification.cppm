@@ -51,7 +51,7 @@ auto certification_command(Vec<String>                       arguments,
     auto output = run_command_with_input(arguments, input, environment, Some(working_directory));
     if (output.is_err()) return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
     if (output->exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make(description),
+        return Err(ToolchainError::Execution(description.into(),
                                              output->exit_code,
                                              rstd::move(output->standard_output),
                                              rstd::move(output->standard_error)));

@@ -47,8 +47,8 @@ auto parse_legacy_visibility(ref<str> value, ref<str> context)
     if (value == "public"_str) return Ok(LegacyVisibility::Public);
     if (value == "private"_str) return Ok(LegacyVisibility::Private);
     if (value == "link"_str) return Ok(LegacyVisibility::LinkOnly);
-    return manifest_schema_failure<LegacyVisibility>(
-        rstd::format("{} must be public, private, or link", context));
+    return Err(
+        ManifestSchemaError::Domain(rstd::format("{} must be public, private, or link", context)));
 }
 
 auto usage_facet(ref<str> value, ref<str> context)
@@ -57,8 +57,8 @@ auto usage_facet(ref<str> value, ref<str> context)
     if (value == "compile"_str) return Ok(DependencyUsageFacet::Compile);
     if (value == "link"_str) return Ok(DependencyUsageFacet::Link);
     if (value == "runtime"_str) return Ok(DependencyUsageFacet::Runtime);
-    return manifest_schema_failure<DependencyUsageFacet>(
-        rstd::format("{} must be 'compile', 'link', or 'runtime'", context));
+    return Err(ManifestSchemaError::Domain(
+        rstd::format("{} must be 'compile', 'link', or 'runtime'", context)));
 }
 
 auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
@@ -76,16 +76,15 @@ auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
         if (facet == DependencyUsageFacet::Link) selected = &has_link;
         if (facet == DependencyUsageFacet::Runtime) selected = &has_runtime;
         if (*selected) {
-            return manifest_schema_failure<empty>(
-                rstd::format("{} repeats a dependency usage facet", item_context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{} repeats a dependency usage facet", item_context)));
         }
         *selected = true;
         return Ok(empty {});
     };
 
     if (value->values.is_empty())
-        return manifest_schema_failure<Option<DependencyUsage>>(
-            rstd::format("{} must not be empty", context));
+        return Err(ManifestSchemaError::Domain(rstd::format("{} must not be empty", context)));
     for (usize index {}; index < value->values.len(); ++index) {
         auto item_context =
             value->scalar ? String::make(context) : rstd::format("{}[{}]", context, index);
@@ -94,8 +93,8 @@ auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
     }
     auto usage = DependencyUsage::from_facets(has_compile, has_link, has_runtime);
     if (usage.is_none()) {
-        return manifest_schema_failure<Option<DependencyUsage>>(
-            rstd::format("{} cannot combine runtime with compile or link", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} cannot combine runtime with compile or link", context)));
     }
     return Ok(Some(*usage));
 }
@@ -105,11 +104,11 @@ auto legacy_visibility(const Specification& specification, ref<str> context)
     -> ManifestSchemaResult<Option<LegacyVisibility>> {
     if (specification.visibility.is_none()) return Ok(Option<LegacyVisibility> {});
     if (specification.pub.is_some())
-        return manifest_schema_failure<Option<LegacyVisibility>>(
-            rstd::format("{}.visibility cannot be combined with pub", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.visibility cannot be combined with pub", context)));
     if (specification.usage.is_some() && ! specification.usage->scalar)
-        return manifest_schema_failure<Option<LegacyVisibility>>(
-            rstd::format("{}.visibility cannot be combined with an array usage", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.visibility cannot be combined with an array usage", context)));
     return Ok(Some(rstd_try(parse_legacy_visibility(specification.visibility->as_str(), context))));
 }
 
@@ -134,20 +133,20 @@ auto parse_pkg_config_version(ref<str> value, ref<str> context)
         comparison = lito::dependency::PkgConfigVersionOperator::Less;
         prefix     = usize(1);
     } else {
-        return manifest_schema_failure<lito::dependency::PkgConfigVersionRequirement>(
-            rstd::format("{} must begin with one of '=', '<', '>', '<=', or '>='", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} must begin with one of '=', '<', '>', '<=', or '>='", context)));
     }
     auto version = text.get(prefix, text.len());
     if (version.is_none()) {
-        return manifest_schema_failure<lito::dependency::PkgConfigVersionRequirement>(
-            rstd::format("{} must contain a version value", context));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{} must contain a version value", context)));
     }
     auto normalized = version->trim_ascii();
     if (normalized.is_empty() || normalized.contains(" "_str) || normalized.contains("\t"_str) ||
         normalized.contains("<"_str) || normalized.contains(">"_str) ||
         normalized.contains("="_str)) {
-        return manifest_schema_failure<lito::dependency::PkgConfigVersionRequirement>(
-            rstd::format("{} contains an invalid version value", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} contains an invalid version value", context)));
     }
     return Ok(lito::dependency::PkgConfigVersionRequirement {
         .comparison = comparison,
@@ -202,8 +201,8 @@ auto parse_cmake_cache(Option<rstd::collections::BTreeMap<String, wire::CacheVal
     if (value.is_none()) return Ok(rstd::move(result));
     for (auto key : value->keys()) {
         if (! cmake_cache_key_is_valid(key->as_str()))
-            return manifest_schema_failure<Vec<lito::dependency::CMakeCacheEntry>>(rstd::format(
-                "{} key '{}' must contain only ASCII letters, digits, or '_'", context, *key));
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "{} key '{}' must contain only ASCII letters, digits, or '_'", context, *key)));
         auto entry = value->get_mut(key->as_str()).unwrap();
         result.push(lito::dependency::CMakeCacheEntry { .name  = key->clone(),
                                                         .value = rstd::move(entry->text) });
@@ -224,8 +223,8 @@ auto parse_git_reference(Specification& specification, ref<str> context)
     if (rev_value.is_some()) ++count;
     if (commit_value.is_some()) ++count;
     if (count > usize(1)) {
-        return manifest_schema_failure<lito::source::GitReference>(rstd::format(
-            "{} may contain only one of 'branch', 'tag', 'rev', or 'commit'", context));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{} may contain only one of 'branch', 'tag', 'rev', or 'commit'", context)));
     }
     auto reference = lito::source::GitReference {};
     if (branch_value.is_some()) {
@@ -243,21 +242,21 @@ auto parse_git_reference(Specification& specification, ref<str> context)
     }
     if (reference.kind != lito::source::GitReferenceKind::DefaultBranch &&
         (reference.value.is_empty() || reference.value.as_str().starts_with("-"_str))) {
-        return manifest_schema_failure<lito::source::GitReference>(
-            rstd::format("{} Git selector is invalid", context));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{} Git selector is invalid", context)));
     }
     if (reference.kind == lito::source::GitReferenceKind::Commit &&
         ! lito::source::git_commit_is_valid(reference.value.as_str())) {
-        return manifest_schema_failure<lito::source::GitReference>(
-            rstd::format("{} Git commit must be a full hexadecimal object id", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} Git commit must be a full hexadecimal object id", context)));
     }
     return Ok(rstd::move(reference));
 }
 
 auto validate_git_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
     if (value.is_empty() || value.starts_with("-"_str) || value.contains("#"_str)) {
-        return manifest_schema_failure<empty>(
-            rstd::format("{}.git is not a valid Git source URL", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.git is not a valid Git source URL", context)));
     }
     return Ok(empty {});
 }
@@ -268,8 +267,8 @@ auto parse_external_archive_variants(
     -> ManifestSchemaResult<Option<Vec<lito::dependency::ExternalArchiveVariant>>> {
     if (value.is_none()) return Ok(Option<Vec<lito::dependency::ExternalArchiveVariant>> {});
     if (value->is_empty())
-        return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
-            rstd::format("{}.archives must not be empty", context));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{}.archives must not be empty", context)));
     auto variants = Vec<lito::dependency::ExternalArchiveVariant>::make();
     for (auto key : value->keys()) {
         const auto& name          = *key;
@@ -281,8 +280,8 @@ auto parse_external_archive_variants(
             rstd_try(parse_manifest_sha256(entry->sha256->as_str(), entry_context.as_str()));
         auto architecture = require_architecture(name.as_str());
         if (architecture.is_err())
-            return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
-                rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str())));
         variants.push(lito::dependency::ExternalArchiveVariant {
             .architecture = rstd::move(architecture).unwrap(),
             .url          = rstd::move(parsed_url),
@@ -308,17 +307,17 @@ auto parse_external_source_requirement(wire::ExternalSourceFields& specification
     const auto source_count = usize(path.is_some()) + usize(git.is_some()) +
                               usize(archive.is_some()) + usize(archives.is_some());
     if (source_count != usize(1)) {
-        return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(rstd::format(
-            "{} must contain exactly one of 'path', 'git', 'archive', or 'archives'", context));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{} must contain exactly one of 'path', 'git', 'archive', or 'archives'", context)));
     }
     auto reference = rstd_try(parse_git_reference(specification, context));
     if (git.is_none() && reference.kind != lito::source::GitReferenceKind::DefaultBranch) {
-        return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(
-            rstd::format("{} Git selector requires 'git'", context));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{} Git selector requires 'git'", context)));
     }
     if (archive.is_some() != sha256.is_some()) {
-        return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(
-            rstd::format("{}.archive and .sha256 must be specified together", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.archive and .sha256 must be specified together", context)));
     }
     if (path.is_some()) {
         auto parsed = rstd_try(
@@ -357,8 +356,8 @@ auto parse_package_external_sources(
         const auto& name    = *key;
         const auto  context = rstd::format("external source '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<ParsedExternalSources>(
-                rstd::format("external source name '{}' is invalid", name.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external source name '{}' is invalid", name.as_str())));
         }
         auto&      specification = *table.get_mut(name.as_str()).unwrap();
         const auto inherited     = specification.workspace.is_some();
@@ -388,8 +387,8 @@ auto parse_workspace_external_sources(
         const auto& name    = *key;
         const auto  context = rstd::format("workspace external source '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<Vec<WorkspaceExternalSourceDefinition>>(
-                rstd::format("workspace external source name '{}' is invalid", name.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("workspace external source name '{}' is invalid", name.as_str())));
         }
         auto& specification = *table.get_mut(name.as_str()).unwrap();
         auto  source = rstd_try(parse_external_source_requirement(specification, context.as_str()));
@@ -413,54 +412,56 @@ auto parse_package_dependency_source(wire::DependencyFields& specification,
     const auto local_source_count =
         usize(path_value.is_some()) + usize(git_value.is_some()) + usize(builtin_value.is_some());
     if (local_source_count > usize(1)) {
-        return manifest_schema_failure<PackageDependencySource>(
-            rstd::format("{} may contain only one of 'path', 'git', or 'builtin'", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} may contain only one of 'path', 'git', or 'builtin'", context)));
     }
     if (local_source_count == usize {} && version_value.is_none()) {
-        return manifest_schema_failure<PackageDependencySource>(
-            rstd::format("{} must contain one of 'path', 'git', 'builtin', or 'version'", context));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{} must contain one of 'path', 'git', 'builtin', or 'version'", context)));
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
     if (git_value.is_none() && reference->kind != lito::source::GitReferenceKind::DefaultBranch) {
-        return manifest_schema_failure<PackageDependencySource>(
-            rstd::format("{} Git selector requires 'git'", context));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{} Git selector requires 'git'", context)));
     }
     if (version_value.is_none() && registry_value.is_some()) {
-        return manifest_schema_failure<PackageDependencySource>(
-            rstd::format("{}.registry requires a Registry 'version'", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.registry requires a Registry 'version'", context)));
     }
     if (builtin_value.is_some() && version_value.is_some()) {
-        return manifest_schema_failure<PackageDependencySource>(
-            rstd::format("{}.builtin cannot be combined with a Registry 'version'", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.builtin cannot be combined with a Registry 'version'", context)));
     }
 
     auto publication = Option<lito::source::PackageRegistryRequirement> {};
     if (version_value.is_some()) {
         auto parsed_package = lito::registry::RegistryPackageName::parse(dependency_name);
         if (parsed_package.is_err()) {
-            return manifest_schema_failure<PackageDependencySource>(rstd::format(
-                "{} name '{}' is not a canonical Registry package name", context, dependency_name));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{} name '{}' is not a canonical Registry package name",
+                             context,
+                             dependency_name)));
         }
         auto parsed_requirement =
             lito::registry::VersionRequirement::parse(version_value->as_str());
         if (parsed_requirement.is_err()) {
-            return manifest_schema_failure<PackageDependencySource>(
+            return Err(ManifestSchemaError::Domain(
                 rstd::format("{}.version '{}' is not a supported Registry version requirement",
                              context,
-                             version_value->as_str()));
+                             version_value->as_str())));
         }
         if (registry_value.is_some()) {
             auto name = registry_value->as_str();
             if (! package_name_is_valid(name)) {
-                return manifest_schema_failure<PackageDependencySource>(rstd::format(
-                    "{}.registry '{}' is not a valid configured registry name", context, name));
+                return Err(ManifestSchemaError::Domain(rstd::format(
+                    "{}.registry '{}' is not a valid configured registry name", context, name)));
             }
             for (auto byte : name.as_bytes()) {
                 const auto ascii = byte.to_primitive();
                 if (ascii >= 'A' && ascii <= 'Z') {
-                    return manifest_schema_failure<PackageDependencySource>(
-                        rstd::format("{}.registry must use lowercase ASCII", context));
+                    return Err(ManifestSchemaError::Domain(
+                        rstd::format("{}.registry must use lowercase ASCII", context)));
                 }
             }
         }
@@ -480,8 +481,8 @@ auto parse_package_dependency_source(wire::DependencyFields& specification,
     } else if (builtin_value.is_some()) {
         auto id = rstd::move(builtin_value).unwrap();
         if (! package_name_is_valid(id.as_str())) {
-            return manifest_schema_failure<PackageDependencySource>(
-                rstd::format("{}.builtin must be a valid builtin package id", context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.builtin must be a valid builtin package id", context)));
         }
         resolution = Some(lito::source::PackageSourceRequirement::Builtin(rstd::move(id)));
     } else if (git_value.is_some()) {
@@ -516,9 +517,9 @@ auto parse_dependencies(Option<rstd::collections::BTreeMap<String, wire::Depende
         auto        context = rstd::format(
             "{} dependency '{}'", development ? "development"_str : "normal"_str, name.as_str());
         if (! package_name_is_valid(name.as_str()))
-            return manifest_schema_failure<ParsedDependencies>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "dependency name '{}' must contain only ASCII letters, digits, '-' or '_'",
-                name.as_str()));
+                name.as_str())));
         auto& specification = *table.get_mut(name.as_str()).unwrap();
         auto  parsed_usage =
             rstd_try(parse_usage(specification.usage, rstd::format("{}.usage", context).as_str()));
@@ -527,16 +528,16 @@ auto parse_dependencies(Option<rstd::collections::BTreeMap<String, wire::Depende
             auto legacy = rstd_try(legacy_visibility(specification, context.as_str()));
             if (legacy.is_some()) {
                 if (specification.usage.is_some())
-                    return manifest_schema_failure<ParsedDependencies>(
-                        rstd::format("{}.visibility cannot be combined with usage", context));
+                    return Err(ManifestSchemaError::Domain(
+                        rstd::format("{}.visibility cannot be combined with usage", context)));
 
                 parsed_public = Some(*legacy == LegacyVisibility::Public);
                 if (*legacy == LegacyVisibility::LinkOnly)
                     parsed_usage = Some(lito::dependency::DependencyUsage::link_only());
             }
         } else if (parsed_public.is_some() && *parsed_public) {
-            return manifest_schema_failure<ParsedDependencies>(
-                rstd::format("{}.pub must be false for a development dependency", context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.pub must be false for a development dependency", context)));
         }
         if (specification.workspace.is_some()) {
             result.workspace_dependencies.push(WorkspaceDependencyReference {
@@ -586,9 +587,9 @@ auto parse_runtime_dependencies(
         const auto& name    = *key;
         auto        context = rstd::format("runtime dependency '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<ParsedRuntimeDependencies>(rstd::format(
+            return Err(ManifestSchemaError::Domain(rstd::format(
                 "runtime dependency name '{}' must contain only ASCII letters, digits, '-' or '_'",
-                name.as_str()));
+                name.as_str())));
         }
         auto& specification = *table.get_mut(name.as_str()).unwrap();
         if (specification.workspace.is_some()) {
@@ -617,8 +618,8 @@ auto parse_workspace_dependencies(
         const auto& name    = *key;
         auto        context = rstd::format("workspace dependency '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<Vec<WorkspaceDependencyDefinition>>(
-                rstd::format("workspace dependency alias '{}' is invalid", name.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("workspace dependency alias '{}' is invalid", name.as_str())));
         }
         auto& specification = *table.get_mut(name.as_str()).unwrap();
         auto  source =
@@ -646,8 +647,8 @@ auto parse_pkg_config_requirement(wire::PkgConfigFields& specification, ref<str>
     auto module  = rstd::move(specification.module).unwrap();
     auto version = rstd::move(specification.version);
     if (module.is_empty() || module.as_str().starts_with("-"_str)) {
-        return manifest_schema_failure<lito::dependency::PkgConfigDependencyRequirement>(
-            rstd::format("{}.module must be non-empty and must not start with '-'", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.module must be non-empty and must not start with '-'", context)));
     }
     auto version_requirement = Option<lito::dependency::PkgConfigVersionRequirement> {};
     if (version.is_some()) {
@@ -672,9 +673,8 @@ auto parse_external_dependency_condition(Option<String> source, ref<str> context
     }
     auto expression = lito::condition::parse(source->as_str());
     if (expression.is_err()) {
-        return manifest_schema_failure<Option<lito::dependency::ExternalDependencyCondition>>(
-            rstd::format(
-                "{} condition '{}': {}", context, source->as_str(), expression.unwrap_err()));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{} condition '{}': {}", context, source->as_str(), expression.unwrap_err())));
     }
     return Ok(Some(lito::dependency::ExternalDependencyCondition {
         .source     = rstd::move(source).unwrap(),
@@ -698,8 +698,8 @@ auto parse_pkg_config_external_dependencies(
         const auto& alias   = *key;
         auto        context = rstd::format("pkg-config external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(
-                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str())));
         }
         auto&      specification          = *table.get_mut(alias.as_str()).unwrap();
         const auto inherited              = specification.workspace.is_some();
@@ -711,14 +711,14 @@ auto parse_pkg_config_external_dependencies(
                                                : Option<String> {});
             if (old_usage.is_some() && old_usage->as_str() != "link"_str &&
                 old_usage->as_str() != "compile"_str) {
-                return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(rstd::format(
-                    "{}.usage must be 'link' or 'compile' with legacy visibility", context));
+                return Err(ManifestSchemaError::Domain(rstd::format(
+                    "{}.usage must be 'link' or 'compile' with legacy visibility", context)));
             }
             const auto compile_only = old_usage.is_some() && old_usage->as_str() == "compile"_str;
             if (compile_only && *legacy == LegacyVisibility::LinkOnly) {
-                return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(rstd::format(
+                return Err(ManifestSchemaError::Domain(rstd::format(
                     "{}.visibility must be public or private when legacy usage is 'compile'",
-                    context));
+                    context)));
             }
             dependency_consumption.usage =
                 compile_only ? lito::dependency::DependencyUsage::compile_only()
@@ -732,8 +732,8 @@ auto parse_pkg_config_external_dependencies(
             dependency_consumption.usage =
                 usage.is_some() ? *usage : lito::dependency::DependencyUsage::compile_and_link();
             if (dependency_consumption.usage.uses_runtime()) {
-                return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(
-                    rstd::format("{}.usage does not support runtime", context));
+                return Err(ManifestSchemaError::Domain(
+                    rstd::format("{}.usage does not support runtime", context)));
             }
             auto is_public                   = specification.pub;
             dependency_consumption.is_public = is_public.is_some() && *is_public;
@@ -772,8 +772,8 @@ auto parse_workspace_pkg_config_external_dependencies(
         auto        context =
             rstd::format("workspace pkg-config external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return manifest_schema_failure<Vec<WorkspacePkgConfigExternalDependencyDefinition>>(
-                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str())));
         }
         auto& specification = *table.get_mut(alias.as_str()).unwrap();
         auto  requirement   = parse_pkg_config_requirement(specification, context.as_str());
@@ -790,13 +790,13 @@ auto parse_cmake_targets(Option<Vec<wire::CMakeTarget>> value, const DataPath& o
     -> ManifestSchemaResult<Vec<lito::dependency::CMakeTargetRequirement>> {
     auto path = owner_path.with_field("targets"_str);
     if (value.is_none()) {
-        return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-            rstd::move(path), "is required"_str);
+        return Err(ManifestSchemaError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "is required"_str)));
     }
     auto targets = rstd::move(value).unwrap();
     if (targets.is_empty()) {
-        return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-            rstd::move(path), "must not be empty"_str);
+        return Err(ManifestSchemaError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "must not be empty"_str)));
     }
     auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
     auto names  = rstd::collections::BTreeMap<String, empty>::make();
@@ -806,19 +806,19 @@ auto parse_cmake_targets(Option<Vec<wire::CMakeTarget>> value, const DataPath& o
         auto  item_context = rstd::format("CMake target requirement [{}]", index);
         auto  name         = rstd::move(target.name).unwrap();
         if (! cmake_target_is_valid(name.as_str())) {
-            return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                item.with_field("name"_str), "invalid CMake target name"_str);
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                item.with_field("name"_str), "invalid CMake target name"_str)));
         }
         if (names.contains_key(name.as_str())) {
-            return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                item.with_field("name"_str), "CMake target is repeated"_str);
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                item.with_field("name"_str), "CMake target is repeated"_str)));
         }
         auto consumption = lito::dependency::DependencyConsumption {};
         auto legacy      = rstd_try(legacy_visibility(target, item_context.as_str()));
         if (legacy.is_some()) {
             if (target.usage.is_some()) {
-                return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                    rstd::format("{}.visibility cannot be combined with usage", item_context));
+                return Err(ManifestSchemaError::Domain(
+                    rstd::format("{}.visibility cannot be combined with usage", item_context)));
             }
             consumption.is_public = *legacy == LegacyVisibility::Public;
             if (*legacy == LegacyVisibility::LinkOnly) {
@@ -829,8 +829,8 @@ auto parse_cmake_targets(Option<Vec<wire::CMakeTarget>> value, const DataPath& o
                 parse_usage(target.usage, rstd::format("{}.usage", item_context).as_str()));
             if (usage.is_some()) consumption.usage = *usage;
             if (consumption.usage.uses_runtime()) {
-                return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                    rstd::format("{}.usage does not support runtime", item_context));
+                return Err(ManifestSchemaError::Domain(
+                    rstd::format("{}.usage does not support runtime", item_context)));
             }
             auto is_public        = target.pub;
             consumption.is_public = is_public.is_some() && *is_public;
@@ -851,24 +851,24 @@ auto parse_cmake_host_tools(Option<Vec<wire::CMakeHostTool>> value, const DataPa
     auto path  = owner_path.with_field("host-tools"_str);
     auto tools = rstd::move(value).unwrap();
     if (tools.is_empty()) {
-        return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-            rstd::move(path), "must not be empty"_str);
+        return Err(ManifestSchemaError::Data(
+            rstd::serde::Error::invalid_value(rstd::move(path), "must not be empty"_str)));
     }
     auto names = rstd::collections::BTreeMap<String, empty>::make();
     for (usize index {}; index < tools.len(); ++index) {
         auto  item = path.with_index(index);
         auto& wire = tools[index];
         if (! package_name_is_valid(wire.name.as_str())) {
-            return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-                item.with_field("name"_str), "invalid host tool name"_str);
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                item.with_field("name"_str), "invalid host tool name"_str)));
         }
         if (! cmake_target_is_valid(wire.target.as_str())) {
-            return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-                item.with_field("target"_str), "invalid CMake target name"_str);
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                item.with_field("target"_str), "invalid CMake target name"_str)));
         }
         if (names.contains_key(wire.name.as_str())) {
-            return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-                item.with_field("name"_str), "host tool name is repeated"_str);
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                item.with_field("name"_str), "host tool name is repeated"_str)));
         }
         names.insert(wire.name.clone(), empty {});
         result.push(lito::dependency::CMakeHostToolRequirement {
@@ -884,18 +884,18 @@ auto parse_cmake_components(Option<Vec<String>> value, ref<str> context)
     const auto present    = value.is_some();
     auto       components = rstd::move(value).unwrap_or(Vec<String>::make());
     if (present && components.is_empty()) {
-        return manifest_schema_failure<Vec<String>>(
-            rstd::format("{}.components must not be empty", context));
+        return Err(
+            ManifestSchemaError::Domain(rstd::format("{}.components must not be empty", context)));
     }
     auto names = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& component : components) {
         if (! lito::dependency::cmake_component_name_is_valid(component.as_str())) {
-            return manifest_schema_failure<Vec<String>>(rstd::format(
-                "{}.components contains unsafe component '{}'", context, component.as_str()));
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "{}.components contains unsafe component '{}'", context, component.as_str())));
         }
         if (names.contains_key(component.as_str())) {
-            return manifest_schema_failure<Vec<String>>(
-                rstd::format("{}.components repeats component '{}'", context, component.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.components repeats component '{}'", context, component.as_str())));
         }
         names.insert(component.clone(), empty {});
     }
@@ -916,25 +916,24 @@ auto parse_cmake_external_dependency_definition(wire::CMakeExternalFields& speci
     if (components.is_err()) return Err(rstd::move(components).unwrap_err());
     if (host_tools.is_err()) return Err(rstd::move(host_tools).unwrap_err());
     if (! lito::dependency::cmake_package_name_is_valid(package.as_str())) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.package is unsafe", context));
+        return Err(ManifestSchemaError::Domain(rstd::format("{}.package is unsafe", context)));
     }
     auto source_value = rstd::move(source);
     if (source_value.is_some() && ! package_name_is_valid(source_value->as_str())) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.source must name a package external source", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.source must name a package external source", context)));
     }
     auto cache =
         parse_cmake_cache(rstd::move(specification.cache), "CMake external dependency cache"_str);
     if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
     if (source_value.is_none() && (! cache->is_empty() || config_directory.is_some())) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{} cache and config-directory require a source", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} cache and config-directory require a source", context)));
     }
     auto adapter_value = rstd::move(adapter);
     if (adapter_value.is_some() && config_directory.is_some()) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.config-directory cannot be combined with adapter", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.config-directory cannot be combined with adapter", context)));
     }
     auto adapter_path = Option<PathBuf> {};
     if (adapter_value.is_some()) {
@@ -982,8 +981,8 @@ auto parse_cmake_external_dependencies(
                                   .with_field("cmake"_str)
                                   .with_map_key(alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return manifest_schema_failure<ParsedCMakeExternalDependencies>(
-                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str())));
         }
         auto&      specification = *table.get_mut(alias.as_str()).unwrap();
         const auto inherited     = specification.workspace.is_some();
@@ -1035,8 +1034,8 @@ auto parse_workspace_cmake_external_dependencies(
                            .with_field("cmake"_str)
                            .with_map_key(alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return manifest_schema_failure<Vec<WorkspaceCMakeExternalDependencyDefinition>>(
-                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str())));
         }
         auto& specification = *table.get_mut(alias.as_str()).unwrap();
         auto  definition    = parse_cmake_external_dependency_definition(
@@ -1068,12 +1067,12 @@ auto parse_cargo_features(Option<Vec<String>> value, ref<str> context)
     auto seen     = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& feature : features) {
         if (! cargo_feature_is_valid(feature.as_str())) {
-            return manifest_schema_failure<Vec<String>>(rstd::format(
-                "{}.features contains invalid Cargo feature '{}'", context, feature.as_str()));
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "{}.features contains invalid Cargo feature '{}'", context, feature.as_str())));
         }
         if (seen.contains_key(feature.as_str())) {
-            return manifest_schema_failure<Vec<String>>(
-                rstd::format("{}.features repeats Cargo feature '{}'", context, feature.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.features repeats Cargo feature '{}'", context, feature.as_str())));
         }
         seen.insert(feature.clone(), empty {});
     }
@@ -1086,20 +1085,20 @@ auto parse_cargo_manifest_path(Option<String> declared, ref<str> context)
     auto path = declared.is_some() ? PathBuf::from(rstd::move(declared).unwrap())
                                    : PathBuf::from("Cargo.toml"_str);
     if (! path.as_path().is_relative()) {
-        return manifest_schema_failure<PathBuf>(
-            rstd::format("{}.manifest-path must be a relative path", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.manifest-path must be a relative path", context)));
     }
     auto found = false;
     for (auto component : path.as_path().components()) {
         found = true;
         if (! component.is_normal()) {
-            return manifest_schema_failure<PathBuf>(
-                rstd::format("{}.manifest-path must stay within the external source", context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.manifest-path must stay within the external source", context)));
         }
     }
     if (! found) {
-        return manifest_schema_failure<PathBuf>(
-            rstd::format("{}.manifest-path must not be empty", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.manifest-path must not be empty", context)));
     }
     return Ok(rstd::move(path));
 }
@@ -1109,12 +1108,12 @@ auto parse_cargo_recipe(wire::CargoExternalFields& specification, ref<str> conte
     auto source  = rstd::move(specification.source).unwrap();
     auto package = rstd::move(specification.package).unwrap();
     if (! package_name_is_valid(source.as_str())) {
-        return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
-            rstd::format("{}.source must name a package external source", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.source must name a package external source", context)));
     }
     if (! package_name_is_valid(package.as_str())) {
-        return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
-            rstd::format("{}.package must be a valid Cargo package name", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.package must be a valid Cargo package name", context)));
     }
     return Ok(lito::dependency::CargoDependencyRecipe {
         .package = rstd::move(package),
@@ -1130,8 +1129,8 @@ auto parse_cargo_consumption(wire::CargoExternalFields& specification, ref<str> 
     auto default_features = specification.default_features.unwrap_or(true);
     auto profile_name     = rstd::move(specification.profile);
     if (profile_name.is_some() && ! package_name_is_valid(profile_name->as_str())) {
-        return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-            rstd::format("{}.profile must be a valid Cargo profile name", context));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.profile must be a valid Cargo profile name", context)));
     }
     auto profile = Option<lito::dependency::CargoProfileName> {};
     if (profile_name.is_some()) {
@@ -1149,13 +1148,12 @@ auto parse_cargo_consumption(wire::CargoExternalFields& specification, ref<str> 
                                            : Option<String> {});
         if (old_usage.is_some() && old_usage->as_str() != "link"_str &&
             old_usage->as_str() != "runtime"_str) {
-            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-                rstd::format("{}.usage must be 'link' or 'runtime' with legacy visibility",
-                             context));
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "{}.usage must be 'link' or 'runtime' with legacy visibility", context)));
         }
         if (old_usage.is_some() && old_usage->as_str() == "runtime"_str) {
-            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-                rstd::format("{}.visibility is not accepted when usage is 'runtime'", context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.visibility is not accepted when usage is 'runtime'", context)));
         }
         dependency_consumption.is_public = *legacy == LegacyVisibility::Public;
     } else {
@@ -1165,14 +1163,14 @@ auto parse_cargo_consumption(wire::CargoExternalFields& specification, ref<str> 
         if (dependency_consumption.usage.uses_compile() ||
             (dependency_consumption.usage.uses_link() &&
              dependency_consumption.usage.uses_runtime())) {
-            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-                rstd::format("{}.usage must select only 'link' or only 'runtime'", context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.usage must select only 'link' or only 'runtime'", context)));
         }
         auto is_public                   = specification.pub;
         dependency_consumption.is_public = is_public.is_some() && *is_public;
         if (dependency_consumption.usage.uses_runtime() && dependency_consumption.is_public) {
-            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
-                rstd::format("{}.pub must be false when usage is 'runtime'", context));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.pub must be false when usage is 'runtime'", context)));
         }
     }
     return Ok(lito::dependency::CargoDependencyConsumption {
@@ -1200,8 +1198,8 @@ auto parse_cargo_external_dependencies(
         const auto& alias   = *key;
         auto        context = rstd::format("Cargo external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return manifest_schema_failure<ParsedCargoExternalDependencies>(
-                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str())));
         }
         auto&      specification = *table.get_mut(alias.as_str()).unwrap();
         const auto inherited     = specification.workspace.is_some();
@@ -1231,8 +1229,8 @@ auto parse_workspace_cargo_external_dependencies(
         const auto& alias = *key;
         auto context = rstd::format("workspace Cargo external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return manifest_schema_failure<Vec<WorkspaceCargoExternalDependencyDefinition>>(
-                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str())));
         }
         auto& specification = *table.get_mut(alias.as_str()).unwrap();
         result.push(WorkspaceCargoExternalDependencyDefinition {

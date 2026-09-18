@@ -85,8 +85,7 @@ auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) con
     -> CppOptionResult<CppArgumentLayer> {
     auto parsed_result = parser_.parse(arguments);
     if (parsed_result.is_err()) {
-        return Err(
-            CppOptionError::Argument(rstd::move(parsed_result).unwrap_err(), String::make(source)));
+        return Err(CppOptionError::Argument(rstd::move(parsed_result).unwrap_err(), source.into()));
     }
     auto parsed = rstd::move(parsed_result).unwrap();
     auto result = CppArgumentLayer {};
@@ -109,8 +108,8 @@ auto CppArgumentParser::parse_c(const Vec<String>& arguments, ref<str> source) c
     -> CompilerOptionResult<lito::c::CArgumentLayer> {
     auto parsed_result = parser_.parse(arguments);
     if (parsed_result.is_err()) {
-        return Err(CompilerOptionError::Argument(rstd::move(parsed_result).unwrap_err(),
-                                                 String::make(source)));
+        return Err(
+            CompilerOptionError::Argument(rstd::move(parsed_result).unwrap_err(), source.into()));
     }
     auto parsed = rstd::move(parsed_result).unwrap();
     auto result = lito::c::CArgumentLayer {};

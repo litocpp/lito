@@ -39,8 +39,7 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
         const auto& action    = actions_[index];
         auto        generated = layout_->generated_package_directory(action.package.as_str());
         if (generated.is_err()) {
-            return build_script_failure<Vec<PublishedGeneratedAction>>(
-                rstd::format("{}", generated.unwrap_err()));
+            return Err(BuildScriptError::Message(rstd::format("{}", generated.unwrap_err())));
         }
         auto action_outputs = Vec<BuildArtifactId>::with_capacity(action.outputs.len());
         for (const auto& output : action.outputs) {
@@ -52,8 +51,7 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
                 .path   = Some(generated->join(output.as_path())),
             });
             if (artifact.is_err()) {
-                return build_script_failure<Vec<PublishedGeneratedAction>>(
-                    rstd::format("{}", artifact.unwrap_err()));
+                return Err(BuildScriptError::Message(rstd::format("{}", artifact.unwrap_err())));
             }
             action_outputs.emplace_back(*artifact);
         }
@@ -81,7 +79,7 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
                 .initially_ready = true,
             });
             if (artifact.is_err()) {
-                return build_script_failure<empty>(rstd::format("{}", artifact.unwrap_err()));
+                return Err(BuildScriptError::Message(rstd::format("{}", artifact.unwrap_err())));
             }
             inputs.emplace_back(*artifact);
             return Ok(empty {});
@@ -98,22 +96,22 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
                 .initially_ready = true,
             });
             if (artifact.is_err()) {
-                return build_script_failure<Vec<PublishedGeneratedAction>>(
-                    rstd::format("{}", artifact.unwrap_err()));
+                return Err(BuildScriptError::Message(rstd::format("{}", artifact.unwrap_err())));
             }
             inputs.emplace_back(*artifact);
         }
         for (const auto& input : action.inputs) {
             if (input.producer.is_some()) {
                 if (*input.producer >= outputs.len()) {
-                    return action_request_failure<Vec<PublishedGeneratedAction>>(
-                        "generated action input refers to an unknown producer"_str);
+                    return Err(
+                        BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                            "generated action input refers to an unknown producer"_Str)));
                 }
                 auto producer_root = layout_->generated_package_directory(
                     actions_[*input.producer].package.as_str());
                 if (producer_root.is_err()) {
-                    return build_script_failure<Vec<PublishedGeneratedAction>>(
-                        rstd::format("{}", producer_root.unwrap_err()));
+                    return Err(
+                        BuildScriptError::Message(rstd::format("{}", producer_root.unwrap_err())));
                 }
                 auto matched = Option<BuildArtifactId> {};
                 for (usize output {}; output < actions_[*input.producer].outputs.len(); ++output) {
@@ -124,8 +122,9 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
                     }
                 }
                 if (matched.is_none()) {
-                    return action_request_failure<Vec<PublishedGeneratedAction>>(
-                        "generated action input does not match its producer output"_str);
+                    return Err(
+                        BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                            "generated action input does not match its producer output"_Str)));
                 }
                 inputs.emplace_back(*matched);
                 continue;
@@ -139,8 +138,7 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
                 .initially_ready = true,
             });
             if (artifact.is_err()) {
-                return build_script_failure<Vec<PublishedGeneratedAction>>(
-                    rstd::format("{}", artifact.unwrap_err()));
+                return Err(BuildScriptError::Message(rstd::format("{}", artifact.unwrap_err())));
             }
             inputs.emplace_back(*artifact);
         }
@@ -156,15 +154,13 @@ auto ToolActionSession::publish_actions(BuildActionGraph&                graph,
             .outputs  = outputs[index].clone(),
         });
         if (registered.is_err()) {
-            return build_script_failure<Vec<PublishedGeneratedAction>>(
-                rstd::format("{}", registered.unwrap_err()));
+            return Err(BuildScriptError::Message(rstd::format("{}", registered.unwrap_err())));
         }
         action_ids.push(PublishedGeneratedAction { .action = index, .id = *registered });
     }
     auto valid = graph.validate();
     if (valid.is_err()) {
-        return build_script_failure<Vec<PublishedGeneratedAction>>(
-            rstd::format("{}", valid.unwrap_err()));
+        return Err(BuildScriptError::Message(rstd::format("{}", valid.unwrap_err())));
     }
     return Ok(rstd::move(action_ids));
 }
@@ -174,7 +170,8 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
                                 cpp::GeneratedSourceAvailability availability,
                                 usize                            jobs) -> BuildScriptResult<empty> {
     if (jobs == usize {}) {
-        return action_request_failure<empty>("generated action jobs must be greater than zero"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "generated action jobs must be greater than zero"_Str)));
     }
     if (actions_.is_empty()) return Ok(empty {});
     auto published = rstd_try(publish_actions(graph, domain, availability));
@@ -185,18 +182,18 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
                             .thread_name("lito-generate"_Str)
                             .build();
     if (pool.is_err()) {
-        return build_script_io_failure<empty>("create generated action worker pool"_str,
-                                              script_.as_path(),
-                                              rstd::move(pool).unwrap_err_unchecked());
+        return Err(BuildScriptError::Io("create generated action worker pool"_Str,
+                                        PathBuf::from(script_.as_path()),
+                                        rstd::move(pool).unwrap_err_unchecked()));
     }
     auto workers  = rstd::move(pool).unwrap_unchecked();
     auto task_set = rstd::thread::BlockingTaskSet<GeneratedActionWorkerResult>::make(
         workers.handle(), worker_count);
     if (task_set.is_err()) {
         rstd::move(workers).join();
-        return build_script_io_failure<empty>("create generated action task set"_str,
-                                              script_.as_path(),
-                                              rstd::move(task_set).unwrap_err_unchecked());
+        return Err(BuildScriptError::Io("create generated action task set"_Str,
+                                        PathBuf::from(script_.as_path()),
+                                        rstd::move(task_set).unwrap_err_unchecked()));
     }
     auto tasks     = rstd::move(task_set).unwrap_unchecked();
     auto completed = usize {};
@@ -217,7 +214,7 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
                 tasks.cancel_pending();
                 tasks.close();
                 rstd::move(workers).join();
-                return build_script_failure<empty>(rstd::format("{}", marked.unwrap_err()));
+                return Err(BuildScriptError::Message(rstd::format("{}", marked.unwrap_err())));
             }
             auto session      = this;
             auto action_index = published[index].action;
@@ -232,8 +229,8 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
                 tasks.cancel_pending();
                 tasks.close();
                 rstd::move(workers).join();
-                return action_request_failure<empty>(
-                    "cannot submit generated action to worker pool"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "cannot submit generated action to worker pool"_Str)));
             }
             ++in_flight;
         }
@@ -241,29 +238,32 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
             tasks.cancel_pending();
             tasks.close();
             rstd::move(workers).join();
-            return action_request_failure<empty>("generated action graph has no ready action"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "generated action graph has no ready action"_Str)));
         }
         auto received = tasks.recv();
         if (received.is_none()) {
             tasks.cancel_pending();
             tasks.close();
             rstd::move(workers).join();
-            return action_request_failure<empty>(
-                "generated action worker pool closed before completion"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "generated action worker pool closed before completion"_Str)));
         }
         auto task = rstd::move(received).unwrap_unchecked();
         if (task.is_cancelled()) {
             tasks.cancel_pending();
             tasks.close();
             rstd::move(workers).join();
-            return action_request_failure<empty>("generated action was cancelled"_str);
+            return Err(BuildScriptError::BuildToolAction(
+                BuildToolActionError::InvalidRequest("generated action was cancelled"_Str)));
         }
         auto value = rstd::move(task).into_value();
         if (value.is_none()) {
             tasks.cancel_pending();
             tasks.close();
             rstd::move(workers).join();
-            return action_request_failure<empty>("generated action completed without a result"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "generated action completed without a result"_Str)));
         }
         auto result = rstd::move(value).unwrap_unchecked();
         --in_flight;
@@ -271,8 +271,8 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
             tasks.cancel_pending();
             tasks.close();
             rstd::move(workers).join();
-            return action_request_failure<empty>(
-                "generated action completion does not match a running action"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "generated action completion does not match a running action"_Str)));
         }
         if (result.outcome.is_err()) {
             static_cast<void>(graph.mark_failed(published[result.action].id));
@@ -286,7 +286,7 @@ auto ToolActionSession::execute(BuildActionGraph&                graph,
             tasks.cancel_pending();
             tasks.close();
             rstd::move(workers).join();
-            return build_script_failure<empty>(rstd::format("{}", marked.unwrap_err()));
+            return Err(BuildScriptError::Message(rstd::format("{}", marked.unwrap_err())));
         }
         ++completed;
     }
@@ -301,15 +301,14 @@ auto ToolActionSession::current_action_dependencies(const RegisteredAction& acti
     for (const auto& input : action.inputs) {
         auto canonical = rstd::fs::canonicalize(input.path.as_path());
         if (canonical.is_err()) {
-            return build_script_io_failure<Vec<ActionDependency>>(
-                "resolve generated action input"_str,
-                input.path.as_path(),
-                rstd::move(canonical).unwrap_err());
+            return Err(BuildScriptError::Io("resolve generated action input"_Str,
+                                            PathBuf::from(input.path.as_path()),
+                                            rstd::move(canonical).unwrap_err()));
         }
         auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
         if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
-            return action_failure<Vec<ActionDependency>>(BuildToolActionError::InvalidInput(
-                canonical->clone(), "path is not a regular file"_Str));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+                canonical->clone(), "path is not a regular file"_Str)));
         }
         result.push(ActionDependency {
             .path   = rstd::move(canonical).unwrap(),
@@ -325,8 +324,8 @@ auto ToolActionSession::render_process_invocation(const RegisteredAction& action
     -> BuildScriptResult<Vec<String>> {
     auto invocation = Vec<String>::make();
     if (action.tool.is_none() || action.tool->executable.is_empty()) {
-        return action_request_failure<Vec<String>>(
-            "build-tool action executable artifact is not ready"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "build-tool action executable artifact is not ready"_Str)));
     }
     invocation.push(action.tool->executable.as_path().to_string_lossy());
     auto replaced_output = false;
@@ -336,8 +335,8 @@ auto ToolActionSession::render_process_invocation(const RegisteredAction& action
             auto name_marker = rstd::format("@OUTPUT_NAME:{}@", output_index + usize(1));
             auto name        = action.outputs[output_index].as_path().file_name();
             if (name.is_none()) {
-                return action_request_failure<Vec<String>>(
-                    "build-tool action output has no file name"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "build-tool action output has no file name"_Str)));
             }
             if (replace_all(argument, name_marker.as_str(), name->to_string_lossy().as_str()) !=
                 usize {}) {
@@ -353,27 +352,27 @@ auto ToolActionSession::render_process_invocation(const RegisteredAction& action
         }
         if (argument.as_str().contains("@OUTPUT@"_str)) {
             if (action.outputs.len() != usize(1)) {
-                return action_request_failure<Vec<String>>(
-                    "build-tool action with multiple outputs must use numbered output markers"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "build-tool action with multiple outputs must use numbered output markers"_Str)));
             }
             auto output = PathBuf::from(staging).join(action.outputs[usize {}].as_path());
             auto count =
                 replace_all(argument, "@OUTPUT@"_str, output.as_path().to_string_lossy().as_str());
             if (count != usize(1)) {
-                return action_request_failure<Vec<String>>(
-                    "build-tool action may use '@OUTPUT@' only once"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "build-tool action may use '@OUTPUT@' only once"_Str)));
             }
             replaced_output = true;
         }
         if (argument.as_str().contains("@OUTPUT_NAME@"_str)) {
             if (action.outputs.len() != usize(1)) {
-                return action_request_failure<Vec<String>>(
-                    "build-tool action with multiple outputs must use numbered output name markers"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "build-tool action with multiple outputs must use numbered output name markers"_Str)));
             }
             auto name = action.outputs[usize {}].as_path().file_name();
             if (name.is_none()) {
-                return action_request_failure<Vec<String>>(
-                    "build-tool action output has no file name"_str);
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "build-tool action output has no file name"_Str)));
             }
             replace_all(argument, "@OUTPUT_NAME@"_str, name->to_string_lossy().as_str());
             replaced_output = true;
@@ -402,14 +401,14 @@ auto ToolActionSession::render_process_invocation(const RegisteredAction& action
             argument.as_str().contains("@INPUT_ROOT:"_str) ||
             argument.as_str().contains("@OUTPUT:"_str) ||
             argument.as_str().contains("@OUTPUT_NAME:"_str)) {
-            return action_request_failure<Vec<String>>(
-                "build-tool action contains an unresolved input, tool, root, or output marker"_str);
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "build-tool action contains an unresolved input, tool, root, or output marker"_Str)));
         }
         invocation.push(rstd::move(argument));
     }
     if (! replaced_output) {
-        return action_request_failure<Vec<String>>(
-            "build-tool action args must contain '@OUTPUT@'"_str);
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+            "build-tool action args must contain '@OUTPUT@'"_Str)));
     }
     return Ok(rstd::move(invocation));
 }
@@ -420,8 +419,10 @@ auto ToolActionSession::write_action_staging(const RegisteredAction& action,
     auto output  = PathBuf::from(staging).join(action.outputs[usize {}].as_path());
     auto written = rstd::fs::write_atomic(output.as_path(), action.content.as_str().as_bytes());
     if (written.is_err()) {
-        return action_publication_failure<empty>(
-            "stage generated file"_str, output.as_path(), rstd::move(written).unwrap_err());
+        return Err(BuildScriptError::BuildToolAction(
+            BuildToolActionError::Publication("stage generated file"_Str,
+                                              PathBuf::from(output.as_path()),
+                                              rstd::move(written).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -431,15 +432,17 @@ auto ToolActionSession::copy_action_staging(const RegisteredAction& action,
     -> BuildScriptResult<empty> {
     auto contents = rstd::fs::read(action.inputs[usize {}].path.as_path());
     if (contents.is_err()) {
-        return build_script_io_failure<empty>("read copy input"_str,
-                                              action.inputs[usize {}].path.as_path(),
-                                              rstd::move(contents).unwrap_err());
+        return Err(BuildScriptError::Io("read copy input"_Str,
+                                        PathBuf::from(action.inputs[usize {}].path.as_path()),
+                                        rstd::move(contents).unwrap_err()));
     }
     auto output  = PathBuf::from(staging).join(action.outputs[usize {}].as_path());
     auto written = rstd::fs::write_atomic(output.as_path(), contents->as_slice());
     if (written.is_err()) {
-        return action_publication_failure<empty>(
-            "stage copied file"_str, output.as_path(), rstd::move(written).unwrap_err());
+        return Err(BuildScriptError::BuildToolAction(
+            BuildToolActionError::Publication("stage copied file"_Str,
+                                              PathBuf::from(output.as_path()),
+                                              rstd::move(written).unwrap_err())));
     }
     return Ok(empty {});
 }
@@ -449,9 +452,9 @@ auto ToolActionSession::transform_action_staging(const RegisteredAction& action,
     -> BuildScriptResult<empty> {
     auto contents = rstd::fs::read_to_string(action.inputs[usize {}].path.as_path());
     if (contents.is_err()) {
-        return build_script_io_failure<empty>("read transform input"_str,
-                                              action.inputs[usize {}].path.as_path(),
-                                              rstd::move(contents).unwrap_err());
+        return Err(BuildScriptError::Io("read transform input"_Str,
+                                        PathBuf::from(action.inputs[usize {}].path.as_path()),
+                                        rstd::move(contents).unwrap_err()));
     }
     auto preamble       = String::make();
     auto implementation = String::make();
@@ -480,9 +483,9 @@ auto ToolActionSession::transform_action_staging(const RegisteredAction& action,
         cursor = end < text.len() ? end + usize(1) : end;
     }
     if (preamble.is_empty() || ! has_code) {
-        return action_failure<empty>(BuildToolActionError::InvalidOutput(
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
             action.inputs[usize {}].path.clone(),
-            "generated C++ file has no separable leading preamble"_Str));
+            "generated C++ file has no separable leading preamble"_Str)));
     }
     ref<str> values[] = { preamble.as_str(), implementation.as_str() };
     for (usize index {}; index < action.outputs.len(); ++index) {
@@ -490,8 +493,10 @@ auto ToolActionSession::transform_action_staging(const RegisteredAction& action,
         auto written =
             rstd::fs::write_atomic(output.as_path(), values[index.to_primitive()].as_bytes());
         if (written.is_err()) {
-            return action_publication_failure<empty>(
-                "stage transform output"_str, output.as_path(), rstd::move(written).unwrap_err());
+            return Err(BuildScriptError::BuildToolAction(
+                BuildToolActionError::Publication("stage transform output"_Str,
+                                                  PathBuf::from(output.as_path()),
+                                                  rstd::move(written).unwrap_err())));
         }
     }
     return Ok(empty {});
@@ -506,23 +511,24 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
     auto receipt = action_root.join(PathBuf::from("receipt.json"_str).as_path());
     auto created = rstd::fs::create_dir_all(action_root.as_path());
     if (created.is_err()) {
-        return build_script_io_failure<empty>("create build-tool action directory"_str,
-                                              action_root.as_path(),
-                                              rstd::move(created).unwrap_err());
+        return Err(BuildScriptError::Io("create build-tool action directory"_Str,
+                                        PathBuf::from(action_root.as_path()),
+                                        rstd::move(created).unwrap_err()));
     }
     auto lock_path = action_root.join(PathBuf::from("lock"_str).as_path());
     auto opened =
         rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(lock_path.as_path());
     if (opened.is_err()) {
-        return build_script_io_failure<empty>("open build-tool action lock"_str,
-                                              lock_path.as_path(),
-                                              rstd::move(opened).unwrap_err());
+        return Err(BuildScriptError::Io("open build-tool action lock"_Str,
+                                        PathBuf::from(lock_path.as_path()),
+                                        rstd::move(opened).unwrap_err()));
     }
     auto locked =
         rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
-        return build_script_io_failure<empty>(
-            "lock build-tool action"_str, lock_path.as_path(), rstd::move(locked).unwrap_err());
+        return Err(BuildScriptError::Io("lock build-tool action"_Str,
+                                        PathBuf::from(lock_path.as_path()),
+                                        rstd::move(locked).unwrap_err()));
     }
     auto reusable = rstd_try(
         action_receipt_matches(receipt.as_path(),
@@ -542,31 +548,32 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
     auto staging        = action_root.join(PathBuf::from("staging"_str).as_path());
     auto staging_exists = rstd::fs::exists(staging.as_path());
     if (staging_exists.is_err()) {
-        return build_script_io_failure<empty>("inspect build-tool action staging"_str,
-                                              staging.as_path(),
-                                              rstd::move(staging_exists).unwrap_err());
+        return Err(BuildScriptError::Io("inspect build-tool action staging"_Str,
+                                        PathBuf::from(staging.as_path()),
+                                        rstd::move(staging_exists).unwrap_err()));
     }
     if (*staging_exists) {
         auto removed = rstd::fs::remove_dir_all(staging.as_path());
         if (removed.is_err()) {
-            return build_script_io_failure<empty>("clear build-tool action staging"_str,
-                                                  staging.as_path(),
-                                                  rstd::move(removed).unwrap_err());
+            return Err(BuildScriptError::Io("clear build-tool action staging"_Str,
+                                            PathBuf::from(staging.as_path()),
+                                            rstd::move(removed).unwrap_err()));
         }
     }
     created = rstd::fs::create_dir_all(staging.as_path());
     if (created.is_err()) {
-        return build_script_io_failure<empty>("create build-tool output staging"_str,
-                                              staging.as_path(),
-                                              rstd::move(created).unwrap_err());
+        return Err(BuildScriptError::Io("create build-tool output staging"_Str,
+                                        PathBuf::from(staging.as_path()),
+                                        rstd::move(created).unwrap_err()));
     }
     for (const auto& output : action.outputs) {
         auto staged_output = staging.join(output.as_path());
         auto parent        = staged_output.as_path().parent().unwrap();
         created            = rstd::fs::create_dir_all(parent);
         if (created.is_err()) {
-            return build_script_io_failure<empty>(
-                "create build-tool output parent"_str, parent, rstd::move(created).unwrap_err());
+            return Err(BuildScriptError::Io("create build-tool output parent"_Str,
+                                            PathBuf::from(parent),
+                                            rstd::move(created).unwrap_err()));
         }
     }
 
@@ -580,15 +587,15 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
         auto executed =
             run_command(invocation, *environment_, Some(process_working_directory.as_path()));
         if (executed.is_err()) {
-            return action_failure<empty>(BuildToolActionError::Process(
-                action.label.clone(), rstd::move(executed).unwrap_err()));
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::Process(
+                action.label.clone(), rstd::move(executed).unwrap_err())));
         }
         if (executed->exit_code != i32 {}) {
-            return action_failure<empty>(
+            return Err(BuildScriptError::BuildToolAction(
                 BuildToolActionError::Execution(action.label.clone(),
                                                 executed->exit_code,
                                                 rstd::move(executed->standard_output),
-                                                rstd::move(executed->standard_error)));
+                                                rstd::move(executed->standard_error))));
         }
     } else if (action.kind == RegisteredActionKind::Write) {
         rstd_try(write_action_staging(action, staging.as_path()));
@@ -611,8 +618,8 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
         outputs_match = actual_outputs[index].as_path() == expected_outputs[index].as_path();
     }
     if (! outputs_match) {
-        return action_failure<empty>(BuildToolActionError::InvalidOutput(
-            staging.clone(), "produced files do not match the declared set"_Str));
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+            staging.clone(), "produced files do not match the declared set"_Str)));
     }
 
     auto dependencies = rstd_try(current_action_dependencies(action));
@@ -640,21 +647,24 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
         auto staged_output = staging.join(output.as_path());
         auto bytes         = rstd::fs::read(staged_output.as_path());
         if (bytes.is_err()) {
-            return build_script_io_failure<empty>("read staged build-tool output"_str,
-                                                  staged_output.as_path(),
-                                                  rstd::move(bytes).unwrap_err());
+            return Err(BuildScriptError::Io("read staged build-tool output"_Str,
+                                            PathBuf::from(staged_output.as_path()),
+                                            rstd::move(bytes).unwrap_err()));
         }
         auto final  = generated_root.join(output.as_path());
         auto parent = final.as_path().parent().unwrap();
         created     = rstd::fs::create_dir_all(parent);
         if (created.is_err()) {
-            return build_script_io_failure<empty>(
-                "create build-tool output parent"_str, parent, rstd::move(created).unwrap_err());
+            return Err(BuildScriptError::Io("create build-tool output parent"_Str,
+                                            PathBuf::from(parent),
+                                            rstd::move(created).unwrap_err()));
         }
         auto written = rstd::fs::write_atomic_if_changed(final.as_path(), bytes->as_slice());
         if (written.is_err()) {
-            return action_publication_failure<empty>(
-                "publish build-tool output"_str, final.as_path(), rstd::move(written).unwrap_err());
+            return Err(BuildScriptError::BuildToolAction(
+                BuildToolActionError::Publication("publish build-tool output"_Str,
+                                                  PathBuf::from(final.as_path()),
+                                                  rstd::move(written).unwrap_err())));
         }
         digests.push(licrypto::sha256_hex(bytes->as_slice()));
     }
@@ -663,9 +673,10 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
     auto receipt_written =
         rstd::fs::write_atomic(receipt.as_path(), receipt_text.as_str().as_bytes());
     if (receipt_written.is_err()) {
-        return action_receipt_failure<empty>("write build-tool action receipt"_str,
-                                             receipt.as_path(),
-                                             rstd::move(receipt_written).unwrap_err());
+        return Err(BuildScriptError::BuildToolAction(
+            BuildToolActionError::Receipt("write build-tool action receipt"_Str,
+                                          PathBuf::from(receipt.as_path()),
+                                          rstd::move(receipt_written).unwrap_err())));
     }
     emit(BuildEventKind::BuildToolRun,
          action.label.as_str(),

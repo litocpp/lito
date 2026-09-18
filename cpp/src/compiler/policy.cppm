@@ -19,14 +19,6 @@ namespace lito::cpp
 template<typename Key, typename Value>
 using PolicyMap = rstd::collections::BTreeMap<Key, Value>;
 
-auto option_error(ref<str> message) -> CppOptionResult<CppCompileOptions> {
-    return Err(CppOptionError::Message(String::make(message)));
-}
-
-auto option_error(String message) -> CppOptionResult<CppCompileOptions> {
-    return Err(CppOptionError::Message(rstd::move(message)));
-}
-
 auto append_unique(Vec<String>& output, String value) -> void {
     for (const auto& existing : output) {
         if (existing.as_str() == value.as_str()) return;
@@ -198,12 +190,14 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             }
             RSTD_CASE(CodegenSetting, setting) {
                 static_cast<void>(setting);
-                return option_error("invalid prevalidated Lito-owned codegen option"_str);
+                return Err(
+                    CppOptionError::Message("invalid prevalidated Lito-owned codegen option"_Str));
             }
             RSTD_CASE(OwnedSetting, setting, enabled) {
                 static_cast<void>(setting);
                 static_cast<void>(enabled);
-                return option_error("invalid prevalidated Lito-owned compiler option"_str);
+                return Err(
+                    CppOptionError::Message("invalid prevalidated Lito-owned compiler option"_Str));
             }
             RSTD_CASE(Family, domain, family, value) {
                 auto* modes = rstd::addressof(language_modes);
@@ -254,7 +248,8 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
     -> CppOptionResult<CppCompileOptions> {
     if (cpp_bmi_compatibility_identity(input).as_str() !=
         cpp_bmi_compatibility_identity(extra).as_str()) {
-        return option_error("cannot merge C++ contexts with different semantic or ABI options"_str);
+        return Err(CppOptionError::Message(
+            "cannot merge C++ contexts with different semantic or ABI options"_Str));
     }
     auto layer = CppOptionLayer {};
     for (const auto& include : extra.preprocessor.include_directories) {

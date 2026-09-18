@@ -29,19 +29,15 @@ auto module_error_context(const cpp::ResolvedStandardLibrary& library)
 }
 
 template<typename T>
-auto module_failure(StandardLibraryModuleError error) -> ToolchainResult<T> {
-    return Err(ToolchainError::StandardLibraryModule(rstd::move(error)));
-}
-
-template<typename T>
 auto manifest_failure(const cpp::ResolvedStandardLibrary& library,
                       ref<rstd::path::Path>               path,
                       String                              message,
                       Option<String>                      entry = None()) -> ToolchainResult<T> {
-    return module_failure<T>(StandardLibraryModuleError::Manifest(module_error_context(library),
-                                                                  PathBuf::from(path),
-                                                                  rstd::move(entry),
-                                                                  rstd::move(message)));
+    return Err(ToolchainError::StandardLibraryModule(
+        StandardLibraryModuleError::Manifest(module_error_context(library),
+                                             PathBuf::from(path),
+                                             rstd::move(entry),
+                                             rstd::move(message))));
 }
 
 template<typename T>
@@ -57,8 +53,11 @@ auto manifest_parse_failure(const cpp::ResolvedStandardLibrary& library,
                             ref<rstd::path::Path>               path,
                             lito::parse::Error                  source,
                             Option<String> entry = None()) -> ToolchainResult<T> {
-    return module_failure<T>(StandardLibraryModuleError::Parse(
-        module_error_context(library), PathBuf::from(path), rstd::move(entry), rstd::move(source)));
+    return Err(ToolchainError::StandardLibraryModule(
+        StandardLibraryModuleError::Parse(module_error_context(library),
+                                          PathBuf::from(path),
+                                          rstd::move(entry),
+                                          rstd::move(source))));
 }
 
 template<typename T>
@@ -66,12 +65,13 @@ auto module_io_failure(const cpp::ResolvedStandardLibrary& library,
                        ref<str>                            operation,
                        ref<rstd::path::Path>               path,
                        rstd::io::error::Error              source) -> ToolchainResult<T> {
-    return module_failure<T>(StandardLibraryModuleError::Io(module_error_context(library),
-                                                            String::make(operation),
-                                                            PathBuf::from(path),
-                                                            None(),
-                                                            None(),
-                                                            rstd::move(source)));
+    return Err(ToolchainError::StandardLibraryModule(
+        StandardLibraryModuleError::Io(module_error_context(library),
+                                       operation.into(),
+                                       PathBuf::from(path),
+                                       None(),
+                                       None(),
+                                       rstd::move(source))));
 }
 
 template<typename T>
@@ -81,12 +81,13 @@ auto module_manifest_io_failure(const cpp::ResolvedStandardLibrary& library,
                                 ref<rstd::path::Path>               manifest,
                                 Option<String>                      entry,
                                 rstd::io::error::Error              source) -> ToolchainResult<T> {
-    return module_failure<T>(StandardLibraryModuleError::Io(module_error_context(library),
-                                                            String::make(operation),
-                                                            PathBuf::from(path),
-                                                            Some(PathBuf::from(manifest)),
-                                                            rstd::move(entry),
-                                                            rstd::move(source)));
+    return Err(ToolchainError::StandardLibraryModule(
+        StandardLibraryModuleError::Io(module_error_context(library),
+                                       operation.into(),
+                                       PathBuf::from(path),
+                                       Some(PathBuf::from(manifest)),
+                                       rstd::move(entry),
+                                       rstd::move(source))));
 }
 
 auto required_member(const Json&                         value,
@@ -178,14 +179,14 @@ auto select_manifest(const cpp::ResolvedStandardLibrary& library) -> ToolchainRe
                                               rstd::move(canonical).unwrap_err());
         }
         if (selected.is_some() && selected->as_path() != canonical->as_path()) {
-            return module_failure<PathBuf>(StandardLibraryModuleError::Ambiguous(
-                module_error_context(library), selected->clone(), canonical->clone()));
+            return Err(ToolchainError::StandardLibraryModule(StandardLibraryModuleError::Ambiguous(
+                module_error_context(library), selected->clone(), canonical->clone())));
         }
         selected = Some(rstd::move(canonical).unwrap());
     }
     if (selected.is_none()) {
-        return module_failure<PathBuf>(StandardLibraryModuleError::Missing(
-            module_error_context(library), library.module_manifest.paths.clone()));
+        return Err(ToolchainError::StandardLibraryModule(StandardLibraryModuleError::Missing(
+            module_error_context(library), library.module_manifest.paths.clone())));
     }
     return Ok(rstd::move(selected).unwrap());
 }

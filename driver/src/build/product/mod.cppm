@@ -91,24 +91,6 @@ namespace lito
 
 inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(7);
 
-template<typename T>
-auto product_failure(String message) -> BuildProductResult<T> {
-    return Err(BuildProductError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto product_failure(ref<str> message) -> BuildProductResult<T> {
-    return product_failure<T>(String::make(message));
-}
-
-template<typename T>
-auto product_io_failure(ref<str>               operation,
-                        ref<rstd::path::Path>  path,
-                        rstd::io::error::Error error) -> BuildProductResult<T> {
-    return Err(
-        BuildProductError::Io(String::make(operation), PathBuf::from(path), rstd::move(error)));
-}
-
 auto product_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
@@ -116,8 +98,8 @@ auto product_string(ref<str> value) -> Json {
 auto product_path(ref<rstd::path::Path> path) -> BuildProductResult<Json> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return product_failure<Json>(
-            rstd::format("build product path '{}' is not valid UTF-8", path));
+        return Err(BuildProductError::Message(
+            rstd::format("build product path '{}' is not valid UTF-8", path)));
     }
     return Ok(product_string(*text));
 }
@@ -158,15 +140,15 @@ auto product_build_path(const CompletedBuildProduct& product,
                         ref<str>                     context) -> BuildProductResult<Json> {
     auto relative = path.strip_prefix(product.base_directory.as_path());
     if (relative.is_none()) {
-        return product_failure<Json>(rstd::format("{} '{}' escapes build directory '{}'",
-                                                  context,
-                                                  path,
-                                                  product.base_directory.as_path()));
+        return Err(BuildProductError::Message(rstd::format("{} '{}' escapes build directory '{}'",
+                                                           context,
+                                                           path,
+                                                           product.base_directory.as_path())));
     }
     if (relative->is_empty()) return Ok(product_string("."_str));
     if (! relative->is_safe_relative()) {
-        return product_failure<Json>(
-            rstd::format("{} '{}' is not a safe build-relative path", context, *relative));
+        return Err(BuildProductError::Message(
+            rstd::format("{} '{}' is not a safe build-relative path", context, *relative)));
     }
     return product_path(*relative);
 }
@@ -179,8 +161,8 @@ auto resolve_product_build_path(ref<rstd::path::Path> base,
     if (text == "."_str) return Ok(PathBuf::from(base));
     auto relative = PathBuf::from(text);
     if (! relative.as_path().is_safe_relative()) {
-        return product_failure<PathBuf>(rstd::format(
-            "{}.{} '{}' is not a safe build-relative path", context, key, relative.as_path()));
+        return Err(BuildProductError::Message(rstd::format(
+            "{}.{} '{}' is not a safe build-relative path", context, key, relative.as_path())));
     }
     return Ok(PathBuf::from(base).join(relative.as_path()));
 }
@@ -207,8 +189,8 @@ auto parse_package_target_kind(ref<str> value)
         return Ok(lito::package::PackageTargetKind::TestAttachment);
     }
     if (value == "compile-test"_str) return Ok(lito::package::PackageTargetKind::CompileTest);
-    return product_failure<lito::package::PackageTargetKind>(
-        rstd::format("unknown build product target kind '{}'", value));
+    return Err(
+        BuildProductError::Message(rstd::format("unknown build product target kind '{}'", value)));
 }
 
 auto artifact_kind_text(cpp::ArtifactKind kind) -> ref<str> {
@@ -238,8 +220,8 @@ auto parse_artifact_kind(ref<str> value) -> BuildProductResult<cpp::ArtifactKind
     if (value == "test-executable"_str) return Ok(cpp::ArtifactKind::TestExecutable);
     if (value == "benchmark-executable"_str) return Ok(cpp::ArtifactKind::BenchmarkExecutable);
     if (value == "compile-test"_str) return Ok(cpp::ArtifactKind::CompileTest);
-    return product_failure<cpp::ArtifactKind>(
-        rstd::format("unknown build product artifact kind '{}'", value));
+    return Err(BuildProductError::Message(
+        rstd::format("unknown build product artifact kind '{}'", value)));
 }
 
 auto parse_artifact_format(ref<str> value) -> BuildProductResult<lito::artifact::Format> {
@@ -248,15 +230,15 @@ auto parse_artifact_format(ref<str> value) -> BuildProductResult<lito::artifact:
     if (value == "pe-coff"_str) return Ok(lito::artifact::Format::PeCoff);
     if (value == "mach-o"_str) return Ok(lito::artifact::Format::MachO);
     if (value == "webassembly"_str) return Ok(lito::artifact::Format::WebAssembly);
-    return product_failure<lito::artifact::Format>(
-        rstd::format("unknown build product artifact format '{}'", value));
+    return Err(BuildProductError::Message(
+        rstd::format("unknown build product artifact format '{}'", value)));
 }
 
 auto parse_artifact_file_role(ref<str> value) -> BuildProductResult<ArtifactFileRole> {
     auto parsed = artifact_file_role_from_name(value);
     if (parsed.is_some()) return Ok(*parsed);
-    return product_failure<ArtifactFileRole>(
-        rstd::format("unknown build product artifact file role '{}'", value));
+    return Err(BuildProductError::Message(
+        rstd::format("unknown build product artifact file role '{}'", value)));
 }
 
 auto target_json(const lito::package::PackageTargetId& target) -> Json {
@@ -290,30 +272,29 @@ auto parse_runpath(const Json& value, ref<str> context)
     -> BuildProductResult<lito::artifact::ElfRunpath> {
     auto array = value.as_array();
     if (array.is_none() || (**array).is_empty()) {
-        return product_failure<lito::artifact::ElfRunpath>(
-            rstd::format("{} must be a non-empty array", context));
+        return Err(
+            BuildProductError::Message(rstd::format("{} must be a non-empty array", context)));
     }
     auto paths = Vec<lito::artifact::OriginRelativeRuntimePath>::with_capacity((**array).len());
     for (const auto& item : **array) {
         auto text = item.as_str();
         if (text.is_none()) {
-            return product_failure<lito::artifact::ElfRunpath>(
-                rstd::format("{} must contain strings", context));
+            return Err(
+                BuildProductError::Message(rstd::format("{} must contain strings", context)));
         }
         auto path = lito::artifact::make_origin_relative_runtime_path(PathBuf::from(*text));
         if (path.is_err()) {
-            return product_failure<lito::artifact::ElfRunpath>(
-                rstd::format("{} contains invalid path '{}': {}",
-                             context,
-                             *text,
-                             rstd::move(path).unwrap_err()));
+            return Err(BuildProductError::Message(rstd::format("{} contains invalid path '{}': {}",
+                                                               context,
+                                                               *text,
+                                                               rstd::move(path).unwrap_err())));
         }
         paths.push(rstd::move(path).unwrap());
     }
     auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
     if (runpath.is_err()) {
-        return product_failure<lito::artifact::ElfRunpath>(
-            rstd::format("{} is invalid: {}", context, rstd::move(runpath).unwrap_err()));
+        return Err(BuildProductError::Message(
+            rstd::format("{} is invalid: {}", context, rstd::move(runpath).unwrap_err())));
     }
     return Ok(rstd::move(runpath).unwrap());
 }
@@ -339,8 +320,7 @@ auto parse_artifact_file(const Json& value, ref<rstd::path::Path> base, ref<str>
     auto publish_value = rstd_try(product_member(value, "publish"_str, context));
     auto publish       = publish_value->as_bool();
     if (publish.is_none()) {
-        return product_failure<BuiltArtifactFile>(
-            rstd::format("{}.publish must be a bool", context));
+        return Err(BuildProductError::Message(rstd::format("{}.publish must be a bool", context)));
     }
     auto role = rstd_try(product_required_string(value, "role"_str, context));
     return Ok(BuiltArtifactFile {
@@ -587,7 +567,7 @@ auto parse_external_assets(const Json& value, ref<rstd::path::Path> base, ref<st
     -> BuildProductResult<ExternalAssetCatalog> {
     auto values = value.as_array();
     if (values.is_none()) {
-        return product_failure<ExternalAssetCatalog>(rstd::format("{} must be an array", context));
+        return Err(BuildProductError::Message(rstd::format("{} must be an array", context)));
     }
     auto result = ExternalAssetCatalog {};
     for (const auto& set_value : **values) {
@@ -601,8 +581,8 @@ auto parse_external_assets(const Json& value, ref<rstd::path::Path> base, ref<st
         if (disposition == "provided"_str) {
             parsed_disposition = ExternalAssetDisposition::Provided;
         } else if (disposition != "materialized"_str) {
-            return product_failure<ExternalAssetCatalog>(rstd::format(
-                "unknown build product external asset disposition '{}'", disposition.as_str()));
+            return Err(BuildProductError::Message(rstd::format(
+                "unknown build product external asset disposition '{}'", disposition.as_str())));
         }
         auto entry_values = rstd_try(product_required_array(
             set_value, "entries"_str, "build product external asset set"_str));
@@ -672,16 +652,16 @@ auto parse_file_stamp(const Json& value, ref<rstd::path::Path> base, ref<str> co
     auto nanoseconds_value = rstd_try(product_member(value, "modified-nanoseconds"_str, context));
     auto nanoseconds       = nanoseconds_value->as_u64();
     if (size.is_none()) {
-        return product_failure<BuildProductFileStamp>(
-            rstd::format("{}.size must be an unsigned integer", context));
+        return Err(BuildProductError::Message(
+            rstd::format("{}.size must be an unsigned integer", context)));
     }
     if (seconds.is_none()) {
-        return product_failure<BuildProductFileStamp>(
-            rstd::format("{}.modified-seconds must be an integer", context));
+        return Err(BuildProductError::Message(
+            rstd::format("{}.modified-seconds must be an integer", context)));
     }
     if (nanoseconds.is_none() || *nanoseconds >= rstd::as_cast<u64>(rstd::time::NANOS_PER_SEC)) {
-        return product_failure<BuildProductFileStamp>(
-            rstd::format("{}.modified-nanoseconds must be a normalized unsigned integer", context));
+        return Err(BuildProductError::Message(rstd::format(
+            "{}.modified-nanoseconds must be a normalized unsigned integer", context)));
     }
     auto owner = rstd_try(product_required_string(value, "owner"_str, context));
     auto path  = PathBuf::make();
@@ -690,12 +670,12 @@ auto parse_file_stamp(const Json& value, ref<rstd::path::Path> base, ref<str> co
     } else if (owner == "external"_str) {
         path = rstd_try(product_required_path(value, "path"_str, context));
         if (! path.as_path().is_absolute()) {
-            return product_failure<BuildProductFileStamp>(
-                rstd::format("{}.path '{}' is not absolute", context, path.as_path()));
+            return Err(BuildProductError::Message(
+                rstd::format("{}.path '{}' is not absolute", context, path.as_path())));
         }
     } else {
-        return product_failure<BuildProductFileStamp>(
-            rstd::format("{}.owner '{}' is unknown", context, owner.as_str()));
+        return Err(BuildProductError::Message(
+            rstd::format("{}.owner '{}' is unknown", context, owner.as_str())));
     }
     return Ok(BuildProductFileStamp {
         .path                 = rstd::move(path),
@@ -783,8 +763,8 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
         rstd_try(product_member(value, "android-minimum-api"_str, "build product"_str));
     auto android_api = android_api_value->as_u64();
     if (android_api.is_none() || *android_api > rstd::as_cast<u64>(u32::MAX)) {
-        return product_failure<CompletedBuildProduct>(
-            "build product.android-minimum-api must be a 32-bit unsigned integer"_str);
+        return Err(BuildProductError::Message(
+            "build product.android-minimum-api must be a 32-bit unsigned integer"_Str));
     }
 
     auto artifact_values =
@@ -835,8 +815,8 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
         auto stamp = rstd_try(parse_file_stamp(file, base, "build product install file"_str));
         for (const auto& existing : files) {
             if (existing.path.as_path() == stamp.path.as_path()) {
-                return product_failure<CompletedBuildProduct>(
-                    rstd::format("build product repeats install file '{}'", stamp.path.as_path()));
+                return Err(BuildProductError::Message(
+                    rstd::format("build product repeats install file '{}'", stamp.path.as_path())));
             }
         }
         files.push(rstd::move(stamp));
@@ -863,18 +843,18 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
         .install_files = rstd::move(files),
     };
     if (result.target_kind != "default"_str && result.target_kind != "android"_str) {
-        return product_failure<CompletedBuildProduct>(
-            rstd::format("build product.target-kind '{}' is unknown", result.target_kind.as_str()));
+        return Err(BuildProductError::Message(rstd::format(
+            "build product.target-kind '{}' is unknown", result.target_kind.as_str())));
     }
     if (result.target_kind == "default"_str &&
         (! result.android_abi.is_empty() || result.android_minimum_api != u32 {})) {
-        return product_failure<CompletedBuildProduct>(
-            "default build product contains Android target fields"_str);
+        return Err(
+            BuildProductError::Message("default build product contains Android target fields"_Str));
     }
     if (result.target_kind == "android"_str &&
         (result.android_abi.is_empty() || result.android_minimum_api == u32 {})) {
-        return product_failure<CompletedBuildProduct>(
-            "Android build product is missing target fields"_str);
+        return Err(
+            BuildProductError::Message("Android build product is missing target fields"_Str));
     }
     return Ok(rstd::move(result));
 }
@@ -900,13 +880,13 @@ auto acquire_product_lock(ref<rstd::path::Path> path, rstd::fs::FileLockMode mod
     if (create) options.create(true);
     auto opened = options.open(path);
     if (opened.is_err()) {
-        return product_io_failure<rstd::fs::FileLock>(
-            "open build product lock"_str, path, rstd::move(opened).unwrap_err());
+        return Err(BuildProductError::Io(
+            "open build product lock"_Str, PathBuf::from(path), rstd::move(opened).unwrap_err()));
     }
     auto locked = rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), mode);
     if (locked.is_err()) {
-        return product_io_failure<rstd::fs::FileLock>(
-            "lock build product"_str, path, rstd::move(locked).unwrap_err());
+        return Err(BuildProductError::Io(
+            "lock build product"_Str, PathBuf::from(path), rstd::move(locked).unwrap_err()));
     }
     return Ok(rstd::move(locked).unwrap());
 }
@@ -914,8 +894,8 @@ auto acquire_product_lock(ref<rstd::path::Path> path, rstd::fs::FileLockMode mod
 auto read_product_state(ref<rstd::path::Path> path) -> BuildProductResult<Json> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return product_io_failure<Json>(
-            "read build product"_str, path, rstd::move(contents).unwrap_err());
+        return Err(BuildProductError::Io(
+            "read build product"_Str, PathBuf::from(path), rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::json::from_str(contents->as_str(),
                                        rstd::json::ParseOptions { .reject_duplicate_keys = true });
@@ -938,12 +918,12 @@ auto state_generation(const Json& value, ref<str> expected_state) -> BuildProduc
     auto schema_value = rstd_try(product_member(value, "schema"_str, "build product state"_str));
     auto schema       = schema_value->as_u64();
     if (schema.is_none() || *schema != BUILD_PRODUCT_SCHEMA) {
-        return product_failure<String>("build product uses an unsupported schema"_str);
+        return Err(BuildProductError::Message("build product uses an unsupported schema"_Str));
     }
     auto state = rstd_try(product_required_string(value, "state"_str, "build product state"_str));
     if (state != expected_state) {
-        return product_failure<String>(rstd::format(
-            "build product state is '{}', expected '{}'", state.as_str(), expected_state));
+        return Err(BuildProductError::Message(rstd::format(
+            "build product state is '{}', expected '{}'", state.as_str(), expected_state)));
     }
     return product_required_string(value, "generation"_str, "build product state"_str);
 }
@@ -954,8 +934,8 @@ auto write_product_state(ref<rstd::path::Path> path, Json value) -> BuildProduct
     text.push_ascii('\n');
     auto written = rstd::fs::write_atomic(path, text.as_str().as_bytes());
     if (written.is_err()) {
-        return product_io_failure<empty>(
-            "write build product"_str, path, rstd::move(written).unwrap_err());
+        return Err(BuildProductError::Io(
+            "write build product"_Str, PathBuf::from(path), rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -973,37 +953,39 @@ auto append_file_stamp(const CompletedBuildProduct& product,
                        BuildProductFileOwner        owner) -> BuildProductResult<empty> {
     auto inspected = rstd::fs::symlink_metadata(requested);
     if (inspected.is_err()) {
-        return product_io_failure<empty>(
-            "inspect build product file"_str, requested, rstd::move(inspected).unwrap_err());
+        return Err(BuildProductError::Io("inspect build product file"_Str,
+                                         PathBuf::from(requested),
+                                         rstd::move(inspected).unwrap_err()));
     }
     if (! inspected->is_file() || inspected->is_symlink()) {
-        return product_failure<empty>(
-            rstd::format("build product file '{}' is not a regular non-symlink file", requested));
+        return Err(BuildProductError::Message(
+            rstd::format("build product file '{}' is not a regular non-symlink file", requested)));
     }
     auto canonical = rstd::fs::canonicalize(requested);
     if (canonical.is_err()) {
-        return product_io_failure<empty>(
-            "resolve build product file"_str, requested, rstd::move(canonical).unwrap_err());
+        return Err(BuildProductError::Io("resolve build product file"_Str,
+                                         PathBuf::from(requested),
+                                         rstd::move(canonical).unwrap_err()));
     }
     if (canonical->as_path() != requested) {
-        return product_failure<empty>(
-            rstd::format("{} '{}' is not its canonical path", context, requested));
+        return Err(BuildProductError::Message(
+            rstd::format("{} '{}' is not its canonical path", context, requested)));
     }
     if (owner == BuildProductFileOwner::Build &&
         canonical->as_path().strip_prefix(product.build_directory.as_path()).is_none()) {
-        return product_failure<empty>(rstd::format("{} '{}' escapes build directory '{}'",
-                                                   context,
-                                                   requested,
-                                                   product.build_directory.as_path()));
+        return Err(BuildProductError::Message(rstd::format("{} '{}' escapes build directory '{}'",
+                                                           context,
+                                                           requested,
+                                                           product.build_directory.as_path())));
     }
     for (const auto& file : files) {
         if (file.path.as_path() == canonical->as_path()) return Ok(empty {});
     }
     auto modified = inspected->modified();
     if (modified.is_err()) {
-        return product_io_failure<empty>("read build product file modification time"_str,
-                                         canonical->as_path(),
-                                         rstd::move(modified).unwrap_err());
+        return Err(BuildProductError::Io("read build product file modification time"_Str,
+                                         PathBuf::from(canonical->as_path()),
+                                         rstd::move(modified).unwrap_err()));
     }
     auto timestamp = modified->as_unix_time();
     files.push(BuildProductFileStamp {
@@ -1018,25 +1000,28 @@ auto append_file_stamp(const CompletedBuildProduct& product,
 auto validate_canonical_directory(ref<rstd::path::Path> path, ref<str> context)
     -> BuildProductResult<empty> {
     if (! path.is_absolute()) {
-        return product_failure<empty>(rstd::format("{} '{}' is not absolute", context, path));
+        return Err(
+            BuildProductError::Message(rstd::format("{} '{}' is not absolute", context, path)));
     }
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_err()) {
-        return product_io_failure<empty>(
-            "inspect completed build directory"_str, path, rstd::move(metadata).unwrap_err());
+        return Err(BuildProductError::Io("inspect completed build directory"_Str,
+                                         PathBuf::from(path),
+                                         rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir() || metadata->is_symlink()) {
-        return product_failure<empty>(
-            rstd::format("{} '{}' is not a non-symlink directory", context, path));
+        return Err(BuildProductError::Message(
+            rstd::format("{} '{}' is not a non-symlink directory", context, path)));
     }
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
-        return product_io_failure<empty>(
-            "resolve completed build directory"_str, path, rstd::move(canonical).unwrap_err());
+        return Err(BuildProductError::Io("resolve completed build directory"_Str,
+                                         PathBuf::from(path),
+                                         rstd::move(canonical).unwrap_err()));
     }
     if (canonical->as_path() != path) {
-        return product_failure<empty>(
-            rstd::format("{} '{}' is not its canonical path", context, path));
+        return Err(BuildProductError::Message(
+            rstd::format("{} '{}' is not its canonical path", context, path)));
     }
     return Ok(empty {});
 }
@@ -1044,13 +1029,14 @@ auto validate_canonical_directory(ref<rstd::path::Path> path, ref<str> context)
 auto validate_normal_relative_path(ref<rstd::path::Path> path, ref<str> context)
     -> BuildProductResult<empty> {
     if (path.is_empty() || path.is_absolute() || path.has_root()) {
-        return product_failure<empty>(rstd::format("{} '{}' is not relative", context, path));
+        return Err(
+            BuildProductError::Message(rstd::format("{} '{}' is not relative", context, path)));
     }
     if (! path.components().all([](auto component) {
             return component.is_normal();
         })) {
-        return product_failure<empty>(
-            rstd::format("{} '{}' contains a non-normal component", context, path));
+        return Err(BuildProductError::Message(
+            rstd::format("{} '{}' contains a non-normal component", context, path)));
     }
     return Ok(empty {});
 }
@@ -1063,34 +1049,35 @@ auto validate_product_layout(const CompletedBuildProduct& product) -> BuildProdu
     if (product.build_directory.as_path()
             .strip_prefix(product.base_directory.as_path())
             .is_none()) {
-        return product_failure<empty>(
+        return Err(BuildProductError::Message(
             rstd::format("build product directory '{}' escapes base directory '{}'",
                          product.build_directory.as_path(),
-                         product.base_directory.as_path()));
+                         product.base_directory.as_path())));
     }
     for (const auto& artifact : product.artifacts) {
         if (artifact.primary.content_type.is_empty()) {
-            return product_failure<empty>(
+            return Err(BuildProductError::Message(
                 rstd::format("artifact '{}' has an empty primary content type",
-                             artifact.primary.path.as_path()));
+                             artifact.primary.path.as_path())));
         }
         for (const auto& companion : artifact.companions) {
             if (companion.content_type.is_empty()) {
-                return product_failure<empty>(rstd::format(
-                    "artifact companion '{}' has an empty content type", companion.path.as_path()));
+                return Err(BuildProductError::Message(
+                    rstd::format("artifact companion '{}' has an empty content type",
+                                 companion.path.as_path())));
             }
             if (companion.path.as_path() == artifact.primary.path.as_path()) {
-                return product_failure<empty>(
+                return Err(BuildProductError::Message(
                     rstd::format("artifact '{}' repeats its primary path as a companion",
-                                 artifact.primary.path.as_path()));
+                                 artifact.primary.path.as_path())));
             }
             for (const auto& prior : artifact.companions) {
                 if (rstd::addressof(prior) == rstd::addressof(companion)) break;
                 if (prior.path.as_path() == companion.path.as_path()) {
-                    return product_failure<empty>(
+                    return Err(BuildProductError::Message(
                         rstd::format("artifact '{}' repeats companion path '{}'",
                                      lito::package::package_target_id_text(artifact.target),
-                                     companion.path.as_path()));
+                                     companion.path.as_path())));
                 }
             }
         }
@@ -1109,51 +1096,54 @@ auto validate_product_file_stamp(const CompletedBuildProduct& product,
                                  ref<str> context) -> BuildProductResult<empty> {
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_err()) {
-        return product_io_failure<empty>(
-            "inspect completed build reference"_str, path, rstd::move(metadata).unwrap_err());
+        return Err(BuildProductError::Io("inspect completed build reference"_Str,
+                                         PathBuf::from(path),
+                                         rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
-        return product_failure<empty>(
-            rstd::format("{} '{}' is not a regular non-symlink file", context, path));
+        return Err(BuildProductError::Message(
+            rstd::format("{} '{}' is not a regular non-symlink file", context, path)));
     }
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
-        return product_io_failure<empty>(
-            "resolve completed build reference"_str, path, rstd::move(canonical).unwrap_err());
+        return Err(BuildProductError::Io("resolve completed build reference"_Str,
+                                         PathBuf::from(path),
+                                         rstd::move(canonical).unwrap_err()));
     }
     const BuildProductFileStamp* stamp = nullptr;
     for (const auto& candidate : product.install_files) {
         if (candidate.path.as_path() != canonical->as_path()) continue;
         if (stamp != nullptr) {
-            return product_failure<empty>(
-                rstd::format("{} '{}' has duplicate file stamps", context, path));
+            return Err(BuildProductError::Message(
+                rstd::format("{} '{}' has duplicate file stamps", context, path)));
         }
         stamp = rstd::addressof(candidate);
     }
     if (stamp == nullptr) {
-        return product_failure<empty>(rstd::format("{} '{}' has no file stamp", context, path));
+        return Err(
+            BuildProductError::Message(rstd::format("{} '{}' has no file stamp", context, path)));
     }
     if (metadata->len() != stamp->size) {
-        return product_failure<empty>(rstd::format(
-            "{} '{}' size changed from {} to {}", context, path, stamp->size, metadata->len()));
+        return Err(BuildProductError::Message(rstd::format(
+            "{} '{}' size changed from {} to {}", context, path, stamp->size, metadata->len())));
     }
     auto modified = metadata->modified();
     if (modified.is_err()) {
-        return product_io_failure<empty>("read completed build file modification time"_str,
-                                         path,
-                                         rstd::move(modified).unwrap_err());
+        return Err(BuildProductError::Io("read completed build file modification time"_Str,
+                                         PathBuf::from(path),
+                                         rstd::move(modified).unwrap_err()));
     }
     auto timestamp = modified->as_unix_time();
     if (timestamp.seconds != stamp->modified_seconds ||
         timestamp.nanoseconds != stamp->modified_nanoseconds) {
-        return product_failure<empty>(
+        return Err(BuildProductError::Message(
             rstd::format("{} '{}' modified time changed from {}.{} to {}.{}",
                          context,
                          path,
                          stamp->modified_seconds,
                          stamp->modified_nanoseconds,
                          timestamp.seconds,
-                         timestamp.nanoseconds));
+                         timestamp.nanoseconds)));
     }
     return Ok(empty {});
 }
@@ -1178,14 +1168,15 @@ auto begin_build_product_publication(ref<rstd::path::Path> project_root,
     auto parent  = layout.state.as_path().parent().unwrap();
     auto created = rstd::fs::create_dir_all(parent);
     if (created.is_err()) {
-        return product_io_failure<BuildProductPublication>(
-            "create build product directory"_str, parent, rstd::move(created).unwrap_err());
+        return Err(BuildProductError::Io("create build product directory"_Str,
+                                         PathBuf::from(parent),
+                                         rstd::move(created).unwrap_err()));
     }
     auto canonical_base = rstd::fs::canonicalize(layout.base.as_path());
     if (canonical_base.is_err()) {
-        return product_io_failure<BuildProductPublication>("resolve build product directory"_str,
-                                                           layout.base.as_path(),
-                                                           rstd::move(canonical_base).unwrap_err());
+        return Err(BuildProductError::Io("resolve build product directory"_Str,
+                                         PathBuf::from(layout.base.as_path()),
+                                         rstd::move(canonical_base).unwrap_err()));
     }
     layout    = product_layout(canonical_base->as_path());
     auto lock = rstd_try(
@@ -1209,16 +1200,16 @@ auto finalize_completed_build_product(CompletedBuildProduct result)
     -> BuildProductResult<CompletedBuildProduct> {
     auto base_directory = rstd::fs::canonicalize(result.base_directory.as_path());
     if (base_directory.is_err()) {
-        return product_io_failure<CompletedBuildProduct>("resolve build product base directory"_str,
-                                                         result.base_directory.as_path(),
-                                                         rstd::move(base_directory).unwrap_err());
+        return Err(BuildProductError::Io("resolve build product base directory"_Str,
+                                         PathBuf::from(result.base_directory.as_path()),
+                                         rstd::move(base_directory).unwrap_err()));
     }
     result.base_directory = rstd::move(base_directory).unwrap();
     auto build_directory  = rstd::fs::canonicalize(result.build_directory.as_path());
     if (build_directory.is_err()) {
-        return product_io_failure<CompletedBuildProduct>("resolve completed build directory"_str,
-                                                         result.build_directory.as_path(),
-                                                         rstd::move(build_directory).unwrap_err());
+        return Err(BuildProductError::Io("resolve completed build directory"_Str,
+                                         PathBuf::from(result.build_directory.as_path()),
+                                         rstd::move(build_directory).unwrap_err()));
     }
     result.build_directory = rstd::move(build_directory).unwrap();
     rstd_try(validate_product_layout(result));
@@ -1291,16 +1282,16 @@ auto complete_build_product_publication(const BuildProductPublication& publicati
     auto current    = rstd_try(read_product_state(publication.state.as_path()));
     auto generation = rstd_try(state_generation(current, "building"_str));
     if (generation != publication.generation.as_str()) {
-        return product_failure<empty>(
+        return Err(BuildProductError::Message(
             rstd::format("build product generation '{}' was superseded by '{}'",
                          publication.generation.as_str(),
-                         generation.as_str()));
+                         generation.as_str())));
     }
     if (product.base_directory.as_path() != publication.base_directory.as_path()) {
-        return product_failure<empty>(
+        return Err(BuildProductError::Message(
             rstd::format("completed build base directory '{}' does not match publication base '{}'",
                          product.base_directory.as_path(),
-                         publication.base_directory.as_path()));
+                         publication.base_directory.as_path())));
     }
     auto state = JsonMap::make();
     state.insert("schema"_Str, Json::Number(rstd::json::Number::from_u64(BUILD_PRODUCT_SCHEMA)));
@@ -1316,9 +1307,9 @@ auto load_completed_build_product(ref<rstd::path::Path> project_root,
     auto base           = resolve_build_base_directory(project_root, requested, profile);
     auto canonical_base = rstd::fs::canonicalize(base.as_path());
     if (canonical_base.is_err()) {
-        return product_io_failure<CompletedBuildProduct>("resolve build product directory"_str,
-                                                         base.as_path(),
-                                                         rstd::move(canonical_base).unwrap_err());
+        return Err(BuildProductError::Io("resolve build product directory"_Str,
+                                         PathBuf::from(base.as_path()),
+                                         rstd::move(canonical_base).unwrap_err()));
     }
     base        = rstd::move(canonical_base).unwrap();
     auto layout = product_layout(base.as_path());
@@ -1329,18 +1320,18 @@ auto load_completed_build_product(ref<rstd::path::Path> project_root,
         rstd_try(product_required_string(state, "state"_str, "build product state"_str));
     if (state_text == "building"_str) {
         rstd_try(state_generation(state, "building"_str));
-        return product_failure<CompletedBuildProduct>(rstd::format(
-            "build directory '{}' does not contain a completed build", base.as_path()));
+        return Err(BuildProductError::Message(rstd::format(
+            "build directory '{}' does not contain a completed build", base.as_path())));
     }
     auto generation    = rstd_try(state_generation(state, "complete"_str));
     auto product_value = rstd_try(product_member(state, "product"_str, "build product state"_str));
     auto product       = rstd_try(parse_product(*product_value, base.as_path()));
     product.generation = rstd::move(generation);
     if (product.build_directory.as_path().strip_prefix(base.as_path()).is_none()) {
-        return product_failure<CompletedBuildProduct>(
+        return Err(BuildProductError::Message(
             rstd::format("completed build directory '{}' is outside requested build directory '{}'",
                          product.build_directory.as_path(),
-                         base.as_path()));
+                         base.as_path())));
     }
     return Ok(rstd::move(product));
 }
@@ -1350,29 +1341,29 @@ auto validate_completed_build_product(const CompletedBuildProduct& product,
                                       ref<str>                     profile,
                                       ref<str> target) -> BuildProductResult<empty> {
     if (product.profile != profile) {
-        return product_failure<empty>(rstd::format(
-            "completed build profile is '{}', requested '{}'", product.profile.as_str(), profile));
+        return Err(BuildProductError::Message(rstd::format(
+            "completed build profile is '{}', requested '{}'", product.profile.as_str(), profile)));
     }
     if (product.target != target) {
-        return product_failure<empty>(rstd::format(
-            "completed build target is '{}', requested '{}'", product.target.as_str(), target));
+        return Err(BuildProductError::Message(rstd::format(
+            "completed build target is '{}', requested '{}'", product.target.as_str(), target)));
     }
     if (request.configuration.target.is_Default()) {
         if (product.target_kind != "default"_str) {
-            return product_failure<empty>(
+            return Err(BuildProductError::Message(
                 rstd::format("completed build target kind is '{}', requested 'default'",
-                             product.target_kind.as_str()));
+                             product.target_kind.as_str())));
         }
     } else {
         const auto& android = request.configuration.target.as_Android().target;
         if (product.target_kind != "android"_str || product.android_abi != android.abi.as_str() ||
             product.android_minimum_api != android.minimum_api) {
-            return product_failure<empty>(
+            return Err(BuildProductError::Message(
                 rstd::format("completed Android target is '{}', API {}; requested '{}', API {}",
                              product.android_abi.as_str(),
                              product.android_minimum_api,
                              android.abi.as_str(),
-                             android.minimum_api));
+                             android.minimum_api)));
         }
     }
     return Ok(empty {});

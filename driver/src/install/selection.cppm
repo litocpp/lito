@@ -20,30 +20,20 @@ using namespace rstd::literals;
 namespace lito
 {
 
-template<typename T>
-auto selection_failure(String message) -> InstallResult<T> {
-    return Err(InstallError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto selection_failure(ref<str> message) -> InstallResult<T> {
-    return selection_failure<T>(String::make(message));
-}
-
 auto resolved_package(const lito::package::ResolvedPackageGraph& graph, ref<str> name)
     -> InstallResult<const lito::package::ResolvedPackage*> {
     const lito::package::ResolvedPackage* result = nullptr;
     for (const auto& package : graph.packages) {
         if (package.manifest.name != name) continue;
         if (result != nullptr) {
-            return selection_failure<const lito::package::ResolvedPackage*>(
-                rstd::format("resolved graph contains package '{}' more than once", name));
+            return Err(InstallError::Message(
+                rstd::format("resolved graph contains package '{}' more than once", name)));
         }
         result = rstd::addressof(package);
     }
     if (result == nullptr) {
-        return selection_failure<const lito::package::ResolvedPackage*>(
-            rstd::format("install package '{}' is missing from the resolved graph", name));
+        return Err(InstallError::Message(
+            rstd::format("install package '{}' is missing from the resolved graph", name)));
     }
     return Ok(result);
 }
@@ -71,9 +61,9 @@ auto install_pkg_config_version_operator(lito::dependency::PkgConfigVersionOpera
 auto pkg_config_requirement(const lito::dependency::PkgConfigExternalDependency& dependency)
     -> InstallResult<String> {
     if (! dependency.consumption.usage.uses_link()) {
-        return selection_failure<String>(rstd::format(
+        return Err(InstallError::Message(rstd::format(
             "compile-only pkg-config dependency '{}' cannot be represented in a Requires field",
-            dependency.alias.as_str()));
+            dependency.alias.as_str())));
     }
     auto result = dependency.requirement.module.clone();
     if (dependency.requirement.version.is_some()) {
@@ -85,9 +75,9 @@ auto pkg_config_requirement(const lito::dependency::PkgConfigExternalDependency&
     }
     for (auto byte : result.as_str().as_bytes()) {
         if (byte == u8('\n') || byte == u8('\r') || byte == u8(',')) {
-            return selection_failure<String>(
+            return Err(InstallError::Message(
                 rstd::format("pkg-config dependency '{}' cannot be represented in a Requires field",
-                             dependency.alias.as_str()));
+                             dependency.alias.as_str())));
         }
     }
     return Ok(rstd::move(result));
@@ -113,14 +103,14 @@ auto resolve_pkg_config_file(const InstallRecipe&                  recipe,
         break;
     }
     if (manifest_target == nullptr) {
-        return selection_failure<ResolvedInstallPkgConfigFile>(
+        return Err(InstallError::Message(
             rstd::format("unknown pkg_config target '{}'",
-                         lito::package::package_target_id_text(requested.target)));
+                         lito::package::package_target_id_text(requested.target))));
     }
     if (! lito::manifest::package_library_is_shared(*manifest_target)) {
-        return selection_failure<ResolvedInstallPkgConfigFile>(
+        return Err(InstallError::Message(
             rstd::format("pkg_config target '{}' is not a shared library",
-                         lito::package::package_target_id_text(requested.target)));
+                         lito::package::package_target_id_text(requested.target))));
     }
 
     const InstallArtifactRecipe* artifact = nullptr;
@@ -130,15 +120,15 @@ auto resolve_pkg_config_file(const InstallRecipe&                  recipe,
         break;
     }
     if (artifact == nullptr) {
-        return selection_failure<ResolvedInstallPkgConfigFile>(
+        return Err(InstallError::Message(
             rstd::format("pkg_config target '{}' must also be selected by artifacts",
-                         lito::package::package_target_id_text(requested.target)));
+                         lito::package::package_target_id_text(requested.target))));
     }
     auto parent = artifact->destination.as_path().parent();
     if (parent.is_none()) {
-        return selection_failure<ResolvedInstallPkgConfigFile>(
+        return Err(InstallError::Message(
             rstd::format("installed library destination '{}' has no parent directory",
-                         artifact->destination.as_path()));
+                         artifact->destination.as_path())));
     }
     auto library_directory = PathBuf::from(*parent);
     auto library_name =
@@ -164,10 +154,10 @@ auto resolve_pkg_config_file(const InstallRecipe&                  recipe,
             }
         }
         if (dependency == nullptr) {
-            return selection_failure<ResolvedInstallPkgConfigFile>(rstd::format(
+            return Err(InstallError::Message(rstd::format(
                 "pkg_config target '{}' references undeclared pkg-config dependency '{}'",
                 lito::package::package_target_id_text(requested.target),
-                alias.as_str()));
+                alias.as_str())));
         }
         auto requirement = rstd_try(pkg_config_requirement(*dependency));
         if (dependency->consumption.is_public) {
@@ -202,14 +192,14 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
     for (const auto& name : selection.install_package_names) {
         const auto* package = rstd_try(resolved_package(selection.graph, name.as_str()));
         if (! package->manifest.target.matches(target)) {
-            return selection_failure<Vec<PackageInstallInput>>(
+            return Err(InstallError::Message(
                 rstd::format("install package '{}' does not support target '{}'",
                              name.as_str(),
-                             target.triple.as_str()));
+                             target.triple.as_str())));
         }
         if (package->manifest.version.value.is_none()) {
-            return selection_failure<Vec<PackageInstallInput>>(
-                rstd::format("package '{}' has no installable version", name.as_str()));
+            return Err(InstallError::Message(
+                rstd::format("package '{}' has no installable version", name.as_str())));
         }
         auto binaries = Vec<PackageInstallTarget>::make();
         for (const auto& candidate : package->manifest.targets) {
@@ -228,8 +218,8 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             });
         }
         if (package->manifest.install_script.is_none() && binaries.is_empty()) {
-            return selection_failure<Vec<PackageInstallInput>>(
-                rstd::format("runtime package '{}' has no install target", name.as_str()));
+            return Err(InstallError::Message(
+                rstd::format("runtime package '{}' has no install target", name.as_str())));
         }
         auto script = Option<PathBuf> {};
         if (package->manifest.install_script.is_some()) {
@@ -287,8 +277,7 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
         });
     }
     if (result.is_empty()) {
-        return selection_failure<Vec<PackageInstallInput>>(
-            "project has no selected install package"_str);
+        return Err(InstallError::Message("project has no selected install package"_Str));
     }
     return Ok(rstd::move(result));
 }
@@ -301,25 +290,25 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
     for (const auto& recipe : recipes) {
         const auto* owner = rstd_try(resolved_package(selection.graph, recipe.owner.as_str()));
         if (! owner->manifest.target.matches(target)) {
-            return selection_failure<InstallBuildRequirements>(
+            return Err(InstallError::Message(
                 rstd::format("install recipe owner '{}' does not support target '{}'",
                              recipe.owner.as_str(),
-                             target.triple.as_str()));
+                             target.triple.as_str())));
         }
         for (usize artifact_index {}; artifact_index < recipe.artifacts.len(); ++artifact_index) {
             const auto& artifact = recipe.artifacts[artifact_index];
             if (artifact.target.package != recipe.owner.as_str()) {
-                return selection_failure<InstallBuildRequirements>(rstd::format(
+                return Err(InstallError::Message(rstd::format(
                     "install recipe '{}' cannot install artifact owned by package '{}'",
                     recipe.owner.as_str(),
-                    artifact.target.package.as_str()));
+                    artifact.target.package.as_str())));
             }
             for (usize prior {}; prior < artifact_index; ++prior) {
                 if (recipe.artifacts[prior].target == artifact.target) {
-                    return selection_failure<InstallBuildRequirements>(
+                    return Err(InstallError::Message(
                         rstd::format("install recipe '{}' repeats artifact target '{}'",
                                      recipe.owner.as_str(),
-                                     lito::package::package_target_id_text(artifact.target)));
+                                     lito::package::package_target_id_text(artifact.target))));
                 }
             }
             auto found = false;
@@ -332,21 +321,21 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                 }
             }
             if (! found) {
-                return selection_failure<InstallBuildRequirements>(
+                return Err(InstallError::Message(
                     rstd::format("unknown install artifact target '{}'",
-                                 lito::package::package_target_id_text(artifact.target)));
+                                 lito::package::package_target_id_text(artifact.target))));
             }
             if (! artifact.runtime_search.is_empty()) {
                 if (artifact.target.kind != lito::package::PackageTargetKind::Binary) {
-                    return selection_failure<InstallBuildRequirements>(rstd::format(
+                    return Err(InstallError::Message(rstd::format(
                         "install runtime search is only supported for binary target '{}'",
-                        lito::package::package_target_id_text(artifact.target)));
+                        lito::package::package_target_id_text(artifact.target))));
                 }
                 if (target.platform != lito::system::TargetPlatform::Linux) {
-                    return selection_failure<InstallBuildRequirements>(rstd::format(
+                    return Err(InstallError::Message(rstd::format(
                         "install runtime search for '{}' requires a Linux target, got '{}'",
                         lito::package::package_target_id_text(artifact.target),
-                        target.triple.as_str()));
+                        target.triple.as_str())));
                 }
                 auto assets = Vec<InstallRuntimeSearchAsset>::make();
                 for (const auto& reference : artifact.runtime_search) {
@@ -356,21 +345,21 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                             candidate.set != reference.set.as_str())
                             continue;
                         if (matched != nullptr) {
-                            return selection_failure<InstallBuildRequirements>(rstd::format(
+                            return Err(InstallError::Message(rstd::format(
                                 "install recipe '{}' has ambiguous external asset '{}:{}'",
                                 recipe.owner.as_str(),
                                 reference.dependency.as_str(),
-                                reference.set.as_str()));
+                                reference.set.as_str())));
                         }
                         matched = rstd::addressof(candidate);
                     }
                     if (matched == nullptr) {
-                        return selection_failure<InstallBuildRequirements>(
+                        return Err(InstallError::Message(
                             rstd::format("install artifact '{}' runtime search references "
                                          "undeclared external asset '{}:{}'",
                                          lito::package::package_target_id_text(artifact.target),
                                          reference.dependency.as_str(),
-                                         reference.set.as_str()));
+                                         reference.set.as_str())));
                     }
                     assets.push(InstallRuntimeSearchAsset {
                         .dependency  = reference.dependency.clone(),
@@ -396,19 +385,19 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
         }
         for (const auto& requested : recipe.pkg_config) {
             if (requested.target.package != recipe.owner.as_str()) {
-                return selection_failure<InstallBuildRequirements>(rstd::format(
+                return Err(InstallError::Message(rstd::format(
                     "install recipe '{}' cannot export pkg_config for target owned by package '{}'",
                     recipe.owner.as_str(),
-                    requested.target.package.as_str()));
+                    requested.target.package.as_str())));
             }
             auto resolved = rstd_try(resolve_pkg_config_file(recipe, requested, *owner));
             for (const auto& existing : requirements.pkg_config) {
                 if (existing.owner == resolved.owner.as_str() &&
                     existing.destination.as_path() == resolved.destination.as_path()) {
-                    return selection_failure<InstallBuildRequirements>(
+                    return Err(InstallError::Message(
                         rstd::format("install recipe '{}' repeats pkg_config destination '{}'",
                                      recipe.owner.as_str(),
-                                     resolved.destination.as_path()));
+                                     resolved.destination.as_path())));
                 }
             }
             requirements.pkg_config.push(rstd::move(resolved));
@@ -421,7 +410,8 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&   requirem
                                             const ExternalAssetCatalog& catalog)
     -> InstallResult<empty> {
     if (! requirements.artifact_link_variants.is_empty()) {
-        return selection_failure<empty>("install artifact link variants were already resolved"_str);
+        return Err(
+            InstallError::Message("install artifact link variants were already resolved"_Str));
     }
     for (const auto& requirement : requirements.runtime_search) {
         auto paths        = Vec<lito::artifact::OriginRelativeRuntimePath>::make();
@@ -430,7 +420,7 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&   requirem
         for (const auto& asset : requirement.assets) {
             auto set = catalog.resolve(asset.dependency.as_str(), asset.set.as_str());
             if (set.is_err()) {
-                return selection_failure<empty>(rstd::move(set).unwrap_err());
+                return Err(InstallError::Message(rstd::move(set).unwrap_err()));
             }
             const auto* resolved_set = *set;
             if (resolved_set->disposition == ExternalAssetDisposition::Provided) {
@@ -441,26 +431,26 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&   requirem
             auto validated = install_runtime_search_path(requirement.destination.as_path(),
                                                          asset.destination.as_path());
             if (validated.is_err()) {
-                return selection_failure<empty>(
+                return Err(InstallError::Message(
                     rstd::format("install runtime search from '{}' to '{}' is invalid: {}",
                                  requirement.destination.as_path(),
                                  asset.destination.as_path(),
-                                 rstd::move(validated).unwrap_err()));
+                                 rstd::move(validated).unwrap_err())));
             }
             paths.push(rstd::move(validated).unwrap());
         }
         if (materialized && provided) {
-            return selection_failure<empty>(rstd::format(
+            return Err(InstallError::Message(rstd::format(
                 "install artifact '{}' cannot mix provided and materialized runtime asset sets",
-                lito::package::package_target_id_text(requirement.target)));
+                lito::package::package_target_id_text(requirement.target))));
         }
         if (! materialized) continue;
         auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
         if (runpath.is_err()) {
-            return selection_failure<empty>(
+            return Err(InstallError::Message(
                 rstd::format("install runtime search for '{}' is invalid: {}",
                              lito::package::package_target_id_text(requirement.target),
-                             rstd::move(runpath).unwrap_err()));
+                             rstd::move(runpath).unwrap_err())));
         }
         auto identity = "lito-install-link-v3\n"_Str;
         identity.push_str(lito::package::package_target_id_text(requirement.target).as_str());

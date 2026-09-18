@@ -74,8 +74,8 @@ private:
                 return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
             }
             if (located->is_none()) {
-                return failure<PathBuf>(rstd::format(
-                    "cannot resolve {} '{}' from effective PATH", description, requested));
+                return Err(ToolchainError::Message(rstd::format(
+                    "cannot resolve {} '{}' from effective PATH", description, requested)));
             }
             return Ok(rstd::move(located).unwrap().unwrap());
         };
@@ -135,10 +135,10 @@ private:
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
-            return failure<ClangToolchain>("configured compiler is not clang++"_str);
+            return Err(ToolchainError::Message("configured compiler is not clang++"_Str));
         }
         if (! c_compiler_version->as_str().contains("clang version"_str)) {
-            return failure<ClangToolchain>("configured C compiler is not clang"_str);
+            return Err(ToolchainError::Message("configured C compiler is not clang"_Str));
         }
 
         auto linker_path = Option<PathBuf> {};
@@ -151,8 +151,8 @@ private:
         } else {
             auto configured_name = specification.ld.as_path().to_str();
             if (configured_name.is_none() || *configured_name != "lld"_str) {
-                return failure<ClangToolchain>(
-                    "configured linker must be 'lld' or an absolute path to LLD"_str);
+                return Err(ToolchainError::Message(
+                    "configured linker must be 'lld' or an absolute path to LLD"_Str));
             }
             auto                        linker_name = lld_executable_name(compile_target->info);
             auto                        requested   = PathBuf::from(linker_name);
@@ -191,23 +191,23 @@ private:
                     auto parent = compiler.parent();
                     if (parent.is_some()) append_directory(*parent);
                 }
-                return failure<ClangToolchain>(rstd::format(
+                return Err(ToolchainError::Message(rstd::format(
                     "cannot resolve LLD frontend '{}' for target '{}' (architecture '{}', standard "
                     "library '{}'); searched {}",
                     linker_name,
                     compile_target->info.triple.as_str(),
                     architecture_name(compile_target->info.architecture),
                     lito::config::standard_library_name(compile_target->standard_library),
-                    searched.is_empty() ? "<no directories>"_str : searched.as_str()));
+                    searched.is_empty() ? "<no directories>"_str : searched.as_str())));
             }
         }
         auto linker_identity = probe_linker(linker_path->as_path(), environment);
         if (linker_identity.is_err()) return Err(rstd::move(linker_identity).unwrap_err());
         if (linker_identity->family != LinkerFamily::Lld) {
-            return failure<ClangToolchain>(
+            return Err(ToolchainError::Message(
                 rstd::format("configured linker '{}' is unsupported; expected LLD, got {}",
                              linker_identity->executable.as_path(),
-                             linker_family_name(linker_identity->family)));
+                             linker_family_name(linker_identity->family))));
         }
 
         auto resource_path      = PathBuf::from(resource->as_str());
@@ -248,8 +248,8 @@ private:
         auto c_compiler_text = c_compiler_path.as_path().to_str();
         auto resource_text   = resolved_resource.as_path().to_str();
         if (compiler_text.is_none() || c_compiler_text.is_none() || resource_text.is_none()) {
-            return failure<ClangToolchain>(
-                "Clang compiler or resource path is not valid UTF-8"_str);
+            return Err(
+                ToolchainError::Message("Clang compiler or resource path is not valid UTF-8"_Str));
         }
         auto build_identity =
             rstd::format("lito-clang-build-v4\n"
@@ -297,9 +297,10 @@ private:
         };
         if (! capabilities.one_phase_bmi || ! capabilities.exact_module_mapping ||
             ! capabilities.reduced_bmi) {
-            return failure<ClangToolchain>("configured Clang lacks required reduced BMI, one-phase "
-                                           "BMI, or exact module mapping "
-                                           "support"_str);
+            return Err(
+                ToolchainError::Message("configured Clang lacks required reduced BMI, one-phase "
+                                        "BMI, or exact module mapping "
+                                        "support"_Str));
         }
         auto format = cpp::BmiFormatIdentity {
             .family               = "clang"_Str,
@@ -364,13 +365,13 @@ public:
                                 target.environment.is_none();
         if (! bare_wasm) return Ok(empty {});
         if (options.abi.standard_library != lito::config::StandardLibrary::Libcxx) {
-            return failure<empty>(rstd::format(
-                "bare WebAssembly target '{}' requires libc++ headers", target.triple.as_str()));
+            return Err(ToolchainError::Message(rstd::format(
+                "bare WebAssembly target '{}' requires libc++ headers", target.triple.as_str())));
         }
         auto compiler_directory = compiler_.as_path().parent();
         if (compiler_directory.is_none()) {
-            return failure<empty>(rstd::format("Clang compiler '{}' has no installation directory",
-                                               compiler_.as_path()));
+            return Err(ToolchainError::Message(rstd::format(
+                "Clang compiler '{}' has no installation directory", compiler_.as_path())));
         }
         auto include_requested = PathBuf::from(*compiler_directory)
                                      .join(PathBuf::from("../include/c++/v1"_str).as_path());
@@ -388,9 +389,9 @@ public:
                                           rstd::move(inspected).unwrap_err()));
         }
         if (! inspected->is_file() || inspected->is_symlink()) {
-            return failure<empty>(
+            return Err(ToolchainError::Message(
                 rstd::format("freestanding libc++ version header '{}' is not a regular file",
-                             version_header.as_path()));
+                             version_header.as_path())));
         }
         auto support_root =
             PathBuf::from(generated_root)
@@ -659,10 +660,10 @@ public:
             return Err(rstd::into<ToolchainError>(rstd::move(queried).unwrap_err()));
         }
         if (queried->exit_code != i32 {}) {
-            return failure<cpp::ResolvedStandardLibrary>(
+            return Err(ToolchainError::Message(
                 rstd::format("cannot resolve selected C++ standard library headers\n{}\n{}",
                              command_text(command).as_str(),
-                             queried->standard_error.as_str()));
+                             queried->standard_error.as_str())));
         }
 
         auto detected_family = Option<lito::config::StandardLibrary> {};
@@ -675,18 +676,18 @@ public:
             detected_family = Some(lito::config::StandardLibrary::Msvc);
         }
         if (detected_family.is_none()) {
-            return failure<cpp::ResolvedStandardLibrary>(rstd::format(
+            return Err(ToolchainError::Message(rstd::format(
                 "cannot identify selected C++ standard library for target '{}' from <version>",
-                target.triple.as_str()));
+                target.triple.as_str())));
         }
         if (*detected_family != options.abi.standard_library) {
-            return failure<cpp::ResolvedStandardLibrary>(
+            return Err(ToolchainError::Message(
                 rstd::format("configured C++ standard library '{}' resolved to '{}' for target "
                              "'{}'; configure matching headers and libraries instead of relying "
                              "on an ignored driver option",
                              lito::config::standard_library_name(options.abi.standard_library),
                              lito::config::standard_library_name(*detected_family),
-                             target.triple.as_str()));
+                             target.triple.as_str())));
         }
 
         auto library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
@@ -730,10 +731,10 @@ public:
             return Err(rstd::into<ToolchainError>(rstd::move(library).unwrap_err()));
         }
         if (library->exit_code != i32 {}) {
-            return failure<cpp::ResolvedStandardLibrary>(
+            return Err(ToolchainError::Message(
                 rstd::format("cannot resolve selected C++ standard library artifact\n{}\n{}",
                              command_text(library_command).as_str(),
-                             library->standard_error.as_str()));
+                             library->standard_error.as_str())));
         }
         auto binary_path_text = trim_ascii(rstd::move(library->standard_output));
         if (target.is_msvc()) {
@@ -803,11 +804,11 @@ public:
                 return Err(rstd::into<ToolchainError>(rstd::move(linked).unwrap_err()));
             }
             if (linked->exit_code != i32 {}) {
-                return failure<cpp::ResolvedStandardLibrary>(
+                return Err(ToolchainError::Message(
                     rstd::format("cannot link selected dynamic C++ standard library\n{}\n{}\n{}",
                                  command_text(probe_command).as_str(),
                                  linked->standard_output.as_str(),
-                                 linked->standard_error.as_str()));
+                                 linked->standard_error.as_str())));
             }
             auto trace = rstd::move(linked->standard_output);
             trace.push_str(linked->standard_error.as_str());
@@ -831,25 +832,25 @@ public:
             };
             auto selected = resolved_trace_entry(library_name);
             if (selected.is_none()) {
-                return failure<cpp::ResolvedStandardLibrary>(rstd::format(
+                return Err(ToolchainError::Message(rstd::format(
                     "dynamic C++ standard library '{}' was not selected while linking target '{}'",
                     library_name,
-                    target.triple.as_str()));
+                    target.triple.as_str())));
             }
             if (resolved_trace_entry("libcmt.lib"_str).is_some() ||
                 resolved_trace_entry("libcmtd.lib"_str).is_some()) {
-                return failure<cpp::ResolvedStandardLibrary>(
-                    "dynamic Microsoft runtime probe selected a static CRT library"_str);
+                return Err(ToolchainError::Message(
+                    "dynamic Microsoft runtime probe selected a static CRT library"_Str));
             }
             if (options.abi.standard_library == lito::config::StandardLibrary::Libcxx &&
                 ! trace.as_str().contains("c++.dll"_str)) {
-                return failure<cpp::ResolvedStandardLibrary>(
-                    "Windows libc++ probe did not select a DLL import library"_str);
+                return Err(ToolchainError::Message(
+                    "Windows libc++ probe did not select a DLL import library"_Str));
             }
             auto selected_path = selected->as_str().split_once("Reading "_str);
             if (selected_path.is_none()) {
-                return failure<cpp::ResolvedStandardLibrary>(
-                    "cannot decode selected standard library path from linker trace"_str);
+                return Err(ToolchainError::Message(
+                    "cannot decode selected standard library path from linker trace"_Str));
             }
             binary_path_text = trim_ascii(String::make(selected_path->get<1>()));
         }
@@ -924,8 +925,8 @@ public:
     auto resolve_standard_library_modules(const cpp::CppCompileOptions& options) const
         -> ToolchainResult<cpp::StandardLibraryModuleCatalog> {
         if (options.abi.resolved_standard_library.is_none()) {
-            return failure<cpp::StandardLibraryModuleCatalog>(
-                "C++ standard library must be resolved before its modules"_str);
+            return Err(ToolchainError::Message(
+                "C++ standard library must be resolved before its modules"_Str));
         }
         return read_standard_library_module_catalog(*options.abi.resolved_standard_library);
     }
@@ -933,17 +934,18 @@ public:
     auto validate(const cpp::CppCompileOptions& cpp, const cpp::BmiRequest& bmi) const
         -> ToolchainResult<empty> {
         if (! cpp::is_supported_cpp_standard(cpp.language.standard.as_str())) {
-            return failure<empty>(
+            return Err(ToolchainError::Message(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
-                             cpp.language.standard.as_str()));
+                             cpp.language.standard.as_str())));
         }
         if (bmi.representation == cpp::BmiRepresentation::Reduced && ! capabilities_.reduced_bmi) {
-            return failure<empty>("configured Clang does not support reduced BMI"_str);
+            return Err(
+                ToolchainError::Message("configured Clang does not support reduced BMI"_Str));
         }
         if (bmi.source_embedding == cpp::BmiSourceEmbeddingPolicy::EmbedAll &&
             ! capabilities_.source_embedding) {
-            return failure<empty>(
-                "configured Clang does not support embedding BMI source inputs"_str);
+            return Err(ToolchainError::Message(
+                "configured Clang does not support embedding BMI source inputs"_Str));
         }
         return Ok(empty {});
     }
@@ -973,11 +975,11 @@ public:
     auto prepare(cpp::UnitSpec unit, ref<rstd::path::Path> working_directory) const
         -> ToolchainResult<cpp::PreparedUnit> {
         if (unit.context == nullptr) {
-            return failure<cpp::PreparedUnit>("source unit has no compile context"_str);
+            return Err(ToolchainError::Message("source unit has no compile context"_Str));
         }
         if (cpp::source_language(unit) != cpp::compile_language(*unit.context)) {
-            return failure<cpp::PreparedUnit>(rstd::format(
-                "source '{}' does not match its compile context language", unit.source.as_path()));
+            return Err(ToolchainError::Message(rstd::format(
+                "source '{}' does not match its compile context language", unit.source.as_path())));
         }
         auto object_parent = create_parent(unit.object.as_path());
         if (object_parent.is_err()) return Err(rstd::move(object_parent).unwrap_err());
@@ -1210,17 +1212,17 @@ private:
         if (compile_context.language.is_C()) {
             for (const auto& option : compile_context.language.as_C().options.vendor) {
                 if (option.native_preprocessor_unsupported) {
-                    return failure<toolchain::PreparedScanInput>(rstd::format(
+                    return Err(ToolchainError::Message(rstd::format(
                         "compiler option '{}' is not supported by the native preprocessor",
-                        option.value.as_str()));
+                        option.value.as_str())));
                 }
             }
         } else {
             for (const auto& option : compile_context.language.as_Cpp().options.vendor) {
                 if (option.native_preprocessor_unsupported) {
-                    return failure<toolchain::PreparedScanInput>(rstd::format(
+                    return Err(ToolchainError::Message(rstd::format(
                         "compiler option '{}' is not supported by the native preprocessor",
-                        option.value.as_str()));
+                        option.value.as_str())));
                 }
             }
         }
@@ -1242,7 +1244,8 @@ public:
                                const ResolvedCompilerPluginUsage& usage) const
         -> ToolchainResult<empty> {
         if (usage.name.is_empty() || usage.identity.is_empty()) {
-            return failure<empty>("compiler plugin usage requires name and identity"_str);
+            return Err(
+                ToolchainError::Message("compiler plugin usage requires name and identity"_Str));
         }
         auto pushed = toolchain::command::push_path_option(
             invocation.arguments, "-fplugin="_str, usage.plugin.as_path());
@@ -1266,8 +1269,8 @@ public:
                                  const Option<PathBuf>& source_overlay = None()) const
         -> ToolchainResult<FrontendPluginInvocation> {
         if (compile_context.language.is_C()) {
-            return failure<FrontendPluginInvocation>(
-                "Clang frontend plugins require a C++ compile context"_str);
+            return Err(ToolchainError::Message(
+                "Clang frontend plugins require a C++ compile context"_Str));
         }
         auto command = Vec<String>::make();
         auto context = append_compile_context(command, compile_context, false);
@@ -1305,10 +1308,10 @@ public:
             return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
         }
         if (output->exit_code != i32 {}) {
-            return failure<rstd::time::Duration>(rstd::format("Clang {} failed for '{}':\n{}",
-                                                              invocation.action.as_str(),
-                                                              invocation.source.as_path(),
-                                                              output->standard_error.as_str()));
+            return Err(ToolchainError::Message(rstd::format("Clang {} failed for '{}':\n{}",
+                                                            invocation.action.as_str(),
+                                                            invocation.source.as_path(),
+                                                            output->standard_error.as_str())));
         }
         return Ok(output->elapsed);
     }
@@ -1323,9 +1326,9 @@ public:
             if (! scan_result.language.is_C() || ! module_dependencies.is_empty() ||
                 ! prepared.unit.language.is_C() ||
                 disposition != cpp::CppCompileDisposition::ObjectOnly) {
-                return failure<CompileInvocation>(
+                return Err(ToolchainError::Message(
                     rstd::format("C source '{}' unexpectedly participates in the C++ module graph",
-                                 prepared.unit.source.as_path()));
+                                 prepared.unit.source.as_path())));
             }
             const auto& scan          = scan_result.language.as_C().facts.common;
             auto        staged_object = staging_path(prepared.unit.object.as_path());
@@ -1338,8 +1341,8 @@ public:
             for (const auto& macro : scan.external_macros) {
                 if (macro.state == frontend::ExternalMacroState::Undefined) continue;
                 if (macro.compiler_definition.is_none()) {
-                    return failure<CompileInvocation>(
-                        "defined external macro has no compiler definition"_str);
+                    return Err(ToolchainError::Message(
+                        "defined external macro has no compiler definition"_Str));
                 }
                 command.push(rstd::format("-D{}", macro.compiler_definition->as_str()));
             }
@@ -1360,8 +1363,8 @@ public:
             });
         }
         if (! scan_result.language.is_Cpp() || ! prepared.unit.language.is_Cpp()) {
-            return failure<CompileInvocation>(rstd::format("C++ source '{}' received C scan facts",
-                                                           prepared.unit.source.as_path()));
+            return Err(ToolchainError::Message(rstd::format("C++ source '{}' received C scan facts",
+                                                            prepared.unit.source.as_path())));
         }
         const auto& cpp_context  = prepared.unit.context->language.as_Cpp();
         const auto& source_unit  = prepared.unit.language.as_Cpp();
@@ -1369,15 +1372,15 @@ public:
         const auto  provides_bmi = scan.provided.is_some();
         if (prepared.unit.cpp_dialect == cpp::CppSourceDialect::ObjectiveCpp &&
             (provides_bmi || scan.implementation_module.is_some())) {
-            return failure<CompileInvocation>(
+            return Err(ToolchainError::Message(
                 rstd::format("Objective-C++ source '{}' cannot provide or implement a C++ module",
-                             prepared.unit.source.as_path()));
+                             prepared.unit.source.as_path())));
         }
         if ((provides_bmi && disposition == cpp::CppCompileDisposition::ObjectOnly) ||
             (! provides_bmi && disposition != cpp::CppCompileDisposition::ObjectOnly)) {
-            return failure<CompileInvocation>(
+            return Err(ToolchainError::Message(
                 rstd::format("compile output disposition does not match module facts for '{}'",
-                             prepared.unit.source.as_path()));
+                             prepared.unit.source.as_path())));
         }
         auto valid = validate(cpp_context.options, cpp_context.bmi);
         if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
@@ -1400,21 +1403,21 @@ public:
         for (const auto& macro : scan.common.external_macros) {
             if (macro.state == frontend::ExternalMacroState::Undefined) {
                 if (macro.compiler_definition.is_some()) {
-                    return failure<CompileInvocation>(
-                        "undefined external macro has a compiler definition"_str);
+                    return Err(ToolchainError::Message(
+                        "undefined external macro has a compiler definition"_Str));
                 }
                 continue;
             }
             if (macro.compiler_definition.is_none()) {
-                return failure<CompileInvocation>(
-                    "defined external macro has no compiler definition"_str);
+                return Err(ToolchainError::Message(
+                    "defined external macro has no compiler definition"_Str));
             }
             command.push(rstd::format("-D{}", macro.compiler_definition->as_str()));
         }
         if (scan.provided.is_some()) {
             if (source_unit.bmi.is_none()) {
-                return failure<CompileInvocation>(rstd::format("module unit has no BMI output: {}",
-                                                               prepared.unit.source.as_path()));
+                return Err(ToolchainError::Message(rstd::format("module unit has no BMI output: {}",
+                                                                prepared.unit.source.as_path())));
             }
             auto parent = create_parent(source_unit.bmi->path.as_path());
             if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
@@ -1523,11 +1526,11 @@ public:
         }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return failure<rstd::time::Duration>(
-                rstd::format("llvm-ar failed for '{}'\n{}\n{}",
-                             invocation.output.as_path(),
-                             command_text(invocation.arguments).as_str(),
-                             command_output.standard_error.as_str()));
+            return Err(
+                ToolchainError::Message(rstd::format("llvm-ar failed for '{}'\n{}\n{}",
+                                                     invocation.output.as_path(),
+                                                     command_text(invocation.arguments).as_str(),
+                                                     command_output.standard_error.as_str())));
         }
         return Ok(command_output.elapsed);
     }
@@ -1549,18 +1552,18 @@ public:
         const auto& microsoft_runtime_library = context.microsoft_runtime_library;
         if (lto.is_some() && *lto != lito::manifest::Lto::Off &&
             ! linker_identity_.capabilities.llvm_lto) {
-            return failure<rstd::time::Duration>(
+            return Err(ToolchainError::Message(
                 rstd::format("configured {} does not support LLVM LTO option '{}'",
                              linker_family_name(linker_identity_.family),
-                             cpp::cpp_lto_option(*lto)));
+                             cpp::cpp_lto_option(*lto))));
         }
         if (linker_identity_.family == LinkerFamily::GnuLd &&
             (target.family != TargetFamily::Unix || target.platform == TargetPlatform::Macos ||
              target.triple.as_str() != compiler_identity_.target.as_str())) {
-            return failure<rstd::time::Duration>(rstd::format(
+            return Err(ToolchainError::Message(rstd::format(
                 "configured GNU ld is only supported for the host ELF target '{}'; requested '{}'",
                 compiler_identity_.target,
-                target.triple));
+                target.triple)));
         }
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
@@ -1579,26 +1582,26 @@ public:
         pushed = push_clang_lld_selection(command, linker_identity_.executable.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         if (context.wasm.is_some() != wasm_target) {
-            return failure<rstd::time::Duration>(
+            return Err(ToolchainError::Message(
                 context.wasm.is_some()
                     ? rstd::format("toolchain.wasm requires a WebAssembly target, got '{}'",
                                    target.triple.as_str())
                     : rstd::format("WebAssembly link target '{}' requires toolchain.wasm",
-                                   target.triple.as_str()));
+                                   target.triple.as_str())));
         }
         if (wasm_target) {
             if (target.architecture != Architecture::Wasm32 ||
                 target.operating_system != "unknown"_str || target.environment.is_some()) {
-                return failure<rstd::time::Duration>(
+                return Err(ToolchainError::Message(
                     rstd::format("bare WebAssembly output currently requires target "
                                  "'wasm32-unknown-unknown', got '{}'",
-                                 target.triple.as_str()));
+                                 target.triple.as_str())));
             }
             if (! link_requirements.runtime_search_paths.is_empty() ||
                 ! link_requirements.system_libraries.is_empty() ||
                 ! link_requirements.frameworks.is_empty() || link_requirements.posix_threads) {
-                return failure<rstd::time::Duration>(
-                    "bare WebAssembly output cannot use native runtime search paths, threads, system libraries or frameworks"_str);
+                return Err(ToolchainError::Message(
+                    "bare WebAssembly output cannot use native runtime search paths, threads, system libraries or frameworks"_Str));
             }
             if (context.wasm->entry == lito::config::WasmEntry::None) {
                 toolchain::command::push_option(command, "-Wl,--no-entry"_str);
@@ -1611,15 +1614,15 @@ public:
         if (context.output == LinkOutputKind::SharedLibrary) {
             if (! wasm_target &&
                 (target.family != TargetFamily::Unix || target.platform == TargetPlatform::Macos)) {
-                return failure<rstd::time::Duration>(
+                return Err(ToolchainError::Message(
                     rstd::format("ELF shared-library output is unsupported for target '{}'",
-                                 target.triple.as_str()));
+                                 target.triple.as_str())));
             }
             if (context.soname.is_none() || context.soname->is_empty() ||
                 context.soname->as_str().contains("/"_str) ||
                 context.soname->as_str().contains("\\"_str)) {
-                return failure<rstd::time::Duration>(
-                    "ELF shared-library output requires a safe SONAME"_str);
+                return Err(ToolchainError::Message(
+                    "ELF shared-library output requires a safe SONAME"_Str));
             }
             if (! wasm_target) {
                 toolchain::command::push_option(command, "-shared"_str);
@@ -1692,8 +1695,8 @@ public:
             if (target.family == TargetFamily::Windows) {
                 auto text = archive.path.as_path().to_str();
                 if (text.is_none()) {
-                    return failure<rstd::time::Duration>(rstd::format(
-                        "whole-archive path '{}' is not valid UTF-8", archive.path.as_path()));
+                    return Err(ToolchainError::Message(rstd::format(
+                        "whole-archive path '{}' is not valid UTF-8", archive.path.as_path())));
                 }
                 auto option = "/WHOLEARCHIVE:"_Str;
                 option.push_str(*text);
@@ -1702,9 +1705,9 @@ public:
                 continue;
             }
             if (target.family != TargetFamily::Unix && ! wasm_target) {
-                return failure<rstd::time::Duration>(
+                return Err(ToolchainError::Message(
                     rstd::format("whole-archive linking is unsupported for target '{}'",
-                                 target.triple.as_str()));
+                                 target.triple.as_str())));
             }
             toolchain::command::push_option(command, toolchain::clang_options::WHOLE_ARCHIVE);
             pushed = toolchain::command::push_path(command, archive.path.as_path());
@@ -1724,10 +1727,10 @@ public:
         }
         for (const auto& requirement : link_requirements.system_libraries) {
             if (requirement.name.as_str() == "dl"_str && target.family == TargetFamily::Windows) {
-                return failure<rstd::time::Duration>(rstd::format(
+                return Err(ToolchainError::Message(rstd::format(
                     "system library 'dl' required by {} is unsupported for target '{}'",
                     requirement.source.as_str(),
-                    target.triple.as_str()));
+                    target.triple.as_str())));
             }
             if (requirement.name.as_str() == "dl"_str && target.platform == TargetPlatform::Macos)
                 continue;
@@ -1739,11 +1742,11 @@ public:
         }
         if (! link_requirements.frameworks.is_empty() && target.platform != TargetPlatform::Macos) {
             const auto& requirement = link_requirements.frameworks[usize {}];
-            return failure<rstd::time::Duration>(
+            return Err(ToolchainError::Message(
                 rstd::format("framework '{}' required by {} is unsupported for target '{}'",
                              requirement.name.as_str(),
                              requirement.source.as_str(),
-                             target.triple.as_str()));
+                             target.triple.as_str())));
         }
         for (const auto& requirement : link_requirements.frameworks) {
             toolchain::command::push_option(command, "-framework"_str);
@@ -1759,12 +1762,12 @@ public:
         }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return failure<rstd::time::Duration>(rstd::format(
+            return Err(ToolchainError::Message(rstd::format(
                 "{} failed to link '{}'\n{}\n{}",
                 language == lito::manifest::PackageLanguage::C ? "clang"_str : "clang++"_str,
                 output_path,
                 command_text(command).as_str(),
-                command_output.standard_error.as_str()));
+                command_output.standard_error.as_str())));
         }
         return Ok(command_output.elapsed);
     }
@@ -1792,20 +1795,20 @@ public:
     auto link_elf_shared_library(const ElfSharedLibraryLinkRequest& request) const
         -> ToolchainResult<ElfSharedLibraryArtifact> {
         if (! linker_identity_.capabilities.elf_shared_library) {
-            return failure<ElfSharedLibraryArtifact>(
+            return Err(ToolchainError::Message(
                 rstd::format("configured {} cannot link ELF shared libraries",
-                             linker_family_name(linker_identity_.family)));
+                             linker_family_name(linker_identity_.family))));
         }
         if (compile_target_.info.family != TargetFamily::Unix ||
             compile_target_.info.platform == TargetPlatform::Macos) {
-            return failure<ElfSharedLibraryArtifact>(rstd::format(
+            return Err(ToolchainError::Message(rstd::format(
                 "ELF shared-library linking requires a host ELF target; compiler target is '{}'",
-                compile_target_.info.triple.as_str()));
+                compile_target_.info.triple.as_str())));
         }
         if (request.soname.is_empty() || request.soname.as_str().contains("/"_str) ||
             request.soname.as_str().contains("\\"_str)) {
-            return failure<ElfSharedLibraryArtifact>(
-                rstd::format("ELF SONAME '{}' must be a file name", request.soname.as_str()));
+            return Err(ToolchainError::Message(
+                rstd::format("ELF SONAME '{}' must be a file name", request.soname.as_str())));
         }
         auto archive_metadata = rstd::fs::metadata(request.archive.path.as_path());
         if (archive_metadata.is_err()) {
@@ -1814,8 +1817,8 @@ public:
                                           rstd::move(archive_metadata).unwrap_err()));
         }
         if (! archive_metadata->is_file()) {
-            return failure<ElfSharedLibraryArtifact>(rstd::format(
-                "ELF shared-library archive '{}' must be a file", request.archive.path.as_path()));
+            return Err(ToolchainError::Message(rstd::format(
+                "ELF shared-library archive '{}' must be a file", request.archive.path.as_path())));
         }
         auto archive_contents = rstd::fs::read(request.archive.path.as_path());
         if (archive_contents.is_err()) {
@@ -1839,9 +1842,9 @@ public:
         }
         auto version_script_text = request.version_script.as_path().to_str();
         if (version_script_text.is_none()) {
-            return failure<ElfSharedLibraryArtifact>(
+            return Err(ToolchainError::Message(
                 rstd::format("ELF version script path '{}' is not valid UTF-8",
-                             request.version_script.as_path()));
+                             request.version_script.as_path())));
         }
         auto inputs = Vec<ResolvedLinkInput>::make();
         inputs.push(ResolvedLinkInput::Archive(LinkArchive {
@@ -1938,8 +1941,8 @@ private:
         -> ToolchainResult<toolchain::SharedPreprocessorEnvironment> {
         auto working_text = working_directory.to_str();
         if (working_text.is_none()) {
-            return failure<toolchain::SharedPreprocessorEnvironment>(rstd::format(
-                "preprocessor working directory '{}' is not valid UTF-8", working_directory));
+            return Err(ToolchainError::Message(rstd::format(
+                "preprocessor working directory '{}' is not valid UTF-8", working_directory)));
         }
         for (const auto& existing : preprocessor_environments_) {
             if (existing->key.matches(
@@ -2031,8 +2034,8 @@ private:
         -> ToolchainResult<ClangBuiltinContext> {
         if (context.language.is_C()) {
             if (language != toolchain::PreprocessorLanguage::C) {
-                return failure<ClangBuiltinContext>(
-                    "C compile context requires C preprocessor language"_str);
+                return Err(ToolchainError::Message(
+                    "C compile context requires C preprocessor language"_Str));
             }
             const auto& c       = context.language.as_C().options;
             auto        command = Vec<String>::make();
@@ -2068,13 +2071,13 @@ private:
         }
         const auto& cpp_options = context.language.as_Cpp().options;
         if (language == toolchain::PreprocessorLanguage::C) {
-            return failure<ClangBuiltinContext>(
-                "C++ compile context cannot use C preprocessor language"_str);
+            return Err(ToolchainError::Message(
+                "C++ compile context cannot use C preprocessor language"_Str));
         }
         if (! cpp::is_supported_cpp_standard(cpp_options.language.standard.as_str())) {
-            return failure<ClangBuiltinContext>(
+            return Err(ToolchainError::Message(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
-                             cpp_options.language.standard.as_str()));
+                             cpp_options.language.standard.as_str())));
         }
         auto command = Vec<String>::make();
         auto pushed  = toolchain::command::push_path(command, compiler_.as_path());

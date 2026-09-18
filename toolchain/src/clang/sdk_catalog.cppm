@@ -237,31 +237,13 @@ struct Impl<convert::From<rstd::serde::Error>, lito::LlvmSdkCatalogError> {
 namespace lito
 {
 
-template<typename T>
-auto catalog_failure(String message) -> LlvmSdkCatalogResult<T> {
-    return Err(LlvmSdkCatalogError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto llvm_catalog_failure(rstd::serde::DataPath path, ref<str> message) -> LlvmSdkCatalogResult<T> {
-    return Err(
-        LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(rstd::move(path), message)));
-}
-
-template<typename T, typename Source>
-    requires Impled<rstd::mtp::rm_cvf<Source>, rstd::error::Error>
-auto llvm_catalog_failure(rstd::serde::DataPath path, ref<str> message, Source source)
-    -> LlvmSdkCatalogResult<T> {
-    return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
-        rstd::move(path), message, rstd::move(source))));
-}
-
 auto parse_decimal_at(ref<str> text, rstd::serde::DataPath path) -> LlvmSdkCatalogResult<u64> {
     auto parsed = lito::parse::parse_canonical_u64_decimal(text);
     if (parsed.is_err()) {
-        return llvm_catalog_failure<u64>(rstd::move(path),
-                                         "version component is invalid"_str,
-                                         rstd::move(parsed).unwrap_err_unchecked());
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
+            rstd::move(path),
+            "version component is invalid"_str,
+            rstd::move(parsed).unwrap_err_unchecked())));
     }
     return Ok(rstd::move(parsed).unwrap_unchecked());
 }
@@ -270,13 +252,13 @@ auto parse_llvm_version_at(ref<str> value, rstd::serde::DataPath path)
     -> LlvmSdkCatalogResult<LlvmVersion> {
     auto first = value.split_once("."_str);
     if (first.is_none()) {
-        return llvm_catalog_failure<LlvmVersion>(rstd::move(path),
-                                                 "LLVM version must have three components"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            rstd::move(path), "LLVM version must have three components"_str)));
     }
     auto second = first->get<1>().split_once("."_str);
     if (second.is_none() || second->get<1>().contains("."_str)) {
-        return llvm_catalog_failure<LlvmVersion>(rstd::move(path),
-                                                 "LLVM version must have three components"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            rstd::move(path), "LLVM version must have three components"_str)));
     }
     auto major = rstd_try(parse_decimal_at(first->get<0>(), path.clone()));
     auto minor = rstd_try(parse_decimal_at(second->get<0>(), path.clone()));
@@ -292,15 +274,15 @@ auto parse_llvm_version_at(ref<str> value, rstd::serde::DataPath path)
 auto parse_host(llvm_catalog_wire::Host value, rstd::serde::DataPath path)
     -> LlvmSdkCatalogResult<lito::system::HostInfo> {
     if (value.os != "linux"_str && value.os != "macos"_str && value.os != "windows"_str) {
-        return llvm_catalog_failure<lito::system::HostInfo>(
-            path.with_field("os"_str), "host operating system is not canonical"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("os"_str), "host operating system is not canonical"_str)));
     }
     auto canonical = lito::system::require_architecture(value.architecture.as_str());
     if (canonical.is_err()) {
-        return llvm_catalog_failure<lito::system::HostInfo>(
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
             path.with_field("architecture"_str),
             "host architecture is invalid"_str,
-            rstd::move(canonical).unwrap_err_unchecked());
+            rstd::move(canonical).unwrap_err_unchecked())));
     }
     auto parsed_architecture = rstd::move(canonical).unwrap_unchecked();
     return Ok(lito::system::HostInfo {
@@ -312,31 +294,34 @@ auto parse_host(llvm_catalog_wire::Host value, rstd::serde::DataPath path)
 auto parse_archive(llvm_catalog_wire::Archive value, rstd::serde::DataPath path)
     -> LlvmSdkCatalogResult<LlvmSdkArchive> {
     if (value.format != "tar.xz"_str) {
-        return llvm_catalog_failure<LlvmSdkArchive>(path.with_field("format"_str),
-                                                    "archive format is not supported"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("format"_str), "archive format is not supported"_str)));
     }
     auto url = lito::parse::HttpsUrl::parse(value.url.as_str());
     if (url.is_err()) {
-        return llvm_catalog_failure<LlvmSdkArchive>(path.with_field("url"_str),
-                                                    "archive URL is invalid"_str,
-                                                    rstd::move(url).unwrap_err_unchecked());
+        return Err(LlvmSdkCatalogError::Data(
+            rstd::serde::Error::invalid_value_with_source(path.with_field("url"_str),
+                                                          "archive URL is invalid"_str,
+                                                          rstd::move(url).unwrap_err_unchecked())));
     }
     auto sha256 =
         lito::parse::parse_sha256(value.sha256.as_str(), lito::parse::Sha256TextMode::Canonical);
     if (sha256.is_err()) {
-        return llvm_catalog_failure<LlvmSdkArchive>(path.with_field("sha256"_str),
-                                                    "archive SHA256 is invalid"_str,
-                                                    rstd::move(sha256).unwrap_err_unchecked());
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
+            path.with_field("sha256"_str),
+            "archive SHA256 is invalid"_str,
+            rstd::move(sha256).unwrap_err_unchecked())));
     }
     auto root = lito::parse::PathComponent::parse(value.root.as_str());
     if (root.is_err()) {
-        return llvm_catalog_failure<LlvmSdkArchive>(path.with_field("root"_str),
-                                                    "archive root is invalid"_str,
-                                                    rstd::move(root).unwrap_err_unchecked());
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
+            path.with_field("root"_str),
+            "archive root is invalid"_str,
+            rstd::move(root).unwrap_err_unchecked())));
     }
     if (value.size == u64 {}) {
-        return llvm_catalog_failure<LlvmSdkArchive>(path.with_field("size"_str),
-                                                    "archive size must be non-zero"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("size"_str), "archive size must be non-zero"_str)));
     }
     return Ok(LlvmSdkArchive {
         .format = rstd::move(value.format),
@@ -371,22 +356,23 @@ auto parse_paths(llvm_catalog_wire::Paths value, rstd::serde::DataPath path)
     for (usize index {}; index < usize(9); ++index) {
         auto text = values[index.to_primitive()].to_str();
         if (text.is_none()) {
-            return llvm_catalog_failure<LlvmSdkPaths>(path.with_field(names[index.to_primitive()]),
-                                                      "SDK path is not UTF-8"_str);
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                path.with_field(names[index.to_primitive()]), "SDK path is not UTF-8"_str)));
         }
         auto parsed = lito::parse::NormalRelativePath::parse(*text);
         if (parsed.is_err()) {
-            return llvm_catalog_failure<LlvmSdkPaths>(path.with_field(names[index.to_primitive()]),
-                                                      "SDK path is not a normal relative path"_str,
-                                                      rstd::move(parsed).unwrap_err_unchecked());
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
+                path.with_field(names[index.to_primitive()]),
+                "SDK path is not a normal relative path"_str,
+                rstd::move(parsed).unwrap_err_unchecked())));
         }
     }
     for (usize left {}; left < usize(9); ++left) {
         for (usize right = left + usize(1); right < usize(9); ++right) {
             if (values[left.to_primitive()].as_os_str().as_encoded_bytes() ==
                 values[right.to_primitive()].as_os_str().as_encoded_bytes()) {
-                return llvm_catalog_failure<LlvmSdkPaths>(
-                    path.with_field(names[right.to_primitive()]), "SDK path is repeated"_str);
+                return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                    path.with_field(names[right.to_primitive()]), "SDK path is repeated"_str)));
             }
         }
     }
@@ -397,10 +383,10 @@ auto parse_runtime_component(llvm_catalog_wire::RuntimeComponent value, rstd::se
     -> LlvmSdkCatalogResult<LlvmSdkRuntimeComponent> {
     auto name = lito::parse::PathComponent::parse(value.name.as_str());
     if (name.is_err()) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
             path.with_field("name"_str),
             "runtime component name is invalid"_str,
-            rstd::move(name).unwrap_err_unchecked());
+            rstd::move(name).unwrap_err_unchecked())));
     }
     rstd_try(parse_llvm_version_at(value.version.as_str(), path.with_field("version"_str)));
     auto recipe = Option<LlvmSdkRuntimeRecipe> {};
@@ -409,63 +395,63 @@ auto parse_runtime_component(llvm_catalog_wire::RuntimeComponent value, rstd::se
         recipe = Some(LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1);
     }
     if (recipe.is_none()) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
-            path.with_field("recipe"_str), "runtime component recipe is unknown"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("recipe"_str), "runtime component recipe is unknown"_str)));
     }
     auto runtime_path = path.with_field("runtime"_str);
     auto file         = lito::parse::NormalRelativePath::parse(value.runtime.file.as_str());
     if (file.is_err()) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
             runtime_path.with_field("file"_str),
             "runtime file is not a normal relative path"_str,
-            rstd::move(file).unwrap_err_unchecked());
+            rstd::move(file).unwrap_err_unchecked())));
     }
     if (! value.runtime.file.as_str().starts_with("lib/"_str)) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(runtime_path.with_field("file"_str),
-                                                             "runtime file must be under lib"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            runtime_path.with_field("file"_str), "runtime file must be under lib"_str)));
     }
     auto soname = lito::parse::PathComponent::parse(value.runtime.soname.as_str());
     if (soname.is_err()) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
             runtime_path.with_field("soname"_str),
             "runtime soname is not a file name"_str,
-            rstd::move(soname).unwrap_err_unchecked());
+            rstd::move(soname).unwrap_err_unchecked())));
     }
     auto license = lito::parse::NormalRelativePath::parse(value.runtime.license.as_str());
     if (license.is_err()) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
             runtime_path.with_field("license"_str),
             "runtime license is not a normal relative path"_str,
-            rstd::move(license).unwrap_err_unchecked());
+            rstd::move(license).unwrap_err_unchecked())));
     }
     if (! value.runtime.license.as_str().starts_with("share/licenses/"_str)) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
-            runtime_path.with_field("license"_str),
-            "runtime license must be under share/licenses"_str);
+        return Err(LlvmSdkCatalogError::Data(
+            rstd::serde::Error::invalid_value(runtime_path.with_field("license"_str),
+                                              "runtime license must be under share/licenses"_str)));
     }
     if (value.runtime.links.is_empty()) {
-        return llvm_catalog_failure<LlvmSdkRuntimeComponent>(runtime_path.with_field("links"_str),
-                                                             "runtime links must not be empty"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            runtime_path.with_field("links"_str), "runtime links must not be empty"_str)));
     }
     auto links = Vec<PathBuf>::with_capacity(value.runtime.links.len());
     for (usize index {}; index < value.runtime.links.len(); ++index) {
         auto link_path = runtime_path.with_field("links"_str).with_index(index);
         auto parsed = lito::parse::NormalRelativePath::parse(value.runtime.links[index].as_str());
         if (parsed.is_err()) {
-            return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
                 rstd::move(link_path),
                 "runtime link is not a normal relative path"_str,
-                rstd::move(parsed).unwrap_err_unchecked());
+                rstd::move(parsed).unwrap_err_unchecked())));
         }
         if (! value.runtime.links[index].as_str().starts_with("lib/"_str)) {
-            return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
-                rstd::move(link_path), "runtime link must be under lib"_str);
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(link_path), "runtime link must be under lib"_str)));
         }
         auto parsed_path = PathBuf::from(rstd::move(value.runtime.links[index]));
         for (const auto& existing : links) {
             if (existing.as_path() == parsed_path.as_path()) {
-                return llvm_catalog_failure<LlvmSdkRuntimeComponent>(
-                    rstd::move(link_path), "runtime link is repeated"_str);
+                return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(link_path), "runtime link is repeated"_str)));
             }
         }
         links.push(rstd::move(parsed_path));
@@ -501,23 +487,23 @@ auto parse_artifact(llvm_catalog_wire::Artifact         value,
         auto component_path = path.with_field("runtime-components"_str).with_index(index);
         auto component      = rstd::move(value.runtime_components[index]);
         if (component.is_empty()) {
-            return llvm_catalog_failure<LlvmSdkArtifact>(
-                rstd::move(component_path), "runtime component name must not be empty"_str);
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(component_path), "runtime component name must not be empty"_str)));
         }
         auto definition = find_runtime_component(available_components, component.as_str());
         if (definition.is_none()) {
-            return llvm_catalog_failure<LlvmSdkArtifact>(rstd::move(component_path),
-                                                         "runtime component is not defined"_str);
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(component_path), "runtime component is not defined"_str)));
         }
         if ((**definition).recipe == LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1 &&
             parsed_host.os.as_str() != "linux"_str) {
-            return llvm_catalog_failure<LlvmSdkArtifact>(
-                rstd::move(component_path), "runtime component requires a Linux host"_str);
+            return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(component_path), "runtime component requires a Linux host"_str)));
         }
         for (const auto& existing : components) {
             if (existing == component.as_str()) {
-                return llvm_catalog_failure<LlvmSdkArtifact>(rstd::move(component_path),
-                                                             "runtime component is repeated"_str);
+                return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(component_path), "runtime component is repeated"_str)));
             }
         }
         components.push(rstd::move(component));
@@ -539,12 +525,12 @@ auto parse_release(llvm_catalog_wire::Release          value,
         rstd_try(parse_llvm_version_at(value.version.as_str(), path.with_field("version"_str)));
     auto expected_tag = rstd::format("llvmorg-{}", version.text.as_str());
     if (value.upstream_tag != expected_tag.as_str()) {
-        return llvm_catalog_failure<LlvmSdkRelease>(path.with_field("upstream-tag"_str),
-                                                    "LLVM upstream tag does not match version"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("upstream-tag"_str), "LLVM upstream tag does not match version"_str)));
     }
     if (value.artifacts.is_empty()) {
-        return llvm_catalog_failure<LlvmSdkRelease>(path.with_field("artifacts"_str),
-                                                    "release artifacts must not be empty"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            path.with_field("artifacts"_str), "release artifacts must not be empty"_str)));
     }
     auto artifacts = Vec<LlvmSdkArtifact>::with_capacity(value.artifacts.len());
     for (usize artifact_index {}; artifact_index < value.artifacts.len(); ++artifact_index) {
@@ -555,8 +541,9 @@ auto parse_release(llvm_catalog_wire::Release          value,
         for (const auto& existing : artifacts) {
             if (existing.host.os == artifact.host.os.as_str() &&
                 existing.host.architecture == artifact.host.architecture) {
-                return llvm_catalog_failure<LlvmSdkRelease>(
-                    artifact_path.with_field("host"_str), "release host artifact is repeated"_str);
+                return Err(LlvmSdkCatalogError::Data(
+                    rstd::serde::Error::invalid_value(artifact_path.with_field("host"_str),
+                                                      "release host artifact is repeated"_str)));
             }
         }
         artifacts.push(rstd::move(artifact));
@@ -597,17 +584,17 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
     auto document = rstd_try(rstd::json::decode<llvm_catalog_wire::Catalog>(text));
     auto root     = rstd::serde::DataPath();
     if (document.schema != u64(1)) {
-        return llvm_catalog_failure<LlvmSdkCatalog>(root.with_field("schema"_str),
-                                                    "LLVM SDK catalog schema must be 1"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            root.with_field("schema"_str), "LLVM SDK catalog schema must be 1"_str)));
     }
     if (document.kind != "lito-llvm-sdk"_str) {
-        return llvm_catalog_failure<LlvmSdkCatalog>(root.with_field("kind"_str),
-                                                    "LLVM SDK catalog kind is invalid"_str);
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+            root.with_field("kind"_str), "LLVM SDK catalog kind is invalid"_str)));
     }
     if (document.runtime_components.is_empty()) {
-        return llvm_catalog_failure<LlvmSdkCatalog>(
+        return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
             root.with_field("runtime-components"_str),
-            "LLVM SDK catalog runtime components must not be empty"_str);
+            "LLVM SDK catalog runtime components must not be empty"_str)));
     }
     auto runtime_components =
         Vec<LlvmSdkRuntimeComponent>::with_capacity(document.runtime_components.len());
@@ -617,8 +604,9 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
             rstd::move(document.runtime_components[index]), component_path.clone()));
         for (const auto& existing : runtime_components) {
             if (existing.name == component.name.as_str() || existing.recipe == component.recipe) {
-                return llvm_catalog_failure<LlvmSdkCatalog>(
-                    rstd::move(component_path), "runtime component name or recipe is repeated"_str);
+                return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(component_path),
+                    "runtime component name or recipe is repeated"_str)));
             }
         }
         runtime_components.push(rstd::move(component));
@@ -630,8 +618,8 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
             rstd::move(document.releases[index]), release_path.clone(), runtime_components));
         for (const auto& existing : releases) {
             if (existing.version.text == release.version.text.as_str()) {
-                return llvm_catalog_failure<LlvmSdkCatalog>(release_path.with_field("version"_str),
-                                                            "LLVM version is repeated"_str);
+                return Err(LlvmSdkCatalogError::Data(rstd::serde::Error::invalid_value(
+                    release_path.with_field("version"_str), "LLVM version is repeated"_str)));
             }
         }
         releases.push(rstd::move(release));
@@ -651,7 +639,8 @@ auto validate_llvm_sdk_archive_identity(const lito::parse::HttpsUrl&,
                                         u64      size,
                                         ref<str> context) -> LlvmSdkCatalogResult<empty> {
     if (size == u64 {}) {
-        return catalog_failure<empty>(rstd::format("{}.size must be greater than zero", context));
+        return Err(LlvmSdkCatalogError::Message(
+            rstd::format("{}.size must be greater than zero", context)));
     }
     return Ok(empty {});
 }
@@ -666,16 +655,16 @@ auto validate_llvm_sdk_paths(const LlvmSdkPaths& paths, ref<str> context)
     for (const auto path : path_values) {
         auto text = path.to_str();
         if (text.is_none() || lito::parse::NormalRelativePath::parse(*text).is_err()) {
-            return catalog_failure<empty>(
-                rstd::format("{} must contain normal relative paths", context));
+            return Err(LlvmSdkCatalogError::Message(
+                rstd::format("{} must contain normal relative paths", context)));
         }
     }
     for (usize left {}; left < usize(9); ++left) {
         for (usize right = left + usize(1); right < usize(9); ++right) {
             if (path_values[left.to_primitive()].as_os_str().as_encoded_bytes() ==
                 path_values[right.to_primitive()].as_os_str().as_encoded_bytes()) {
-                return catalog_failure<empty>(rstd::format(
-                    "{} repeats path '{}'", context, path_values[left.to_primitive()]));
+                return Err(LlvmSdkCatalogError::Message(rstd::format(
+                    "{} repeats path '{}'", context, path_values[left.to_primitive()])));
             }
         }
     }

@@ -13,9 +13,7 @@ struct Error {
     Option<SourceLocation>      location;
     Option<rstd::path::PathBuf> path;
 
-    static auto make(ref<str> message) -> Error {
-        return Error { .message = String::make(message) };
-    }
+    static auto make(ref<str> message) -> Error { return Error { .message = message.into() }; }
 
     static auto make(String message) -> Error { return Error { .message = rstd::move(message) }; }
 

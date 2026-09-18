@@ -63,16 +63,6 @@ struct ResolvedInstallSource {
 namespace lito
 {
 
-template<typename T>
-auto install_source_failure(String message) -> InstallSourceResult<T> {
-    return Err(InstallSourceError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto install_source_failure(ref<str> message) -> InstallSourceResult<T> {
-    return Err(InstallSourceError::Message(String::make(message)));
-}
-
 auto absolute_root(ref<rstd::path::Path> base, PathBuf root) -> PathBuf {
     if (root.as_path().is_absolute()) return root;
     return PathBuf::from(base).join(root.as_path());
@@ -83,8 +73,8 @@ auto environment_root(ref<str> variable) -> InstallSourceResult<Option<PathBuf>>
     if (value.is_none() || value->is_empty()) return Ok(Option<PathBuf> {});
     auto path = PathBuf::from(rstd::move(value).unwrap());
     if (! path.as_path().is_absolute()) {
-        return install_source_failure<Option<PathBuf>>(
-            rstd::format("{} must be an absolute path", variable));
+        return Err(
+            InstallSourceError::Message(rstd::format("{} must be an absolute path", variable)));
     }
     return Ok(Some(rstd::move(path)));
 }
@@ -106,13 +96,13 @@ auto registry_install_source_key(ref<str> key) -> bool {
 auto required_source_string(const Json& source, ref<str> key) -> InstallSourceResult<String> {
     auto member = source.get(key);
     if (member.is_none()) {
-        return install_source_failure<String>(
-            rstd::format("installed package source is missing '{}'", key));
+        return Err(InstallSourceError::Message(
+            rstd::format("installed package source is missing '{}'", key)));
     }
     auto value = (**member).as_str();
     if (value.is_none() || value->is_empty()) {
-        return install_source_failure<String>(
-            rstd::format("installed package source.{} must be a non-empty string", key));
+        return Err(InstallSourceError::Message(
+            rstd::format("installed package source.{} must be a non-empty string", key)));
     }
     return Ok(String::make(*value));
 }
@@ -120,13 +110,13 @@ auto required_source_string(const Json& source, ref<str> key) -> InstallSourceRe
 auto required_source_text(const Json& source, ref<str> key) -> InstallSourceResult<String> {
     auto member = source.get(key);
     if (member.is_none()) {
-        return install_source_failure<String>(
-            rstd::format("installed package source is missing '{}'", key));
+        return Err(InstallSourceError::Message(
+            rstd::format("installed package source is missing '{}'", key)));
     }
     auto value = (**member).as_str();
     if (value.is_none()) {
-        return install_source_failure<String>(
-            rstd::format("installed package source.{} must be a string", key));
+        return Err(InstallSourceError::Message(
+            rstd::format("installed package source.{} must be a string", key)));
     }
     return Ok(String::make(*value));
 }
@@ -137,8 +127,8 @@ auto reject_source_fields(const Json& source, bool (*allowed)(ref<str>))
     auto keys   = (**object).keys();
     for (auto key : keys) {
         if (! allowed((*key).as_str())) {
-            return install_source_failure<empty>(rstd::format(
-                "installed package source contains unknown field '{}'", (*key).as_str()));
+            return Err(InstallSourceError::Message(rstd::format(
+                "installed package source contains unknown field '{}'", (*key).as_str())));
         }
     }
     return Ok(empty {});
@@ -234,9 +224,9 @@ auto resolve_registry_install_source(const lito::registry::RegistryPackageName& 
     for (auto& source : graph) {
         if (source.package.name == package) {
             if (selected.is_some()) {
-                return install_source_failure<ResolvedInstallSource>(
+                return Err(InstallSourceError::Message(
                     rstd::format("Registry install graph contains package '{}' more than once",
-                                 package.as_str()));
+                                 package.as_str())));
             }
             selected = Some(rstd::move(source));
         } else {
@@ -244,14 +234,14 @@ auto resolve_registry_install_source(const lito::registry::RegistryPackageName& 
         }
     }
     if (selected.is_none()) {
-        return install_source_failure<ResolvedInstallSource>(
-            rstd::format("Registry install graph omitted root package '{}'", package.as_str()));
+        return Err(InstallSourceError::Message(
+            rstd::format("Registry install graph omitted root package '{}'", package.as_str())));
     }
     auto root = rstd::move(selected).unwrap();
     if (! (root.catalog.root().starts_with(root.source.root_directory.as_path()) &&
            root.source.root_directory.as_path().starts_with(root.catalog.root()))) {
-        return install_source_failure<ResolvedInstallSource>(
-            "Registry install root catalog does not match its materialized source"_str);
+        return Err(InstallSourceError::Message(
+            "Registry install root catalog does not match its materialized source"_Str));
     }
     auto identity   = root.source.identity.clone();
     auto provenance = rstd_try(install_source_provenance(root.source));
@@ -284,31 +274,31 @@ auto install_source_identity(const InstallSourceProvenance& provenance)
         const auto& source   = provenance.as_Registry();
         auto        expected = lito::source::registry_source_identity(source.pin);
         if (source.identity != expected.as_str()) {
-            return install_source_failure<String>(
-                "installed Registry source identity does not match its package and version"_str);
+            return Err(InstallSourceError::Message(
+                "installed Registry source identity does not match its package and version"_Str));
         }
         return Ok(source.identity.clone());
     }
     if (provenance.is_Git()) {
         const auto& source = provenance.as_Git();
         if (! lito::source::git_commit_is_valid(source.commit.as_str()) || source.url.is_empty()) {
-            return install_source_failure<String>("installed Git source is invalid"_str);
+            return Err(InstallSourceError::Message("installed Git source is invalid"_Str));
         }
         auto expected =
             lito::source::git_source_identity(source.url.as_str(), source.commit.as_str());
         if (source.identity != expected.as_str()) {
-            return install_source_failure<String>(
-                "installed Git source identity does not match its URL and commit"_str);
+            return Err(InstallSourceError::Message(
+                "installed Git source identity does not match its URL and commit"_Str));
         }
         return Ok(source.identity.clone());
     }
     const auto& source = provenance.as_Local();
     const auto& root   = source.root;
     if (! root.as_path().is_absolute()) {
-        return install_source_failure<String>("installed local source path must be absolute"_str);
+        return Err(InstallSourceError::Message("installed local source path must be absolute"_Str));
     }
     if (source.identity.is_empty() || ! source.identity.as_str().starts_with("path+"_str)) {
-        return install_source_failure<String>("installed local source identity is invalid"_str);
+        return Err(InstallSourceError::Message("installed local source identity is invalid"_Str));
     }
     return Ok(source.identity.clone());
 }
@@ -316,21 +306,20 @@ auto install_source_identity(const InstallSourceProvenance& provenance)
 auto install_source_provenance(const lito::source::ResolvedPackageSource& source)
     -> InstallSourceResult<InstallSourceProvenance> {
     if (source.identity.is_empty()) {
-        return install_source_failure<InstallSourceProvenance>(
-            "resolved package source identity is empty"_str);
+        return Err(InstallSourceError::Message("resolved package source identity is empty"_Str));
     }
     if (source.kind == lito::source::PackageSourceKind::Path) {
         if (! source.root_directory.as_path().is_absolute()) {
-            return install_source_failure<InstallSourceProvenance>(
-                "resolved package source root must be absolute"_str);
+            return Err(
+                InstallSourceError::Message("resolved package source root must be absolute"_Str));
         }
         return Ok(
             InstallSourceProvenance::Local(source.root_directory.clone(), source.identity.clone()));
     }
     if (source.kind == lito::source::PackageSourceKind::Registry) {
         if (source.registry.is_none()) {
-            return install_source_failure<InstallSourceProvenance>(
-                "resolved Registry package source is missing exact provenance"_str);
+            return Err(InstallSourceError::Message(
+                "resolved Registry package source is missing exact provenance"_Str));
         }
         auto provenance =
             InstallSourceProvenance::Registry(source.registry->clone(), source.identity.clone());
@@ -338,12 +327,12 @@ auto install_source_provenance(const lito::source::ResolvedPackageSource& source
         return Ok(rstd::move(provenance));
     }
     if (source.kind != lito::source::PackageSourceKind::Git) {
-        return install_source_failure<InstallSourceProvenance>(
-            "resolved package source kind cannot be installed"_str);
+        return Err(
+            InstallSourceError::Message("resolved package source kind cannot be installed"_Str));
     }
     if (! lito::source::git_commit_is_valid(source.commit.as_str())) {
-        return install_source_failure<InstallSourceProvenance>(
-            "resolved Git package source commit is invalid"_str);
+        return Err(
+            InstallSourceError::Message("resolved Git package source commit is invalid"_Str));
     }
     return Ok(InstallSourceProvenance::Git(source.git.clone(),
                                            source.reference.clone(),
@@ -381,8 +370,8 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
     const auto& root = provenance.as_Local().root;
     auto        path = root.as_path().to_str();
     if (path.is_none()) {
-        return install_source_failure<Json>(
-            rstd::format("install source path '{}' is not valid UTF-8", root.as_path()));
+        return Err(InstallSourceError::Message(
+            rstd::format("install source path '{}' is not valid UTF-8", root.as_path())));
     }
     source.insert("kind"_Str, Json::String("path"_Str));
     source.insert("path"_Str, Json::String(String::make(*path)));
@@ -393,8 +382,7 @@ auto parse_install_source_provenance(const Json& source)
     -> InstallSourceResult<InstallSourceProvenance> {
     auto object = source.as_object();
     if (object.is_none()) {
-        return install_source_failure<InstallSourceProvenance>(
-            "installed package source must be an object"_str);
+        return Err(InstallSourceError::Message("installed package source must be an object"_Str));
     }
     auto kind     = rstd_try(required_source_string(source, "kind"_str));
     auto identity = rstd_try(required_source_string(source, "identity"_str));
@@ -409,8 +397,8 @@ auto parse_install_source_provenance(const Json& source)
         auto version       = lito::registry::SemanticVersion::parse(version_text.as_str());
         auto checksum      = lito::registry::PackageChecksum::parse(checksum_text.as_str());
         if (registry.is_err() || package.is_err() || version.is_err() || checksum.is_err()) {
-            return install_source_failure<InstallSourceProvenance>(
-                "installed Registry source contains invalid exact provenance"_str);
+            return Err(InstallSourceError::Message(
+                "installed Registry source contains invalid exact provenance"_Str));
         }
         auto provenance = InstallSourceProvenance::Registry(
             lito::registry::RegistryReleasePin {
@@ -442,8 +430,8 @@ auto parse_install_source_provenance(const Json& source)
         else if (reference_kind == "commit"_str)
             parsed_kind = lito::source::GitReferenceKind::Commit;
         else if (reference_kind != "default"_str) {
-            return install_source_failure<InstallSourceProvenance>(
-                "installed Git source reference kind is invalid"_str);
+            return Err(
+                InstallSourceError::Message("installed Git source reference kind is invalid"_Str));
         }
         auto provenance = InstallSourceProvenance::Git(
             rstd_try(required_source_string(source, "url"_str)),
@@ -457,8 +445,8 @@ auto parse_install_source_provenance(const Json& source)
         return Ok(rstd::move(provenance));
     }
     if (kind != "path"_str) {
-        return install_source_failure<InstallSourceProvenance>(
-            rstd::format("installed package source kind '{}' is unsupported", kind.as_str()));
+        return Err(InstallSourceError::Message(
+            rstd::format("installed package source kind '{}' is unsupported", kind.as_str())));
     }
     rstd_try(reject_source_fields(source, path_install_source_key));
     auto path = rstd_try(required_source_string(source, "path"_str));
@@ -475,7 +463,7 @@ auto resolve_install_root(ref<rstd::path::Path>              invocation_root,
     -> InstallSourceResult<InstallRoot> {
     if (command_root.is_some()) {
         if (command_root->is_empty()) {
-            return install_source_failure<InstallRoot>("install root must not be empty"_str);
+            return Err(InstallSourceError::Message("install root must not be empty"_Str));
         }
         auto root = absolute_root(invocation_root, rstd::move(command_root).unwrap());
         return Ok(InstallRoot { .path = rstd::move(root) });
@@ -494,8 +482,8 @@ auto resolve_install_root(ref<rstd::path::Path>              invocation_root,
     auto home = environment_root("HOME"_str);
     if (home.is_err()) return Err(rstd::move(home).unwrap_err());
     if (home->is_none()) {
-        return install_source_failure<InstallRoot>(
-            "install root requires --root, LITO_INSTALL_ROOT, LITO_HOME, or HOME"_str);
+        return Err(InstallSourceError::Message(
+            "install root requires --root, LITO_INSTALL_ROOT, LITO_HOME, or HOME"_Str));
     }
     auto root = rstd::move(home).unwrap().unwrap();
     root.push(PathBuf::from(".lito"_str).as_path());
@@ -509,8 +497,7 @@ auto resolve_install_destination(ref<rstd::path::Path>              invocation_r
     if (requirement.is_Prefix()) {
         auto path = rstd::move(requirement).as_Prefix().path;
         if (path.is_empty()) {
-            return install_source_failure<InstallDestination>(
-                "install prefix must not be empty"_str);
+            return Err(InstallSourceError::Message("install prefix must not be empty"_Str));
         }
         return Ok(InstallDestination::Prefix(
             InstallPrefix { .path = absolute_root(invocation_root, rstd::move(path)) }));

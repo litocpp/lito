@@ -26,11 +26,11 @@ auto append_locked_git_source(lito::source::SourceResolutionOptions& options,
                 existing.commit = String::make(commit);
                 return Ok(empty {});
             }
-            return lito::dependency::dependency_failure<empty>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("Git source '{}' resolves to both '{}' and '{}'",
                              url,
                              existing.commit.as_str(),
-                             commit));
+                             commit)));
         }
         return Ok(empty {});
     }
@@ -74,11 +74,11 @@ auto resolve_package_owned_external(
 
     auto normalized = relative->is_empty() ? PathBuf::from("."_str) : PathBuf::from(*relative);
     if (! normalized.as_path().is_safe_relative()) {
-        return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("external source '{}:{}' has unsafe package source path '{}'",
                          package.manifest.name.as_str(),
                          declaration.name.as_str(),
-                         normalized.as_path()));
+                         normalized.as_path())));
     }
     auto metadata = rstd::fs::metadata(physical.as_path());
     if (metadata.is_err()) {
@@ -86,11 +86,11 @@ auto resolve_package_owned_external(
             "inspect external source"_Str, physical.clone(), rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
+        return Err(lito::dependency::DependencyError::Message(
             rstd::format("external source '{}:{}' path '{}' is not a directory",
                          package.manifest.name.as_str(),
                          declaration.name.as_str(),
-                         physical.as_path()));
+                         physical.as_path())));
     }
     auto identity = rstd::format(
         "lito-package-external-v1\n{}\n{}", package.source.identity.as_str(), normalized.as_path());
@@ -179,11 +179,10 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                     auto key      = external_relation_key(package.manifest.name.as_str(),
                                                           declaration.name.as_str());
                     if (package_owned.contains_key(key.as_str())) {
-                        return lito::dependency::dependency_failure<
-                            DeclaredExternalDependencySources>(
+                        return Err(lito::dependency::DependencyError::Message(
                             rstd::format("package '{}' repeats external source '{}'",
                                          package.manifest.name.as_str(),
-                                         declaration.name.as_str()));
+                                         declaration.name.as_str())));
                     }
                     make_record(lito::dependency::ResolvedExternalSource::Package(
                                     resolved.relative_path.clone()),
@@ -240,9 +239,9 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                 continue;
             }
             if (resolved.kind != lito::source::PackageSourceKind::Git) {
-                return lito::dependency::dependency_failure<DeclaredExternalDependencySources>(
+                return Err(lito::dependency::DependencyError::Message(
                     rstd::format("Git external source '{}' resolved to unsupported source kind",
-                                 declaration.name.as_str()));
+                                 declaration.name.as_str())));
             }
             rstd_try(append_locked_git_source(options, git.url.as_str(), resolved.commit.as_str()));
             make_record(lito::dependency::ResolvedExternalSource::Git(
@@ -298,10 +297,10 @@ auto validate_cmake_build_overrides(const lito::package::ResolvedPackageGraph&  
             }
         }
         if (! matched) {
-            return lito::dependency::dependency_failure<empty>(rstd::format(
+            return Err(lito::dependency::DependencyError::Message(rstd::format(
                 "tools.cmake.overrides.{}.source = 'installed' does not match any CMake package "
                 "in the active package graph",
-                entry.package.as_str()));
+                entry.package.as_str())));
         }
     }
     return Ok(empty {});
@@ -322,8 +321,8 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                          lito::source::SourceEventSink observer = {})
     -> lito::dependency::DependencyResult<AcquiredExternalDependencySources> {
     if (jobs == usize {}) {
-        return lito::dependency::dependency_failure<AcquiredExternalDependencySources>(
-            "source fetch jobs must be greater than zero"_str);
+        return Err(lito::dependency::DependencyError::Message(
+            "source fetch jobs must be greater than zero"_Str));
     }
     rstd_try(validate_cmake_build_overrides(graph, overrides));
     auto options              = rstd::move(declared.options);
@@ -355,10 +354,10 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             }
         }
         if (declaration_index.is_none()) {
-            return lito::dependency::dependency_failure<usize>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("package '{}' references unknown external source '{}'",
                              package.manifest.name.as_str(),
-                             name));
+                             name)));
         }
         const auto& external     = package.manifest.external_sources[*declaration_index];
         auto        source_fetch = Option<usize> {};

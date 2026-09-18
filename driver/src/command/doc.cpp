@@ -28,20 +28,11 @@ using JsonArray = rstd::json::Array;
 namespace lito
 {
 
-template<typename T>
-auto doc_failure(String message) -> DocResult<T> {
-    return Err(DocError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto doc_failure(ref<str> message) -> DocResult<T> {
-    return doc_failure<T>(String::make(message));
-}
-
 auto doc_path_text(ref<rstd::path::Path> path, ref<str> context) -> DocResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return doc_failure<String>(rstd::format("{} path '{}' is not valid UTF-8", context, path));
+        return Err(
+            DocError::Message(rstd::format("{} path '{}' is not valid UTF-8", context, path)));
     }
     return Ok(String::make(*text));
 }
@@ -148,8 +139,9 @@ auto response_matches(ref<rstd::path::Path> response, ref<str> request_id) -> Do
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(false);
         }
-        return Err(
-            doc_io_failure("read litodoc extraction response"_str, response, rstd::move(error)));
+        return Err(DocError::Io("read litodoc extraction response"_Str,
+                                rstd::path::PathBuf::from(response),
+                                rstd::move(error)));
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) return Ok(false);
@@ -164,19 +156,20 @@ auto response_matches(ref<rstd::path::Path> response, ref<str> request_id) -> Do
 auto write_extraction_request(ref<rstd::path::Path> path, ref<str> contents) -> DocResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
-        return doc_failure<empty>(
-            rstd::format("documentation request path '{}' has no parent", path));
+        return Err(
+            DocError::Message(rstd::format("documentation request path '{}' has no parent", path)));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return Err(doc_io_failure("create documentation extraction cache"_str,
-                                  *parent,
-                                  rstd::move(created).unwrap_err()));
+        return Err(DocError::Io("create documentation extraction cache"_Str,
+                                rstd::path::PathBuf::from(*parent),
+                                rstd::move(created).unwrap_err()));
     }
     auto written = rstd::fs::write_atomic(path, contents.as_bytes());
     if (written.is_err()) {
-        return Err(doc_io_failure(
-            "write documentation extraction request"_str, path, rstd::move(written).unwrap_err()));
+        return Err(DocError::Io("write documentation extraction request"_Str,
+                                rstd::path::PathBuf::from(path),
+                                rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -333,7 +326,7 @@ auto execute_extractions(const DocRequest&                 request,
                 task_set.cancel_pending();
                 task_set.close();
                 rstd::move(threads).join();
-                return doc_failure<usize>("cannot submit documentation extraction task"_str);
+                return Err(DocError::Message("cannot submit documentation extraction task"_Str));
             }
             ++next;
             ++active;
@@ -343,14 +336,14 @@ auto execute_extractions(const DocRequest&                 request,
             task_set.cancel_pending();
             task_set.close();
             rstd::move(threads).join();
-            return doc_failure<usize>("documentation task set closed before completion"_str);
+            return Err(DocError::Message("documentation task set closed before completion"_Str));
         }
         auto value = rstd::move(completion).unwrap_unchecked().into_value();
         if (value.is_none()) {
             task_set.cancel_pending();
             task_set.close();
             rstd::move(threads).join();
-            return doc_failure<usize>("documentation extraction task was cancelled"_str);
+            return Err(DocError::Message("documentation extraction task was cancelled"_Str));
         }
         auto outcome = rstd::move(value).unwrap_unchecked();
         --active;
@@ -395,9 +388,9 @@ auto site_manifest_json(const BuildSummary&     summary,
             if (package.package->name.as_str() != unit.target.package.as_str()) continue;
             auto contents = rstd::fs::read_to_string(plan.response.as_path());
             if (contents.is_err()) {
-                return Err(doc_io_failure("read documentation response"_str,
-                                          plan.response.as_path(),
-                                          rstd::move(contents).unwrap_err()));
+                return Err(DocError::Io("read documentation response"_Str,
+                                        rstd::path::PathBuf::from(plan.response.as_path()),
+                                        rstd::move(contents).unwrap_err()));
             }
             package.responses.push(PackageResponses::Response {
                 .path   = plan.response.clone(),
@@ -407,11 +400,11 @@ auto site_manifest_json(const BuildSummary&     summary,
                 if (package.root_module.is_empty()) {
                     package.root_module = unit.root_module->clone();
                 } else if (package.root_module.as_str() != unit.root_module->as_str()) {
-                    return doc_failure<String>(rstd::format(
+                    return Err(DocError::Message(rstd::format(
                         "package '{}' has conflicting documentation root modules '{}' and '{}'",
                         package.package->name.as_str(),
                         package.root_module.as_str(),
-                        unit.root_module->as_str()));
+                        unit.root_module->as_str())));
                 }
             }
         }
@@ -519,8 +512,9 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
         if (! selected_library_target(summary, unit.target)) continue;
         auto package = selected_package(summary, unit.target.package.as_str());
         if (package.is_none()) {
-            return doc_failure<DocSummary>(rstd::format(
-                "documentation unit '{}' has no selected package metadata", unit.source.as_path()));
+            return Err(DocError::Message(
+                rstd::format("documentation unit '{}' has no selected package metadata",
+                             unit.source.as_path())));
         }
         auto request_id    = request_identity(unit, **package, *tool);
         auto directory     = cache_root.join(PathBuf::from(request_id.as_str()).as_path());
@@ -538,8 +532,8 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
         });
     }
     if (plans.is_empty()) {
-        return doc_failure<DocSummary>(
-            "selected packages do not contain a documentable library target"_str);
+        return Err(DocError::Message(
+            "selected packages do not contain a documentable library target"_Str));
     }
 
     auto reused = execute_extractions(request, summary, *tool, *environment, plans);

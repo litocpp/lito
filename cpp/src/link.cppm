@@ -216,12 +216,12 @@ auto validate_runtime_search(ref<str> value, ref<str> source, ref<str> token)
     -> ArgumentResult<empty> {
     if (value.is_empty()) {
         return Err(ArgumentError::InvalidRuntimeSearchPath(
-            String::make(source), String::make(token), "path is empty"_Str));
+            source.into(), token.into(), "path is empty"_Str));
     }
     for (auto byte : value.as_bytes()) {
         if (byte == u8 {}) {
             return Err(ArgumentError::InvalidRuntimeSearchPath(
-                String::make(source), String::make(token), "path contains NUL"_Str));
+                source.into(), token.into(), "path contains NUL"_Str));
         }
     }
     return Ok(empty {});

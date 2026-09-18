@@ -17,16 +17,6 @@ class RegistryValueError {
 template<typename T>
 using RegistryValueResult = Result<T, RegistryValueError>;
 
-template<typename T>
-auto registry_value_failure(String message) -> RegistryValueResult<T> {
-    return Err(RegistryValueError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto registry_value_failure(ref<str> message) -> RegistryValueResult<T> {
-    return Err(RegistryValueError::Message(String::make(message)));
-}
-
 } // namespace lito::registry
 
 export namespace rstd

@@ -15,16 +15,6 @@ using namespace rstd::literals;
 namespace
 {
 
-template<typename T>
-auto embedded_failure(String message) -> lito::registry::RegistryGraphResult<T> {
-    return Err(lito::registry::RegistryGraphError { .message = rstd::move(message) });
-}
-
-template<typename T>
-auto embedded_failure(ref<str> message) -> lito::registry::RegistryGraphResult<T> {
-    return embedded_failure<T>(String::make(message));
-}
-
 auto registry_config(const lito::config::LitoBootstrapConfig& config,
                      const lito::registry::RegistryId&        identity)
     -> Option<ref<lito::config::NamedRegistryConfig>> {
@@ -46,18 +36,20 @@ auto descriptor_error(ref<str> id, ref<str> message) -> String {
 auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
     -> lito::registry::RegistryGraphResult<lito::registry::BuiltinRegistryPackage> {
     if (provider_.resolve == nullptr) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            rstd::format("builtin package '{}' has no embedded provider", id));
+        return Err(lito::registry::RegistryGraphError {
+            .message = rstd::format("builtin package '{}' has no embedded provider", id) });
     }
     auto input = provider_.resolve(provider_.context, id);
     if (input.is_none()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            rstd::format("builtin package '{}' is not provided by this executable", id));
+        return Err(lito::registry::RegistryGraphError {
+            .message =
+                rstd::format("builtin package '{}' is not provided by this executable", id) });
     }
     auto descriptor = lito::registry::parse_verified_publish_candidate(input->descriptor);
     if (descriptor.is_err()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            descriptor_error(id, rstd::move(descriptor).unwrap_err().message.as_str()));
+        return Err(lito::registry::RegistryGraphError {
+            .message =
+                descriptor_error(id, rstd::move(descriptor).unwrap_err().message.as_str()) });
     }
     auto definition = lito::registry::BuiltinRegistryPackage {
         .release =
@@ -71,10 +63,11 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
     }
     auto configured = registry_config(*config_, descriptor->package.registry);
     if (configured.is_none()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            rstd::format("builtin package '{}' uses Registry '{}' which is not configured",
-                         id,
-                         descriptor->package.registry.as_str()));
+        return Err(lito::registry::RegistryGraphError {
+            .message =
+                rstd::format("builtin package '{}' uses Registry '{}' which is not configured",
+                             id,
+                             descriptor->package.registry.as_str()) });
     }
     auto cache =
         lito::registry::RegistryBlobCache(cache_root_.clone(),
@@ -87,13 +80,14 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
     };
     auto blob = cache.publish(pin, input->archive);
     if (blob.is_err()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            descriptor_error(id, rstd::move(blob).unwrap_err().message.as_str()));
+        return Err(lito::registry::RegistryGraphError {
+            .message = descriptor_error(id, rstd::move(blob).unwrap_err().message.as_str()) });
     }
     if (blob->checksum != descriptor->archive.checksum ||
         blob->size != descriptor->archive.size.value()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            descriptor_error(id, "archive does not match its verified descriptor"_str));
+        return Err(lito::registry::RegistryGraphError {
+            .message =
+                descriptor_error(id, "archive does not match its verified descriptor"_str) });
     }
     auto inspected = lito::registry::PackageArchiveInspector::inspect_candidate(
         *blob,
@@ -102,8 +96,8 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
         {},
         lito::registry::RegistryExternalInputPolicy::AllowEmbedded);
     if (inspected.is_err()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            descriptor_error(id, rstd::move(inspected).unwrap_err().message.as_str()));
+        return Err(lito::registry::RegistryGraphError {
+            .message = descriptor_error(id, rstd::move(inspected).unwrap_err().message.as_str()) });
     }
     if (inspected->archive.checksum != descriptor->archive.checksum ||
         inspected->archive.size != descriptor->archive.size ||
@@ -112,8 +106,9 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
         inspected->candidate.unpacked_size != descriptor->unpacked_size ||
         ! lito::registry::registry_dependencies_match(inspected->candidate.dependencies.as_slice(),
                                                       descriptor->dependencies.as_slice())) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            descriptor_error(id, "descriptor does not describe the embedded archive"_str));
+        return Err(lito::registry::RegistryGraphError {
+            .message =
+                descriptor_error(id, "descriptor does not describe the embedded archive"_str) });
     }
     auto dependencies = descriptor->dependencies.iter()
                             .map([](auto dependency) {
@@ -125,8 +120,9 @@ auto lito::package::EmbeddedRegistryPackages::resolve(ref<str> id)
                                                               descriptor->archive.checksum.clone(),
                                                               rstd::move(dependencies));
     if (index.is_err()) {
-        return embedded_failure<lito::registry::BuiltinRegistryPackage>(
-            rstd::format("embedded package '{}': {}", id, rstd::move(index).unwrap_err()));
+        return Err(lito::registry::RegistryGraphError {
+            .message =
+                rstd::format("embedded package '{}': {}", id, rstd::move(index).unwrap_err()) });
     }
     indices_.push(rstd::move(index).unwrap());
     return Ok(rstd::move(definition));

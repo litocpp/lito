@@ -34,18 +34,6 @@ auto is_searchable_executable_name(ref<rstd::path::Path> path) -> bool {
 namespace lito::system
 {
 
-template<typename T>
-auto environment_failure(String message) -> SystemResult<T> {
-    return Err(SystemError::Environment(rstd::move(message)));
-}
-
-template<typename T>
-auto environment_io_failure(ref<str>               operation,
-                            ref<rstd::path::Path>  path,
-                            rstd::io::error::Error source) -> SystemResult<T> {
-    return Err(SystemError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) -> bool {
     return left.as_os_str().as_encoded_bytes() == right.as_os_str().as_encoded_bytes();
 }
@@ -66,14 +54,16 @@ auto append_search_directories(String& output, const Vec<PathBuf>& directories) 
 auto executable_candidate(ref<rstd::path::Path> path) -> SystemResult<bool> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return environment_io_failure<bool>(
-            "inspect executable candidate"_str, path, rstd::move(exists).unwrap_err());
+        return Err(SystemError::Io("inspect executable candidate"_Str,
+                                   PathBuf::from(path),
+                                   rstd::move(exists).unwrap_err()));
     }
     if (! *exists) return Ok(false);
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
-        return environment_io_failure<bool>(
-            "inspect executable candidate"_str, path, rstd::move(metadata).unwrap_err());
+        return Err(SystemError::Io("inspect executable candidate"_Str,
+                                   PathBuf::from(path),
+                                   rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_file()) return Ok(false);
 #if RSTD_OS_UNIX
@@ -94,10 +84,9 @@ public:
         -> SystemResult<ResolvedProcessEnvironment> {
         auto cwd = rstd::fs::canonicalize(PathBuf::from("."_str).as_path());
         if (cwd.is_err()) {
-            return environment_io_failure<ResolvedProcessEnvironment>(
-                "resolve Lito invocation directory"_str,
-                PathBuf::from("."_str).as_path(),
-                rstd::move(cwd).unwrap_err());
+            return Err(SystemError::Io("resolve Lito invocation directory"_Str,
+                                       PathBuf::from(PathBuf::from("."_str).as_path()),
+                                       rstd::move(cwd).unwrap_err()));
         }
         auto inherited  = rstd::env::var_os("PATH"_str);
         auto extensions = rstd::env::var_os("PATHEXT"_str);
@@ -120,10 +109,9 @@ public:
         -> SystemResult<ResolvedProcessEnvironment> {
         auto cwd = rstd::fs::canonicalize(invocation_directory);
         if (cwd.is_err()) {
-            return environment_io_failure<ResolvedProcessEnvironment>(
-                "resolve Lito invocation directory"_str,
-                invocation_directory,
-                rstd::move(cwd).unwrap_err());
+            return Err(SystemError::Io("resolve Lito invocation directory"_Str,
+                                       PathBuf::from(invocation_directory),
+                                       rstd::move(cwd).unwrap_err()));
         }
 
         auto directories = Vec<PathBuf>::make();
@@ -208,10 +196,10 @@ public:
 #endif
             }
         } else {
-            return environment_failure<Option<PathBuf>>(
+            return Err(SystemError::Environment(
                 rstd::format("cannot resolve {} '{}': expected an executable name or absolute path",
                              description,
-                             requested));
+                             requested)));
         }
         return Ok(rstd::move(selected));
     }
@@ -220,11 +208,11 @@ public:
                                         ref<str>              description) const
         -> SystemResult<Option<PathBuf>> {
         if (! single_component(requested)) {
-            return environment_failure<Option<PathBuf>>(
+            return Err(SystemError::Environment(
                 rstd::format("cannot resolve {} '{}' in '{}': expected an executable name",
                              description,
                              requested,
-                             directory));
+                             directory)));
         }
         auto candidate  = PathBuf::from(directory).join(requested);
         auto executable = executable_candidate(candidate.as_path());

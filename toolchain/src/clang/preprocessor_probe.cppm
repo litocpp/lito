@@ -17,16 +17,6 @@ using namespace rstd::literals;
 namespace lito::toolchain
 {
 
-template<typename T>
-auto environment_failure(String message) -> ToolchainResult<T> {
-    return Err(ToolchainError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto environment_failure(ref<str> message) -> ToolchainResult<T> {
-    return Err(ToolchainError::Message(String::make(message)));
-}
-
 auto clone_command(const Vec<String>& source) -> Vec<String> {
     auto result = source.iter()
                       .map([](auto argument) {
@@ -44,7 +34,7 @@ auto each_line(ref<str> text, Callback&& callback) -> ToolchainResult<empty> {
         auto end = begin;
         while (end < bytes.len() && bytes[end] != u8('\n') && bytes[end] != u8('\r')) ++end;
         auto line = text.get(begin, end);
-        if (line.is_none()) return environment_failure<empty>("invalid UTF-8 line boundary"_str);
+        if (line.is_none()) return Err(ToolchainError::Message("invalid UTF-8 line boundary"_Str));
         auto result = callback(*line);
         if (result.is_err()) return result;
         if (end == bytes.len()) break;
@@ -149,8 +139,8 @@ auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchE
         if (framework) {
             auto prefix = line.get(usize {}, line.len() - framework_marker.len());
             if (prefix.is_none() || prefix->trim_ascii().is_empty()) {
-                return environment_failure<empty>(
-                    rstd::format("clang emitted an invalid framework include directory: {}", line));
+                return Err(ToolchainError::Message(rstd::format(
+                    "clang emitted an invalid framework include directory: {}", line)));
             }
             directory_text = prefix->trim_ascii();
         }
@@ -168,8 +158,8 @@ auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchE
     });
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     if (! saw_start || ! saw_end) {
-        return environment_failure<Vec<IncludeSearchEntry>>(
-            "clang++ -E -v did not emit a complete include search list"_str);
+        return Err(ToolchainError::Message(
+            "clang++ -E -v did not emit a complete include search list"_Str));
     }
     return Ok(rstd::move(entries));
 }
@@ -253,12 +243,12 @@ auto parse_macro_dump(String output, ref<str> source_name, ref<str> key)
         if (line.is_empty()) return Ok(empty {});
         constexpr auto prefix = "#define "_str;
         if (! line.starts_with(prefix)) {
-            return environment_failure<empty>(
-                rstd::format("unexpected clang++ -dM output line: {}", line));
+            return Err(ToolchainError::Message(
+                rstd::format("unexpected clang++ -dM output line: {}", line)));
         }
         auto definition = line.get(prefix.len(), line.len());
         if (definition.is_none() || definition->is_empty()) {
-            return environment_failure<empty>("clang++ -dM emitted an empty definition"_str);
+            return Err(ToolchainError::Message("clang++ -dM emitted an empty definition"_Str));
         }
         auto name = macro_name(*definition);
         if (name.is_none() || ! native_predefined_macro(*name)) {
@@ -283,8 +273,8 @@ auto parse_macro_dump(String output, ref<str> source_name, ref<str> key)
         }
     }
     if (definitions.len() != macro_count) {
-        return environment_failure<ParsedMacroDump>(
-            "clang++ -dM macro framing and parsed definitions disagree"_str);
+        return Err(ToolchainError::Message(
+            "clang++ -dM macro framing and parsed definitions disagree"_Str));
     }
     return Ok(ParsedMacroDump {
         .definitions = rstd::move(definitions),
@@ -310,8 +300,8 @@ auto environment_identity(ref<str>                       builtin_identity,
     for (const auto& include : includes) {
         auto text = include.directory.as_path().to_str();
         if (text.is_none()) {
-            return environment_failure<String>(rstd::format(
-                "include directory '{}' is not valid UTF-8", include.directory.as_path()));
+            return Err(ToolchainError::Message(rstd::format(
+                "include directory '{}' is not valid UTF-8", include.directory.as_path())));
         }
         add(*text);
         add(include.system ? "system"_str : "quote"_str);
@@ -511,7 +501,8 @@ auto parse_capability_value(ref<str> raw) -> ToolchainResult<i64> {
         ++cursor;
     }
     if (digits == usize {} || cursor != value.len()) {
-        return environment_failure<i64>(rstd::format("invalid clang builtin query value: {}", raw));
+        return Err(
+            ToolchainError::Message(rstd::format("invalid clang builtin query value: {}", raw)));
     }
     return Ok(negative ? -result : result);
 }
@@ -566,10 +557,10 @@ auto query_clang_capabilities(const Vec<String>&                        base_com
         return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
-        return environment_failure<QueriedCapabilities>(
-            rstd::format("clang builtin capability query failed\n{}\n{}",
-                         command_text(command_line).as_str(),
-                         output->standard_error.as_str()));
+        return Err(
+            ToolchainError::Message(rstd::format("clang builtin capability query failed\n{}\n{}",
+                                                 command_text(command_line).as_str(),
+                                                 output->standard_error.as_str())));
     }
 
     auto values = Vec<i64>::make();
@@ -579,8 +570,8 @@ auto query_clang_capabilities(const Vec<String>&                        base_com
             if (line.is_empty()) return Ok(empty {});
             constexpr auto prefix = "LITO_BUILTIN_QUERY_"_str;
             if (! line.starts_with(prefix)) {
-                return environment_failure<empty>(
-                    rstd::format("unexpected clang builtin query output: {}", line));
+                return Err(ToolchainError::Message(
+                    rstd::format("unexpected clang builtin query output: {}", line)));
             }
             auto cursor = prefix.len();
             auto index  = usize {};
@@ -593,13 +584,13 @@ auto query_clang_capabilities(const Vec<String>&                        base_com
                 ++digits;
             }
             if (digits == usize {} || index != values.len()) {
-                return environment_failure<empty>(
-                    "clang builtin query output index is invalid"_str);
+                return Err(
+                    ToolchainError::Message("clang builtin query output index is invalid"_Str));
             }
             while (cursor < line.len() && line.as_bytes()[cursor] == u8(' ')) ++cursor;
             auto value_text = line.get(cursor, line.len());
             if (value_text.is_none() || value_text->is_empty()) {
-                return environment_failure<empty>("clang builtin query emitted no value"_str);
+                return Err(ToolchainError::Message("clang builtin query emitted no value"_Str));
             }
             auto value = parse_capability_value(*value_text);
             if (value.is_err()) {
@@ -610,10 +601,10 @@ auto query_clang_capabilities(const Vec<String>&                        base_com
         });
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     if (values.len() != pending.len()) {
-        return environment_failure<QueriedCapabilities>(
+        return Err(ToolchainError::Message(
             rstd::format("clang builtin query returned {} values for {} catalog entries",
                          values.len(),
-                         pending.len()));
+                         pending.len())));
     }
     auto result = rstd::collections::HashMap<String, i64>::with_capacity(pending.len());
     for (auto index = usize {}; index < pending.len(); ++index)

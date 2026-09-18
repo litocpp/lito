@@ -113,14 +113,16 @@ class ArchiveCacheSession {
         if (force_refresh_) return Ok(CurrentArchiveRecord {});
         auto exists = rstd::fs::exists(record);
         if (exists.is_err()) {
-            return cache_io_failure<CurrentArchiveRecord>(
-                "inspect archive record"_str, record, rstd::move(exists).unwrap_err());
+            return Err(CacheError::Io("inspect archive record"_Str,
+                                      PathBuf::from(record),
+                                      rstd::move(exists).unwrap_err()));
         }
         if (! *exists) return Ok(CurrentArchiveRecord {});
         auto contents = rstd::fs::read_to_string(record);
         if (contents.is_err()) {
-            return cache_io_failure<CurrentArchiveRecord>(
-                "read archive record"_str, record, rstd::move(contents).unwrap_err());
+            return Err(CacheError::Io("read archive record"_Str,
+                                      PathBuf::from(record),
+                                      rstd::move(contents).unwrap_err()));
         }
         auto parsed = rstd::json::from_str(contents->as_str());
         if (parsed.is_err()) return Ok(CurrentArchiveRecord {});
@@ -214,16 +216,15 @@ public:
         auto present = output_exists(decision.output_.as_path());
         if (present.is_err()) return Err(rstd::move(present).unwrap_err());
         if (! *present) {
-            return cache_failure<CachedArtifactIdentity>(
-                rstd::format("archiver did not produce output '{}'", decision.output_.as_path()));
+            return Err(CacheError::Record(
+                rstd::format("archiver did not produce output '{}'", decision.output_.as_path())));
         }
         auto digest = output_content_digest(decision.output_.as_path());
         if (digest.is_err()) return Err(rstd::move(digest).unwrap_err());
         auto complete        = archive_receipt_json(decision.receipt_);
         auto complete_object = complete.as_object_mut();
         if (complete_object.is_none()) {
-            return cache_failure<CachedArtifactIdentity>(
-                "archive cache receipt is not an object"_Str);
+            return Err(CacheError::Record("archive cache receipt is not an object"_Str));
         }
         auto digests = JsonMap::make();
         digests.insert("archive"_Str, cache_string(digest->as_str()));

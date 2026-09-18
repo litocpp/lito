@@ -114,8 +114,8 @@ namespace lito::registry
 auto parse_version_number(ref<str> value, ref<str> component) -> RegistryValueResult<u64> {
     auto parsed = lito::parse::parse_canonical_u64_decimal(value);
     if (parsed.is_err()) {
-        return registry_value_failure<u64>(
-            rstd::format("invalid semantic version {} component", component));
+        return Err(RegistryValueError::Message(
+            rstd::format("invalid semantic version {} component", component)));
     }
     return Ok(rstd::move(parsed).unwrap());
 }
@@ -130,8 +130,8 @@ auto prerelease_identifier_is_numeric(ref<str> value) noexcept -> bool {
 
 auto parse_prerelease(ref<str> value) -> RegistryValueResult<Vec<String>> {
     if (value.is_empty()) {
-        return registry_value_failure<Vec<String>>(
-            "semantic version prerelease must not be empty"_str);
+        return Err(
+            RegistryValueError::Message("semantic version prerelease must not be empty"_Str));
     }
     auto result    = Vec<String>::make();
     auto remaining = value;
@@ -139,22 +139,22 @@ auto parse_prerelease(ref<str> value) -> RegistryValueResult<Vec<String>> {
         auto separated  = remaining.split_once("."_str);
         auto identifier = separated.is_some() ? separated->template get<0>() : remaining;
         if (identifier.is_empty()) {
-            return registry_value_failure<Vec<String>>(
-                "semantic version prerelease identifiers must not be empty"_str);
+            return Err(RegistryValueError::Message(
+                "semantic version prerelease identifiers must not be empty"_Str));
         }
         for (auto byte : identifier.as_bytes()) {
             const auto ascii = byte.to_primitive();
             const auto valid = (ascii >= 'a' && ascii <= 'z') || (ascii >= 'A' && ascii <= 'Z') ||
                                (ascii >= '0' && ascii <= '9') || ascii == '-';
             if (! valid) {
-                return registry_value_failure<Vec<String>>(
-                    "semantic version prerelease contains an invalid byte"_str);
+                return Err(RegistryValueError::Message(
+                    "semantic version prerelease contains an invalid byte"_Str));
             }
         }
         if (identifier.len() > usize(1) && identifier[usize()] == u8('0') &&
             prerelease_identifier_is_numeric(identifier)) {
-            return registry_value_failure<Vec<String>>(
-                "numeric prerelease identifiers must not contain leading zeroes"_str);
+            return Err(RegistryValueError::Message(
+                "numeric prerelease identifiers must not contain leading zeroes"_Str));
         }
         result.push(String::make(identifier));
         if (separated.is_none()) break;
@@ -193,15 +193,15 @@ struct PartialVersion {
 auto parse_partial_version(ref<str> value, bool allow_prerelease)
     -> RegistryValueResult<PartialVersion> {
     if (value.is_empty() || value.contains("+"_str)) {
-        return registry_value_failure<PartialVersion>(
-            "version must not be empty or contain build metadata"_str);
+        return Err(
+            RegistryValueError::Message("version must not be empty or contain build metadata"_Str));
     }
     auto separated  = value.split_once("-"_str);
     auto core       = separated.is_some() ? separated->template get<0>() : value;
     auto prerelease = separated.is_some() ? Some(separated->template get<1>()) : None<ref<str>>();
     if (prerelease.is_some() && ! allow_prerelease) {
-        return registry_value_failure<PartialVersion>(
-            "this version requirement form does not accept prerelease versions"_str);
+        return Err(RegistryValueError::Message(
+            "this version requirement form does not accept prerelease versions"_Str));
     }
 
     auto pieces    = Vec<ref<str>>::make();
@@ -214,8 +214,8 @@ auto parse_partial_version(ref<str> value, bool allow_prerelease)
         remaining = part->template get<1>();
     }
     if (pieces.is_empty() || pieces.len() > usize(3)) {
-        return registry_value_failure<PartialVersion>(
-            "semantic version must contain one to three numeric components here"_str);
+        return Err(RegistryValueError::Message(
+            "semantic version must contain one to three numeric components here"_Str));
     }
     auto result       = PartialVersion {};
     result.components = pieces.len();
@@ -234,8 +234,8 @@ auto parse_partial_version(ref<str> value, bool allow_prerelease)
     }
     if (prerelease.is_some()) {
         if (pieces.len() != usize(3)) {
-            return registry_value_failure<PartialVersion>(
-                "prerelease requirements require major, minor, and patch"_str);
+            return Err(RegistryValueError::Message(
+                "prerelease requirements require major, minor, and patch"_Str));
         }
         auto parsed = parse_prerelease(*prerelease);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -266,8 +266,8 @@ auto plain_version(u64 major, u64 minor, u64 patch) -> SemanticVersion {
 auto incremented(u64 value, ref<str> component) -> RegistryValueResult<u64> {
     auto next = value.checked_add(u64(1));
     if (next.is_none()) {
-        return registry_value_failure<u64>(
-            rstd::format("version {} component cannot form an upper bound", component));
+        return Err(RegistryValueError::Message(
+            rstd::format("version {} component cannot form an upper bound", component)));
     }
     return Ok(*next);
 }
@@ -326,17 +326,18 @@ auto append_tilde(Vec<VersionComparator>& output, const PartialVersion& value)
 
 auto append_wildcard(Vec<VersionComparator>& output, ref<str> value) -> RegistryValueResult<empty> {
     if (value == "*"_str) {
-        return registry_value_failure<empty>("bare '*' version requirement is not supported"_str);
+        return Err(
+            RegistryValueError::Message("bare '*' version requirement is not supported"_Str));
     }
     if (! value.ends_with(".*"_str) || value.contains("-"_str) || value.contains("+"_str)) {
-        return registry_value_failure<empty>("wildcard must be written as 'x.*' or 'x.y.*'"_str);
+        return Err(RegistryValueError::Message("wildcard must be written as 'x.*' or 'x.y.*'"_Str));
     }
     auto prefix = value.get(usize {}, value.len() - usize(2)).unwrap();
     auto parsed = parse_partial_version(prefix, false);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto partial = rstd::move(parsed).unwrap();
     if (partial.components > usize(2)) {
-        return registry_value_failure<empty>("wildcard has too many version components"_str);
+        return Err(RegistryValueError::Message("wildcard has too many version components"_Str));
     }
     return append_tilde(output, partial);
 }
@@ -344,12 +345,11 @@ auto append_wildcard(Vec<VersionComparator>& output, ref<str> value) -> Registry
 auto append_requirement_clause(Vec<VersionComparator>& output, ref<str> clause)
     -> RegistryValueResult<Option<SemanticVersion>> {
     if (clause.is_empty()) {
-        return registry_value_failure<Option<SemanticVersion>>(
-            "version requirement contains an empty clause"_str);
+        return Err(RegistryValueError::Message("version requirement contains an empty clause"_Str));
     }
     if (clause.contains("||"_str) || clause.contains("+"_str)) {
-        return registry_value_failure<Option<SemanticVersion>>(
-            "version requirement unions and build metadata are not supported"_str);
+        return Err(RegistryValueError::Message(
+            "version requirement unions and build metadata are not supported"_Str));
     }
     if (clause.contains("*"_str)) {
         auto appended = append_wildcard(output, clause);
@@ -391,8 +391,8 @@ auto append_requirement_clause(Vec<VersionComparator>& output, ref<str> clause)
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto partial = rstd::move(parsed).unwrap();
     if (! range && operation == VersionComparatorOp::Equal && partial.components != usize(3)) {
-        return registry_value_failure<Option<SemanticVersion>>(
-            "exact version requirement requires major, minor, and patch"_str);
+        return Err(RegistryValueError::Message(
+            "exact version requirement requires major, minor, and patch"_Str));
     }
     auto prerelease =
         partial.has_prerelease ? Some(version_from_partial(partial)) : None<SemanticVersion>();
@@ -413,15 +413,14 @@ auto append_requirement_clause(Vec<VersionComparator>& output, ref<str> clause)
 auto lito::registry::SemanticVersion::parse(ref<str> value)
     -> RegistryValueResult<SemanticVersion> {
     if (value.starts_with("v"_str)) {
-        return registry_value_failure<SemanticVersion>(
-            "semantic version must not start with 'v'"_str);
+        return Err(RegistryValueError::Message("semantic version must not start with 'v'"_Str));
     }
     auto parsed = parse_partial_version(value, true);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto partial = rstd::move(parsed).unwrap();
     if (partial.components != usize(3)) {
-        return registry_value_failure<SemanticVersion>(
-            "semantic version requires major, minor, and patch"_str);
+        return Err(
+            RegistryValueError::Message("semantic version requires major, minor, and patch"_Str));
     }
     return Ok(SemanticVersion(
         partial.major, partial.minor, partial.patch, rstd::move(partial.prerelease)));
@@ -466,8 +465,7 @@ auto lito::registry::SemanticVersion::cmp(const SemanticVersion& other) const no
 auto lito::registry::VersionRequirement::parse(ref<str> value)
     -> RegistryValueResult<VersionRequirement> {
     if (value.trim_ascii().is_empty()) {
-        return registry_value_failure<VersionRequirement>(
-            "version requirement must not be empty"_str);
+        return Err(RegistryValueError::Message("version requirement must not be empty"_Str));
     }
     auto comparators       = Vec<VersionComparator>::make();
     auto canonical_text    = String::make();
@@ -488,8 +486,8 @@ auto lito::registry::VersionRequirement::parse(ref<str> value)
             if (admits_prerelease && (prerelease_major != explicit_prerelease->major() ||
                                       prerelease_minor != explicit_prerelease->minor() ||
                                       prerelease_patch != explicit_prerelease->patch())) {
-                return registry_value_failure<VersionRequirement>(
-                    "one requirement cannot opt into multiple prerelease base versions"_str);
+                return Err(RegistryValueError::Message(
+                    "one requirement cannot opt into multiple prerelease base versions"_Str));
             }
             admits_prerelease = true;
             prerelease_major  = explicit_prerelease->major();

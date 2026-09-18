@@ -37,16 +37,6 @@ using DocResult = Result<T, DocError>;
 
 } // namespace lito
 
-namespace lito
-{
-
-auto doc_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error error)
-    -> DocError {
-    return DocError::Io(String::make(operation), PathBuf::from(path), rstd::move(error));
-}
-
-} // namespace lito
-
 export namespace rstd
 {
 

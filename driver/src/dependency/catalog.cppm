@@ -40,10 +40,10 @@ auto project_external_source_provenance(const lito::package::ResolvedPackageGrap
     auto result = Vec<ExternalSourceProvenance>::with_capacity(sources.sources.len());
     for (const auto& source : sources.sources) {
         if (source.package >= graph.packages.len()) {
-            return lito::dependency::dependency_failure<Vec<ExternalSourceProvenance>>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("external source '{}' refers to unavailable package index {}",
                              source.name.as_str(),
-                             source.package));
+                             source.package)));
         }
         result.push(ExternalSourceProvenance {
             .package                = graph.packages[source.package].manifest.name.clone(),
@@ -75,8 +75,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                     const Option<PathBuf>& cmake_find_install_prefix       = None())
     -> lito::dependency::DependencyResult<PreparedExternalCatalog> {
     if (jobs == usize {}) {
-        return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-            "external dependency jobs must be greater than zero"_str);
+        return Err(lito::dependency::DependencyError::Message(
+            "external dependency jobs must be greater than zero"_Str));
     }
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
@@ -203,8 +203,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 }
             }
             if (binding == nullptr) {
-                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                    "external acquisition plan refers to an unavailable CMake dependency"_str);
+                return Err(lito::dependency::DependencyError::Message(
+                    "external acquisition plan refers to an unavailable CMake dependency"_Str));
             }
             binding->requirement.source = SelectedCMakeDependencySource::Directory(
                 (*fetched)[index].root.clone(), (*fetched)[index].identity.clone(), true);
@@ -220,11 +220,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             }
         }
         if (prepared == nullptr) {
-            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+            return Err(lito::dependency::DependencyError::Message(
                 rstd::format("CMake dependency '{}:{}' external source '{}' was not materialized",
                              binding.owner.as_str(),
                              binding.requirement.alias.as_str(),
-                             binding.source_name->as_str()));
+                             binding.source_name->as_str())));
         }
         binding.requirement.source = SelectedCMakeDependencySource::Directory(
             prepared->root.clone(), prepared->identity.clone(), prepared->cacheable);
@@ -257,8 +257,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         for (auto& asset : dependencies->assets) {
             auto inserted = assets.insert(rstd::move(asset));
             if (inserted.is_err()) {
-                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                    rstd::move(inserted).unwrap_err());
+                return Err(
+                    lito::dependency::DependencyError::Message(rstd::move(inserted).unwrap_err()));
             }
         }
     }
@@ -303,10 +303,10 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                     bindings[prior].requirement.package.as_str()) {
                 continue;
             }
-            return lito::dependency::dependency_failure<PreparedExternalCatalog>(rstd::format(
+            return Err(lito::dependency::DependencyError::Message(rstd::format(
                 "CMake packages '{}' and '{}' have colliding portable work directory names",
                 bindings[prior].requirement.package.as_str(),
-                bindings[index].requirement.package.as_str()));
+                bindings[index].requirement.package.as_str())));
         }
     }
     for (usize left {}; left < bindings.len();) {
@@ -353,8 +353,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             auto dependency = rstd::move(usage).unwrap();
             auto normalized = normalize_clang_link_arguments(rstd::move(dependency.link_arguments));
             if (normalized.is_err()) {
-                return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                    rstd::format("{}", rstd::move(normalized).unwrap_err()));
+                return Err(lito::dependency::DependencyError::Message(
+                    rstd::format("{}", rstd::move(normalized).unwrap_err())));
             }
             dependency.link_arguments    = rstd::move(normalized->arguments);
             dependency.link_requirements = rstd::move(normalized->requirements);
@@ -364,8 +364,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 copied.alias  = bindings[index].requirement.alias.clone();
                 auto inserted = assets.insert(rstd::move(copied));
                 if (inserted.is_err()) {
-                    return lito::dependency::dependency_failure<PreparedExternalCatalog>(
-                        rstd::move(inserted).unwrap_err());
+                    return Err(lito::dependency::DependencyError::Message(
+                        rstd::move(inserted).unwrap_err()));
                 }
             }
         }

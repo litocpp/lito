@@ -185,27 +185,11 @@ struct Impl<error::Error, lito::tools::acquisition::AcquisitionError>
 namespace lito::tools::acquisition
 {
 
-template<typename T>
-auto failure(String message) -> AcquisitionResult<T> {
-    return Err(AcquisitionError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto failure(ref<str> message) -> AcquisitionResult<T> {
-    return failure<T>(String::make(message));
-}
-
-template<typename T>
-auto io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
-    -> AcquisitionResult<T> {
-    return Err(
-        AcquisitionError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
 auto process_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> AcquisitionResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(rstd::format("acquisition path '{}' is not valid UTF-8", path));
+        return Err(AcquisitionError::Message(
+            rstd::format("acquisition path '{}' is not valid UTF-8", path)));
     }
     arguments.push(String::make(*text));
     return Ok(empty {});
@@ -227,8 +211,8 @@ auto ordinary_file_metadata(ref<rstd::path::Path> path)
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_ok()) {
         if (! metadata->is_file() || metadata->is_symlink()) {
-            return failure<Option<rstd::fs::Metadata>>(
-                rstd::format("acquisition file '{}' must be an ordinary file", path));
+            return Err(AcquisitionError::Message(
+                rstd::format("acquisition file '{}' must be an ordinary file", path)));
         }
         return Ok(Some(rstd::move(metadata).unwrap()));
     }
@@ -236,15 +220,16 @@ auto ordinary_file_metadata(ref<rstd::path::Path> path)
     if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
         return Ok(None());
     }
-    return io_failure<Option<rstd::fs::Metadata>>(
-        "inspect acquisition file"_str, path, rstd::move(error));
+    return Err(AcquisitionError::Io(
+        "inspect acquisition file"_Str, PathBuf::from(path), rstd::move(error)));
 }
 
 auto file_digest_matches(ref<rstd::path::Path> path, const licrypto::Sha256Digest& expected)
     -> AcquisitionResult<bool> {
     auto opened = rstd::fs::File::open(path);
     if (opened.is_err()) {
-        return io_failure<bool>("open acquisition file"_str, path, rstd::move(opened).unwrap_err());
+        return Err(AcquisitionError::Io(
+            "open acquisition file"_Str, PathBuf::from(path), rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
     auto state  = licrypto::Sha256::make();
@@ -252,8 +237,8 @@ auto file_digest_matches(ref<rstd::path::Path> path, const licrypto::Sha256Diges
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
         if (read.is_err()) {
-            return io_failure<bool>(
-                "read acquisition file"_str, path, rstd::move(read).unwrap_err());
+            return Err(AcquisitionError::Io(
+                "read acquisition file"_Str, PathBuf::from(path), rstd::move(read).unwrap_err()));
         }
         if (*read == usize {}) break;
         state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
@@ -285,11 +270,12 @@ auto reserve_staging_path(ref<rstd::path::Path> bucket) -> AcquisitionResult<Pat
         auto error = rstd::move(created).unwrap_err();
         if (error.kind() !=
             rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::AlreadyExists }) {
-            return io_failure<PathBuf>(
-                "reserve acquisition staging file"_str, candidate.as_path(), rstd::move(error));
+            return Err(AcquisitionError::Io("reserve acquisition staging file"_Str,
+                                            PathBuf::from(candidate.as_path()),
+                                            rstd::move(error)));
         }
     }
-    return failure<PathBuf>("cannot reserve acquisition staging file"_str);
+    return Err(AcquisitionError::Message("cannot reserve acquisition staging file"_Str));
 }
 
 auto acquire_cached_file(VerifiedArchiveRequest            request,
@@ -303,9 +289,9 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
     auto bucket  = layout.bucket(key.as_str());
     auto created = rstd::fs::create_dir_all(bucket.as_path());
     if (created.is_err()) {
-        return io_failure<VerifiedFile>("create acquisition cache bucket"_str,
-                                        bucket.as_path(),
-                                        rstd::move(created).unwrap_err());
+        return Err(AcquisitionError::Io("create acquisition cache bucket"_Str,
+                                        PathBuf::from(bucket.as_path()),
+                                        rstd::move(created).unwrap_err()));
     }
     auto source = layout.source(key.as_str());
     auto cached = rstd_try(verified_file(source.as_path(), request));
@@ -353,23 +339,26 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
     }
     if (downloaded->exit_code != i32 {}) {
         (void)rstd::fs::remove_file(staging.as_path());
-        return failure<VerifiedFile>(rstd::format("download '{}' failed with exit code {}:\n{}{}",
-                                                  request.url,
-                                                  downloaded->exit_code,
-                                                  downloaded->standard_output,
-                                                  downloaded->standard_error));
+        return Err(
+            AcquisitionError::Message(rstd::format("download '{}' failed with exit code {}:\n{}{}",
+                                                   request.url,
+                                                   downloaded->exit_code,
+                                                   downloaded->standard_output,
+                                                   downloaded->standard_error)));
     }
     auto staged_metadata = rstd_try(ordinary_file_metadata(staging.as_path()));
     if (staged_metadata.is_none()) {
         (void)rstd::fs::remove_file(staging.as_path());
-        return failure<VerifiedFile>(
-            rstd::format("download '{}' did not produce an ordinary file", request.url));
+        return Err(AcquisitionError::Message(
+            rstd::format("download '{}' did not produce an ordinary file", request.url)));
     }
     if (request.expected_size.is_some() && staged_metadata->len() != *request.expected_size) {
         auto actual = staged_metadata->len();
         (void)rstd::fs::remove_file(staging.as_path());
-        return failure<VerifiedFile>(rstd::format(
-            "download '{}' has size {}, expected {}", request.url, actual, *request.expected_size));
+        return Err(AcquisitionError::Message(rstd::format("download '{}' has size {}, expected {}",
+                                                          request.url,
+                                                          actual,
+                                                          *request.expected_size)));
     }
     auto matches = file_digest_matches(staging.as_path(), request.sha256);
     if (matches.is_err()) {
@@ -378,24 +367,24 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
     }
     if (! *matches) {
         (void)rstd::fs::remove_file(staging.as_path());
-        return failure<VerifiedFile>(
-            rstd::format("download '{}' does not match SHA-256 '{}'", request.url, request.sha256));
+        return Err(AcquisitionError::Message(rstd::format(
+            "download '{}' does not match SHA-256 '{}'", request.url, request.sha256)));
     }
     if (existing.is_some()) {
         auto removed = rstd::fs::remove_file(source.as_path());
         if (removed.is_err()) {
             (void)rstd::fs::remove_file(staging.as_path());
-            return io_failure<VerifiedFile>("replace cached acquisition file"_str,
-                                            source.as_path(),
-                                            rstd::move(removed).unwrap_err());
+            return Err(AcquisitionError::Io("replace cached acquisition file"_Str,
+                                            PathBuf::from(source.as_path()),
+                                            rstd::move(removed).unwrap_err()));
         }
     }
     auto published = rstd::fs::rename(staging.as_path(), source.as_path());
     if (published.is_err()) {
         (void)rstd::fs::remove_file(staging.as_path());
-        return io_failure<VerifiedFile>("publish cached acquisition file"_str,
-                                        source.as_path(),
-                                        rstd::move(published).unwrap_err());
+        return Err(AcquisitionError::Io("publish cached acquisition file"_Str,
+                                        PathBuf::from(source.as_path()),
+                                        rstd::move(published).unwrap_err()));
     }
     return Ok(VerifiedFile {
         .identity = archive_identity(request.url, request.sha256),
@@ -426,25 +415,27 @@ auto clean_extraction_destination(ref<rstd::path::Path> destination) -> Acquisit
     auto metadata = rstd::fs::symlink_metadata(destination);
     if (metadata.is_ok()) {
         if (! metadata->is_dir() || metadata->is_symlink()) {
-            return failure<empty>(rstd::format(
-                "archive extraction destination '{}' must be a real directory", destination));
+            return Err(AcquisitionError::Message(rstd::format(
+                "archive extraction destination '{}' must be a real directory", destination)));
         }
         auto removed = rstd::fs::remove_dir_all(destination);
         if (removed.is_err()) {
-            return io_failure<empty>(
-                "reset archive extraction"_str, destination, rstd::move(removed).unwrap_err());
+            return Err(AcquisitionError::Io("reset archive extraction"_Str,
+                                            PathBuf::from(destination),
+                                            rstd::move(removed).unwrap_err()));
         }
     } else {
         auto error = rstd::move(metadata).unwrap_err();
         if (error.kind() != rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
-            return io_failure<empty>(
-                "inspect archive extraction"_str, destination, rstd::move(error));
+            return Err(AcquisitionError::Io(
+                "inspect archive extraction"_Str, PathBuf::from(destination), rstd::move(error)));
         }
     }
     auto created = rstd::fs::create_dir_all(destination);
     if (created.is_err()) {
-        return io_failure<empty>(
-            "create archive extraction"_str, destination, rstd::move(created).unwrap_err());
+        return Err(AcquisitionError::Io("create archive extraction"_Str,
+                                        PathBuf::from(destination),
+                                        rstd::move(created).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -461,7 +452,7 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
                             bool                              offline,
                             AcquisitionEventSink observer) -> AcquisitionResult<Vec<VerifiedFile>> {
     if (jobs == usize {}) {
-        return failure<Vec<VerifiedFile>>("acquisition jobs must be greater than zero"_str);
+        return Err(AcquisitionError::Message("acquisition jobs must be greater than zero"_Str));
     }
     auto files   = Vec<Option<VerifiedFile>>::with_capacity(requests.len());
     auto pending = Vec<usize>::make();
@@ -470,10 +461,10 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
             auto provided = rstd_try(
                 verified_file(requests[index].provided_source->as_path(), requests[index]));
             if (provided.is_none()) {
-                return failure<Vec<VerifiedFile>>(
+                return Err(AcquisitionError::Message(
                     rstd::format("provided source '{}' does not match '{}'",
                                  requests[index].provided_source->as_path(),
-                                 requests[index].label));
+                                 requests[index].label)));
             }
             resolver.report_not_required(requests[index].download_requirement,
                                          "verified source bundle entry is available"_str);
@@ -508,9 +499,9 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
             }
         }
         if (! downloads.is_empty() && offline) {
-            return failure<Vec<VerifiedFile>>(
+            return Err(AcquisitionError::Message(
                 rstd::format("offline acquisition cannot fetch '{}'",
-                             requests[downloads[usize {}]].url.as_str()));
+                             requests[downloads[usize {}]].url.as_str())));
         }
         if (! downloads.is_empty()) {
             auto curl = resolver.require(lito::tools::Tool::Curl,
@@ -523,7 +514,7 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
             auto created = rstd::thread::BlockingTaskGroup<AcquisitionResult<FetchTask>>::make(
                 workers, downloads.len());
             if (created.is_err()) {
-                return failure<Vec<VerifiedFile>>("cannot create acquisition executor"_str);
+                return Err(AcquisitionError::Message("cannot create acquisition executor"_Str));
             }
             auto group = rstd::move(created).unwrap_unchecked();
             for (const auto index : downloads) {
@@ -552,14 +543,14 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
                     });
                 });
                 if (submitted.is_err()) {
-                    return failure<Vec<VerifiedFile>>("cannot submit acquisition task"_str);
+                    return Err(AcquisitionError::Message("cannot submit acquisition task"_Str));
                 }
             }
             auto outcomes = rstd::move(group).join();
             for (auto& outcome : outcomes) {
                 auto value = rstd::move(outcome).into_value();
                 if (value.is_none()) {
-                    return failure<Vec<VerifiedFile>>("acquisition task was cancelled"_str);
+                    return Err(AcquisitionError::Message("acquisition task was cancelled"_Str));
                 }
                 auto task = rstd::move(value).unwrap_unchecked();
                 if (task.is_err()) return Err(rstd::move(task).unwrap_err());
@@ -570,7 +561,8 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
     }
     auto result = Vec<VerifiedFile>::with_capacity(files.len());
     for (auto& file : files) {
-        if (file.is_none()) return failure<Vec<VerifiedFile>>("acquisition result is missing"_str);
+        if (file.is_none())
+            return Err(AcquisitionError::Message("acquisition result is missing"_Str));
         result.push(rstd::move(file).unwrap());
     }
     return Ok(rstd::move(result));
@@ -633,11 +625,11 @@ auto select_archive_extractor(lito::tools::ToolResolver&              resolver,
     attempts.push_str(rstd::format("\n    cmake -E tar via '{}': not found",
                                    resolver.tools().requested(lito::tools::Tool::CMake))
                           .as_str());
-    return failure<ArchiveExtractor>(
+    return Err(AcquisitionError::Message(
         rstd::format("cannot provide {} required by {}; tried:{}",
                      lito::tools::host_tool_capability_name(requirement.capability),
                      lito::tools::host_tool_requirement_origin_text(requirement.origin),
-                     attempts.as_str()));
+                     attempts.as_str())));
 }
 
 auto extract_verified_archive(VerifiedFile                      file,
@@ -678,12 +670,12 @@ auto extract_verified_archive(VerifiedFile                      file,
     }
     if (status->exit_code != i32 {}) {
         (void)rstd::fs::remove_dir_all(destination);
-        return failure<ExtractedArchive>(
+        return Err(AcquisitionError::Message(
             rstd::format("archive extraction with {} failed with exit code {}:\n{}{}",
                          extractor.provider_name(),
                          status->exit_code,
                          status->standard_output,
-                         status->standard_error));
+                         status->standard_error)));
     }
 
     auto root = PathBuf::from(destination);
@@ -691,41 +683,45 @@ auto extract_verified_archive(VerifiedFile                      file,
         root.push(PathBuf::from(*expected_root).as_path());
         auto opened = rstd::fs::read_dir(destination);
         if (opened.is_err()) {
-            return io_failure<ExtractedArchive>(
-                "enumerate archive"_str, destination, rstd::move(opened).unwrap_err());
+            return Err(AcquisitionError::Io("enumerate archive"_Str,
+                                            PathBuf::from(destination),
+                                            rstd::move(opened).unwrap_err()));
         }
         auto entries = rstd::move(opened).unwrap();
         auto count   = usize {};
         for (auto next : entries) {
             if (next.is_err()) {
-                return io_failure<ExtractedArchive>(
-                    "enumerate archive"_str, destination, rstd::move(next).unwrap_err());
+                return Err(AcquisitionError::Io("enumerate archive"_Str,
+                                                PathBuf::from(destination),
+                                                rstd::move(next).unwrap_err()));
             }
             auto entry = rstd::move(next).unwrap();
             ++count;
             if (entry.file_name().as_os_str().as_encoded_bytes() !=
                 PathBuf::from(*expected_root).as_path().as_os_str().as_encoded_bytes()) {
-                return failure<ExtractedArchive>(rstd::format(
-                    "archive contains unexpected top-level entry '{}'", entry.path().as_path()));
+                return Err(AcquisitionError::Message(rstd::format(
+                    "archive contains unexpected top-level entry '{}'", entry.path().as_path())));
             }
         }
         if (count != usize(1)) {
-            return failure<ExtractedArchive>(
-                rstd::format("archive root '{}' is not the only top-level entry", *expected_root));
+            return Err(AcquisitionError::Message(
+                rstd::format("archive root '{}' is not the only top-level entry", *expected_root)));
         }
     } else {
         auto opened = rstd::fs::read_dir(destination);
         if (opened.is_err()) {
-            return io_failure<ExtractedArchive>(
-                "enumerate archive"_str, destination, rstd::move(opened).unwrap_err());
+            return Err(AcquisitionError::Io("enumerate archive"_Str,
+                                            PathBuf::from(destination),
+                                            rstd::move(opened).unwrap_err()));
         }
         auto entries = rstd::move(opened).unwrap();
         auto only    = Option<PathBuf> {};
         auto count   = usize {};
         for (auto next : entries) {
             if (next.is_err()) {
-                return io_failure<ExtractedArchive>(
-                    "enumerate archive"_str, destination, rstd::move(next).unwrap_err());
+                return Err(AcquisitionError::Io("enumerate archive"_Str,
+                                                PathBuf::from(destination),
+                                                rstd::move(next).unwrap_err()));
             }
             auto entry = rstd::move(next).unwrap();
             ++count;
@@ -733,8 +729,9 @@ auto extract_verified_archive(VerifiedFile                      file,
                 auto type = entry.file_type();
                 if (type.is_err()) {
                     auto path = entry.path();
-                    return io_failure<ExtractedArchive>(
-                        "inspect archive entry"_str, path.as_path(), rstd::move(type).unwrap_err());
+                    return Err(AcquisitionError::Io("inspect archive entry"_Str,
+                                                    PathBuf::from(path.as_path()),
+                                                    rstd::move(type).unwrap_err()));
                 }
                 if (type->is_dir()) only = Some(entry.path());
             }
@@ -743,27 +740,29 @@ auto extract_verified_archive(VerifiedFile                      file,
     }
     auto canonical = rstd::fs::canonicalize(root.as_path());
     if (canonical.is_err()) {
-        return io_failure<ExtractedArchive>(
-            "resolve archive root"_str, root.as_path(), rstd::move(canonical).unwrap_err());
+        return Err(AcquisitionError::Io("resolve archive root"_Str,
+                                        PathBuf::from(root.as_path()),
+                                        rstd::move(canonical).unwrap_err()));
     }
     auto canonical_destination = rstd::fs::canonicalize(destination);
     if (canonical_destination.is_err()) {
-        return io_failure<ExtractedArchive>("resolve archive destination"_str,
-                                            destination,
-                                            rstd::move(canonical_destination).unwrap_err());
+        return Err(AcquisitionError::Io("resolve archive destination"_Str,
+                                        PathBuf::from(destination),
+                                        rstd::move(canonical_destination).unwrap_err()));
     }
     if (! canonical->as_path().starts_with(canonical_destination->as_path())) {
-        return failure<ExtractedArchive>(rstd::format(
-            "archive root '{}' is outside extraction destination", canonical->as_path()));
+        return Err(AcquisitionError::Message(rstd::format(
+            "archive root '{}' is outside extraction destination", canonical->as_path())));
     }
     auto metadata = rstd::fs::metadata(canonical->as_path());
     if (metadata.is_err()) {
-        return io_failure<ExtractedArchive>(
-            "inspect archive root"_str, canonical->as_path(), rstd::move(metadata).unwrap_err());
+        return Err(AcquisitionError::Io("inspect archive root"_Str,
+                                        PathBuf::from(canonical->as_path()),
+                                        rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return failure<ExtractedArchive>(
-            rstd::format("archive root '{}' is not a directory", canonical->as_path()));
+        return Err(AcquisitionError::Message(
+            rstd::format("archive root '{}' is not a directory", canonical->as_path())));
     }
     return Ok(ExtractedArchive {
         .root     = rstd::move(canonical).unwrap(),

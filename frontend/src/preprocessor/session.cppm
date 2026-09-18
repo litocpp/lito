@@ -322,7 +322,7 @@ private:
     }
 
     auto failure(ref<str> message, SourceLocation location) -> Error {
-        auto error = Error::at(String::make(message), location);
+        auto error = Error::at(message.into(), location);
         if (location.source < sources_.len()) {
             error.path = Some(rstd::path::PathBuf::from(sources_.path(location.source)));
         }

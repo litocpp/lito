@@ -11,23 +11,13 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito::system;
 
-namespace lito::tools::command
-{
-
-template<typename T>
-auto failure(String message) -> ToolResult<T> {
-    return Err(ToolError::Message(rstd::move(message)));
-}
-
-} // namespace lito::tools::command
-
 export namespace lito::tools::command
 {
 
 auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> ToolResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(rstd::format("tool path '{}' is not valid UTF-8", path));
+        return Err(ToolError::Message(rstd::format("tool path '{}' is not valid UTF-8", path)));
     }
     arguments.push(String::make(*text));
     return Ok(empty {});
@@ -37,7 +27,8 @@ auto push_path_option(Vec<String>& arguments, ref<str> prefix, ref<rstd::path::P
     -> ToolResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(rstd::format("tool option path '{}' is not valid UTF-8", path));
+        return Err(
+            ToolError::Message(rstd::format("tool option path '{}' is not valid UTF-8", path)));
     }
     arguments.push(rstd::format("{}{}", prefix, *text));
     return Ok(empty {});
@@ -54,7 +45,7 @@ auto tool_output_raw(Vec<String>                       arguments,
     if (output.is_err()) return Err(rstd::into<ToolError>(rstd::move(output).unwrap_err()));
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {
-        return Err(ToolError::Execution(String::make(description),
+        return Err(ToolError::Execution(description.into(),
                                         value.exit_code,
                                         rstd::move(value.standard_output),
                                         rstd::move(value.standard_error)));

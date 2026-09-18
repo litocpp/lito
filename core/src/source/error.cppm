@@ -28,28 +28,6 @@ using SourceResult = Result<T, SourceError>;
 
 } // namespace lito::source
 
-export namespace lito::source
-{
-
-template<typename T>
-auto source_failure(String message) -> SourceResult<T> {
-    return Err(SourceError::Message(rstd::move(message)));
-}
-
-template<typename T>
-auto source_failure(ref<str> message) -> SourceResult<T> {
-    return Err(SourceError::Message(String::make(message)));
-}
-
-template<typename T>
-auto source_io_failure(ref<str>               operation,
-                       ref<rstd::path::Path>  path,
-                       rstd::io::error::Error source) -> SourceResult<T> {
-    return Err(SourceError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
-}
-
-} // namespace lito::source
-
 export namespace rstd
 {
 
