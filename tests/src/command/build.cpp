@@ -1659,6 +1659,7 @@ path = "tools/helper"
         { "lib.cppm"_str, "export module fixture.script.host;\n"_str },
         { "build.lua"_str, R"lua(local host = require("@lito")
 assert(host == lito)
+host.write({output = "identity.txt", content = "unchanged"})
 local helper = require("@fixture.script.helper")
 local own = require("scripts/value.lua")
 assert(helper.answer == 42)
@@ -1682,7 +1683,12 @@ return { answer = value }
     auto output  = build_root("required-script-package"_str);
     auto request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-script-host"_str));
-    auto summary = lito::build(request);
+    auto capture     = GeneratedScanOrderCapture {};
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(capture),
+        .notify  = capture_generated_scan_order,
+    });
+    auto summary     = lito::build(request);
     if (summary.is_err()) {
         auto message = error_chain_text(summary.unwrap_err());
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
@@ -1690,6 +1696,25 @@ return { answer = value }
     }
     EXPECT_TRUE(summary->script.executed);
     EXPECT_EQ(summary->compiled, usize(1));
+    auto check_action = [&](lito::BuildEventKind expected) {
+        capture.events.clear();
+        auto built = lito::build(request);
+        if (built.is_err()) {
+            rstd::test::fail_current(
+                error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+            return false;
+        }
+        for (const auto& event : capture.events) {
+            if (event.kind == expected) return true;
+        }
+        return false;
+    };
+    ASSERT_TRUE(check_action(lito::BuildEventKind::BuildToolRunReuse));
+    auto helper =
+        project->root.join(PathBuf::from("tools/helper/internal/value.lua"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(helper.as_path(), "return 42 -- changed\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(check_action(lito::BuildEventKind::BuildToolRun));
+    ASSERT_TRUE(check_action(lito::BuildEventKind::BuildToolRunReuse));
 }
 
 TEST_F(BuildCommand, CMakeInstalledOverrideBuildsFromSearchPathAndPreservesLockSource) {

@@ -10,6 +10,7 @@ import :install.recipe;
 import :install.package;
 import :install.script_error;
 import :package.module_catalog;
+import :script.runtime;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -569,21 +570,19 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
                                            rstd::move(state).unwrap_err_unchecked()));
     }
     auto lua = rstd::move(state).unwrap_unchecked();
-    auto catalog =
+    auto module_sources =
         lito::package::ScriptModuleCatalog::make(package.root.as_path(),
                                                  package.source.identity.as_str(),
                                                  package.script_dependencies.as_slice(),
                                                  package.script_packages.as_slice(),
                                                  lito::manifest::ScriptHostKind::Install);
-    if (catalog.is_err()) {
-        return Err(InstallScriptError::Message(rstd::format(
-            "cannot configure install script modules: {}", rstd::move(catalog).unwrap_err())));
+    if (module_sources.is_err()) {
+        return Err(
+            InstallScriptError::Message(rstd::format("cannot configure install script modules: {}",
+                                                     rstd::move(module_sources).unwrap_err())));
     }
-    auto modules    = rstd::move(catalog).unwrap();
-    auto configured = lua.set_module_resolver(luato::ModuleResolverSpec::make(
-        [&modules](luato::ModuleRequest request) -> luato::Result<luato::LuaModuleSource> {
-            return modules.resolve(rstd::move(request));
-        }));
+    auto modules    = rstd::move(module_sources).unwrap();
+    auto configured = attach_script_modules(lua, modules);
     if (configured.is_err()) {
         return Err(InstallScriptError::Lua(package.script->clone(),
                                            rstd::move(configured).unwrap_err_unchecked()));
@@ -594,62 +593,32 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
     module.set(String::make("profile"_str), context.profile.clone());
     module.set(String::make("target"_str), context.target.clone());
     module.set(String::make("target_arch"_str), context.target_arch.clone());
-    module.add(luato::NativeFunctionSpec::make(
-        String::make("install"_str),
-        usize(1),
-        [&session](luato::CallFrame& frame) -> luato::BindingResult {
-            auto table = frame.required<luato::Table>(usize {});
-            if (table.is_err()) return Err(rstd::move(table).unwrap_err_unchecked());
-            auto installed = session.install(rstd::move(table).unwrap_unchecked());
-            if (installed.is_err()) return Err(rstd::move(installed).unwrap_err_unchecked());
-            return Ok(usize {});
-        }));
-    module.add(luato::NativeFunctionSpec::make(
-        String::make("render_template"_str),
-        usize(1),
-        [&session](luato::CallFrame& frame) -> luato::BindingResult {
-            auto table = frame.required<luato::Table>(usize {});
-            if (table.is_err()) return Err(rstd::move(table).unwrap_err_unchecked());
-            auto rendered = session.render(rstd::move(table).unwrap_unchecked());
-            if (rendered.is_err()) {
-                auto error = rstd::move(rendered).unwrap_err();
-                auto text  = rstd::format("{}", error);
-                session.defer_error(rstd::move(error));
-                return Err(luato::Error::binding(rstd::move(text)));
-            }
-            frame.push(rstd::move(rendered).unwrap());
-            return Ok(usize(1));
-        }));
-    module.add(luato::NativeFunctionSpec::make(
-        String::make("read_file"_str),
-        usize(1),
-        [&session](luato::CallFrame& frame) -> luato::BindingResult {
-            auto path = frame.required<String>(usize {});
-            if (path.is_err()) return Err(rstd::move(path).unwrap_err_unchecked());
-            auto contents = session.read_file(rstd::move(path).unwrap_unchecked());
-            if (contents.is_err()) {
-                auto error = rstd::move(contents).unwrap_err();
-                auto text  = rstd::format("{}", error);
-                session.defer_error(rstd::move(error));
-                return Err(luato::Error::binding(rstd::move(text)));
-            }
-            frame.push(rstd::move(contents).unwrap());
-            return Ok(usize(1));
-        }));
-    module.add(luato::NativeFunctionSpec::make(
-        String::make("env"_str), usize(1), [](luato::CallFrame& frame) -> luato::BindingResult {
-            auto name = frame.required<String>(usize {});
-            if (name.is_err()) return Err(rstd::move(name).unwrap_err_unchecked());
-            auto value = environment_value(rstd::move(name).unwrap_unchecked());
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err_unchecked());
-            auto resolved = rstd::move(value).unwrap_unchecked();
-            if (resolved.is_none()) {
-                frame.push_nil();
-            } else {
-                frame.push(rstd::move(resolved).unwrap());
-            }
-            return Ok(usize(1));
-        }));
+    module.function(String::make("install"_str), [&session](luato::Table table) {
+        return session.install(rstd::move(table));
+    });
+    module.function(String::make("render_template"_str),
+                    [&session](luato::Table table) -> luato::Result<String> {
+                        auto rendered = session.render(rstd::move(table));
+                        if (rendered.is_err()) {
+                            auto error = rstd::move(rendered).unwrap_err();
+                            auto text  = rstd::format("{}", error);
+                            session.defer_error(rstd::move(error));
+                            return Err(luato::Error::binding(rstd::move(text)));
+                        }
+                        return Ok(rstd::move(rendered).unwrap());
+                    });
+    module.function(String::make("read_file"_str),
+                    [&session](String path) -> luato::Result<String> {
+                        auto contents = session.read_file(rstd::move(path));
+                        if (contents.is_err()) {
+                            auto error = rstd::move(contents).unwrap_err();
+                            auto text  = rstd::format("{}", error);
+                            session.defer_error(rstd::move(error));
+                            return Err(luato::Error::binding(rstd::move(text)));
+                        }
+                        return Ok(rstd::move(contents).unwrap());
+                    });
+    module.function(String::make("env"_str), &environment_value);
     auto native_module =
         luato::NativeRequireModuleSpec(String::make("@lito"_str),
                                        String::make("lito:install-host-api:v1"_str),

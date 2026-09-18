@@ -125,7 +125,18 @@ target_sources(
          src/build/frontend_observer.cppm
          src/build/resource.cppm
          src/build/scan_executor.cppm
-         src/build/script.cppm
+         src/build/script/mod.cppm
+         src/build/script/support.cppm
+         src/build/configure/mod.cppm
+         src/build/generated/model.cppm
+         src/build/generated/cache.cppm
+         src/build/generated/mod.cppm
+         src/build/generated/declaration.cppm
+         src/build/generated/execution.cppm
+         src/build/script/declaration.cppm
+         src/script/runtime.cppm
+         src/script/build_request.cppm
+         src/script/build.cppm
          src/build/prepared_project.cppm
          src/build/unit_plan.cppm
          src/build/standard_library_module.cppm
