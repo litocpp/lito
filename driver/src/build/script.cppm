@@ -846,16 +846,45 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
                 String::make("depfile dependency is not a regular file or directory"_str)));
         }
         auto allowed = false;
-        for (const auto& root : allowed_roots) {
+        static const auto env_roots = [] {
+            auto roots = Vec<PathBuf>::make();
+            if (auto env = rstd::env::var("LITO_ALLOWED_ROOTS"_str); env.is_ok()) {
+                auto remaining = env->as_str();
+                while (! remaining.is_empty()) {
+                    if (auto split = remaining.split_once(":"_str); split.is_some()) {
+                        auto head = rstd::get<0>(*split);
+                        if (! head.is_empty()) {
+                            roots.push(PathBuf::from(head));
+                        }
+                        remaining = rstd::get<1>(*split);
+                    } else {
+                        roots.push(PathBuf::from(remaining));
+                        break;
+                    }
+                }
+            }
+            return roots;
+        }();
+        for (const auto& root : env_roots) {
             if (canonical->as_path().strip_prefix(root.as_path()).is_some()) {
                 allowed = true;
                 break;
             }
         }
-        for (const auto& input : direct_inputs) {
-            if (canonical->as_path() == input.as_path()) {
-                allowed = true;
-                break;
+        if (! allowed) {
+            for (const auto& root : allowed_roots) {
+                if (canonical->as_path().strip_prefix(root.as_path()).is_some()) {
+                    allowed = true;
+                    break;
+                }
+            }
+        }
+        if (! allowed) {
+            for (const auto& input : direct_inputs) {
+                if (canonical->as_path() == input.as_path()) {
+                    allowed = true;
+                    break;
+                }
             }
         }
         if (! allowed) {
