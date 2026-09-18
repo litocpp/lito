@@ -11,7 +11,7 @@ import lito.core;
 import :build.event;
 import :build.action_graph;
 import :build.layout;
-import :build.host_tool_error;
+import :build.host_tool.error;
 import :source;
 import lito.cpp;
 import lito.system;

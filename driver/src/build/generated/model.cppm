@@ -7,7 +7,7 @@ import rstd;
 import lito.core;
 import lito.cpp;
 import lito.system;
-import :build.script_error;
+import :build.script.error;
 import :build.action_graph;
 
 using namespace rstd::prelude;

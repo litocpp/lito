@@ -14,7 +14,7 @@ import :build.artifact;
 import :build.error;
 import :build.layout;
 import :build.plugin;
-import :build.compile_plan;
+import :build.compile.plan;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

@@ -1,4 +1,4 @@
-module lito.driver:build.frontend_analysis;
+module lito.driver:build.frontend;
 
 import rstd;
 import lito.core;
@@ -9,7 +9,7 @@ import lito.toolchain;
 import :cache;
 import :build.layout;
 import :build.profiling;
-import :build.frontend_observer;
+import :build.frontend.observer;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

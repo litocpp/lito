@@ -9,7 +9,7 @@ import :config.registry;
 import :package.selection;
 export import :command.error;
 import :build.event;
-import :build.setup_report;
+import :build.setup;
 import lito.cpp;
 import lito.system;
 

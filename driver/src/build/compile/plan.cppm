@@ -1,4 +1,4 @@
-module lito.driver:build.compile_plan;
+module lito.driver:build.compile.plan;
 
 import rstd;
 import lito.core;
@@ -8,13 +8,13 @@ import :build.request;
 import :build.artifact;
 import :build.documentation;
 import :build.error;
-import :build.compile_executor;
+import :build.compile;
 import lito.toolchain.common;
 import lito.system;
 import :cache;
 import lito.toolchain;
 import :build.layout;
-import :build.compile_test;
+import :build.compile.test;
 import :build.profiling;
 
 using namespace rstd::prelude;

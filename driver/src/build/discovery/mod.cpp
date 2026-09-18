@@ -4,11 +4,11 @@ import rstd;
 import lito.core;
 import lito.cpp;
 import :build.event;
-import :build.frontend_analysis;
-import :build.package_discovery;
+import :build.frontend;
+import :build.discovery.package;
 import lito.frontend;
 import :build.profiling;
-import :build.scan_executor;
+import :build.frontend.scan;
 import :build.error;
 
 using namespace rstd::prelude;

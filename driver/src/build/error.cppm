@@ -11,10 +11,10 @@ import lito.toolchain.common;
 import lito.system;
 import :cache.error;
 import lito.cpp;
-import :build.layout_error;
-import :build.script_error;
-import :build.product_error;
-import :build.artifact_processor_error;
+import :build.layout.error;
+import :build.script.error;
+import :build.product.error;
+import :build.artifact.processor.error;
 
 using namespace rstd::prelude;
 

@@ -1,4 +1,4 @@
-export module lito.driver:build.compile_executor;
+export module lito.driver:build.compile;
 
 import rstd;
 import lito.core;

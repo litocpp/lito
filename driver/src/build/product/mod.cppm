@@ -7,7 +7,7 @@ import rstd;
 import rstd.json;
 import lito.core;
 import lito.cpp;
-import :build.product_error;
+import :build.product.error;
 import :build.request;
 import :build.artifact;
 import :build.layout;

@@ -1,7 +1,7 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.driver:build.artifact_processor_error;
+export module lito.driver:build.artifact.processor.error;
 
 import rstd;
 import rstd.json;

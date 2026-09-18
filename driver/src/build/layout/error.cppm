@@ -1,7 +1,7 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.driver:build.layout_error;
+export module lito.driver:build.layout.error;
 
 import rstd;
 import lito.core;

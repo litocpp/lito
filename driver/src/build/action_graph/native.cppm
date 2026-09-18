@@ -1,13 +1,13 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.driver:build.native_action_graph;
+module lito.driver:build.action_graph.native;
 
 import rstd;
 import lito.core;
 import lito.cpp;
 import :build.action_graph;
-import :build.compile_plan;
+import :build.compile.plan;
 import :build.error;
 import :build.layout;
 

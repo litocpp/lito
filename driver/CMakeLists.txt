@@ -2,7 +2,7 @@ add_library(lito.driver STATIC)
 target_compile_features(lito.driver PUBLIC cxx_std_20)
 target_sources(
   lito.driver
-  PRIVATE src/build/discovery.cpp
+  PRIVATE src/build/discovery/mod.cpp
           src/build/event.cpp
           src/build/mod.cpp
           src/command/clean.cpp
@@ -26,31 +26,31 @@ target_sources(
          CXX_MODULES
          FILES
          src/dependency/preparation.cppm
-         src/build/action_graph.cppm
-         src/build/native_action_graph.cppm
-         src/build/artifact.cppm
-         src/build/artifact_processor.cppm
-         src/build/artifact_processor_error.cppm
-         src/build/compile_executor.cppm
+         src/build/action_graph/mod.cppm
+         src/build/action_graph/native.cppm
+         src/build/artifact/mod.cppm
+         src/build/artifact/processor/mod.cppm
+         src/build/artifact/processor/error.cppm
+         src/build/compile/mod.cppm
          src/build/documentation.cppm
-         src/build/discovery.cppm
+         src/build/discovery/mod.cppm
          src/build/error.cppm
          src/build/event.cppm
-         src/build/host_tool.cppm
-         src/build/host_tool_error.cppm
-         src/build/layout.cppm
-         src/build/layout_error.cppm
+         src/build/host_tool/mod.cppm
+         src/build/host_tool/error.cppm
+         src/build/layout/mod.cppm
+         src/build/layout/error.cppm
          src/build/mod.cppm
          src/build/profiling.cppm
-         src/build/product.cppm
-         src/build/product_error.cppm
+         src/build/product/mod.cppm
+         src/build/product/error.cppm
          src/build/plugin.cppm
-         src/build/proc_macro.cppm
+         src/build/proc_macro/mod.cppm
          src/build/request.cppm
          src/build/result.cppm
-         src/build/script_error.cppm
-         src/build/setup_report.cppm
-         src/build/tool_action_error.cppm
+         src/build/script/error.cppm
+         src/build/setup/mod.cppm
+         src/build/generated/error.cppm
          src/cache/error.cppm
          src/command/bench.cppm
          src/command/doc.cppm
@@ -118,13 +118,13 @@ target_sources(
          src/registry/publish.cppm
          src/registry/source.cppm
          src/registry/mod.cppm
-         src/build/compile_test.cppm
-         src/build/compile_plan.cppm
-         src/build/package_discovery.cppm
-         src/build/frontend_analysis.cppm
-         src/build/frontend_observer.cppm
+         src/build/compile/test.cppm
+         src/build/compile/plan.cppm
+         src/build/discovery/package.cppm
+         src/build/frontend/mod.cppm
+         src/build/frontend/observer.cppm
          src/build/resource.cppm
-         src/build/scan_executor.cppm
+         src/build/frontend/scan.cppm
          src/build/script/mod.cppm
          src/build/script/support.cppm
          src/build/configure/mod.cppm
@@ -137,9 +137,9 @@ target_sources(
          src/script/runtime.cppm
          src/script/build_request.cppm
          src/script/build.cppm
-         src/build/prepared_project.cppm
-         src/build/unit_plan.cppm
-         src/build/standard_library_module.cppm
+         src/build/project/mod.cppm
+         src/build/compile/units.cppm
+         src/build/compile/standard_library.cppm
          src/cache/archive.cppm
          src/cache/common.cppm
          src/cache/compile.cppm

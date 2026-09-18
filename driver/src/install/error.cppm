@@ -7,7 +7,7 @@ import rstd;
 import rstd.json;
 import lito.core;
 import :build.error;
-import :build.product_error;
+import :build.product.error;
 import :install.script_error;
 import :install.materialize_error;
 import lito.toolchain.common;

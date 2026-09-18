@@ -1,7 +1,7 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.driver:build.artifact_processor;
+export module lito.driver:build.artifact.processor;
 
 import rstd;
 import rstd.json;
@@ -11,7 +11,7 @@ import lito.cpp;
 import lito.system;
 import :build.artifact;
 import :build.layout;
-import :build.artifact_processor_error;
+import :build.artifact.processor.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

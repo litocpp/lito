@@ -1,7 +1,7 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.driver:build.product_error;
+export module lito.driver:build.product.error;
 
 import rstd;
 import rstd.json;

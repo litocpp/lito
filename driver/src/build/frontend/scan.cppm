@@ -1,9 +1,9 @@
-module lito.driver:build.scan_executor;
+module lito.driver:build.frontend.scan;
 
 import rstd;
 import lito.core;
 import :build.error;
-import :build.frontend_analysis;
+import :build.frontend;
 import :build.profiling;
 import lito.system;
 

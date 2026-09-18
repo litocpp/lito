@@ -1,4 +1,4 @@
-export module lito.driver:build.setup_report;
+export module lito.driver:build.setup;
 
 import rstd;
 import licrypto;

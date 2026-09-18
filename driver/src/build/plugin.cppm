@@ -11,7 +11,7 @@ import lito.system;
 import lito.toolchain;
 import lito.toolchain.common;
 import :build.artifact;
-import :build.compile_plan;
+import :build.compile.plan;
 import :build.error;
 import :build.layout;
 

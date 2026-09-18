@@ -1,7 +1,7 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.driver:build.host_tool_error;
+export module lito.driver:build.host_tool.error;
 
 import rstd;
 import lito.core;

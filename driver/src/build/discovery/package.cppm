@@ -1,10 +1,10 @@
-module lito.driver:build.package_discovery;
+module lito.driver:build.discovery.package;
 
 import rstd;
 import lito.cpp;
 import :build.event;
 import :build.error;
-import :build.frontend_analysis;
+import :build.frontend;
 
 using namespace rstd::prelude;
 

@@ -12,7 +12,7 @@ import lito.tools;
 import lito.tools.cargo;
 import lito.toolchain.common;
 import lito.cpp;
-import :build.layout_error;
+import :build.layout.error;
 
 using namespace rstd::prelude;
 

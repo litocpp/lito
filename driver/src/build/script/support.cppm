@@ -8,8 +8,8 @@ import lito.core;
 import lito.cpp;
 import lito.system;
 import rstd.json;
-import :build.script_error;
-import :build.tool_action_error;
+import :build.script.error;
+import :build.generated.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

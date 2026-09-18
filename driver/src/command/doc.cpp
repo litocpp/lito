@@ -14,7 +14,7 @@ import :command.doc_error;
 import :command.doc_tool;
 import :build;
 import :build.documentation;
-import :build.compile_executor;
+import :build.compile;
 import lito.cpp;
 import lito.system;
 

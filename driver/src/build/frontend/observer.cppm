@@ -1,4 +1,4 @@
-module lito.driver:build.frontend_observer;
+module lito.driver:build.frontend.observer;
 
 import rstd;
 import lito.frontend;

@@ -6,7 +6,7 @@ export module lito.driver:install.script_error;
 import rstd;
 import luato;
 import lito.core;
-import :build.script_error;
+import :build.script.error;
 
 using namespace rstd::prelude;
 

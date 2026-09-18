@@ -1,16 +1,16 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.driver:build.standard_library_module;
+module lito.driver:build.compile.standard_library;
 
 import rstd;
 import lito.core;
 import lito.cpp;
 import lito.toolchain;
 import :build.error;
-import :build.frontend_analysis;
+import :build.frontend;
 import :build.layout;
-import :build.unit_plan;
+import :build.compile.units;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

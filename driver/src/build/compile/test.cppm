@@ -1,4 +1,4 @@
-module lito.driver:build.compile_test;
+module lito.driver:build.compile.test;
 
 import rstd;
 import lito.core;

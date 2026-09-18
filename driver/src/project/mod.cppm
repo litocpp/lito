@@ -12,7 +12,7 @@ import :config.registry;
 import :project.error;
 import lito.cpp;
 import :build.event;
-import :build.setup_report;
+import :build.setup;
 import :build.layout;
 import :build.artifact;
 import :dependency.catalog;

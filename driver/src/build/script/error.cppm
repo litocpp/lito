@@ -1,16 +1,16 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.driver:build.script_error;
+export module lito.driver:build.script.error;
 
 import rstd;
 import rstd.json;
 import luato;
 import lito.core;
 import lito.toolchain.common;
-import :build.layout_error;
-import :build.host_tool_error;
-import :build.tool_action_error;
+import :build.layout.error;
+import :build.host_tool.error;
+import :build.generated.error;
 
 using namespace rstd::prelude;
 

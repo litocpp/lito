@@ -9,7 +9,7 @@ import lito.core;
 import :build.event;
 import :build.artifact;
 import :build.layout;
-import :build.script_error;
+import :build.script.error;
 import lito.cpp;
 
 using namespace rstd::prelude;

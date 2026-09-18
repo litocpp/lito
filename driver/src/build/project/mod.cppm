@@ -1,4 +1,4 @@
-module lito.driver:build.prepared_project;
+module lito.driver:build.project;
 
 import rstd;
 import :build.request;

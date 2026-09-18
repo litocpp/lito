@@ -1,7 +1,7 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.driver:build.tool_action_error;
+export module lito.driver:build.generated.error;
 
 import rstd;
 import lito.core;

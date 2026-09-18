@@ -8,7 +8,7 @@ import lito.core;
 import lito.system;
 import lito.toolchain;
 import lito.cpp;
-import :build.layout_error;
+import :build.layout.error;
 
 using namespace rstd::prelude;
 

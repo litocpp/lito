@@ -1,4 +1,4 @@
-module lito.driver:build.unit_plan;
+module lito.driver:build.compile.units;
 
 import rstd;
 import lito.core;
@@ -6,7 +6,7 @@ import lito.cpp;
 import :build.error;
 import lito.toolchain;
 import :build.layout;
-import :build.compile_test;
+import :build.compile.test;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
