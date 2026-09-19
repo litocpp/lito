@@ -23,33 +23,21 @@
 
         llvmPkgs = pkgs.llvmPackages;
 
-        rstdSrc = pkgs.fetchFromGitHub {
-          owner = "litocpp";
-          repo = "rstd";
-          rev = "02cd6e8f83a8374527985a8f461bfd3a56ce0bec";
-          hash = "sha256-TEH/t2tMjBnKBIQuC//9q0W3XMXQWzred6e5MRwBId4=";
-        };
+        deps = builtins.fromJSON (builtins.readFile ./deps.json);
+        fetchDependency =
+          name:
+          let
+            dep = deps.${name};
+          in
+          pkgs.fetchFromGitHub {
+            inherit (dep) owner repo rev;
+            hash = dep.narHash;
+          };
 
-        luatoSrc = pkgs.fetchFromGitHub {
-          owner = "litocpp";
-          repo = "luato";
-          rev = "9ad07ca2604022319c0178b7f5543220baf87050";
-          hash = "sha256-C1DlycFz5z+e+A5FsL18ePc4KQYscn2z4cJKPBgkj8w=";
-        };
-
-        licryptoSrc = pkgs.fetchFromGitHub {
-          owner = "litocpp";
-          repo = "licrypto";
-          rev = "18345239cc68869646a6522e6e258a4eba3dec20";
-          hash = "sha256-UVk3BeTA8+cBvB9XFXKNo1ua4rBflpKif7NF+9a9l/Q=";
-        };
-
-        zstdSrc = pkgs.fetchFromGitHub {
-          owner = "facebook";
-          repo = "zstd";
-          rev = "f8745da6ff1ad1e7bab384bd1f9d742439278e99";
-          hash = "sha256-tNFWIT9ydfozB8dWcmTMuZLCQmQudTFJIkSr0aG7S44=";
-        };
+        rstdSrc = fetchDependency "rstd";
+        luatoSrc = fetchDependency "luato";
+        licryptoSrc = fetchDependency "licrypto";
+        zstdSrc = fetchDependency "zstd";
 
         luaSrc = pkgs.fetchzip {
           url = "https://www.lua.org/ftp/lua-5.5.1.tar.gz";

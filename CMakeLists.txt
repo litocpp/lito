@@ -4,7 +4,7 @@ set(CMAKE_LINKER_TYPE LLD)
 
 project(
   lito
-  VERSION 0.8.1
+  VERSION 0.8.2
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
@@ -55,32 +55,33 @@ set(RSTD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 
 include(FetchContent)
 
-FetchContent_Declare(
-  rstd
-  GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 02cd6e8f83a8374527985a8f461bfd3a56ce0bec)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/deps.json" LITO_DEPS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/deps.json")
 
+function(lito_declare_dependency name)
+  string(JSON owner GET "${LITO_DEPS}" "${name}" owner)
+  string(JSON repo GET "${LITO_DEPS}" "${name}" repo)
+  string(JSON rev GET "${LITO_DEPS}" "${name}" rev)
+  FetchContent_Declare(
+    ${name}
+    GIT_REPOSITORY "https://github.com/${owner}/${repo}.git"
+    GIT_TAG "${rev}")
+endfunction()
+
+lito_declare_dependency(rstd)
 FetchContent_MakeAvailable(rstd)
 
 set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-  luato
-  GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG 9ad07ca2604022319c0178b7f5543220baf87050)
+lito_declare_dependency(luato)
 FetchContent_MakeAvailable(luato)
 
 if(NOT LITO_USE_SYSTEM_ZSTD)
-  FetchContent_Declare(
-    zstd
-    GIT_REPOSITORY https://github.com/facebook/zstd.git
-    GIT_TAG f8745da6ff1ad1e7bab384bd1f9d742439278e99)
+  lito_declare_dependency(zstd)
   FetchContent_MakeAvailable(zstd)
 endif()
 
-FetchContent_Declare(
-  licrypto
-  GIT_REPOSITORY https://github.com/litocpp/licrypto.git
-  GIT_TAG 18345239cc68869646a6522e6e258a4eba3dec20)
+lito_declare_dependency(licrypto)
 FetchContent_MakeAvailable(licrypto)
 
 add_subdirectory(third-party/zstd)

@@ -1,3 +1,16 @@
+<release version="0.8.2" date="2026-09-19">
+  <description>
+    <ul>
+      <li>Parallelize formatting.</li>
+      <li>Add typed Lua build-script bindings.</li>
+      <li>Simplify manifest field schemas.</li>
+      <li>Simplify error construction.</li>
+      <li>Support LITO_ALLOWED_ROOTS.</li>
+      <li>Add a Nix flake.</li>
+      <li>Update rstd to 0.1.4.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.1" date="2026-09-09">
   <description>
     <ul>
