@@ -442,11 +442,10 @@ class Solver {
                     indices_[index_position].index.releases()[*state.selected_release].clone(),
             });
         }
-        rstd::slice_::sort_unstable_by(
-            packages.as_mut_slice().as_mut_ref(),
-            [](const ResolvedRegistryPackage& left, const ResolvedRegistryPackage& right) {
-                return package_key(left.package) < package_key(right.package);
-            });
+        rstd::slice_::sort_by_cached_key(packages.as_mut_slice().as_mut_ref(),
+                                         [](const ResolvedRegistryPackage& package) {
+                                             return package_key(package.package);
+                                         });
         return Ok(ResolvedRegistryGraph { .packages = rstd::move(packages) });
     }
 
