@@ -82,11 +82,19 @@ a fallback.
 
 The configured Index, blob, API, and mirror endpoints are transport details and are not written to
 the lock. A normal build reuses its locked Registry releases and locally cached package Index
-records without checking for newly published versions. If a manifest change cannot be resolved
-from that cache, an online build may refresh the affected package Index once. `lito update`
+records without checking for newly published versions. If a cached Index is missing a still-applicable
+locked version, an online build refreshes that package Index once. If the version is still missing,
+resolution fails without replacing the lock with another compatible version. Changed dependency
+requirements can invalidate a locked version and allow normal resolution to select a replacement.
+If a manifest change cannot be resolved from the cache, an online build may refresh the Index.
+Each package Index is refreshed at most once per resolution session. `lito update`
 conditionally refreshes every package Index reached by resolution. `--locked` does not read the
 Index at all; it may still download a missing archive by its locked checksum unless `--offline` is
 also active.
+
+Normal build and fetch may update the lock when dependency changes require it. `--locked` instead
+rejects a missing or stale lock; it does not prohibit network access. `--offline` prohibits network
+access, and `--frozen` combines both restrictions.
 
 Offline resolution evaluates source availability before resolving network tools. A verified
 archive file-cache entry can be extracted without `curl`, and a valid archive materialization

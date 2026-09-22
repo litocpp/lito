@@ -78,6 +78,11 @@ public:
     auto releases() const noexcept -> slice<RegistryReleaseProjection> {
         return releases_.as_slice();
     }
+    auto contains(const SemanticVersion& version) const noexcept -> bool {
+        return releases_.iter().any([&](auto release) {
+            return release->version == version;
+        });
+    }
     auto clone() const -> RegistryPackageIndex;
 };
 

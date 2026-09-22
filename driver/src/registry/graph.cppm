@@ -66,11 +66,12 @@ class RegistryGraphClient {
     bool                                     locked_mode_ {};
     Vec<RegistryReleasePin>                  locked_;
     Vec<RegistryPackageIndex>                provided_indices_;
-    Vec<RegistryPackageIndex>                indices_;
+    Vec<RegistryIndexClient>                 index_clients_;
     Vec<RegistryPackageId>                   development_packages_;
     const Vec<PathBuf>*                      source_bundles_ {};
 
-    static auto load_index(void*, const RegistryPackageId&) noexcept -> RegistryIndexLoadResult;
+    static auto load_index(void*, const RegistryPackageId&, Option<ref<SemanticVersion>>) noexcept
+        -> RegistryIndexLoadResult;
     static auto resolve_callback(void*, slice<RegistryGraphRequirement>) noexcept
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
     static auto resolve_registry_callback(void*, Option<ref<str>>) noexcept
@@ -107,6 +108,12 @@ public:
                          ref<str>                   source   = "Registry install"_str)
         -> RegistryGraphResult<Vec<ResolvedRegistryGraphSource>>;
     auto add_index(RegistryPackageIndex index) -> void {
+        for (auto& existing : provided_indices_) {
+            if (existing.package() == index.package()) {
+                existing = rstd::move(index);
+                return;
+            }
+        }
         provided_indices_.push(rstd::move(index));
     }
     auto provider() noexcept -> RegistryGraphProvider {
@@ -176,8 +183,9 @@ auto locked_pin(const Vec<RegistryReleasePin>& pins, const RegistryPackageId& pa
 
 } // namespace
 
-auto lito::registry::RegistryGraphClient::load_index(void*                    context,
-                                                     const RegistryPackageId& package) noexcept
+auto lito::registry::RegistryGraphClient::load_index(void*                        context,
+                                                     const RegistryPackageId&     package,
+                                                     Option<ref<SemanticVersion>> required) noexcept
     -> RegistryIndexLoadResult {
     auto& self = *static_cast<RegistryGraphClient*>(context);
     if (self.config_ == nullptr) {
@@ -188,10 +196,13 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
         });
     }
     for (const auto& index : self.provided_indices_) {
-        if (index.package() == package) return Ok(index.clone());
+        if (index.package() == package) {
+            rstd_try(require_index_version(index, required));
+            return Ok(index.clone());
+        }
     }
-    for (const auto& index : self.indices_) {
-        if (index.package() == package) return Ok(index.clone());
+    for (auto& client : self.index_clients_) {
+        if (client.registry() == package.registry) return client.load(package, required);
     }
     auto config = configured_registry(*self.config_, package.registry);
     if (config.is_none()) {
@@ -207,10 +218,8 @@ auto lito::registry::RegistryGraphClient::load_index(void*                    co
                                       self.policy_.index,
                                       self.http_,
                                       self.source_bundles_);
-    auto loaded = client.load(package);
-    if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
-    self.indices_.push(loaded->clone());
-    return Ok(rstd::move(loaded).unwrap());
+    self.index_clients_.push(rstd::move(client));
+    return self.index_clients_[self.index_clients_.len() - usize(1)].load(package, required);
 }
 
 auto lito::registry::RegistryGraphClient::resolve_registry_callback(
@@ -342,9 +351,9 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
         if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
         return materialize(rstd::move(selected).unwrap());
     }
-    auto locked = Vec<RegistryLockedPreference>::with_capacity(locked_.len());
+    auto locked = Vec<RegistryLockedConstraint>::with_capacity(locked_.len());
     for (const auto& pin : locked_) {
-        locked.push(RegistryLockedPreference {
+        locked.push(RegistryLockedConstraint {
             .package  = pin.release.package.clone(),
             .version  = pin.release.version.clone(),
             .checksum = pin.checksum.clone(),
@@ -353,7 +362,11 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
     auto input = RegistrySolverInput {
         .roots                = rstd::move(roots),
         .locked               = rstd::move(locked),
-        .development_packages = rstd::move(development_packages_),
+        .development_packages = development_packages_.iter()
+                                    .map([](auto package) {
+                                        return package->clone();
+                                    })
+                                    .collect<Vec<RegistryPackageId>>(),
     };
     auto provider = RegistryIndexProvider {
         .context = this,
@@ -365,7 +378,7 @@ auto lito::registry::RegistryGraphClient::resolve(slice<RegistryGraphRequirement
         if (policy_.index == RegistryIndexUpdatePolicy::Reuse &&
             policy_.refresh_on_incompatibility && network_ == RegistryNetworkPolicy::Online &&
             error.is_Incompatibility()) {
-            indices_.clear();
+            for (auto& client : index_clients_) client.refresh();
             policy_.index = RegistryIndexUpdatePolicy::Refresh;
             solved        = RegistryVersionSolver::solve(input, provider);
         } else {

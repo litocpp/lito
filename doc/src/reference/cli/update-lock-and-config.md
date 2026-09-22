@@ -21,6 +21,12 @@ changing the external project's manifest or lock file.
 reuses locked Git commits and Registry releases; dependency upgrades remain the responsibility of
 `lito update`.
 
+An online fetch refreshes a package Index once if its cache lacks a still-applicable locked version.
+If that version remains unavailable, fetch fails without changing the lock. Dependency declaration
+changes may require a new lock; `--locked` rejects such changes rather than writing them.
+`--locked` still permits downloads, whereas `--offline` forbids network access and `--frozen`
+combines both restrictions.
+
 ```sh
 lito fetch --locked
 lito fetch --locked --output packaging/source-bundle

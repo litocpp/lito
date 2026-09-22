@@ -28,6 +28,7 @@ enum class RegistryIndexErrorKind
     ContextMismatch,
     CorruptCache,
     Integrity,
+    LockedVersionMissing,
 };
 
 struct RegistryIndexError {
@@ -40,8 +41,23 @@ using RegistryIndexLoadResult = Result<RegistryPackageIndex, RegistryIndexError>
 
 struct RegistryIndexProvider {
     void* context {};
-    RegistryIndexLoadResult (*load)(void*, const RegistryPackageId&) noexcept {};
+    RegistryIndexLoadResult (*load)(void*,
+                                    const RegistryPackageId&,
+                                    Option<ref<SemanticVersion>>) noexcept {};
 };
+
+inline auto require_index_version(const RegistryPackageIndex&  index,
+                                  Option<ref<SemanticVersion>> version)
+    -> Result<empty, RegistryIndexError> {
+    if (version.is_none() || index.contains(**version)) return Ok(empty {});
+    return Err(RegistryIndexError {
+        .kind    = RegistryIndexErrorKind::LockedVersionMissing,
+        .package = index.package().clone(),
+        .message = rstd::format("Registry index for '{}' does not contain locked version '{}'",
+                                registry_package_id_text(index.package()),
+                                (**version).text()),
+    });
+}
 
 struct RegistrySolverRequirement {
     RegistryPackageId  package;
@@ -57,13 +73,13 @@ struct RegistrySolverRequirement {
     }
 };
 
-struct RegistryLockedPreference {
+struct RegistryLockedConstraint {
     RegistryPackageId package;
     SemanticVersion   version;
     PackageChecksum   checksum;
 
-    auto clone() const -> RegistryLockedPreference {
-        return RegistryLockedPreference {
+    auto clone() const -> RegistryLockedConstraint {
+        return RegistryLockedConstraint {
             .package  = package.clone(),
             .version  = version.clone(),
             .checksum = checksum.clone(),
@@ -73,7 +89,7 @@ struct RegistryLockedPreference {
 
 struct RegistrySolverInput {
     Vec<RegistrySolverRequirement> roots;
-    Vec<RegistryLockedPreference>  locked;
+    Vec<RegistryLockedConstraint>  locked;
     Vec<RegistryPackageId>         development_packages;
 };
 
@@ -90,7 +106,8 @@ class RegistrySolverError {
                 String incoming_source;)),
               (Incompatibility,
                (RegistryPackageId package; Vec<RegistryConstraintTrace> constraints;
-                Vec<String>                                             candidates;)),
+                Vec<String>                                             candidates;
+                bool                                                    locked_conflict;)),
               (Limit, (String message;)))
 };
 
@@ -208,9 +225,13 @@ class Solver {
         return None();
     }
 
-    auto ensure_index(const RegistryPackageId& package) -> RegistrySolverResult<usize> {
+    auto ensure_index(const RegistryPackageId&     package,
+                      Option<ref<SemanticVersion>> required = None())
+        -> RegistrySolverResult<usize> {
         auto existing = index_position(package);
-        if (existing.is_some()) return Ok(*existing);
+        if (existing.is_some() &&
+            (required.is_none() || indices_[*existing].index.contains(**required)))
+            return Ok(*existing);
         if (provider_.load == nullptr) {
             return Err(RegistrySolverError::Provider(RegistryIndexError {
                 .kind    = RegistryIndexErrorKind::Network,
@@ -218,7 +239,7 @@ class Solver {
                 .message = "Registry index provider is not configured"_Str,
             }));
         }
-        auto loaded = provider_.load(provider_.context, package);
+        auto loaded = provider_.load(provider_.context, package, required);
         if (loaded.is_err()) {
             return Err(RegistrySolverError::Provider(rstd::move(loaded).unwrap_err()));
         }
@@ -230,6 +251,13 @@ class Solver {
                 .message = "Registry index provider returned another package"_Str,
             }));
         }
+        auto checked = require_index_version(index, required);
+        if (checked.is_err())
+            return Err(RegistrySolverError::Provider(rstd::move(checked).unwrap_err()));
+        if (existing.is_some()) {
+            indices_[*existing].index = rstd::move(index);
+            return Ok(*existing);
+        }
         auto position = indices_.len();
         indices_.push(CachedIndex {
             .key   = package_key(package),
@@ -238,11 +266,11 @@ class Solver {
         return Ok(position);
     }
 
-    auto locked_preference(const RegistryPackageId& package) const
-        -> Option<ref<RegistryLockedPreference>> {
+    auto locked_constraint(const RegistryPackageId& package) const
+        -> Option<ref<RegistryLockedConstraint>> {
         for (const auto& locked : input_.locked) {
             if (same_package(locked.package, package)) {
-                return Some(ref<RegistryLockedPreference>::from_raw_parts(rstd::addressof(locked)));
+                return Some(ref<RegistryLockedConstraint>::from_raw_parts(rstd::addressof(locked)));
             }
         }
         return None();
@@ -261,11 +289,20 @@ class Solver {
         });
     }
 
-    auto candidates(const PackageState& state, usize index_position)
+    auto applicable_lock(const PackageState& state) const -> Option<ref<SemanticVersion>> {
+        auto locked = locked_constraint(state.package);
+        if (locked.is_none()) return None();
+        for (const auto& constraint : state.constraints) {
+            if (! constraint.requirement.matches((*locked)->version)) return None();
+        }
+        return Some(ref<SemanticVersion>::from_raw_parts(rstd::addressof((*locked)->version)));
+    }
+
+    auto candidates(const PackageState& state, usize index_position, bool reuse_lock = true)
         -> RegistrySolverResult<Vec<usize>> {
         const auto& index           = indices_[index_position].index;
         auto        result          = Vec<usize>::make();
-        auto        locked          = locked_preference(state.package);
+        auto        locked          = locked_constraint(state.package);
         auto        locked_position = Option<usize> {};
         if (locked.is_some()) {
             for (usize position {}; position < index.releases().len(); ++position) {
@@ -280,7 +317,10 @@ class Solver {
                     }));
                 }
                 locked_position = Some(position);
-                if (satisfies(state, release)) result.push(rstd::move(position));
+                if (reuse_lock && satisfies(state, release)) {
+                    result.push(rstd::move(position));
+                    return Ok(rstd::move(result));
+                }
                 break;
             }
         }
@@ -348,8 +388,11 @@ class Solver {
                                   return release->version.text();
                               })
                               .collect<Vec<String>>();
-        return RegistrySolverError::Incompatibility(
-            state.package.clone(), rstd::move(constraints), rstd::move(candidates));
+        return RegistrySolverError::Incompatibility(state.package.clone(),
+                                                    rstd::move(constraints),
+                                                    rstd::move(candidates),
+                                                    locked_constraint(state.package).is_some() &&
+                                                        applicable_lock(state).is_none());
     }
 
     auto validate_selected(const Vec<PackageState>& states) -> RegistrySolverResult<empty> {
@@ -420,7 +463,8 @@ class Solver {
         auto selected_index_position = usize {};
         for (usize state_position {}; state_position < states.len(); ++state_position) {
             if (states[state_position].selected_release.is_some()) continue;
-            auto index_position = rstd_try(ensure_index(states[state_position].package));
+            auto index_position = rstd_try(ensure_index(states[state_position].package,
+                                                        applicable_lock(states[state_position])));
             auto available      = rstd_try(candidates(states[state_position], index_position));
             if (available.is_empty()) {
                 return Err(incompatibility(states[state_position], index_position));
@@ -439,7 +483,8 @@ class Solver {
         if (selected_state.is_none()) return complete_graph(states);
 
         auto failure = Option<RegistrySolverError> {};
-        for (auto release_position : selected_candidates) {
+        for (usize candidate {}; candidate < selected_candidates.len(); ++candidate) {
+            auto release_position                    = selected_candidates[candidate];
             auto branch                              = clone_states(states);
             branch[*selected_state].selected_release = Some(release_position);
             const auto& package                      = states[*selected_state].package;
@@ -454,7 +499,28 @@ class Solver {
             }
             auto solved = search(rstd::move(branch), depth + usize(1));
             if (solved.is_ok()) return solved;
-            failure = Some(rstd::move(solved).unwrap_err());
+            auto error = rstd::move(solved).unwrap_err();
+            if (error.is_Provider() || error.is_Limit()) return Err(rstd::move(error));
+            auto locked = applicable_lock(states[*selected_state]);
+            if (candidate == usize {} && locked.is_some() && error.is_Incompatibility() &&
+                error.as_Incompatibility().locked_conflict) {
+                const auto& conflict     = error.as_Incompatibility().package;
+                const auto& dependencies = indices_[selected_index_position]
+                                               .index.releases()[release_position]
+                                               .dependencies;
+                auto        affected     = same_package(conflict, package) ||
+                                           dependencies.iter().any([&](auto dependency) {
+                                    return same_package(dependency->package, conflict);
+                                           });
+                if (affected) {
+                    // New constraints can invalidate a lock or one of its dependency edges.
+                    auto alternatives = rstd_try(
+                        candidates(states[*selected_state], selected_index_position, false));
+                    for (auto alternative : alternatives)
+                        selected_candidates.push(rstd::move(alternative));
+                }
+            }
+            failure = Some(rstd::move(error));
         }
         if (failure.is_some()) return Err(rstd::move(*failure));
         return Err(incompatibility(states[*selected_state], selected_index_position));

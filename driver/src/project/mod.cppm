@@ -64,11 +64,14 @@ struct ProjectRegistryResolver {
     lito::registry::RegistryNetworkPolicy network { lito::registry::RegistryNetworkPolicy::Online };
     lito::registry::RegistryGraphPolicy   policy;
     bool                                  locked_mode {};
-    Vec<lito::registry::RegistryReleasePin>         locked;
-    const Vec<PathBuf>*                             source_bundles {};
-    lito::tools::ToolResolver*                      tools {};
-    const ResolvedProcessEnvironment*               environment {};
-    Option<lito::package::EmbeddedRegistryPackages> embedded;
+    Vec<lito::registry::RegistryReleasePin>                locked;
+    const Vec<PathBuf>*                                    source_bundles {};
+    lito::tools::ToolResolver*                             tools {};
+    const ResolvedProcessEnvironment*                      environment {};
+    Option<lito::package::EmbeddedRegistryPackages>        embedded;
+    Option<Box<lito::registry::CurlRegistryHttpTransport>> http_owner;
+    Option<Box<lito::registry::CurlRegistryBlobTransport>> blob_owner;
+    Option<lito::registry::RegistryGraphClient>            client;
 
     static auto resolve_builtin(void* raw, ref<str> id) noexcept
         -> lito::registry::RegistryGraphResult<lito::registry::BuiltinRegistryPackage> {
@@ -104,6 +107,10 @@ struct ProjectRegistryResolver {
                 .message = "Registry resolution has no bootstrap context"_Str,
             });
         }
+        if (self.client.is_some()) {
+            if (self.embedded.is_some()) self.embedded->add_indices(*self.client);
+            return self.client->resolve(requirements);
+        }
         auto data = lito::system::LitoDataRoot::resolve();
         if (data.is_err()) {
             return Err(lito::registry::RegistryGraphError {
@@ -111,10 +118,8 @@ struct ProjectRegistryResolver {
                                         rstd::move(data).unwrap_err()),
             });
         }
-        auto http       = lito::registry::RegistryHttpTransport {};
-        auto blobs      = lito::registry::RegistryBlobTransport {};
-        auto http_owner = Option<lito::registry::CurlRegistryHttpTransport> {};
-        auto blob_owner = Option<lito::registry::CurlRegistryBlobTransport> {};
+        auto http  = lito::registry::RegistryHttpTransport {};
+        auto blobs = lito::registry::RegistryBlobTransport {};
         if (self.network == lito::registry::RegistryNetworkPolicy::Online) {
             if (self.tools == nullptr) {
                 return Err(lito::registry::RegistryGraphError {
@@ -131,29 +136,29 @@ struct ProjectRegistryResolver {
                                             rstd::move(curl).unwrap_err()),
                 });
             }
-            http_owner = Some(lito::registry::CurlRegistryHttpTransport(curl->executable.clone(),
-                                                                        *self.environment));
-            blob_owner = Some(lito::registry::CurlRegistryBlobTransport(curl->executable.clone(),
-                                                                        *self.environment));
-            http       = http_owner->transport();
-            blobs      = blob_owner->transport();
+            self.http_owner = Some(Box<lito::registry::CurlRegistryHttpTransport>::make(
+                curl->executable.clone(), *self.environment));
+            self.blob_owner = Some(Box<lito::registry::CurlRegistryBlobTransport>::make(
+                curl->executable.clone(), *self.environment));
+            http            = (**self.http_owner).transport();
+            blobs           = (**self.blob_owner).transport();
         }
         auto pins   = self.locked.iter()
                           .map([](auto pin) {
                             return pin->clone();
                           })
                           .collect<Vec<lito::registry::RegistryReleasePin>>();
-        auto client = lito::registry::RegistryGraphClient(PathBuf::from(data->root()),
-                                                          *self.config,
-                                                          self.network,
-                                                          self.policy,
-                                                          http,
-                                                          blobs,
-                                                          self.locked_mode,
-                                                          rstd::move(pins),
-                                                          self.source_bundles);
-        if (self.embedded.is_some()) self.embedded->add_indices(client);
-        return client.resolve(requirements);
+        self.client = Some(lito::registry::RegistryGraphClient(PathBuf::from(data->root()),
+                                                               *self.config,
+                                                               self.network,
+                                                               self.policy,
+                                                               http,
+                                                               blobs,
+                                                               self.locked_mode,
+                                                               rstd::move(pins),
+                                                               self.source_bundles));
+        if (self.embedded.is_some()) self.embedded->add_indices(*self.client);
+        return self.client->resolve(requirements);
     }
 
     auto provider() noexcept -> lito::registry::RegistryGraphProvider {

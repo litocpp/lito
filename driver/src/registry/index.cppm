@@ -55,8 +55,22 @@ class RegistryIndexClient {
     RegistryIndexUpdatePolicy     update_ { RegistryIndexUpdatePolicy::Reuse };
     RegistryHttpTransport         transport_;
     const Vec<PathBuf>*           source_bundles_ {};
+    Vec<RegistryPackageIndex>     indices_;
+    Vec<RegistryPackageId>        refreshed_;
+    Vec<RegistryIndexError>       failures_;
 
-    static auto load_provider(void* context, const RegistryPackageId& package) noexcept
+    auto load_index(const RegistryPackageId& package, Option<ref<SemanticVersion>> required)
+        -> RegistryIndexLoadResult;
+    auto read_index(const RegistryPackageId& package, Option<ref<SemanticVersion>> required)
+        -> RegistryIndexLoadResult;
+    auto refreshed(const RegistryPackageId& package) const -> bool {
+        return refreshed_.iter().any([&](auto item) {
+            return *item == package;
+        });
+    }
+    static auto load_provider(void*                        context,
+                              const RegistryPackageId&     package,
+                              Option<ref<SemanticVersion>> required) noexcept
         -> RegistryIndexLoadResult;
 
 public:
@@ -74,7 +88,10 @@ public:
           transport_(transport),
           source_bundles_(source_bundles) {}
 
-    auto load(const RegistryPackageId& package) -> RegistryIndexLoadResult;
+    auto load(const RegistryPackageId& package, Option<ref<SemanticVersion>> required = None())
+        -> RegistryIndexLoadResult;
+    auto refresh() -> void { update_ = RegistryIndexUpdatePolicy::Refresh; }
+    auto registry() const -> const RegistryId& { return registry_; }
     auto source_bundle_record(const RegistryReleasePin& pin) -> Result<String, RegistryIndexError>;
     auto provider() noexcept -> RegistryIndexProvider {
         return RegistryIndexProvider {
@@ -375,13 +392,60 @@ auto http_status_failure(const RegistryHttpResponse& response, const RegistryPac
 
 } // namespace
 
-auto lito::registry::RegistryIndexClient::load_provider(void*                    context,
-                                                        const RegistryPackageId& package) noexcept
-    -> RegistryIndexLoadResult {
-    return static_cast<RegistryIndexClient*>(context)->load(package);
+auto lito::registry::RegistryIndexClient::load_provider(
+    void*                        context,
+    const RegistryPackageId&     package,
+    Option<ref<SemanticVersion>> required) noexcept -> RegistryIndexLoadResult {
+    return static_cast<RegistryIndexClient*>(context)->load(package, required);
 }
 
-auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
+auto lito::registry::RegistryIndexClient::load(const RegistryPackageId&     package,
+                                               Option<ref<SemanticVersion>> required)
+    -> RegistryIndexLoadResult {
+    for (const auto& error : failures_) {
+        if (error.package == package)
+            return Err(RegistryIndexError {
+                .kind = error.kind, .package = package.clone(), .message = error.message.clone() });
+    }
+    for (auto& index : indices_) {
+        if (! (index.package() == package)) continue;
+        if (refreshed(package) || (update_ == RegistryIndexUpdatePolicy::Reuse &&
+                                   (required.is_none() || index.contains(**required)))) {
+            rstd_try(require_index_version(index, required));
+            return Ok(index.clone());
+        }
+        auto loaded = rstd_try(load_index(package, required));
+        index       = rstd::move(loaded);
+        rstd_try(require_index_version(index, required));
+        return Ok(index.clone());
+    }
+    auto loaded = rstd_try(load_index(package, required));
+    indices_.push(rstd::move(loaded));
+    const auto& index = indices_[indices_.len() - usize(1)];
+    rstd_try(require_index_version(index, required));
+    return Ok(index.clone());
+}
+
+auto lito::registry::RegistryIndexClient::load_index(const RegistryPackageId&     package,
+                                                     Option<ref<SemanticVersion>> required)
+    -> RegistryIndexLoadResult {
+    auto loaded = read_index(package, required);
+    if (loaded.is_err()) {
+        auto error = rstd::move(loaded).unwrap_err();
+        if (required.is_some())
+            error.message = rstd::format("cannot load '{}' locked at '{}': {}",
+                                         registry_package_id_text(package),
+                                         (**required).text(),
+                                         error.message);
+        failures_.push(RegistryIndexError {
+            .kind = error.kind, .package = package.clone(), .message = error.message.clone() });
+        return Err(rstd::move(error));
+    }
+    return loaded;
+}
+
+auto lito::registry::RegistryIndexClient::read_index(const RegistryPackageId&     package,
+                                                     Option<ref<SemanticVersion>> required)
     -> RegistryIndexLoadResult {
     if (! (package.registry == registry_)) {
         return index_failure<RegistryPackageIndex>(
@@ -391,7 +455,8 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
     }
     auto record = cache_record_path(cache_root_.as_path(), package);
     auto cached = read_cached_index(record.as_path(), package);
-    if (update_ == RegistryIndexUpdatePolicy::Reuse && cached.is_ok() && cached->is_some()) {
+    if (update_ == RegistryIndexUpdatePolicy::Reuse && cached.is_ok() && cached->is_some() &&
+        (required.is_none() || cached->as_ref().unwrap().index.contains(**required))) {
         return Ok(cached->as_ref().unwrap().index.clone());
     }
     auto bundled = read_source_bundle_index(source_bundles_, package);
@@ -427,6 +492,7 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId& package)
             package,
             "online Registry resolve has no HTTP transport"_str);
     }
+    refreshed_.push(package.clone());
     auto response = transport_.get(transport_.context, request);
     if (response.is_err()) return Err(rstd::move(response).unwrap_err());
     auto received = rstd::move(response).unwrap();

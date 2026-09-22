@@ -1,4 +1,5 @@
 #include <rstd/test/gtest.hpp>
+#include <rstd/macro.hpp>
 
 import rstd;
 import licrypto;
@@ -7,6 +8,7 @@ import rstd.test;
 import lito.core;
 import lito.pack;
 import lito.driver;
+import lito.test.support;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -92,7 +94,9 @@ auto registry_test_config() -> lito::config::NamedRegistryConfig {
 struct SolverFixtureProvider {
     usize loads {};
 
-    static auto load(void* context, const lito::registry::RegistryPackageId& package) noexcept
+    static auto load(void*                                    context,
+                     const lito::registry::RegistryPackageId& package,
+                     Option<ref<lito::registry::SemanticVersion>>) noexcept
         -> lito::registry::RegistryIndexLoadResult {
         auto& self = *static_cast<SolverFixtureProvider*>(context);
         ++self.loads;
@@ -627,8 +631,8 @@ TEST(RegistrySolver, PreservesAnExactlyLockedYankedVersion) {
         .requirement = lito::registry::VersionRequirement::parse(">=2.0.0"_str).unwrap(),
         .source      = "workspace dependency 'sample'"_Str,
     });
-    auto locked = Vec<lito::registry::RegistryLockedPreference>::make();
-    locked.push(lito::registry::RegistryLockedPreference {
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push(lito::registry::RegistryLockedConstraint {
         .package  = registry_package("sample"_str),
         .version  = registry_version("2.0.0"_str),
         .checksum = package_checksum(
@@ -652,8 +656,8 @@ TEST(RegistrySolver, RejectsChecksumChangeForLockedVersion) {
         .requirement = lito::registry::VersionRequirement::parse("=2.0.0"_str).unwrap(),
         .source      = "workspace dependency 'sample'"_Str,
     });
-    auto locked = Vec<lito::registry::RegistryLockedPreference>::make();
-    locked.push(lito::registry::RegistryLockedPreference {
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push(lito::registry::RegistryLockedConstraint {
         .package  = registry_package("sample"_str),
         .version  = registry_version("2.0.0"_str),
         .checksum = package_checksum(
@@ -669,6 +673,109 @@ TEST(RegistrySolver, RejectsChecksumChangeForLockedVersion) {
     auto error = rstd::move(solved).unwrap_err();
     ASSERT_TRUE(error.is_Provider());
     EXPECT_EQ(error.as_Provider().error.kind, lito::registry::RegistryIndexErrorKind::Integrity);
+}
+
+TEST(RegistrySolver, MissingLockedVersionDoesNotFallBackToCompatibleRelease) {
+    auto fixture = SolverFixtureProvider {};
+    auto roots   = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push({ .package     = registry_package("sample"_str),
+                 .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
+                 .source      = "root"_Str });
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push({ .package  = registry_package("sample"_str),
+                  .version  = registry_version("1.8.0"_str),
+                  .checksum = package_checksum(
+                      "1111111111111111111111111111111111111111111111111111111111111111"_str) });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        { .roots = rstd::move(roots), .locked = rstd::move(locked) }, fixture.provider());
+    ASSERT_TRUE(solved.is_err());
+    auto error = rstd::move(solved).unwrap_err();
+    ASSERT_TRUE(error.is_Provider());
+    EXPECT_EQ(error.as_Provider().error.kind,
+              lito::registry::RegistryIndexErrorKind::LockedVersionMissing);
+}
+
+TEST(RegistrySolver, NewTransitiveConstraintCanInvalidateEarlierLock) {
+    auto fixture = SolverFixtureProvider {};
+    auto roots   = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push({ .package     = registry_package("helper"_str),
+                 .requirement = lito::registry::VersionRequirement::parse(">=1"_str).unwrap(),
+                 .source      = "root helper"_Str });
+    roots.push({ .package     = registry_package("sample"_str),
+                 .requirement = lito::registry::VersionRequirement::parse("=1.5.0"_str).unwrap(),
+                 .source      = "changed root sample"_Str });
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push({ .package  = registry_package("helper"_str),
+                  .version  = registry_version("1.0.0"_str),
+                  .checksum = package_checksum(
+                      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"_str) });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        { .roots = rstd::move(roots), .locked = rstd::move(locked) }, fixture.provider());
+    ASSERT_TRUE(solved.is_ok());
+    EXPECT_EQ(solved->packages[usize {}].release.version.text().as_str(), "2.0.0"_str);
+}
+
+TEST(RegistrySolver, ChangedRequirementDoesNotRequireMissingOldLock) {
+    auto fixture = SolverFixtureProvider {};
+    auto roots   = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push({ .package     = registry_package("sample"_str),
+                 .requirement = lito::registry::VersionRequirement::parse("=1.5.0"_str).unwrap(),
+                 .source      = "changed root"_Str });
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push({ .package  = registry_package("sample"_str),
+                  .version  = registry_version("1.1.0"_str),
+                  .checksum = package_checksum(
+                      "1111111111111111111111111111111111111111111111111111111111111111"_str) });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        { .roots = rstd::move(roots), .locked = rstd::move(locked) }, fixture.provider());
+    ASSERT_TRUE(solved.is_ok());
+    EXPECT_EQ(solved->packages[usize(1)].release.version.text().as_str(), "1.5.0"_str);
+}
+
+TEST(RegistrySolver, ChangedDependencyCanUnlockItsLockedParent) {
+    auto fixture = SolverFixtureProvider {};
+    auto roots   = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push({ .package     = registry_package("sample"_str),
+                 .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
+                 .source      = "root sample"_Str });
+    roots.push({ .package     = registry_package("helper"_str),
+                 .requirement = lito::registry::VersionRequirement::parse("=1.0.0"_str).unwrap(),
+                 .source      = "changed root helper"_Str });
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push({ .package  = registry_package("sample"_str),
+                  .version  = registry_version("1.5.0"_str),
+                  .checksum = package_checksum(
+                      "3333333333333333333333333333333333333333333333333333333333333333"_str) });
+    locked.push({ .package  = registry_package("helper"_str),
+                  .version  = registry_version("2.0.0"_str),
+                  .checksum = package_checksum(
+                      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"_str) });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        { .roots = rstd::move(roots), .locked = rstd::move(locked) }, fixture.provider());
+    ASSERT_TRUE(solved.is_ok());
+    EXPECT_EQ(solved->packages[usize {}].release.version.text().as_str(), "1.0.0"_str);
+    EXPECT_EQ(solved->packages[usize(1)].release.version.text().as_str(), "1.2.3"_str);
+}
+
+TEST(RegistrySolver, MissingTransitiveLockCannotBeHiddenByBacktracking) {
+    auto fixture = SolverFixtureProvider {};
+    auto roots   = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push({ .package     = registry_package("sample"_str),
+                 .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
+                 .source      = "root"_Str });
+    auto locked = Vec<lito::registry::RegistryLockedConstraint>::make();
+    locked.push({ .package  = registry_package("helper"_str),
+                  .version  = registry_version("2.1.0"_str),
+                  .checksum = package_checksum(
+                      "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"_str) });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        { .roots = rstd::move(roots), .locked = rstd::move(locked) }, fixture.provider());
+    ASSERT_TRUE(solved.is_err());
+    auto error = rstd::move(solved).unwrap_err();
+    ASSERT_TRUE(error.is_Provider());
+    EXPECT_EQ(error.as_Provider().error.kind,
+              lito::registry::RegistryIndexErrorKind::LockedVersionMissing);
+    EXPECT_EQ(error.as_Provider().error.package.name.as_str(), "helper"_str);
 }
 
 TEST(RegistryIndexCache, RefreshRevalidatesWhileReuseStaysLocal) {
@@ -694,6 +801,14 @@ TEST(RegistryIndexCache, RefreshRevalidatesWhileReuseStaysLocal) {
 
     fixture.not_modified = true;
     ASSERT_TRUE(online.load(registry_package("sample"_str)).is_ok());
+    EXPECT_EQ(fixture.calls, usize(1));
+    auto revalidate =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    ASSERT_TRUE(revalidate.load(registry_package("sample"_str)).is_ok());
     EXPECT_TRUE(fixture.saw_condition);
     EXPECT_EQ(fixture.calls, usize(2));
 
@@ -761,6 +876,120 @@ TEST(RegistryIndexCache, SourceBundleRecordSupportsOfflineResolution) {
     ASSERT_EQ(loaded->releases().len(), usize(1));
     EXPECT_EQ(loaded->releases()[usize {}].version.text().as_str(), "1.2.3"_str);
     EXPECT_EQ(fixture.calls, usize(1));
+    auto missing = registry_version("1.8.0"_str);
+    auto absent =
+        offline.load(package, Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&missing)));
+    ASSERT_TRUE(absent.is_err());
+    EXPECT_EQ(absent.unwrap_err().kind,
+              lito::registry::RegistryIndexErrorKind::LockedVersionMissing);
+}
+
+TEST(RegistryIndexCache, MissingLockedVersionRefreshesOnceAndRejectsStillMissing) {
+    const bool responses[] = { false, true };
+    for (auto not_modified : responses) {
+        auto temporary = rstd::test::TempDir::make();
+        ASSERT_TRUE(temporary.is_ok());
+        auto owner   = rstd::move(temporary).unwrap();
+        auto config  = registry_test_config();
+        auto fixture = IndexHttpFixture { .body = String::make(package_index_fixture) };
+        auto seed =
+            lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                                config,
+                                                lito::registry::RegistryNetworkPolicy::Online,
+                                                lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                                fixture.transport());
+        auto package = registry_package("sample"_str);
+        ASSERT_TRUE(seed.load(package).is_ok());
+        fixture.not_modified = not_modified;
+        auto client =
+            lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                                config,
+                                                lito::registry::RegistryNetworkPolicy::Online,
+                                                lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                                fixture.transport());
+        auto version  = registry_version("1.8.0"_str);
+        auto required = Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&version));
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            SCOPED_TRACE(attempt);
+            auto loaded = client.load(package, required);
+            ASSERT_TRUE(loaded.is_err());
+            EXPECT_EQ(loaded.unwrap_err().kind,
+                      lito::registry::RegistryIndexErrorKind::LockedVersionMissing);
+            EXPECT_EQ(fixture.calls, usize(2));
+            EXPECT_TRUE(fixture.saw_condition);
+            client.refresh();
+        }
+    }
+}
+
+TEST(RegistryIndexCache, ExistingLockedVersionStaysLocalAndOfflineNeverRefreshes) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto config  = registry_test_config();
+    auto fixture = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto package = registry_package("sample"_str);
+    auto seed =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    ASSERT_TRUE(seed.load(package).is_ok());
+    const lito::registry::RegistryNetworkPolicy networks[] = {
+        lito::registry::RegistryNetworkPolicy::Online,
+        lito::registry::RegistryNetworkPolicy::Offline
+    };
+    for (auto network : networks) {
+        auto client =
+            lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                                config,
+                                                network,
+                                                lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                                fixture.transport());
+        auto version = registry_version("1.2.3"_str);
+        ASSERT_TRUE(
+            client
+                .load(package, Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&version)))
+                .is_ok());
+        EXPECT_EQ(fixture.calls, usize(1));
+    }
+    auto offline =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Offline,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                            fixture.transport());
+    auto missing = registry_version("1.8.0"_str);
+    auto loaded =
+        offline.load(package, Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&missing)));
+    ASSERT_TRUE(loaded.is_err());
+    EXPECT_EQ(loaded.unwrap_err().kind,
+              lito::registry::RegistryIndexErrorKind::LockedVersionMissing);
+    EXPECT_EQ(fixture.calls, usize(1));
+}
+
+TEST(RegistryIndexCache, FreshIndexMissingLockedVersionDoesNotFetchAgain) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto config  = registry_test_config();
+    auto fixture = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto client =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                            fixture.transport());
+    auto missing = registry_version("1.8.0"_str);
+    auto package = registry_package("sample"_str);
+    ASSERT_TRUE(client.load(package).is_ok());
+    auto loaded =
+        client.load(package, Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&missing)));
+    ASSERT_TRUE(loaded.is_err());
+    EXPECT_EQ(loaded.unwrap_err().kind,
+              lito::registry::RegistryIndexErrorKind::LockedVersionMissing);
+    EXPECT_EQ(fixture.calls, usize(1));
 }
 
 TEST(RegistryIndexCache, DoesNotSendAnEtagToAnotherEndpoint) {
@@ -796,6 +1025,14 @@ TEST(RegistryIndexCache, DoesNotSendAnEtagToAnotherEndpoint) {
     EXPECT_EQ(fixture.last_url.as_str(), "https://mirror.example/index/sample.json"_str);
 
     ASSERT_TRUE(refreshed.load(registry_package("sample"_str)).is_ok());
+    EXPECT_EQ(fixture.calls, usize(2));
+    auto revalidate =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            mirror,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    ASSERT_TRUE(revalidate.load(registry_package("sample"_str)).is_ok());
     EXPECT_EQ(fixture.calls, usize(3));
     EXPECT_TRUE(fixture.saw_condition);
 }
@@ -814,7 +1051,13 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
                                             fixture.transport());
     ASSERT_TRUE(online.load(registry_package("sample"_str)).is_ok());
     fixture.body = String::make(changed_package_index_fixture);
-    auto changed = online.load(registry_package("sample"_str));
+    auto revalidate =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            fixture.transport());
+    auto changed = revalidate.load(registry_package("sample"_str));
     ASSERT_TRUE(changed.is_err());
     EXPECT_EQ(changed.unwrap_err().kind, lito::registry::RegistryIndexErrorKind::Integrity);
 
@@ -1270,7 +1513,7 @@ archive = "sample"
     EXPECT_EQ(blob.calls, usize(1));
 }
 
-TEST(RegistryGraphClient, RefreshesOnceAfterCachedIndexIncompatibility) {
+auto check_graph_index_refresh(bool locked) -> void {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
     auto owner        = rstd::move(temporary).unwrap();
@@ -1322,7 +1565,9 @@ archive = "sample"
     auto registries = Vec<lito::config::NamedRegistryConfig>::make();
     registries.push(config.clone());
     auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries), Some("fixture"_Str));
-    auto client    = lito::registry::RegistryGraphClient(
+    auto pins      = Vec<lito::registry::RegistryReleasePin>::make();
+    if (locked) pins.push(registry_pin(package, version, built->archive.checksum));
+    auto client = lito::registry::RegistryGraphClient(
         rstd::move(cache),
         bootstrap,
         lito::registry::RegistryNetworkPolicy::Online,
@@ -1332,12 +1577,15 @@ archive = "sample"
         },
         http.transport(),
         blob.transport(),
-        false);
+        false,
+        rstd::move(pins));
     auto requirements = Vec<lito::registry::RegistryGraphRequirement>::make();
     requirements.push(lito::registry::RegistryGraphRequirement {
-        .package     = package.name.clone(),
-        .requirement = lito::registry::VersionRequirement::parse(">=2.0.0"_str).unwrap(),
-        .source      = "root dependency 'sample'"_Str,
+        .package = package.name.clone(),
+        .requirement =
+            lito::registry::VersionRequirement::parse(locked ? ">=1.0.0"_str : ">=2.0.0"_str)
+                .unwrap(),
+        .source = "root dependency 'sample'"_Str,
     });
     auto resolved = client.resolve(requirements.as_slice());
     ASSERT_TRUE(resolved.is_ok());
@@ -1346,6 +1594,296 @@ archive = "sample"
     EXPECT_EQ(http.calls, usize(1));
     EXPECT_TRUE(http.saw_condition);
     EXPECT_EQ(blob.calls, usize(1));
+    ASSERT_TRUE(client.resolve(requirements.as_slice()).is_ok());
+    EXPECT_EQ(http.calls, usize(1));
+    EXPECT_EQ(blob.calls, usize(1));
+}
+
+TEST(RegistryGraphClient, RefreshesOnceAfterCachedIndexIncompatibility) {
+    check_graph_index_refresh(false);
+}
+
+TEST(RegistryGraphClient, RefreshesMissingLockedVersionInsteadOfDowngrading) {
+    check_graph_index_refresh(true);
+}
+
+#if RSTD_OS_UNIX
+TEST(RegistryCommands, BuildAndFetchPreserveLockWithOlderIndexCache) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+    auto data_guard =
+        lito_test::EnvironmentVariableGuard("XDG_DATA_HOME"_str, owner.path().as_os_str());
+    auto cache     = PathBuf::from(owner.path()).join(PathBuf::from("lito"_str).as_path());
+    auto config    = registry_test_config();
+    auto bootstrap = [&]() {
+        auto registries = Vec<lito::config::NamedRegistryConfig>::make();
+        registries.push(config.clone());
+        return lito::config::LitoBootstrapConfig(rstd::move(registries), Some("fixture"_Str));
+    };
+    auto tree = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str, R"toml([package]
+name = "sample"
+version = "0.1.4"
+authors = ["Lito Authors"]
+license = "MIT"
+description = "Locked Registry dependency"
+readme = "README.md"
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("README.md"_str, "# Sample\n"_str).is_ok());
+    ASSERT_TRUE(tree.add_text("src/lib.cppm"_str,
+                              "export module sample; export int answer() { return 0; }\n"_str)
+                    .is_ok());
+    auto package = registry_package("sample"_str);
+    auto version = registry_version("0.1.4"_str);
+    auto archive = PathBuf::from(owner.path()).join(PathBuf::from("sample.tar.zst"_str).as_path());
+    auto built =
+        lito::registry::PackageArchiveBuilder::build(tree, package, version, archive.clone());
+    if (built.is_err()) {
+        auto message = rstd::move(built).unwrap_err().message;
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    auto new_index = rstd::format(
+        "{{\"schema\":\"lito.registry.package-index.v1\",\"registry\":\"https://registry.example/"
+        "\","
+        "\"package\":\"sample\",\"releases\":[{{\"version\":\"0.1.4\",\"checksum\":\"{}\","
+        "\"dependencies\":[],\"yanked\":false,\"published_at\":\"2026-09-22T00:00:00Z\"}}]}}",
+        built->archive.checksum.text());
+    constexpr auto old_index =
+        R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"0.1.3","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[],"yanked":false,"published_at":"2026-09-01T00:00:00Z"}]})json"_str;
+    auto blob        = CopyBlobTransportFixture { .source = archive.clone() };
+    auto seed_config = bootstrap();
+    auto seed = lito::registry::RegistryGraphClient(cache.clone(),
+                                                    seed_config,
+                                                    lito::registry::RegistryNetworkPolicy::Online,
+                                                    {},
+                                                    {},
+                                                    blob.transport(),
+                                                    false);
+    seed.add_index(
+        lito::registry::parse_package_index(new_index.as_str().as_bytes(), package).unwrap());
+    auto requirements = Vec<lito::registry::RegistryGraphRequirement>::make();
+    requirements.push(
+        { .package     = package.name.clone(),
+          .requirement = lito::registry::VersionRequirement::parse("^0.1.0"_str).unwrap(),
+          .source      = "root"_Str });
+    ASSERT_TRUE(seed.resolve(requirements.as_slice()).is_ok());
+
+    auto project_tree = lito::source::SourceTree::make();
+    ASSERT_TRUE(project_tree
+                    .add_text("lito.toml"_str, R"toml([package]
+name = "locked-app"
+version = "0.1.0"
+[[bin]]
+name = "locked-app"
+sources = ["main.cpp"]
+link-stdlib = false
+[dependencies]
+sample = "0.1.0"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(
+        project_tree
+            .add_text("main.cpp"_str, "import sample; int main() { return answer(); }\n"_str)
+            .is_ok());
+    ASSERT_TRUE(project_tree.add_text("index.json"_str, new_index.as_str()).is_ok());
+    ASSERT_TRUE(project_tree
+                    .add_text("curl"_str,
+                              R"sh(#!/bin/sh
+cd "$(dirname "$0")" || exit 1
+printf x >> requests
+test ! -f fail || exit 42
+cat index.json
+printf '\nLITO_REGISTRY_HTTP_V1\n200\n"test-etag"'
+)sh"_str,
+                              lito::source::SourceFileMode::Executable)
+                    .is_ok());
+    auto root = PathBuf::from(owner.path()).join(PathBuf::from("app"_str).as_path());
+    ASSERT_TRUE(lito::source::materialize_source_tree(project_tree, root.as_path()).is_ok());
+    auto curl           = root.join(PathBuf::from("curl"_str).as_path());
+    auto fetch          = lito::FetchRequest { .selection  = { .root = root.clone() },
+                                               .registries = Some(bootstrap()) };
+    fetch.tools.curl    = curl.clone();
+    fetch.configuration = lito::config::build_configuration_request(lito_test::configuration());
+    fetch.locked        = true;
+    EXPECT_TRUE(lito::fetch_dependencies(fetch).is_err());
+    fetch.locked       = false;
+    auto initial_fetch = lito::fetch_dependencies(fetch);
+    if (initial_fetch.is_err()) {
+        auto message = lito_test::error_chain_text(rstd::move(initial_fetch).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    auto lock_path = root.join(PathBuf::from("lito.lock"_str).as_path());
+    auto lock_text = rstd::fs::read_to_string(lock_path.as_path()).unwrap();
+    EXPECT_TRUE(lock_text.as_str().contains("0.1.4"_str));
+    auto output  = PathBuf::from(owner.path()).join(PathBuf::from("build"_str).as_path());
+    auto request = lito_test::build_request(
+        root.as_path(), output.as_path(), {}, lito_test::build_profile("release"_str));
+    request.registries = Some(bootstrap());
+    request.tools.curl = curl.clone();
+    auto reset_index   = [&]() {
+        auto http = IndexHttpFixture { .body = String::make(old_index) };
+        auto client =
+            lito::registry::RegistryIndexClient(cache.clone(),
+                                                config,
+                                                lito::registry::RegistryNetworkPolicy::Online,
+                                                lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                                http.transport());
+        ASSERT_TRUE(client.load(package).is_ok());
+    };
+    reset_index();
+    auto fetched = lito::fetch_dependencies(fetch);
+    if (fetched.is_err()) {
+        auto message = lito_test::error_chain_text(rstd::move(fetched).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(fetched->lock, lito::lock::LockStatus::Unchanged);
+    EXPECT_EQ(rstd::fs::read_to_string(lock_path.as_path()).unwrap(), lock_text);
+    reset_index();
+    auto compiled = lito::build(request);
+    if (compiled.is_err()) {
+        auto message = lito_test::error_chain_text(rstd::move(compiled).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(rstd::fs::read_to_string(lock_path.as_path()).unwrap(), lock_text);
+    auto requests = root.join(PathBuf::from("requests"_str).as_path());
+    EXPECT_EQ(rstd::fs::read_to_string(requests.as_path()).unwrap().as_str(), "xxx"_str);
+
+    reset_index();
+    fetch.locked = true;
+    ASSERT_TRUE(lito::fetch_dependencies(fetch).is_ok());
+    fetch.sources.network = lito::source::NetworkPolicy::Offline;
+    ASSERT_TRUE(lito::fetch_dependencies(fetch).is_ok());
+    fetch.locked = false;
+    ASSERT_TRUE(lito::fetch_dependencies(fetch).is_ok());
+    fetch.sources.network = lito::source::NetworkPolicy::Allow;
+    EXPECT_EQ(rstd::fs::read_to_string(requests.as_path()).unwrap().as_str(), "xxx"_str);
+    EXPECT_EQ(rstd::fs::read_to_string(lock_path.as_path()).unwrap(), lock_text);
+
+    auto failure = root.join(PathBuf::from("fail"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(failure.as_path(), "fail"_str.as_bytes()).is_ok());
+    EXPECT_TRUE(lito::fetch_dependencies(fetch).is_err());
+    EXPECT_EQ(rstd::fs::read_to_string(lock_path.as_path()).unwrap(), lock_text);
+    ASSERT_TRUE(rstd::fs::remove_file(failure.as_path()).is_ok());
+    auto response = root.join(PathBuf::from("index.json"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(response.as_path(), old_index.as_bytes()).is_ok());
+    EXPECT_TRUE(lito::fetch_dependencies(fetch).is_err());
+    EXPECT_EQ(rstd::fs::read_to_string(lock_path.as_path()).unwrap(), lock_text);
+    EXPECT_TRUE(lito::build(request).is_err());
+    EXPECT_EQ(rstd::fs::read_to_string(lock_path.as_path()).unwrap(), lock_text);
+}
+#endif
+
+TEST(RegistryGraphClient, ProvidedIndexMissingLockDoesNotUseNetwork) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner      = rstd::move(temporary).unwrap();
+    auto config     = registry_test_config();
+    auto registries = Vec<lito::config::NamedRegistryConfig>::make();
+    registries.push(config.clone());
+    auto bootstrap = lito::config::LitoBootstrapConfig(rstd::move(registries), Some("fixture"_Str));
+    auto package   = registry_package("sample"_str);
+    auto pins      = Vec<lito::registry::RegistryReleasePin>::make();
+    pins.push(registry_pin(
+        package,
+        registry_version("1.8.0"_str),
+        package_checksum("1111111111111111111111111111111111111111111111111111111111111111"_str)));
+    auto http   = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto blob   = BlobTransportFixture {};
+    auto client = lito::registry::RegistryGraphClient(PathBuf::from(owner.path()),
+                                                      bootstrap,
+                                                      lito::registry::RegistryNetworkPolicy::Online,
+                                                      {},
+                                                      http.transport(),
+                                                      blob.transport(),
+                                                      false,
+                                                      rstd::move(pins));
+    client.add_index(
+        lito::registry::parse_package_index(package_index_fixture.as_bytes(), package).unwrap());
+    auto requirements = Vec<lito::registry::RegistryGraphRequirement>::make();
+    requirements.push({ .package     = package.name.clone(),
+                        .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
+                        .source      = "root"_Str });
+    auto resolved = client.resolve(requirements.as_slice());
+    ASSERT_TRUE(resolved.is_err());
+    EXPECT_TRUE(resolved.unwrap_err().message.as_str().contains("1.8.0"_str));
+    EXPECT_EQ(http.calls, usize {});
+    EXPECT_EQ(blob.calls, usize {});
+}
+
+TEST(RegistryIndexCache, ResolutionRefreshDoesNotRepeatAlreadyFetchedPackages) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner  = rstd::move(temporary).unwrap();
+    auto config = registry_test_config();
+    auto http   = IndexHttpFixture { .body = String::make(package_index_fixture) };
+    auto seed =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Refresh,
+                                            http.transport());
+    auto sample = registry_package("sample"_str);
+    auto helper = registry_package("helper"_str);
+    ASSERT_TRUE(seed.load(sample).is_ok());
+    http.body = String::make(solver_helper_fixture);
+    ASSERT_TRUE(seed.load(helper).is_ok());
+    auto client =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                            http.transport());
+    ASSERT_TRUE(client.load(helper).is_ok());
+    EXPECT_EQ(http.calls, usize(2));
+    http.body = String::make(
+        R"json({"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{"version":"1.8.0","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[],"yanked":false,"published_at":"2026-09-22T00:00:00Z"}]})json"_str);
+    auto version  = registry_version("1.8.0"_str);
+    auto required = Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&version));
+    ASSERT_TRUE(client.load(sample, required).is_ok());
+    EXPECT_EQ(http.calls, usize(3));
+    client.refresh();
+    ASSERT_TRUE(client.load(sample, required).is_ok());
+    EXPECT_EQ(http.calls, usize(3));
+    http.body = String::make(solver_helper_fixture);
+    ASSERT_TRUE(client.load(helper).is_ok());
+    EXPECT_EQ(http.calls, usize(4));
+    ASSERT_TRUE(client.load(helper).is_ok());
+    EXPECT_EQ(http.calls, usize(4));
+}
+
+TEST(RegistryIndexCache, InvalidRefreshIsNotRetriedWithinSession) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner  = rstd::move(temporary).unwrap();
+    auto config = registry_test_config();
+    auto http   = IndexHttpFixture { .body = "invalid json"_Str };
+    auto client =
+        lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
+                                            config,
+                                            lito::registry::RegistryNetworkPolicy::Online,
+                                            lito::registry::RegistryIndexUpdatePolicy::Reuse,
+                                            http.transport());
+    auto package  = registry_package("sample"_str);
+    auto version  = registry_version("1.8.0"_str);
+    auto required = Some(ref<lito::registry::SemanticVersion>::from_raw_parts(&version));
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        auto loaded = client.load(package, required);
+        ASSERT_TRUE(loaded.is_err());
+        auto error = rstd::move(loaded).unwrap_err();
+        EXPECT_EQ(error.kind, lito::registry::RegistryIndexErrorKind::Schema);
+        EXPECT_TRUE(error.message.as_str().contains("1.8.0"_str));
+    }
+    EXPECT_EQ(http.calls, usize(1));
 }
 
 TEST(RegistrySourcePath, PreservesUtf8SpellingWithoutUnicodeCollisionRules) {
