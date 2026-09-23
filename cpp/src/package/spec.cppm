@@ -41,7 +41,7 @@ struct TargetSpec {
     Vec<GeneratedArtifactContribution> generated_artifacts;
     UsageRequirements                  usage;
     Vec<ResolvedCompileTestCase>       compile_tests;
-    Option<TestAttachmentTarget>       test_attachment;
+    Option<AttachmentTarget>           attachment;
     PackageCompileMetadata             compile_metadata;
 };
 

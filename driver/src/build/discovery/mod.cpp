@@ -583,7 +583,7 @@ auto resolve_source_target(const cpp::PackageMetadata&          package,
     auto selected             = Option<cpp::TargetId> {};
     auto selected_root_length = usize {};
     for (auto target : discovery.target_order) {
-        if (package.targets[target].test_attachment.is_some()) continue;
+        if (package.targets[target].attachment.is_some()) continue;
         const auto root = package.targets[target].source_root.as_path();
         if (source.strip_prefix(root).is_none()) continue;
         auto root_length = root.as_os_str().as_encoded_bytes().len();

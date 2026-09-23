@@ -432,7 +432,7 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
         case lito::cpp::ArtifactKind::CompilerPlugin: ++counts.archives; break;
         case lito::cpp::ArtifactKind::ProcMacroProvider: ++counts.archives; break;
         case lito::cpp::ArtifactKind::SharedLibrary: ++counts.shared_libraries; break;
-        case lito::cpp::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
+        case lito::cpp::ArtifactKind::AttachmentArchive: ++counts.archives; break;
         case lito::cpp::ArtifactKind::Executable: ++counts.executables; break;
         case lito::cpp::ArtifactKind::TestExecutable: ++counts.tests; break;
         case lito::cpp::ArtifactKind::BenchmarkExecutable: ++counts.benchmarks; break;

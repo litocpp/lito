@@ -22,7 +22,7 @@ enum class SourceDiscoveryMode
     Module,
 };
 
-struct TestAttachmentManifest {
+struct TargetAttachmentManifest {
     String       package;
     Vec<PathBuf> sources;
 };
@@ -81,8 +81,10 @@ class PackageTargetManifest {
                 Vec<RuntimeResourceManifest>                                     resources;)),
               (Test,
                (String name; TargetSourceManifest source; bool link_stdlib;
-                Vec<TestAttachmentManifest>                    attachments;)),
-              (Benchmark, (String name; TargetSourceManifest source; bool link_stdlib;)))
+                Vec<TargetAttachmentManifest>                  attachments;)),
+              (Benchmark,
+               (String name; TargetSourceManifest source; bool link_stdlib;
+                Vec<TargetAttachmentManifest>                  attachments;)))
 };
 
 auto package_target_kind(const PackageTargetManifest& target) noexcept
@@ -155,10 +157,16 @@ auto package_target_is_host_tool(const PackageTargetManifest& target) noexcept -
 }
 
 auto package_target_attachments(const PackageTargetManifest& target) noexcept
-    -> Option<ref<Vec<TestAttachmentManifest>>> {
-    if (! target.is_Test()) return None();
-    return Some(ref<Vec<TestAttachmentManifest>>::from_raw_parts(
-        rstd::addressof(target.as_Test().attachments)));
+    -> Option<ref<Vec<TargetAttachmentManifest>>> {
+    if (target.is_Test()) {
+        return Some(ref<Vec<TargetAttachmentManifest>>::from_raw_parts(
+            rstd::addressof(target.as_Test().attachments)));
+    }
+    if (target.is_Benchmark()) {
+        return Some(ref<Vec<TargetAttachmentManifest>>::from_raw_parts(
+            rstd::addressof(target.as_Benchmark().attachments)));
+    }
+    return None();
 }
 
 auto package_target_resources(const PackageTargetManifest& target) noexcept

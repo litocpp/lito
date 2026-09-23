@@ -30,15 +30,15 @@ struct TargetSource {
 };
 
 struct TargetFields : TargetSource {
-    String                       name;
-    Option<String>               kind;
-    Option<String>               archive;
-    Option<String>               artifact;
-    Vec<String>                  linker_options;
-    bool                         link_stdlib { true };
-    bool                         host_tool {};
-    Option<Vec<RuntimeResource>> resources;
-    Option<Vec<TestAttachment>>  attach;
+    String                        name;
+    Option<String>                kind;
+    Option<String>                archive;
+    Option<String>                artifact;
+    Vec<String>                   linker_options;
+    bool                          link_stdlib { true };
+    bool                          host_tool {};
+    Option<Vec<RuntimeResource>>  resources;
+    Option<Vec<TargetAttachment>> attach;
 };
 
 template<TargetKind Kind>
@@ -100,8 +100,8 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
                     rstd_try(read(name, link_stdlib, host_tool, resources));
                     result.host_tool = host_tool.take();
                     result.resources = resources.take();
-                } else if constexpr (Kind == TargetKind::Test) {
-                    auto attach = serde::OptionalField<Vec<lito::manifest::wire::TestAttachment>>(
+                } else if constexpr (Kind == TargetKind::Test || Kind == TargetKind::Benchmark) {
+                    auto attach = serde::OptionalField<Vec<lito::manifest::wire::TargetAttachment>>(
                         "attach"_str);
                     rstd_try(read(name, link_stdlib, attach));
                     result.attach = attach.take();

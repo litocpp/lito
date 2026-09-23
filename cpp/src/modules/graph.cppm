@@ -1123,7 +1123,7 @@ auto resolve_semantic_build(const PackagePlan&           package,
                     package, public_target_units, *importer_target, provider_unit)) {
                 continue;
             }
-            if (package.package->targets[*importer_target].test_attachment.is_some() &&
+            if (package.package->targets[*importer_target].attachment.is_some() &&
                 *importer_target < package.visible_targets.len() &&
                 contains_target(package.visible_targets[*importer_target], *provider_target)) {
                 continue;

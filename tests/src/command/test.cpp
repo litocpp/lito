@@ -81,6 +81,15 @@ sources = ["src/main.cpp"]
 package = "fixture-test-attach-lib"
 sources = ["src/registration.cppm"]
 
+[[bench]]
+link-stdlib = false
+name = "fixture-test-attach"
+sources = ["src/bench.cpp"]
+
+[[bench.attach]]
+package = "fixture-test-attach-lib"
+sources = ["src/bench_registration.cppm"]
+
 [dependencies.fixture-test-attach-lib]
 path = "../test-attach-lib"
 )test"_str },
@@ -89,6 +98,28 @@ path = "../test-attach-lib"
 auto main() -> int {
     return fixture::attach::registrations() == 1 ? 0 : 1;
 }
+)test"_str },
+        { "test-attach/src/bench.cpp"_str, R"test(import fixture.test.attach;
+
+auto main() -> int {
+    return fixture::attach::registrations() == 2 ? 0 : 1;
+}
+)test"_str },
+        { "test-attach/src/bench_registration.cppm"_str,
+          R"test(module fixture.test.attach:registration;
+
+import :internal;
+
+static_assert(FIXTURE_ATTACH_PRIVATE == 17);
+
+struct BenchRegistrar {
+    BenchRegistrar() noexcept {
+        fixture::attach::internal::register_test();
+        fixture::attach::internal::register_test();
+    }
+};
+
+BenchRegistrar bench_registrar;
 )test"_str },
         { "test-attach/src/registration.cppm"_str,
           R"test(export module fixture.test.attach:registration;
@@ -298,7 +329,7 @@ static_assert(fixture_compile_value() == 42);
     return source_tree(files);
 }
 
-TEST_F(TestCommand, TestAttachmentKeepsProductionArtifactsIsolated) {
+TEST_F(TestCommand, AttachmentsKeepTestBenchAndProductionArtifactsIsolated) {
     auto tree = test_command_tree();
     ASSERT_TRUE(tree.is_ok());
     auto project = materialize("test-attachment"_str, *tree);
@@ -310,8 +341,7 @@ TEST_F(TestCommand, TestAttachmentKeepsProductionArtifactsIsolated) {
         build_request(root.as_path(), output.as_path(), strings("fixture-test-attach-lib"_str)));
     ASSERT_TRUE(production.is_ok());
     EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::TestAttachmentArchive),
-              usize {});
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::AttachmentArchive), usize {});
     auto attachment_directory =
         output.join(PathBuf::from("test-attachments/fixture-test-attach/fixture-test-attach/"
                                   "fixture-test-attach-lib/fixture-test-attach-lib"_str)
@@ -325,14 +355,37 @@ TEST_F(TestCommand, TestAttachmentKeepsProductionArtifactsIsolated) {
     ASSERT_TRUE(tested.is_ok());
     EXPECT_TRUE(tested->success());
     EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::TestAttachmentArchive),
-              usize(1));
+    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::AttachmentArchive), usize(1));
     EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::TestExecutable), usize(1));
     EXPECT_TRUE(
         rstd::fs::exists(
             attachment_directory.join(PathBuf::from("libfixture_test_attach.test.a"_str).as_path())
                 .as_path())
             .unwrap());
+
+    auto benchmarked = lito::bench(lito::BenchRequest {
+        .build =
+            build_request(root.as_path(), output.as_path(), strings("fixture-test-attach"_str)),
+    });
+    ASSERT_TRUE(benchmarked.is_ok());
+    EXPECT_TRUE(benchmarked->success());
+    EXPECT_EQ(artifact_count(benchmarked->build, lito::cpp::ArtifactKind::AttachmentArchive),
+              usize(1));
+    EXPECT_EQ(artifact_count(benchmarked->build, lito::cpp::ArtifactKind::BenchmarkExecutable),
+              usize(1));
+    EXPECT_EQ(artifact_count(benchmarked->build, lito::cpp::ArtifactKind::TestExecutable),
+              usize {});
+    auto bench_archive = output.join(PathBuf::from(
+        "bench-attachments/fixture-test-attach/fixture-test-attach/"
+        "fixture-test-attach-lib/fixture-test-attach-lib/libfixture_test_attach.bench.a"_str));
+    EXPECT_TRUE(rstd::fs::exists(bench_archive.as_path()).unwrap());
+
+    auto retested = lito::test(lito::TestRequest {
+        .build =
+            build_request(root.as_path(), output.as_path(), strings("fixture-test-attach"_str)),
+    });
+    ASSERT_TRUE(retested.is_ok());
+    EXPECT_TRUE(retested->success());
 }
 
 TEST_F(TestCommand, TestRunsPassFailureSignalAndNoRun) {

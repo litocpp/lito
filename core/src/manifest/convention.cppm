@@ -343,7 +343,8 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
                 .discovery        = SourceDiscoveryMode::Explicit,
                 .declared_sources = rstd::move(candidates[index].sources),
             },
-            true));
+            true,
+            Vec<TargetAttachmentManifest>::make()));
     }
     return Ok(rstd::move(result));
 }

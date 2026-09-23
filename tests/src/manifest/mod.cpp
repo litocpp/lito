@@ -46,6 +46,15 @@ TEST_F(Manifest, TypedFieldSchemasRejectInvalidModesAndKeepPaths) {
         { R"toml(bench = [{name="bench", host-tool=false}])toml"_str,
           Kind::UnknownField,
           "bench[0].host-tool"_str },
+        { R"toml(bench = [{name="bench", attach=[{package="dep", sources=[]}]}])toml"_str,
+          Kind::InvalidValue,
+          "bench[0].attach[0].sources"_str },
+        { R"toml(bench = [{name="bench", attach=[{sources=["access.cppm"]}]}])toml"_str,
+          Kind::MissingField,
+          "bench[0].attach[0].package"_str },
+        { R"toml(bench = [{name="bench", attach=[{package="dep", sources=["access.cppm"], other=true}]}])toml"_str,
+          Kind::UnknownField,
+          "bench[0].attach[0].other"_str },
         { R"toml(plugin = {module="plugin", name="other"})toml"_str,
           Kind::UnknownField,
           "plugin.name"_str },
@@ -1786,6 +1795,14 @@ sources = ["src/main.cpp"]
 name = "speed"
 sources = ["src/main.cpp"]
 link-stdlib = false
+
+[[bench.attach]]
+package = "library"
+sources = ["src/access.cppm"]
+
+[[bench.attach]]
+package = "library"
+sources = ["src/more.cppm"]
 )toml"_str);
     ASSERT_TRUE(multi_target.is_ok());
     auto loaded = lito::manifest::load_package_manifest(multi_target->root.as_path());
@@ -1805,7 +1822,7 @@ link-stdlib = false
         case lito::package::PackageTargetKind::Test: ++tests; break;
         case lito::package::PackageTargetKind::Benchmark: ++benchmarks; break;
         case lito::package::PackageTargetKind::ProcMacro:
-        case lito::package::PackageTargetKind::TestAttachment:
+        case lito::package::PackageTargetKind::Attachment:
         case lito::package::PackageTargetKind::CompileTest: break;
         }
         if (! lito::manifest::package_target_links_stdlib(target)) ++no_stdlib;
@@ -1819,6 +1836,16 @@ link-stdlib = false
     for (const auto& target : loaded->targets) {
         EXPECT_EQ(lito::manifest::package_target_source(target).discovery,
                   lito::manifest::SourceDiscoveryMode::Explicit);
+        auto attachments = lito::manifest::package_target_attachments(target);
+        if (target.is_Benchmark() && target.as_Benchmark().name == "speed"_str) {
+            ASSERT_TRUE(attachments.is_some());
+            ASSERT_EQ((*attachments)->len(), usize(1));
+            const auto& attachment = (**attachments)[usize {}];
+            EXPECT_EQ(attachment.package.as_str(), "library"_str);
+            ASSERT_EQ(attachment.sources.len(), usize(2));
+            EXPECT_EQ(attachment.sources[usize {}].as_path(),
+                      PathBuf::from("src/access.cppm"_str).as_path());
+        }
     }
 
     auto module_project = manifest("directory-markers"_str, R"toml([package]

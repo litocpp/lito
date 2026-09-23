@@ -112,12 +112,18 @@ class BuildLayout {
         return join(kind_directory.as_path(), target.name.as_str());
     }
 
-    auto test_attachment_directory(const cpp::TestAttachmentTarget& attachment) const -> PathBuf {
-        auto test_root      = join(output_.as_path(), "test-attachments"_str);
-        auto test_package   = join(test_root.as_path(), attachment.test_target.package.as_str());
-        auto test_directory = join(test_package.as_path(), attachment.test_target.name.as_str());
+    auto attachment_directory(const cpp::AttachmentTarget& attachment) const -> PathBuf {
+        auto attachment_root = join(
+            output_.as_path(),
+            rstd::format("{}-attachments",
+                         lito::package::package_target_kind_name(attachment.consumer_target.kind))
+                .as_str());
+        auto consumer_package =
+            join(attachment_root.as_path(), attachment.consumer_target.package.as_str());
+        auto consumer_directory =
+            join(consumer_package.as_path(), attachment.consumer_target.name.as_str());
         auto library_package =
-            join(test_directory.as_path(), attachment.library_target.package.as_str());
+            join(consumer_directory.as_path(), attachment.library_target.package.as_str());
         return join(library_package.as_path(), attachment.library_target.name.as_str());
     }
 
@@ -422,13 +428,14 @@ public:
         return artifact_directory.join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
-    auto test_attachment_archive(const cpp::TestAttachmentTarget& attachment,
-                                 ref<str>                         archive_stem) const -> PathBuf {
+    auto attachment_archive(const cpp::AttachmentTarget& attachment, ref<str> archive_stem) const
+        -> PathBuf {
         auto filename = "lib"_Str;
         filename.push_str(archive_stem);
-        filename.push_str(".test.a"_str);
-        return test_attachment_directory(attachment)
-            .join(PathBuf::from(rstd::move(filename)).as_path());
+        filename.push_ascii('.');
+        filename.push_str(lito::package::package_target_kind_name(attachment.consumer_target.kind));
+        filename.push_str(".a"_str);
+        return attachment_directory(attachment).join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
     auto archive(const lito::package::PackageTargetId& target, ref<str> artifact_name) const

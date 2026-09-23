@@ -202,7 +202,7 @@ auto path_repeated(const Vec<PathBuf>& paths, ref<rstd::path::Path> candidate) -
     });
 }
 
-auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source, DataPath path)
+auto append_attachment_source(TargetAttachmentManifest& attachment, PathBuf source, DataPath path)
     -> ManifestSchemaResult<empty> {
     if (path_repeated(attachment.sources, source.as_path())) {
         return Err(ManifestSchemaError::Data(
@@ -263,10 +263,10 @@ auto parse_target_source_conditions(Vec<lito::manifest::wire::TargetSourceCondit
         .collect<ManifestSchemaResult<Vec<ConditionalTargetSources>>>();
 }
 
-auto parse_test_attachments(Option<Vec<lito::manifest::wire::TestAttachment>> value,
-                            const DataPath&                                   owner_path)
-    -> ManifestSchemaResult<Vec<TestAttachmentManifest>> {
-    auto result = Vec<TestAttachmentManifest>::make();
+auto parse_attachments(Option<Vec<lito::manifest::wire::TargetAttachment>> value,
+                       const DataPath&                                     owner_path)
+    -> ManifestSchemaResult<Vec<TargetAttachmentManifest>> {
+    auto result = Vec<TargetAttachmentManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto path    = owner_path.with_field("attach"_str);
     auto entries = rstd::move(value).unwrap();
@@ -290,7 +290,7 @@ auto parse_test_attachments(Option<Vec<lito::manifest::wire::TestAttachment>> va
             }
         }
         if (position.is_none()) {
-            result.push(TestAttachmentManifest { .package = rstd::move(entry.package) });
+            result.push(TargetAttachmentManifest { .package = rstd::move(entry.package) });
             position = Some(result.len() - usize(1));
         }
         auto& attachment = result[*position];
@@ -599,10 +599,11 @@ auto parse_runnable_targets(Option<Vec<T>>                   value,
                                                       host_tool,
                                                       rstd::move(resources)));
         } else if (kind == lito::package::PackageTargetKind::Benchmark) {
+            auto attachments = rstd_try(parse_attachments(rstd::move(wire.attach), path));
             result.push(PackageTargetManifest::Benchmark(
-                rstd::move(name), rstd::move(source), link_stdlib));
+                rstd::move(name), rstd::move(source), link_stdlib, rstd::move(attachments)));
         } else {
-            auto attachments = rstd_try(parse_test_attachments(rstd::move(wire.attach), path));
+            auto attachments = rstd_try(parse_attachments(rstd::move(wire.attach), path));
             result.push(PackageTargetManifest::Test(
                 rstd::move(name), rstd::move(source), link_stdlib, rstd::move(attachments)));
         }

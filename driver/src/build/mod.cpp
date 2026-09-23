@@ -71,10 +71,9 @@ auto build_archive_target(const BuildRequest&                        request,
                           const Vec<cpp::UnitId>&                    target_units,
                           const Vec<Option<CachedArtifactIdentity>>& object_identities,
                           BuildTimingReport& timing) -> BuildResult<PathBuf> {
-    auto archive =
-        target.test_attachment.is_some()
-            ? layout.test_attachment_archive(*target.test_attachment, target.archive_stem.as_str())
-            : layout.archive(target.id, target.artifact_name.as_str());
+    auto archive = target.attachment.is_some()
+                       ? layout.attachment_archive(*target.attachment, target.archive_stem.as_str())
+                       : layout.archive(target.id, target.artifact_name.as_str());
     auto objects = Vec<PathBuf>::with_capacity(target_units.len());
     auto inputs  = Vec<CachedArtifactIdentity>::with_capacity(target_units.len());
     for (auto unit : target_units) {
@@ -170,20 +169,20 @@ auto build_link_target(const BuildRequest&                 request,
     auto        objects     = Vec<PathBuf>::with_capacity(target_units[target].len());
     for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
     auto link_inputs = Vec<ResolvedLinkInput>::make();
-    if (target_spec.artifact_kind == cpp::ArtifactKind::TestExecutable) {
+    if (target_spec.artifact_kind == cpp::ArtifactKind::TestExecutable ||
+        target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
         for (auto candidate : plan.target_order) {
             const auto& candidate_spec = package.targets[candidate];
-            if (candidate_spec.test_attachment.is_none() ||
-                ! (candidate_spec.test_attachment->test_target == target_spec.id)) {
+            if (candidate_spec.attachment.is_none() ||
+                ! (candidate_spec.attachment->consumer_target == target_spec.id)) {
                 continue;
             }
             if (library_paths[candidate].is_none()) {
-                return Err(BuildError::Message(
-                    rstd::format("test target '{}' has no attachment archive for '{}'",
-                                 lito::package::package_target_id_text(target_spec.id).as_str(),
-                                 lito::package::package_target_id_text(
-                                     candidate_spec.test_attachment->library_target)
-                                     .as_str())));
+                return Err(BuildError::Message(rstd::format(
+                    "target '{}' has no attachment archive for '{}'",
+                    lito::package::package_target_id_text(target_spec.id).as_str(),
+                    lito::package::package_target_id_text(candidate_spec.attachment->library_target)
+                        .as_str())));
             }
             link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                 .path = (*library_paths[candidate]).clone(),
@@ -1767,7 +1766,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         if (package.targets[target].artifact_kind == cpp::ArtifactKind::StaticLibrary ||
             package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin ||
             package.targets[target].artifact_kind == cpp::ArtifactKind::ProcMacroProvider ||
-            package.targets[target].artifact_kind == cpp::ArtifactKind::TestAttachmentArchive) {
+            package.targets[target].artifact_kind == cpp::ArtifactKind::AttachmentArchive) {
             records.push(layout.cache_archive(package.targets[target].id));
         }
         auto finished = cache.finish_target(layout, package.targets[target].id, records);

@@ -78,12 +78,26 @@ must itself declare a named module. If the target declares `module`, the provide
 Tests and benchmarks accept the runnable fields `name`, `module`, `sources`, `source-groups`, `when`,
 and `link-stdlib`.
 
-A test also accepts `attach`, a non-empty array. Each attachment requires:
+Tests and benchmarks also accept `attach`. Each attachment requires:
 
 - `package`: the name of a direct package dependency with a library target;
-- `sources`: a non-empty array of sources compiled only into that library's test attachment archive.
+- `sources`: a non-empty array of sources, relative to the declaring package, compiled into an
+  attachment archive for the selected test or benchmark.
 
 Attachment sources never enter the production library archive or a normal build.
+They inherit the library's private compile settings and can import its internal module partitions.
+The selected executable links the attachment archive in whole; test and benchmark attachments
+remain isolated even when their targets have the same name.
+
+```toml
+[[bench]]
+name = "runtime"
+sources = ["benches/main.cpp"]
+
+[[bench.attach]]
+package = "runtime-lib"
+sources = ["benches/runtime_access.cppm"]
+```
 
 ## `[compile-test]`
 

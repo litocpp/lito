@@ -20,7 +20,7 @@ enum class ArtifactKind
     CompilerPlugin,
     ProcMacroProvider,
     SharedLibrary,
-    TestAttachmentArchive,
+    AttachmentArchive,
     Executable,
     TestExecutable,
     BenchmarkExecutable,
@@ -84,8 +84,8 @@ struct TargetSource {
     Option<TransformedSource>  transformed;
 };
 
-struct TestAttachmentTarget {
-    lito::package::PackageTargetId test_target;
+struct AttachmentTarget {
+    lito::package::PackageTargetId consumer_target;
     lito::package::PackageTargetId library_target;
 };
 

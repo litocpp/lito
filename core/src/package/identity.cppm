@@ -16,7 +16,7 @@ enum class PackageTargetKind
     Binary,
     Test,
     Benchmark,
-    TestAttachment,
+    Attachment,
     CompileTest,
 };
 
@@ -28,7 +28,7 @@ auto package_target_kind_name(PackageTargetKind kind) noexcept -> ref<str> {
     case PackageTargetKind::Binary: return "bin"_str;
     case PackageTargetKind::Test: return "test"_str;
     case PackageTargetKind::Benchmark: return "bench"_str;
-    case PackageTargetKind::TestAttachment: return "test-attachment"_str;
+    case PackageTargetKind::Attachment: return "attachment"_str;
     case PackageTargetKind::CompileTest: return "compile-test"_str;
     }
     return "unknown"_str;

@@ -85,29 +85,29 @@ struct GeneratedArtifactContribution {
 };
 
 struct ResolvedTarget {
-    lito::package::PackageTargetId               id;
-    String                                       package_source_identity;
-    ArtifactKind                                 artifact_kind { ArtifactKind::StaticLibrary };
-    lito::manifest::PackageLanguage              language { lito::manifest::PackageLanguage::Cpp };
-    String                                       artifact_name;
-    bool                                         link_stdlib { true };
-    bool                                         host_tool { false };
-    lito::manifest::TargetSourceManifest         source;
-    Vec<ResolvedSourceGroup>                     source_groups;
-    PathBuf                                      root;
-    PathBuf                                      source_root;
-    UsageRequirements                            usage;
-    Vec<ResolvedCompileTestCase>                 compile_tests;
-    Vec<lito::manifest::TestAttachmentManifest>  attachments;
-    Vec<lito::manifest::RuntimeResourceManifest> runtime_resources;
-    Vec<DependencySpec>                          dependencies;
-    Vec<HostToolDependencySpec>                  host_tool_dependencies;
-    Vec<CompilerPluginDependencySpec>            plugin_dependencies;
-    Vec<ProcMacroDependencySpec>                 proc_macro_dependencies;
-    Vec<ResolvedExternalDependency>              external_dependencies;
-    Vec<GeneratedArtifactContribution>           generated_artifacts;
-    Option<TestAttachmentTarget>                 test_attachment;
-    PackageCompileMetadata                       compile_metadata;
+    lito::package::PackageTargetId                id;
+    String                                        package_source_identity;
+    ArtifactKind                                  artifact_kind { ArtifactKind::StaticLibrary };
+    lito::manifest::PackageLanguage               language { lito::manifest::PackageLanguage::Cpp };
+    String                                        artifact_name;
+    bool                                          link_stdlib { true };
+    bool                                          host_tool { false };
+    lito::manifest::TargetSourceManifest          source;
+    Vec<ResolvedSourceGroup>                      source_groups;
+    PathBuf                                       root;
+    PathBuf                                       source_root;
+    UsageRequirements                             usage;
+    Vec<ResolvedCompileTestCase>                  compile_tests;
+    Vec<lito::manifest::TargetAttachmentManifest> attachments;
+    Vec<lito::manifest::RuntimeResourceManifest>  runtime_resources;
+    Vec<DependencySpec>                           dependencies;
+    Vec<HostToolDependencySpec>                   host_tool_dependencies;
+    Vec<CompilerPluginDependencySpec>             plugin_dependencies;
+    Vec<ProcMacroDependencySpec>                  proc_macro_dependencies;
+    Vec<ResolvedExternalDependency>               external_dependencies;
+    Vec<GeneratedArtifactContribution>            generated_artifacts;
+    Option<AttachmentTarget>                      attachment;
+    PackageCompileMetadata                        compile_metadata;
 };
 
 auto add_generated_source(ResolvedTarget&             target,

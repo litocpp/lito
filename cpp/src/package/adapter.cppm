@@ -264,20 +264,23 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
     return Ok(empty {});
 }
 
-auto output_name(ArtifactKind kind, ref<str> declared_name, const lito::system::TargetInfo& target)
-    -> String {
+auto output_name(ArtifactKind                    kind,
+                 ref<str>                        declared_name,
+                 const lito::system::TargetInfo& target,
+                 const Option<AttachmentTarget>& attachment) -> String {
     auto product_kind = lito::artifact::ProductKind::Executable;
     if (kind == ArtifactKind::StaticLibrary || kind == ArtifactKind::CompilerPlugin ||
-        kind == ArtifactKind::ProcMacroProvider || kind == ArtifactKind::TestAttachmentArchive) {
+        kind == ArtifactKind::ProcMacroProvider || kind == ArtifactKind::AttachmentArchive) {
         product_kind = lito::artifact::ProductKind::StaticLibrary;
     } else if (kind == ArtifactKind::SharedLibrary) {
         product_kind = lito::artifact::ProductKind::SharedLibrary;
     }
     auto result = lito::artifact::product_name(product_kind, declared_name, target);
-    if (kind == ArtifactKind::TestAttachmentArchive) {
+    if (kind == ArtifactKind::AttachmentArchive) {
         auto suffix = target.family == lito::system::TargetFamily::Windows ? ".lib"_str : ".a"_str;
         result.truncate(result.len() - suffix.len());
-        result.push_str(".test"_str);
+        result.push_ascii('.');
+        result.push_str(lito::package::package_target_kind_name(attachment->consumer_target.kind));
         result.push_str(suffix);
     }
     return result;
@@ -876,12 +879,11 @@ auto clone_generated_artifacts(const Vec<GeneratedArtifactContribution>& artifac
     return result;
 }
 
-auto clone_test_attachment(const Option<TestAttachmentTarget>& attachment)
-    -> Option<TestAttachmentTarget> {
+auto clone_attachment(const Option<AttachmentTarget>& attachment) -> Option<AttachmentTarget> {
     if (attachment.is_none()) return None();
-    return Some(TestAttachmentTarget {
-        .test_target    = attachment->test_target.clone(),
-        .library_target = attachment->library_target.clone(),
+    return Some(AttachmentTarget {
+        .consumer_target = attachment->consumer_target.clone(),
+        .library_target  = attachment->library_target.clone(),
     });
 }
 
@@ -896,8 +898,7 @@ auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -
     case lito::package::PackageTargetKind::Binary: return ArtifactKind::Executable;
     case lito::package::PackageTargetKind::Test: return ArtifactKind::TestExecutable;
     case lito::package::PackageTargetKind::Benchmark: return ArtifactKind::BenchmarkExecutable;
-    case lito::package::PackageTargetKind::TestAttachment:
-        return ArtifactKind::TestAttachmentArchive;
+    case lito::package::PackageTargetKind::Attachment: return ArtifactKind::AttachmentArchive;
     case lito::package::PackageTargetKind::CompileTest: return ArtifactKind::CompileTest;
     }
     return ArtifactKind::Executable;
@@ -1381,9 +1382,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             auto& source = lito::manifest::package_target_source(manifest_target);
             auto  source_groups =
                 rstd_try(resolve_source_groups(package_index, package, source, external_sources));
-            auto attachments = Vec<lito::manifest::TestAttachmentManifest>::make();
+            auto attachments = Vec<lito::manifest::TargetAttachmentManifest>::make();
             if (manifest_target.is_Test()) {
                 attachments = rstd::move(manifest_target.as_Test().attachments);
+            } else if (manifest_target.is_Benchmark()) {
+                attachments = rstd::move(manifest_target.as_Benchmark().attachments);
             }
             auto runtime_resources = Vec<lito::manifest::RuntimeResourceManifest>::make();
             if (manifest_target.is_Binary()) {
@@ -1510,15 +1513,16 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
 
     const auto real_target_count = targets.len();
     auto       attachments       = Vec<ResolvedTarget>::make();
-    for (usize test_index {}; test_index < real_target_count; ++test_index) {
-        const auto& test = targets[test_index];
-        if (test.artifact_kind != ArtifactKind::TestExecutable ||
-            ! selected_target(selected_targets, test.id)) {
+    for (usize consumer_index {}; consumer_index < real_target_count; ++consumer_index) {
+        const auto& consumer = targets[consumer_index];
+        if ((consumer.artifact_kind != ArtifactKind::TestExecutable &&
+             consumer.artifact_kind != ArtifactKind::BenchmarkExecutable) ||
+            ! selected_target(selected_targets, consumer.id)) {
             continue;
         }
-        for (const auto& declaration : test.attachments) {
+        for (const auto& declaration : consumer.attachments) {
             auto direct = false;
-            for (const auto& dependency : test.dependencies) {
+            for (const auto& dependency : consumer.dependencies) {
                 if (dependency.target.package == declaration.package.as_str()) {
                     direct = true;
                     break;
@@ -1526,15 +1530,15 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             if (! direct) {
                 return Err(lito::package::PackageError::Message(rstd::format(
-                    "test target '{}::{}' can only attach a direct dependency, but '{}' is not one",
-                    test.id.package.as_str(),
-                    test.id.name.as_str(),
+                    "target '{}::{}' can only attach a direct dependency, but '{}' is not one",
+                    consumer.id.package.as_str(),
+                    consumer.id.name.as_str(),
                     declaration.package.as_str())));
             }
             auto library_id = libraries.get(declaration.package.as_str());
             if (library_id.is_none()) {
                 return Err(lito::package::PackageError::Message(rstd::format(
-                    "test attachment dependency '{}' is missing", declaration.package.as_str())));
+                    "target attachment dependency '{}' is missing", declaration.package.as_str())));
             }
             const ResolvedTarget* library = nullptr;
             for (const auto& candidate : targets) {
@@ -1545,41 +1549,43 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             if (library == nullptr || library->artifact_kind != ArtifactKind::StaticLibrary) {
                 return Err(lito::package::PackageError::Message(
-                    rstd::format("test target '{}::{}' cannot attach non-library package '{}'",
-                                 test.id.package.as_str(),
-                                 test.id.name.as_str(),
+                    rstd::format("target '{}::{}' cannot attach non-library package '{}'",
+                                 consumer.id.package.as_str(),
+                                 consumer.id.name.as_str(),
                                  declaration.package.as_str())));
             }
             auto sources = Vec<PathBuf>::make();
             for (const auto& source : declaration.sources) {
                 if (contains_source(sources, source.as_path())) {
                     return Err(lito::package::PackageError::Message(
-                        rstd::format("test attachment '{}' repeats source '{}'",
+                        rstd::format("target attachment '{}' repeats source '{}'",
                                      declaration.package.as_str(),
                                      source.as_path())));
                 }
-                if (contains_source(test.source.declared_sources, source.as_path())) {
+                if (contains_source(consumer.source.declared_sources, source.as_path())) {
                     return Err(lito::package::PackageError::Message(
-                        rstd::format("test source '{}' cannot also attach to package '{}'",
+                        rstd::format("target source '{}' cannot also attach to package '{}'",
                                      source.as_path(),
                                      declaration.package.as_str())));
                 }
                 sources.push(source.clone());
             }
             if (sources.is_empty()) continue;
-            auto synthetic_name = rstd::format("{}@test-attach@{}@{}",
-                                               test.id.name.as_str(),
-                                               library->id.package.as_str(),
-                                               library->id.name.as_str());
+            auto synthetic_name =
+                rstd::format("{}@{}-attach@{}@{}",
+                             consumer.id.name.as_str(),
+                             lito::package::package_target_kind_name(consumer.id.kind),
+                             library->id.package.as_str(),
+                             library->id.name.as_str());
             attachments.push(ResolvedTarget {
                 .id =
                     lito::package::PackageTargetId {
-                        .package = test.id.package.clone(),
-                        .kind    = lito::package::PackageTargetKind::TestAttachment,
+                        .package = consumer.id.package.clone(),
+                        .kind    = lito::package::PackageTargetKind::Attachment,
                         .name    = rstd::move(synthetic_name),
                     },
-                .package_source_identity = test.package_source_identity.clone(),
-                .artifact_kind           = ArtifactKind::TestAttachmentArchive,
+                .package_source_identity = consumer.package_source_identity.clone(),
+                .artifact_kind           = ArtifactKind::AttachmentArchive,
                 .language                = library->language,
                 .artifact_name           = library->artifact_name.clone(),
                 .source =
@@ -1588,11 +1594,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                         .discovery        = lito::manifest::SourceDiscoveryMode::Explicit,
                         .declared_sources = rstd::move(sources),
                     },
-                .root             = test.root.clone(),
-                .source_root      = test.source_root.clone(),
-                .test_attachment  = Some(TestAttachmentTarget {
-                    .test_target    = test.id.clone(),
-                    .library_target = library->id.clone(),
+                .root             = consumer.root.clone(),
+                .source_root      = consumer.source_root.clone(),
+                .attachment       = Some(AttachmentTarget {
+                    .consumer_target = consumer.id.clone(),
+                    .library_target  = library->id.clone(),
                 }),
                 .compile_metadata = library->compile_metadata.clone(),
             });
@@ -1794,8 +1800,8 @@ auto snapshot_package(const PackageMetadata&          metadata,
     -> lito::package::PackageResult<PackageSpec> {
     auto targets = Vec<TargetSpec>::with_capacity(metadata.targets.len());
     for (const auto& target : metadata.targets) {
-        auto artifact_name =
-            output_name(target.artifact_kind, target.artifact_name.as_str(), target_info);
+        auto artifact_name = output_name(
+            target.artifact_kind, target.artifact_name.as_str(), target_info, target.attachment);
         auto archive_stem = target.artifact_name.clone();
         targets.push(TargetSpec {
             .id                      = target.id.clone(),
@@ -1819,7 +1825,7 @@ auto snapshot_package(const PackageMetadata&          metadata,
             .generated_artifacts   = clone_generated_artifacts(target.generated_artifacts),
             .usage                 = clone_usage_requirements(target.usage),
             .compile_tests         = clone_compile_tests(target.compile_tests),
-            .test_attachment       = clone_test_attachment(target.test_attachment),
+            .attachment            = clone_attachment(target.attachment),
             .compile_metadata      = target.compile_metadata.clone(),
         });
     }

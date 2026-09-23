@@ -467,7 +467,7 @@ auto validate_references(const FileSetState& state) -> PackageFileSetResult<empt
                     rstd_try(require_relative(state,
                                               state.manifest.source_root.as_path(),
                                               path.as_path(),
-                                              "test attachment"_str));
+                                              "target attachment"_str));
                 }
             }
         }

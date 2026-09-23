@@ -35,7 +35,7 @@ struct TargetSourceCondition {
     Vec<String> source_groups;
 };
 
-struct TestAttachment {
+struct TargetAttachment {
     String      package;
     Vec<String> sources;
 };
@@ -153,15 +153,15 @@ struct Impl<serde::Deserialize, lito::manifest::wire::TargetSourceCondition> {
 };
 
 template<>
-struct Impl<serde::Deserialize, lito::manifest::wire::TestAttachment> {
+struct Impl<serde::Deserialize, lito::manifest::wire::TargetAttachment> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
-        -> Result<lito::manifest::wire::TestAttachment, typename Deserializer::error_type> {
+        -> Result<lito::manifest::wire::TargetAttachment, typename Deserializer::error_type> {
         auto package = serde::RequiredField<String>("package"_str);
         auto sources = serde::RequiredField<Vec<String>>("sources"_str);
         rstd_try(serde::deserialize_record(
             deserializer, serde::UnknownFieldPolicy::Reject, package, sources));
-        return Ok(lito::manifest::wire::TestAttachment {
+        return Ok(lito::manifest::wire::TargetAttachment {
             .package = rstd_try(package.take(deserializer)),
             .sources = rstd_try(sources.take(deserializer)),
         });

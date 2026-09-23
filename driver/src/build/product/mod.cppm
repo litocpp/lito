@@ -185,8 +185,8 @@ auto parse_package_target_kind(ref<str> value)
     if (value == "bin"_str) return Ok(lito::package::PackageTargetKind::Binary);
     if (value == "test"_str) return Ok(lito::package::PackageTargetKind::Test);
     if (value == "bench"_str) return Ok(lito::package::PackageTargetKind::Benchmark);
-    if (value == "test-attachment"_str) {
-        return Ok(lito::package::PackageTargetKind::TestAttachment);
+    if (value == "attachment"_str) {
+        return Ok(lito::package::PackageTargetKind::Attachment);
     }
     if (value == "compile-test"_str) return Ok(lito::package::PackageTargetKind::CompileTest);
     return Err(
@@ -199,7 +199,7 @@ auto artifact_kind_text(cpp::ArtifactKind kind) -> ref<str> {
     case cpp::ArtifactKind::CompilerPlugin: return "compiler-plugin-support"_str;
     case cpp::ArtifactKind::ProcMacroProvider: return "proc-macro-provider"_str;
     case cpp::ArtifactKind::SharedLibrary: return "shared-library"_str;
-    case cpp::ArtifactKind::TestAttachmentArchive: return "test-attachment-archive"_str;
+    case cpp::ArtifactKind::AttachmentArchive: return "attachment-archive"_str;
     case cpp::ArtifactKind::Executable: return "executable"_str;
     case cpp::ArtifactKind::TestExecutable: return "test-executable"_str;
     case cpp::ArtifactKind::BenchmarkExecutable: return "benchmark-executable"_str;
@@ -213,8 +213,8 @@ auto parse_artifact_kind(ref<str> value) -> BuildProductResult<cpp::ArtifactKind
     if (value == "compiler-plugin-support"_str) return Ok(cpp::ArtifactKind::CompilerPlugin);
     if (value == "proc-macro-provider"_str) return Ok(cpp::ArtifactKind::ProcMacroProvider);
     if (value == "shared-library"_str) return Ok(cpp::ArtifactKind::SharedLibrary);
-    if (value == "test-attachment-archive"_str) {
-        return Ok(cpp::ArtifactKind::TestAttachmentArchive);
+    if (value == "attachment-archive"_str) {
+        return Ok(cpp::ArtifactKind::AttachmentArchive);
     }
     if (value == "executable"_str) return Ok(cpp::ArtifactKind::Executable);
     if (value == "test-executable"_str) return Ok(cpp::ArtifactKind::TestExecutable);

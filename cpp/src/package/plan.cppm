@@ -422,23 +422,24 @@ auto scan_context_id(const CompileContext& context) -> String {
     return result;
 }
 
-auto attachment_context(const CompileContext&       library,
-                        const CompileContext&       test,
-                        const TestAttachmentTarget& attachment)
+auto attachment_context(const CompileContext&   library,
+                        const CompileContext&   consumer,
+                        const AttachmentTarget& attachment)
     -> lito::package::PackageResult<CompileContext> {
-    if (! library.language.is_Cpp() || ! test.language.is_Cpp()) {
+    if (! library.language.is_Cpp() || ! consumer.language.is_Cpp()) {
         return Err(lito::package::PackageError::Message(
-            "test attachments currently require C++ targets"_Str));
+            "target attachments currently require C++ targets"_Str));
     }
-    const auto& library_cpp = library.language.as_Cpp();
-    const auto& test_cpp    = test.language.as_Cpp();
-    if (library_cpp.bmi.representation != test_cpp.bmi.representation ||
-        library_cpp.bmi.source_embedding != test_cpp.bmi.source_embedding) {
+    const auto& library_cpp  = library.language.as_Cpp();
+    const auto& consumer_cpp = consumer.language.as_Cpp();
+    if (library_cpp.bmi.representation != consumer_cpp.bmi.representation ||
+        library_cpp.bmi.source_embedding != consumer_cpp.bmi.source_embedding) {
         return Err(lito::package::PackageError::Message(
-            "test attachment cannot merge different BMI requests"_Str));
+            "target attachment cannot merge different BMI requests"_Str));
     }
     auto result = library.clone();
-    auto merged = merge_cpp_options(rstd::move(result.language.as_Cpp().options), test_cpp.options);
+    auto merged =
+        merge_cpp_options(rstd::move(result.language.as_Cpp().options), consumer_cpp.options);
     if (merged.is_err()) {
         return Err(lito::package::PackageError::Configuration(
             erase_error(rstd::move(merged).unwrap_err())));
@@ -446,10 +447,10 @@ auto attachment_context(const CompileContext&       library,
     auto& result_cpp               = result.language.as_Cpp();
     result_cpp.options             = rstd::move(merged).unwrap();
     result_cpp.public_requirements = merge_cpp_public_requirements(
-        rstd::move(result_cpp.public_requirements), test_cpp.public_requirements);
-    append_unique(result.external_identities, test.external_identities);
-    result.id      = rstd::format("lito-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
-                                  target_text(attachment.test_target).as_str(),
+        rstd::move(result_cpp.public_requirements), consumer_cpp.public_requirements);
+    append_unique(result.external_identities, consumer.external_identities);
+    result.id      = rstd::format("lito-attachment-context-v1\nconsumer:{}\nlibrary:{}\n{}",
+                                  target_text(attachment.consumer_target).as_str(),
                                   target_text(attachment.library_target).as_str(),
                                   context_id(result).as_str());
     result.scan_id = scan_context_id(result);
@@ -1153,21 +1154,22 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
     }
 
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
-        const auto& attachment = package.targets[target].test_attachment;
+        const auto& attachment = package.targets[target].attachment;
         if (attachment.is_none()) continue;
-        auto test_id    = target_index(package, attachment->test_target);
-        auto library_id = target_index(package, attachment->library_target);
-        if (test_id.is_none() || library_id.is_none()) {
+        auto consumer_id = target_index(package, attachment->consumer_target);
+        auto library_id  = target_index(package, attachment->library_target);
+        if (consumer_id.is_none() || library_id.is_none()) {
             return Err(lito::package::PackageError::Message(
-                "test attachment references an unknown target"_Str));
+                "target attachment references an unknown target"_Str));
         }
         if (! append_unique(visible_targets[target], target)) {
             return Err(lito::package::PackageError::Message(
-                "test attachment target is repeated in the build graph"_Str));
+                "target attachment target is repeated in the build graph"_Str));
         }
         append_unique(visible_targets[target], visible_targets[*library_id]);
-        append_unique(visible_targets[target], visible_targets[*test_id]);
-        auto attached = attachment_context(contexts[*library_id], contexts[*test_id], *attachment);
+        append_unique(visible_targets[target], visible_targets[*consumer_id]);
+        auto attached =
+            attachment_context(contexts[*library_id], contexts[*consumer_id], *attachment);
         if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
         contexts[target] = rstd::move(attached).unwrap();
     }
@@ -1175,9 +1177,9 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
     auto expanded_target_order = Vec<TargetId>::with_capacity(package.targets.len());
     for (auto selected_target : target_order) {
         for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
-            const auto& attachment = package.targets[candidate].test_attachment;
+            const auto& attachment = package.targets[candidate].attachment;
             if (attachment.is_some() &&
-                attachment->test_target == package.targets[selected_target].id) {
+                attachment->consumer_target == package.targets[selected_target].id) {
                 expanded_target_order.emplace_back(candidate);
             }
         }

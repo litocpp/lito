@@ -33,6 +33,15 @@ sources = ["main.cpp"]
 [[test.attach]]
 package = "missing-library"
 sources = ["attached.cppm"]
+
+[[bench]]
+link-stdlib = false
+name = "fixture-bench-attach-not-direct"
+sources = ["main.cpp"]
+
+[[bench.attach]]
+package = "missing-library"
+sources = ["attached.cppm"]
 )toml"_str,
         },
     };
@@ -48,4 +57,13 @@ sources = ["attached.cppm"]
     auto tested_error = rstd::move(tested).unwrap_err();
     ASSERT_TRUE(tested_error.is_Build());
     EXPECT_TRUE(error_chain_text(tested_error).as_str().contains("direct dependency"_str));
+    auto benchmarked = lito::bench(lito::BenchRequest {
+        .build = lito_test::build_request(
+            project->root.as_path(), output.as_path(), Vec<String>::make()),
+        .no_run = true,
+    });
+    ASSERT_TRUE(benchmarked.is_err());
+    auto bench_error = rstd::move(benchmarked).unwrap_err();
+    ASSERT_TRUE(bench_error.is_Build());
+    EXPECT_TRUE(error_chain_text(bench_error).as_str().contains("direct dependency"_str));
 }

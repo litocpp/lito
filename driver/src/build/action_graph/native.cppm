@@ -20,7 +20,7 @@ namespace lito
 auto target_output_kind(cpp::ArtifactKind kind) noexcept -> Option<BuildArtifactKind> {
     if (kind == cpp::ArtifactKind::StaticLibrary || kind == cpp::ArtifactKind::CompilerPlugin ||
         kind == cpp::ArtifactKind::ProcMacroProvider ||
-        kind == cpp::ArtifactKind::TestAttachmentArchive) {
+        kind == cpp::ArtifactKind::AttachmentArchive) {
         return Some(BuildArtifactKind::Archive);
     }
     if (kind == cpp::ArtifactKind::SharedLibrary) return Some(BuildArtifactKind::SharedLibrary);
@@ -35,10 +35,9 @@ auto target_output_path(const BuildLayout& layout, const cpp::TargetSpec& target
     if (target.artifact_kind == cpp::ArtifactKind::StaticLibrary ||
         target.artifact_kind == cpp::ArtifactKind::CompilerPlugin ||
         target.artifact_kind == cpp::ArtifactKind::ProcMacroProvider ||
-        target.artifact_kind == cpp::ArtifactKind::TestAttachmentArchive) {
-        return target.test_attachment.is_some()
-                   ? layout.test_attachment_archive(*target.test_attachment,
-                                                    target.archive_stem.as_str())
+        target.artifact_kind == cpp::ArtifactKind::AttachmentArchive) {
+        return target.attachment.is_some()
+                   ? layout.attachment_archive(*target.attachment, target.archive_stem.as_str())
                    : layout.archive(target.id, target.artifact_name.as_str());
     }
     if (target.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
@@ -223,15 +222,17 @@ auto extend_native_action_graph(NativeActionGraph&            result,
             }
             inputs.emplace_back(*result.target_artifacts[dependency]);
         }
-        if (package.targets[target].artifact_kind == cpp::ArtifactKind::TestExecutable) {
+        if (package.targets[target].artifact_kind == cpp::ArtifactKind::TestExecutable ||
+            package.targets[target].artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
             for (auto candidate : package_plan.target_order) {
-                const auto& attachment = package.targets[candidate].test_attachment;
-                if (attachment.is_none() || attachment->test_target != package.targets[target].id) {
+                const auto& attachment = package.targets[candidate].attachment;
+                if (attachment.is_none() ||
+                    attachment->consumer_target != package.targets[target].id) {
                     continue;
                 }
                 if (result.target_artifacts[candidate].is_none()) {
                     return Err(BuildError::Message(rstd::format(
-                        "test target '{}' has no attachment archive artifact",
+                        "target '{}' has no attachment archive artifact",
                         lito::package::package_target_id_text(package.targets[target].id))));
                 }
                 inputs.emplace_back(*result.target_artifacts[candidate]);
@@ -243,8 +244,7 @@ auto extend_native_action_graph(NativeActionGraph&            result,
             package.targets[target].artifact_kind == cpp::ArtifactKind::StaticLibrary ||
                     package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin ||
                     package.targets[target].artifact_kind == cpp::ArtifactKind::ProcMacroProvider ||
-                    package.targets[target].artifact_kind ==
-                        cpp::ArtifactKind::TestAttachmentArchive
+                    package.targets[target].artifact_kind == cpp::ArtifactKind::AttachmentArchive
                 ? BuildActionKind::Archive
                 : BuildActionKind::Link;
         result.target_actions[target] = Some(rstd_try(result.graph.add_action(BuildActionSpec {
