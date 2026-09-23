@@ -2,14 +2,14 @@
   "rstd": {
     "owner": "litocpp",
     "repo": "rstd",
-    "rev": "a7285c0392af6a57b79212ed9b0943b536abc176",
-    "narHash": "sha256-4OWpgYn/UY33CeQVm/a20kz9A+XviLGk6r/hwlvcHp4="
+    "rev": "4a4bf6910cd06043b80b179eff35f229a82580b8",
+    "narHash": "sha256-hwET+YV0qxGPK9ONnk+f6T197SG11igGAdBN37+j1LE="
   },
   "luato": {
     "owner": "litocpp",
     "repo": "luato",
-    "rev": "bd4848b3d6dc2cc57928e4405c3593b67322d6f8",
-    "narHash": "sha256-0nZF5XonKTluvrZGLNlIS2Z3JxfMGX+EylejRjgFqpw="
+    "rev": "df0c6f2d1cce2051b4711d36067619eda7933683",
+    "narHash": "sha256-XL1evcZbZJ2LfTi5T9UQ+4YBEw5YnDsGeY3IBS+Fs5U="
   },
   "licrypto": {
     "owner": "litocpp",
