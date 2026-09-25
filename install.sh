@@ -2,7 +2,7 @@
 
 set -eu
 
-readonly VERSION="v0.8.3"
+readonly VERSION="v0.8.4"
 readonly REPOSITORY="https://github.com/litocpp/lito"
 readonly INSTALL_DIRECTORY="${HOME}/.local/bin"
 
