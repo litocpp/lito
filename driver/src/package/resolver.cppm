@@ -159,6 +159,7 @@ class PackageGraphResolver {
     PreparedRegistryMap        registry_sources_ { PreparedRegistryMap::make() };
     Vec<PreparedRegistryPatch> registry_patches_;
     StringSet                  discovered_ { StringSet::make() };
+    StringSet                  development_packages_ { StringSet::make() };
     StringSet                  builtin_packages_ { StringSet::make() };
     usize                      jobs_ { usize(1) };
 
@@ -490,7 +491,9 @@ class PackageGraphResolver {
             return Ok(empty {});
         };
         for (const auto& dependency : package.dependencies) rstd_try(append(dependency));
-        for (const auto& dependency : package.dev_dependencies) rstd_try(append(dependency));
+        if (development_packages_.contains_key(key)) {
+            for (const auto& dependency : package.dev_dependencies) rstd_try(append(dependency));
+        }
         for (const auto& dependency : package.runtime_dependencies) rstd_try(append(dependency));
         auto pmacro_support = rstd_try(pmacro_support_dependency(package));
         if (pmacro_support.is_some()) rstd_try(append(*pmacro_support));
@@ -527,6 +530,15 @@ class PackageGraphResolver {
     }
 
     auto prepare_registry_impl(const AcquiredProjectSources& roots) -> PackageResult<empty> {
+        const auto enable_development = [&](usize source) {
+            for (const auto& name : package_names(source)) {
+                development_packages_.insert(
+                    rstd::format("{}\n{}", sources_.source_identity(source), name.as_str()),
+                    empty {});
+            }
+        };
+        enable_development(roots.primary);
+        if (roots.tests.is_some()) enable_development(*roots.tests);
         rstd_try(prepare_registry_patches());
         rstd_try(discover_source(roots.primary));
         if (roots.tests.is_some()) rstd_try(discover_source(*roots.tests));
@@ -959,7 +971,11 @@ public:
         if (selected.is_err()) {
             return Err(rstd::move(selected).unwrap_err());
         }
-        auto loaded = rstd::move(selected).unwrap();
+        auto loaded          = rstd::move(selected).unwrap();
+        auto development_key = rstd::format("{}\n{}", source_identity.as_str(), expected_name);
+        auto development_dependencies = development_packages_.contains_key(development_key.as_str())
+                                            ? loaded.package.dev_dependencies.as_slice()
+                                            : slice<lito::manifest::DeclaredDependency> {};
         if (loaded.package.name.as_str() != expected_name) {
             return Err(PackageError::Message(
                 rstd::format("dependency '{}' resolves to package '{}' from source '{}'",
@@ -989,11 +1005,10 @@ public:
         active_kinds_.push(rstd::move(incoming));
 
         auto fetch_requests = Vec<lito::source::PackageSourceFetchRequest>::with_capacity(
-            loaded.package.dependencies.len() + loaded.package.dev_dependencies.len() +
+            loaded.package.dependencies.len() + development_dependencies.len() +
             loaded.package.runtime_dependencies.len());
         const auto append_fetch_requests =
-            [&](const Vec<lito::manifest::DeclaredDependency>& declarations)
-            -> PackageResult<empty> {
+            [&](slice<lito::manifest::DeclaredDependency> declarations) -> PackageResult<empty> {
             for (const auto& dependency : declarations) {
                 auto declaring_root = loaded.package.root.clone();
                 if (dependency.declaration_root.is_some()) {
@@ -1009,8 +1024,8 @@ public:
             }
             return Ok(empty {});
         };
-        rstd_try(append_fetch_requests(loaded.package.dependencies));
-        rstd_try(append_fetch_requests(loaded.package.dev_dependencies));
+        rstd_try(append_fetch_requests(loaded.package.dependencies.as_slice()));
+        rstd_try(append_fetch_requests(development_dependencies));
         for (const auto& dependency : loaded.package.runtime_dependencies) {
             auto declaring_root = loaded.package.root.clone();
             if (dependency.declaration_root.is_some()) {
@@ -1069,8 +1084,8 @@ public:
         }
 
         auto dev_dependencies =
-            Vec<ResolvedRequiredDependency>::with_capacity(loaded.package.dev_dependencies.len());
-        for (const auto& dependency : loaded.package.dev_dependencies) {
+            Vec<ResolvedRequiredDependency>::with_capacity(development_dependencies.len());
+        for (const auto& dependency : development_dependencies) {
             rstd_try(resolve_acquired(fetched_sources[source_offset++],
                                       dependency.source,
                                       loaded.package.name.as_str(),

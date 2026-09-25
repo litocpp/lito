@@ -945,6 +945,16 @@ supports = ["build"]
     ASSERT_TRUE(script_project.is_ok());
     auto manifest = lito::manifest::load_package_manifest(script_project->root.as_path());
     ASSERT_TRUE(manifest.is_ok());
+    manifest->dev_dependencies.push(lito::manifest::DeclaredDependency {
+        .name = "rstd-test"_Str,
+        .source =
+            lito::manifest::PackageDependencySource {
+                .resolution = lito::source::PackageSourceRequirement::Registry(
+                    None(),
+                    lito::registry::RegistryPackageName::parse("rstd-test"_str).unwrap(),
+                    lito::registry::VersionRequirement::parse("0.1.0"_str).unwrap()),
+            },
+    });
     auto package_view = lito::workspace::WorkspaceCatalog::single(rstd::move(manifest).unwrap());
     ASSERT_TRUE(package_view.is_ok());
     auto pin = lito::registry::RegistryReleasePin {
@@ -1005,6 +1015,8 @@ supports = ["build"]
     }
     ASSERT_NE(consumer, nullptr);
     ASSERT_NE(provider, nullptr);
+    EXPECT_TRUE(provider->dev_dependencies.is_empty());
+    EXPECT_EQ(provider->manifest.dev_dependencies.len(), usize(1));
     ASSERT_EQ(consumer->dependencies.len(), usize(1));
     ASSERT_TRUE(consumer->dependencies[usize {}].is_Script());
     const auto& script = consumer->dependencies[usize {}].as_Script().value;
@@ -1514,6 +1526,9 @@ path = "provider"
         { "test.cpp"_str, "auto main() -> int { return 0; }\n"_str },
         { "provider/lito.toml"_str, R"toml([package]
 name = "fixture-dev-pmacro-provider"
+version = "0.1.0"
+
+[dev-dependencies.unavailable-transitive-test]
 version = "0.1.0"
 
 [pmacro]
