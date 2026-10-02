@@ -28,6 +28,7 @@ sources = [
   "src/cache/scan.cpp",
   "src/condition.cpp",
   "src/command/bench.cpp",
+  "src/command/examples.cpp",
   "src/command/build.cpp",
   "src/command/clean.cpp",
   "src/command/format.cpp",

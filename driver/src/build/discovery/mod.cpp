@@ -102,6 +102,11 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
         }
         auto path = entry.path();
         if (type->is_dir()) {
+            auto manifest = lito::manifest::try_locate_manifest(path.as_path());
+            if (manifest.is_err())
+                return Err(cpp::SourceDiscoveryError::Message(
+                    rstd::format("cannot inspect nested package: {}", manifest.unwrap_err())));
+            if (manifest->is_some()) continue;
             auto nested = collect_format_directory(source_root, path.as_path(), entries);
             if (nested.is_err()) return nested;
             continue;
@@ -262,6 +267,7 @@ template<typename Plan>
 auto convention_import_owner(const cpp::PackageMetadata& package,
                              const Plan&                 plan,
                              cpp::TargetId               importer,
+                             const Vec<Option<String>>&  inferred_modules,
                              ref<str>                    logical_name,
                              FrontendAnalysisService&    analysis_service)
     -> BuildResult<Option<ImportOwner>> {
@@ -270,7 +276,10 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
     for (auto visible : plan.visible_targets[importer]) {
         const auto& target = package.targets[visible];
         if (target.source.discovery == lito::manifest::SourceDiscoveryMode::Explicit) continue;
-        auto exists = cpp::module_source_exists(target, logical_name);
+        auto inferred = inferred_modules[visible].is_some()
+                            ? Some(inferred_modules[visible]->as_str())
+                            : Option<ref<str>> {};
+        auto exists   = cpp::module_source_exists(target, logical_name, inferred);
         if (exists.is_err()) {
             return Err(BuildError::Discovery(cpp::SourceDiscoveryError::Message(
                 rstd::format("cannot inspect owner of module '{}': {}",
@@ -278,11 +287,12 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
                              rstd::move(exists).unwrap_err()))));
         }
         if (! *exists) continue;
-        const auto& module = package.targets[visible].source.module;
-        auto priority = module.is_some() && cpp::module_name_belongs(module->as_str(), logical_name)
+        auto module =
+            target.source.module.is_some() ? Some(target.source.module->as_str()) : inferred;
+        auto priority = module.is_some() && cpp::module_name_belongs(*module, logical_name)
                             ? module->size() + usize(1)
                             : usize {};
-        auto source   = cpp::module_source(package.targets[visible], logical_name);
+        auto source   = cpp::module_source(package.targets[visible], logical_name, inferred);
         if (source.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(source).unwrap_err()));
         }
@@ -492,23 +502,25 @@ auto discover_explicit_sources(const cpp::ResolvedTarget& target)
 
 auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
-    auto entries          = Vec<SourceEntry>::make();
-    auto module_discovery = false;
+    auto entries = Vec<SourceEntry>::make();
     for (const auto& target : manifest.targets) {
-        if (lito::manifest::package_target_source(target).discovery ==
-            lito::manifest::SourceDiscoveryMode::Module) {
-            module_discovery = true;
-            break;
-        }
-    }
-    if (module_discovery) {
-        auto source_directory = manifest.source_root.join(PathBuf::from("src"_str).as_path());
+        const auto& source = lito::manifest::package_target_source(target);
+        if (source.discovery != lito::manifest::SourceDiscoveryMode::Module) continue;
+        auto relative =
+            source.module_root.is_some() ? source.module_root->clone() : PathBuf::from("src"_str);
+        auto source_directory = manifest.source_root.join(relative.as_path());
         auto collected        = collect_format_directory(
             manifest.source_root.as_path(), source_directory.as_path(), entries);
         if (collected.is_err()) return Err(rstd::move(collected).unwrap_err());
     }
-    auto seen = StringSet::make();
-    for (const auto& entry : entries) seen.insert(entry.key.clone(), empty {});
+    auto seen   = StringSet::make();
+    auto unique = Vec<SourceEntry>::make();
+    for (auto& entry : entries) {
+        if (seen.contains_key(entry.key.as_str())) continue;
+        seen.insert(entry.key.clone(), empty {});
+        unique.push(rstd::move(entry));
+    }
+    entries           = rstd::move(unique);
     const auto append = [&](const PathBuf& declared) -> cpp::SourceDiscoveryResult<empty> {
         auto resolved = resolve_declared_source(manifest.source_root.as_path(), declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
@@ -532,6 +544,10 @@ auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
     }
     for (const auto& target : manifest.targets) {
         const auto& source = lito::manifest::package_target_source(target);
+        if (source.entry.is_some()) {
+            auto appended = append(*source.entry);
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
         for (const auto& declared : source.declared_sources) {
             auto appended = append(declared);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
@@ -673,9 +689,11 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                       usize                          max_in_flight,
                       bool                           finish,
                       SourceDiscoveryScope scope) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
-    auto discovered = Vec<Vec<cpp::ResolvedSource>>::with_capacity(package.targets.len());
+    auto discovered       = Vec<Vec<cpp::ResolvedSource>>::with_capacity(package.targets.len());
+    auto inferred_modules = Vec<Option<String>>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
+        inferred_modules.emplace_back();
     }
     auto queue      = Vec<DiscoveryCandidate>::make();
     auto path_names = StringMap::make();
@@ -943,7 +961,8 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                      actual)));
                     return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
-                if (candidate.source.expected_module->as_str() == target.source.module->as_str() &&
+                if (target.source.module.is_some() &&
+                    candidate.source.expected_module->as_str() == target.source.module->as_str() &&
                     ! cpp_facts->provided->is_interface) {
                     auto failed = Err(cpp::SourceDiscoveryError::Message(
                         rstd::format("primary module source '{}' is not an interface",
@@ -952,12 +971,20 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                 }
             }
 
+            if (candidate.source.module_context_required && target.source.module.is_none()) {
+                const auto& provided = *cpp_facts->provided;
+                if (provided.logical_name.as_str().contains(":"_str))
+                    return Err(BuildError::Message(
+                        "runnable entry must declare a primary module, not a partition"_Str));
+                inferred_modules[candidate.target] = Some(provided.logical_name.clone());
+            }
             if (cpp_facts != nullptr) {
                 for (const auto& imported : cpp_facts->required_modules) {
                     if (! imported.imported) continue;
                     auto owner = convention_import_owner(package,
                                                          plan,
                                                          candidate.target,
+                                                         inferred_modules,
                                                          imported.logical_name.as_str(),
                                                          analysis_service);
                     if (owner.is_err()) {

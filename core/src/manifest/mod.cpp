@@ -15,6 +15,7 @@ import :manifest.primitives;
 import :manifest.profile_schema;
 import :manifest.wire.document;
 import :manifest.convention;
+import :manifest.examples;
 import :manifest.target_schema;
 import :manifest.dependency_schema;
 import :manifest.build_tool_schema;
@@ -333,6 +334,10 @@ auto assemble_manifest_document(PathBuf                               root,
                                                    target_language));
     auto script =
         rstd_try(parse_script_package(rstd::move(input.script), root.as_path(), embedded_source));
+    auto examples = rstd_try(parse_runnable_targets(rstd::move(input.example),
+                                                    lito::package::PackageTargetKind::Example,
+                                                    "example"_str,
+                                                    target_language));
 
     auto compile_tests = Vec<CompileTestCase>::make();
     if (input.compile_test.is_some())
@@ -360,13 +365,22 @@ auto assemble_manifest_document(PathBuf                               root,
     const auto has_bins       = ! bins.is_empty();
     auto       targets        = Vec<PackageTargetManifest>::with_capacity(
         (has_library ? usize(1) : usize {}) + (has_plugin ? usize(1) : usize {}) +
-        (has_proc_macro ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len());
+        (has_proc_macro ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len() +
+        examples.len());
     if (library.is_some()) targets.push(rstd::move(library).unwrap());
     if (plugin.is_some()) targets.push(rstd::move(plugin).unwrap());
     if (proc_macro.is_some()) targets.push(rstd::move(proc_macro).unwrap());
     for (auto& target : bins) targets.push(rstd::move(target));
     for (auto& target : tests) targets.push(rstd::move(target));
     for (auto& target : benches) targets.push(rstd::move(target));
+    for (auto& target : examples) targets.push(rstd::move(target));
+    rstd_try(resolve_examples(root.as_path(),
+                              source_root->as_path(),
+                              targets,
+                              package_value.autoexamples,
+                              embedded_source));
+    rstd_try(
+        validate_target_layouts(targets, root.as_path(), source_root->as_path(), embedded_source));
     auto conventional =
         embedded_source.is_some()
             ? Ok(Vec<PackageTargetManifest>::make())
@@ -393,7 +407,7 @@ auto assemble_manifest_document(PathBuf                               root,
         script.is_none()) {
         return Err(ManifestSchemaError::Domain(
             "manifest must contain at least one of 'lib', 'plugin', 'pmacro', 'bin', 'test', "
-            "'bench' or 'compile-test', provide install.lua, or declare a script package"_Str));
+            "'bench', 'example' or 'compile-test', provide install.lua, or declare a script package"_Str));
     }
     auto has_benches = false;
     for (const auto& target : targets) {

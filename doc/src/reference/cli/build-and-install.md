@@ -1,4 +1,4 @@
-# `build` and `install`
+# `build`, `run`, and `install`
 
 ## Shared package/profile selection
 
@@ -37,7 +37,9 @@ lito build [OPTIONS]
 Additional options:
 
 - repeated `--target NAME` selects package targets;
-- `--out DIRECTORY` overrides the profile output root.
+- repeated `--example NAME` selects example targets instead of production targets;
+- `--examples` builds all examples in the selected packages;
+- `--build-dir DIRECTORY` overrides the profile output root.
 
 Examples:
 
@@ -49,6 +51,23 @@ lito build --target codegen --target viewer -j 8
 
 Without explicit package/target selection, Lito uses package defaults or workspace
 `default-members`. `build` uses the `debug` profile when `--profile` is omitted.
+
+`--example`, `--examples`, and `--target` are mutually exclusive selection modes. An example name
+shared by multiple selected packages requires `-p` to disambiguate. Example executables are stored
+under `examples/PACKAGE/`, separately from ordinary binaries and tests.
+
+## `lito run --example`
+
+```sh
+lito run -p ui-examples --example gallery -- --theme dark
+```
+
+Build and run exactly one example. The current run command requires `--example NAME`; it does not
+select ordinary binaries or a default executable. Build package/profile, source acquisition,
+`--build-dir`, job, feature, and reporting options are supported. Arguments after `--` are passed
+to the program, which runs in its package directory with inherited standard streams and the
+resolved runtime environment. A normal child exit code is returned unchanged; termination by a
+signal returns `128 + signal`. Cross-target execution without a configured runner is rejected.
 
 ## `lito install`
 

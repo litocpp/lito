@@ -26,6 +26,7 @@ enum class PackageSelectionPurpose
     Install,
     Test,
     Benchmark,
+    Example,
 };
 
 struct PackageSelection {
@@ -68,6 +69,7 @@ struct Impl<fmt::Display, lito::package::PackageSelectionPurpose>
         case lito::package::PackageSelectionPurpose::Install: name = "install"_str; break;
         case lito::package::PackageSelectionPurpose::Test: name = "test"_str; break;
         case lito::package::PackageSelectionPurpose::Benchmark: name = "benchmark"_str; break;
+        case lito::package::PackageSelectionPurpose::Example: name = "example"_str; break;
         }
         return formatter.write_str(name);
     }
@@ -100,6 +102,7 @@ auto selected_by_purpose(ProjectRootRole         role,
     if (purpose == PackageSelectionPurpose::Benchmark) {
         return kind == PackageTargetKind::Benchmark;
     }
+    if (purpose == PackageSelectionPurpose::Example) return kind == PackageTargetKind::Example;
     if (purpose == PackageSelectionPurpose::Documentation) {
         return kind == PackageTargetKind::Library;
     }
@@ -165,6 +168,7 @@ auto selected_closure(const ResolvedPackageGraph& graph,
     for (const auto& selected_target : selected_targets) {
         if (selected_target.kind == PackageTargetKind::Test ||
             selected_target.kind == PackageTargetKind::Benchmark ||
+            selected_target.kind == PackageTargetKind::Example ||
             selected_target.kind == PackageTargetKind::CompileTest) {
             development.insert(selected_target.package.clone(), empty {});
         }

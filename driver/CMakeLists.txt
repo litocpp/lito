@@ -53,6 +53,7 @@ target_sources(
          src/build/generated/error.cppm
          src/cache/error.cppm
          src/command/bench.cppm
+         src/command/run.cppm
          src/command/doc.cppm
          src/command/doc/event.cppm
          src/command/doc/request.cppm

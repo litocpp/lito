@@ -25,7 +25,8 @@ auto target_output_kind(cpp::ArtifactKind kind) noexcept -> Option<BuildArtifact
     }
     if (kind == cpp::ArtifactKind::SharedLibrary) return Some(BuildArtifactKind::SharedLibrary);
     if (kind == cpp::ArtifactKind::Executable || kind == cpp::ArtifactKind::TestExecutable ||
-        kind == cpp::ArtifactKind::BenchmarkExecutable) {
+        kind == cpp::ArtifactKind::BenchmarkExecutable ||
+        kind == cpp::ArtifactKind::ExampleExecutable) {
         return Some(BuildArtifactKind::Executable);
     }
     return None();
@@ -48,6 +49,9 @@ auto target_output_path(const BuildLayout& layout, const cpp::TargetSpec& target
     }
     if (target.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
         return layout.benchmark(target.id, target.artifact_name.as_str());
+    }
+    if (target.artifact_kind == cpp::ArtifactKind::ExampleExecutable) {
+        return layout.example(target.id, target.artifact_name.as_str());
     }
     return layout.executable(target.id, target.artifact_name.as_str());
 }

@@ -81,6 +81,7 @@ auto resolve_features(ResolvedPackageGraph&       graph,
             if (target.package.as_str() != name) continue;
             if (target.kind == PackageTargetKind::Test ||
                 target.kind == PackageTargetKind::Benchmark ||
+                target.kind == PackageTargetKind::Example ||
                 target.kind == PackageTargetKind::CompileTest) {
                 return true;
             }

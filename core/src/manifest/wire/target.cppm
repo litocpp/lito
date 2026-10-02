@@ -19,11 +19,14 @@ enum class TargetKind
     Module,
     Binary,
     Test,
+    Example,
     Benchmark
 };
 
 struct TargetSource {
     Option<String>             module;
+    Option<String>             path;
+    Option<String>             source_root;
     Option<Vec<String>>        sources;
     Option<Vec<String>>        source_groups;
     Vec<TargetSourceCondition> when;
@@ -48,6 +51,7 @@ using LibraryTarget   = Target<TargetKind::Library>;
 using ModuleTarget    = Target<TargetKind::Module>;
 using BinaryTarget    = Target<TargetKind::Binary>;
 using TestTarget      = Target<TargetKind::Test>;
+using ExampleTarget   = Target<TargetKind::Example>;
 using BenchmarkTarget = Target<TargetKind::Benchmark>;
 
 } // namespace lito::manifest::wire
@@ -62,6 +66,8 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
         -> Result<lito::manifest::wire::Target<Kind>, typename Deserializer::error_type> {
         using TargetKind   = lito::manifest::wire::TargetKind;
         auto module        = serde::OptionalField<String>("module"_str);
+        auto path          = serde::OptionalField<String>("path"_str);
+        auto source_root   = serde::OptionalField<String>("source-root"_str);
         auto sources       = serde::OptionalField<Vec<String>>("sources"_str);
         auto source_groups = serde::OptionalField<Vec<String>>("source-groups"_str);
         auto when =
@@ -70,6 +76,8 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
             return serde::deserialize_record(deserializer,
                                              serde::UnknownFieldPolicy::Reject,
                                              module,
+                                             path,
+                                             source_root,
                                              sources,
                                              source_groups,
                                              when,
@@ -100,6 +108,12 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
                     rstd_try(read(name, link_stdlib, host_tool, resources));
                     result.host_tool = host_tool.take();
                     result.resources = resources.take();
+                } else if constexpr (Kind == TargetKind::Example) {
+                    auto resources =
+                        serde::OptionalField<Vec<lito::manifest::wire::RuntimeResource>>(
+                            "resources"_str);
+                    rstd_try(read(name, link_stdlib, resources));
+                    result.resources = resources.take();
                 } else if constexpr (Kind == TargetKind::Test || Kind == TargetKind::Benchmark) {
                     auto attach = serde::OptionalField<Vec<lito::manifest::wire::TargetAttachment>>(
                         "attach"_str);
@@ -113,6 +127,8 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
             result.name = rstd_try(name.take(deserializer));
         }
         result.module        = module.take();
+        result.path          = path.take();
+        result.source_root   = source_root.take();
         result.sources       = sources.take();
         result.source_groups = source_groups.take();
         result.when          = when.take();

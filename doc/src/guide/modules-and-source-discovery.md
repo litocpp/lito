@@ -106,6 +106,26 @@ auto main() -> int {
 
 Use an explicit `.cpp` source when a runnable entry intentionally has no named module.
 
+Targets may override the entry with `path` and the module discovery directory with `source-root`.
+Both paths are relative to the package source root. They do not change the package's identity,
+resource paths, or dependency visibility. Existing targets keep their `src/` defaults; examples
+default to the entry's parent directory. Runnable entries can omit `module`: the same entry scan
+supplies the root module name used for subsequent import discovery.
+
+```toml
+[[example]]
+name = "game2048"
+path = "2048/main.cppm"
+source-root = "2048"
+```
+
+For an entry declaring `export module demo.game;`, `import :view;` resolves to `2048/view.cppm`
+or `2048/view/mod.cppm`. Keep shared support in a library; game-specific partitions must belong to
+the game's module rather than the shared library's primary module.
+
+`path` and `source-root` cannot be combined with explicit `sources`, `source-groups`, or `when`.
+Paths must stay within the package source root and must not cross nested package boundaries.
+
 ## Named modules and partitions
 
 A separate named module uses dots as part of its full name:

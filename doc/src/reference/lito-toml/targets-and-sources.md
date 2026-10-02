@@ -73,6 +73,36 @@ With discovery, the runnable entry is `src/main.cppm`. When the entry imports th
 declared root module, that root module uses `src/mod.cppm`. A convention-discovered `main.cppm`
 must itself declare a named module. If the target declares `module`, the provided name must match.
 
+## `[[example]]`
+
+Examples are package-owned executables, separate from normal binaries. They accept `name`,
+`module`, `path`, `source-root`, `sources`, `source-groups`, `when`, `link-stdlib`, and `resources`.
+They use the package's library, ordinary dependencies, and development dependencies. They do not
+accept `attach`, `host-tool`, or library output settings.
+
+```toml
+[[example]]
+name = "gallery"
+path = "gallery/main.cppm"
+source-root = "gallery"
+link-stdlib = false
+```
+
+By default, Lito discovers `examples/NAME.cppm`, `.cpp`, `.cc`, or `.cxx`, and
+`examples/NAME/main` with those extensions. A directory without a main entry is not a target.
+Nested packages are not traversed. Set `[package].autoexamples = false` to disable automatic
+discovery while keeping explicit declarations. A same-name explicit declaration overrides an
+automatic target; without an explicit path or source list, it uses the unique conventional entry.
+Ambiguous file/directory names and multiple main entries are errors.
+
+Module examples follow imports from their entry, with its parent directory as the default module
+source root. Ordinary C++ entries are single-source targets; use `sources` for multiple translation
+units. A virtual workspace cannot directly own example targets.
+
+Use `lito build --example gallery`, `lito build --examples`, or `lito run --example gallery`.
+Normal build, test, install, and documentation selection do not include examples. Examples from
+dependency packages are not built implicitly.
+
 ## `[[test]]` and `[[bench]]`
 
 Tests and benchmarks accept the runnable fields `name`, `module`, `sources`, `source-groups`, `when`,

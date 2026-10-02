@@ -35,6 +35,8 @@ struct ConditionalTargetSources {
 
 struct TargetSourceManifest {
     Option<String>                module;
+    Option<PathBuf>               entry;
+    Option<PathBuf>               module_root;
     SourceDiscoveryMode           discovery { SourceDiscoveryMode::Explicit };
     Vec<PathBuf>                  declared_sources;
     Vec<String>                   source_groups;
@@ -82,6 +84,9 @@ class PackageTargetManifest {
               (Test,
                (String name; TargetSourceManifest source; bool link_stdlib;
                 Vec<TargetAttachmentManifest>                  attachments;)),
+              (Example,
+               (String name; TargetSourceManifest source; bool link_stdlib;
+                Vec<RuntimeResourceManifest>                   resources;)),
               (Benchmark,
                (String name; TargetSourceManifest source; bool link_stdlib;
                 Vec<TargetAttachmentManifest>                  attachments;)))
@@ -94,6 +99,7 @@ auto package_target_kind(const PackageTargetManifest& target) noexcept
     if (target.is_ProcMacro()) return lito::package::PackageTargetKind::ProcMacro;
     if (target.is_Binary()) return lito::package::PackageTargetKind::Binary;
     if (target.is_Test()) return lito::package::PackageTargetKind::Test;
+    if (target.is_Example()) return lito::package::PackageTargetKind::Example;
     return lito::package::PackageTargetKind::Benchmark;
 }
 
@@ -103,6 +109,7 @@ auto package_target_name(const PackageTargetManifest& target) noexcept -> ref<st
     if (target.is_ProcMacro()) return target.as_ProcMacro().name.as_str();
     if (target.is_Binary()) return target.as_Binary().name.as_str();
     if (target.is_Test()) return target.as_Test().name.as_str();
+    if (target.is_Example()) return target.as_Example().name.as_str();
     return target.as_Benchmark().name.as_str();
 }
 
@@ -113,6 +120,7 @@ auto package_target_source(const PackageTargetManifest& target) noexcept
     if (target.is_ProcMacro()) return target.as_ProcMacro().source;
     if (target.is_Binary()) return target.as_Binary().source;
     if (target.is_Test()) return target.as_Test().source;
+    if (target.is_Example()) return target.as_Example().source;
     return target.as_Benchmark().source;
 }
 
@@ -122,6 +130,7 @@ auto package_target_source(PackageTargetManifest& target) noexcept -> TargetSour
     if (target.is_ProcMacro()) return target.as_ProcMacro().source;
     if (target.is_Binary()) return target.as_Binary().source;
     if (target.is_Test()) return target.as_Test().source;
+    if (target.is_Example()) return target.as_Example().source;
     return target.as_Benchmark().source;
 }
 
@@ -148,6 +157,7 @@ auto package_target_linker_options(const PackageTargetManifest& target) noexcept
 auto package_target_links_stdlib(const PackageTargetManifest& target) noexcept -> bool {
     if (target.is_Binary()) return target.as_Binary().link_stdlib;
     if (target.is_Test()) return target.as_Test().link_stdlib;
+    if (target.is_Example()) return target.as_Example().link_stdlib;
     if (target.is_Benchmark()) return target.as_Benchmark().link_stdlib;
     return true;
 }
@@ -171,6 +181,9 @@ auto package_target_attachments(const PackageTargetManifest& target) noexcept
 
 auto package_target_resources(const PackageTargetManifest& target) noexcept
     -> Option<ref<Vec<RuntimeResourceManifest>>> {
+    if (target.is_Example())
+        return Some(ref<Vec<RuntimeResourceManifest>>::from_raw_parts(
+            rstd::addressof(target.as_Example().resources)));
     if (! target.is_Binary()) return None();
     return Some(ref<Vec<RuntimeResourceManifest>>::from_raw_parts(
         rstd::addressof(target.as_Binary().resources)));

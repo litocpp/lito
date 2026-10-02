@@ -207,6 +207,8 @@ auto build_link_target(const BuildRequest&                 request,
         executable_path = layout.test(target_spec.id, target_spec.artifact_name.as_str());
     } else if (target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
         executable_path = layout.benchmark(target_spec.id, target_spec.artifact_name.as_str());
+    } else if (target_spec.artifact_kind == cpp::ArtifactKind::ExampleExecutable) {
+        executable_path = layout.example(target_spec.id, target_spec.artifact_name.as_str());
     }
     if (output_override.is_some()) executable_path = rstd::move(output_override).unwrap();
 
@@ -732,7 +734,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         const auto kind = metadata.targets[target].artifact_kind;
         if (kind == cpp::ArtifactKind::SharedLibrary || kind == cpp::ArtifactKind::Executable ||
             kind == cpp::ArtifactKind::TestExecutable ||
-            kind == cpp::ArtifactKind::BenchmarkExecutable) {
+            kind == cpp::ArtifactKind::BenchmarkExecutable ||
+            kind == cpp::ArtifactKind::ExampleExecutable) {
             needs_strip_tool = true;
             break;
         }

@@ -68,6 +68,13 @@ auto try_manifest_path(ref<rstd::path::Path> directory) -> ManifestLocatorResult
 export namespace lito::manifest
 {
 
+auto is_manifest_filename(ref<str> name) noexcept -> bool {
+    for (auto candidate : MANIFEST_NAMES) {
+        if (candidate == name) return true;
+    }
+    return false;
+}
+
 struct ManifestLocation {
     PathBuf directory;
     PathBuf manifest;

@@ -20,6 +20,7 @@ import :manifest.wire;
 import :manifest.wire.target;
 import :manifest.wire.common;
 import :source.tree;
+import :manifest.locator;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -325,7 +326,24 @@ auto parse_target_source(lito::manifest::wire::TargetSource value,
         return Err(ManifestSchemaError::Domain(
             rstd::format("{}.module must be a valid module name", context)));
     }
-    const auto has_sources      = value.sources.is_some();
+    const auto has_sources = value.sources.is_some();
+    if ((value.path.is_some() || value.source_root.is_some()) &&
+        (has_sources || value.source_groups.is_some() || ! value.when.is_empty())) {
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{}.path and source-root cannot be combined with sources, source-groups or when",
+            context)));
+    }
+    auto layout_path = [&](Option<String> text,
+                           ref<str>       key) -> ManifestSchemaResult<Option<PathBuf>> {
+        if (text.is_none()) return Ok(None());
+        auto result = rstd_try(relative_path(rstd::move(*text), key));
+        if (! result.as_path().is_safe_relative())
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.{} must stay within the package source root", context, key)));
+        return Ok(Some(rstd::move(result)));
+    };
+    auto entry       = rstd_try(layout_path(rstd::move(value.path), "path"_str));
+    auto module_root = rstd_try(layout_path(rstd::move(value.source_root), "source-root"_str));
     const auto module_discovery = ! has_sources && value.source_groups.is_none();
     auto       sources          = Vec<PathBuf>::make();
     if (has_sources) {
@@ -355,12 +373,83 @@ auto parse_target_source(lito::manifest::wire::TargetSource value,
         return Err(ManifestSchemaError::Domain(rstd::format("{}.module is required", context)));
     }
     return Ok(TargetSourceManifest {
-        .module    = rstd::move(module),
+        .module      = rstd::move(module),
+        .entry       = rstd::move(entry),
+        .module_root = rstd::move(module_root),
         .discovery = module_discovery ? SourceDiscoveryMode::Module : SourceDiscoveryMode::Explicit,
         .declared_sources = rstd::move(sources),
         .source_groups    = rstd::move(groups),
         .conditions       = rstd::move(conditions),
     });
+}
+
+auto validate_target_layouts(const Vec<PackageTargetManifest>&     targets,
+                             ref<rstd::path::Path>                 package_root,
+                             ref<rstd::path::Path>                 source_root,
+                             Option<ref<lito::source::SourceTree>> embedded)
+    -> ManifestSchemaResult<empty> {
+    auto validate = [&](const PathBuf& relative, bool directory) -> ManifestSchemaResult<empty> {
+        if (embedded.is_some()) {
+            if (relative.as_path().to_str() == Some("."_str) && directory) return Ok(empty {});
+            for (const auto& item : (**embedded).entries()) {
+                const auto path     = item.path().as_path();
+                auto       filename = path.file_name()->to_str();
+                if (item.kind() != lito::source::SourceEntryKind::File || filename.is_none() ||
+                    ! is_manifest_filename(*filename))
+                    continue;
+                auto owner = path.parent();
+                if (owner.is_some() && ! owner->is_empty() &&
+                    relative.as_path().starts_with(*owner))
+                    return Err(ManifestSchemaError::Domain(rstd::format(
+                        "target path '{}' crosses a nested package boundary", relative.as_path())));
+            }
+            for (const auto& item : (**embedded).entries()) {
+                if (item.path().as_path() != relative.as_path()) continue;
+                if ((item.kind() == lito::source::SourceEntryKind::Directory) == directory)
+                    return Ok(empty {});
+            }
+            if (directory && (**embedded).is_directory(relative.as_path())) return Ok(empty {});
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("target {} '{}' is missing from the source tree",
+                             directory ? "source-root"_str : "path"_str,
+                             relative.as_path())));
+        }
+        auto requested = PathBuf::from(source_root).join(relative.as_path());
+        auto resolved  = rstd_try(canonical_existing(requested.as_path(), "target layout"_str));
+        if (! resolved.as_path().starts_with(source_root))
+            return Err(ManifestSchemaError::Domain(rstd::format(
+                "target path '{}' resolves outside package source root", relative.as_path())));
+        auto metadata = rstd::fs::metadata(resolved.as_path());
+        if (metadata.is_err())
+            return Err(ManifestSchemaError::Io("target layout"_Str,
+                                               "inspect"_Str,
+                                               resolved.clone(),
+                                               rstd::move(metadata).unwrap_err()));
+        if (directory ? ! metadata->is_dir() : ! metadata->is_file())
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("target path '{}' must be a {}",
+                             relative.as_path(),
+                             directory ? "directory"_str : "file"_str)));
+        auto cursor = directory ? Some(resolved.as_path()) : resolved.as_path().parent();
+        while (cursor.is_some() && cursor->starts_with(source_root) && *cursor != source_root) {
+            if (! package_root.starts_with(*cursor)) {
+                auto manifest = try_locate_manifest(*cursor);
+                if (manifest.is_err())
+                    return Err(rstd::into<ManifestSchemaError>(rstd::move(manifest).unwrap_err()));
+                if (manifest->is_some())
+                    return Err(ManifestSchemaError::Domain(rstd::format(
+                        "target path '{}' crosses a nested package boundary", relative.as_path())));
+            }
+            cursor = cursor->parent();
+        }
+        return Ok(empty {});
+    };
+    for (const auto& target : targets) {
+        const auto& source = package_target_source(target);
+        if (source.entry.is_some()) rstd_try(validate(*source.entry, false));
+        if (source.module_root.is_some()) rstd_try(validate(*source.module_root, true));
+    }
+    return Ok(empty {});
 }
 
 auto parse_source_groups(Option<wire::SourceGroups> value)
@@ -598,6 +687,10 @@ auto parse_runnable_targets(Option<Vec<T>>                   value,
                                                       link_stdlib,
                                                       host_tool,
                                                       rstd::move(resources)));
+        } else if (kind == lito::package::PackageTargetKind::Example) {
+            auto resources = rstd_try(parse_runtime_resources(rstd::move(wire.resources), path));
+            result.push(PackageTargetManifest::Example(
+                rstd::move(name), rstd::move(source), link_stdlib, rstd::move(resources)));
         } else if (kind == lito::package::PackageTargetKind::Benchmark) {
             auto attachments = rstd_try(parse_attachments(rstd::move(wire.attach), path));
             result.push(PackageTargetManifest::Benchmark(
@@ -618,15 +711,7 @@ struct ResolvedIncludeDirectories {
 
 auto source_tree_directory(const lito::source::SourceTree& tree, ref<rstd::path::Path> path)
     -> bool {
-    auto text = path.to_str();
-    if (text.is_none()) return false;
-    for (const auto& entry : tree.entries()) {
-        if (entry.path().as_str() == *text &&
-            entry.kind() == lito::source::SourceEntryKind::Directory) {
-            return true;
-        }
-    }
-    return false;
+    return tree.is_directory(path);
 }
 
 auto resolve_package_include_directory(PathBuf                               path,

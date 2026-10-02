@@ -251,6 +251,7 @@
         "name"
       ],
       "properties": {
+        "autoexamples": { "type": "boolean", "default": true },
         "name": {
           "$ref": "#/definitions/packageName"
         },
@@ -299,6 +300,12 @@
       }
     },
     "targetSources": {
+      "allOf": [
+        {
+          "if": { "anyOf": [{ "required": ["path"] }, { "required": ["source-root"] }] },
+          "then": { "not": { "anyOf": [{ "required": ["sources"] }, { "required": ["source-groups"] }, { "required": ["when"] }] } }
+        }
+      ],
       "oneOf": [
         {
           "$ref": "#/definitions/explicitSources"
@@ -374,6 +381,8 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
         "sources": {
           "$ref": "#/definitions/nonEmptyPathArray"
         },
@@ -415,6 +424,8 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
         "sources": {
           "$ref": "#/definitions/nonEmptyPathArray"
         },
@@ -438,6 +449,8 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
         "sources": {
           "$ref": "#/definitions/nonEmptyPathArray"
         },
@@ -467,6 +480,8 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
         "sources": {
           "$ref": "#/definitions/pathArray"
         },
@@ -522,6 +537,54 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
+        "sources": {
+          "$ref": "#/definitions/pathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
+        },
+        "link-stdlib": {
+          "type": "boolean",
+          "default": true
+        },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/runtimeResource"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/targetSources"
+        }
+      ],
+      "additionalProperties": false
+    },
+    "exampleTarget": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/packageName"
+        },
+        "module": {
+          "$ref": "#/definitions/moduleName"
+        },
+        "path": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "source-root": {
+          "$ref": "#/definitions/relativePath"
+        },
         "sources": {
           "$ref": "#/definitions/pathArray"
         },
@@ -575,6 +638,8 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
         "sources": {
           "$ref": "#/definitions/pathArray"
         },
@@ -2246,6 +2311,11 @@
           "items": {
             "$ref": "#/definitions/test"
           }
+        },
+        "example": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/exampleTarget" }
         },
         "bench": {
           "type": "array",

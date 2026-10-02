@@ -456,6 +456,19 @@ auto require_include_directories(
 auto validate_references(const FileSetState& state) -> PackageFileSetResult<empty> {
     for (const auto& target : state.manifest.targets) {
         const auto& source = package_target_source(target);
+        if (source.entry.is_some()) {
+            rstd_try(require_relative(state,
+                                      state.manifest.source_root.as_path(),
+                                      source.entry->as_path(),
+                                      "target entry"_str));
+        }
+        if (source.module_root.is_some() &&
+            source.module_root->as_path().to_str() != Some("."_str)) {
+            rstd_try(require_relative(state,
+                                      state.manifest.source_root.as_path(),
+                                      source.module_root->as_path(),
+                                      "module source root"_str));
+        }
         for (const auto& path : source.declared_sources) {
             rstd_try(require_relative(
                 state, state.manifest.source_root.as_path(), path.as_path(), "target source"_str));

@@ -185,6 +185,7 @@ auto parse_package_target_kind(ref<str> value)
     if (value == "bin"_str) return Ok(lito::package::PackageTargetKind::Binary);
     if (value == "test"_str) return Ok(lito::package::PackageTargetKind::Test);
     if (value == "bench"_str) return Ok(lito::package::PackageTargetKind::Benchmark);
+    if (value == "example"_str) return Ok(lito::package::PackageTargetKind::Example);
     if (value == "attachment"_str) {
         return Ok(lito::package::PackageTargetKind::Attachment);
     }
@@ -203,6 +204,7 @@ auto artifact_kind_text(cpp::ArtifactKind kind) -> ref<str> {
     case cpp::ArtifactKind::Executable: return "executable"_str;
     case cpp::ArtifactKind::TestExecutable: return "test-executable"_str;
     case cpp::ArtifactKind::BenchmarkExecutable: return "benchmark-executable"_str;
+    case cpp::ArtifactKind::ExampleExecutable: return "example-executable"_str;
     case cpp::ArtifactKind::CompileTest: return "compile-test"_str;
     }
     return "unknown"_str;
@@ -219,6 +221,7 @@ auto parse_artifact_kind(ref<str> value) -> BuildProductResult<cpp::ArtifactKind
     if (value == "executable"_str) return Ok(cpp::ArtifactKind::Executable);
     if (value == "test-executable"_str) return Ok(cpp::ArtifactKind::TestExecutable);
     if (value == "benchmark-executable"_str) return Ok(cpp::ArtifactKind::BenchmarkExecutable);
+    if (value == "example-executable"_str) return Ok(cpp::ArtifactKind::ExampleExecutable);
     if (value == "compile-test"_str) return Ok(cpp::ArtifactKind::CompileTest);
     return Err(BuildProductError::Message(
         rstd::format("unknown build product artifact kind '{}'", value)));

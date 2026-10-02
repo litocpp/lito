@@ -481,6 +481,12 @@ public:
             join(join(output_.as_path(), "bench"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
+    auto example(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
+        -> PathBuf {
+        auto directory =
+            join(join(output_.as_path(), "examples"_str).as_path(), target.package.as_str());
+        return directory.join(PathBuf::from(artifact_name).as_path());
+    }
 };
 
 } // namespace lito

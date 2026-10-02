@@ -19,7 +19,8 @@ namespace lito::cpp
 auto runnable_target(lito::package::PackageTargetKind kind) -> bool {
     return kind == lito::package::PackageTargetKind::Binary ||
            kind == lito::package::PackageTargetKind::Test ||
-           kind == lito::package::PackageTargetKind::Benchmark;
+           kind == lito::package::PackageTargetKind::Benchmark ||
+           kind == lito::package::PackageTargetKind::Example;
 }
 
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
@@ -70,15 +71,21 @@ auto relative_module_path(ref<str> logical_name, usize start) -> ModuleResult<St
     return Ok(rstd::move(relative));
 }
 
-auto canonical_source_root(ref<rstd::path::Path> package_source_root) -> ModuleResult<PathBuf> {
-    auto requested = PathBuf::from(package_source_root).join(PathBuf::from("src"_str).as_path());
+auto canonical_source_root(const ResolvedTarget& target) -> ModuleResult<PathBuf> {
+    auto package_source_root = target.source_root.as_path();
+    auto relative  = target.source.module_root.is_some() ? target.source.module_root->clone()
+                                                         : PathBuf::from("src"_str);
+    auto requested = PathBuf::from(package_source_root).join(relative.as_path());
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
         return Err(ModuleError::Io("resolve source root"_Str,
                                    PathBuf::from(requested.as_path()),
                                    rstd::move(canonical).unwrap_err()));
     }
-    auto root     = rstd::move(canonical).unwrap();
+    auto root = rstd::move(canonical).unwrap();
+    if (! root.as_path().starts_with(package_source_root))
+        return Err(
+            ModuleError::Convention("module source root resolves outside package source root"_Str));
     auto metadata = rstd::fs::metadata(root.as_path());
     if (metadata.is_err() || ! metadata->is_dir()) {
         return Err(ModuleError::Convention(
@@ -87,11 +94,12 @@ auto canonical_source_root(ref<rstd::path::Path> package_source_root) -> ModuleR
     return Ok(rstd::move(root));
 }
 
-auto canonical_candidate(ref<rstd::path::Path> package_source_root,
+auto canonical_candidate(const ResolvedTarget& target,
                          ref<rstd::path::Path> source_root,
                          ref<rstd::path::Path> requested,
                          Option<String>        expected) -> ModuleResult<ResolvedSource> {
-    auto canonical = rstd::fs::canonicalize(requested);
+    auto package_source_root = target.source_root.as_path();
+    auto canonical           = rstd::fs::canonicalize(requested);
     if (canonical.is_err()) {
         return Err(ModuleError::Io("resolve convention source"_Str,
                                    PathBuf::from(requested),
@@ -103,6 +111,20 @@ auto canonical_candidate(ref<rstd::path::Path> package_source_root,
     if (source_relative.is_none() || package_relative.is_none() || (*source_relative).is_empty()) {
         return Err(ModuleError::Convention(rstd::format(
             "module convention source '{}' resolves outside package source root", requested)));
+    }
+    auto parent = resolved.as_path().parent();
+    while (parent.is_some() && parent->starts_with(package_source_root) &&
+           *parent != package_source_root) {
+        if (! target.root.as_path().starts_with(*parent)) {
+            auto manifest = lito::manifest::try_locate_manifest(*parent);
+            if (manifest.is_err())
+                return Err(ModuleError::Convention(rstd::format(
+                    "cannot inspect source package boundary: {}", manifest.unwrap_err())));
+            if (manifest->is_some())
+                return Err(ModuleError::Convention(rstd::format(
+                    "module source '{}' crosses a nested package boundary", requested)));
+        }
+        parent = parent->parent();
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
@@ -140,19 +162,25 @@ auto file_exists(ref<rstd::path::Path> path) -> ModuleResult<bool> {
     return Ok(metadata->is_file());
 }
 
-auto root_module_source(const ResolvedTarget& target) -> ModuleResult<ResolvedSource> {
-    if (target.source.module.is_none()) {
+auto root_module_source(const ResolvedTarget& target, Option<ref<str>> inferred = None())
+    -> ModuleResult<ResolvedSource> {
+    auto module = target.source.module.is_some() ? Some(target.source.module->as_str()) : inferred;
+    if (module.is_none()) {
         return Err(ModuleError::Convention("module discovery requires target.module"_Str));
     }
-    auto source_root_result = canonical_source_root(target.source_root.as_path());
+    auto source_root_result = canonical_source_root(target);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
     auto relative    = runnable_target(target.id.kind) ? "mod.cppm"_str : "lib.cppm"_str;
     auto requested   = source_root.join(PathBuf::from(relative).as_path());
-    return canonical_candidate(target.source_root.as_path(),
-                               source_root.as_path(),
+    if (! runnable_target(target.id.kind) && target.source.entry.is_some())
+        requested = target.source_root.join(target.source.entry->as_path());
+    return canonical_candidate(target,
+                               target.source.entry.is_some() && ! runnable_target(target.id.kind)
+                                   ? target.source_root.as_path()
+                                   : source_root.as_path(),
                                requested.as_path(),
-                               Some(target.source.module->clone()));
+                               Some(String::make(*module)));
 }
 
 auto namespace_relative_path(ref<str> root_module, ref<str> logical_name) -> ModuleResult<String> {
@@ -226,10 +254,8 @@ auto exact_relative_module_source(const ResolvedTarget& target,
     auto has_direct = file_exists(direct.as_path());
     if (has_direct.is_err()) return Err(rstd::move(has_direct).unwrap_err());
     if (*has_direct) {
-        auto resolved = canonical_candidate(target.source_root.as_path(),
-                                            source_root,
-                                            direct.as_path(),
-                                            Some(String::make(logical_name)));
+        auto resolved = canonical_candidate(
+            target, source_root, direct.as_path(), Some(String::make(logical_name)));
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         return Ok(Some(rstd::move(resolved).unwrap()));
     }
@@ -240,10 +266,8 @@ auto exact_relative_module_source(const ResolvedTarget& target,
     auto has_module = file_exists(requested.as_path());
     if (has_module.is_err()) return Err(rstd::move(has_module).unwrap_err());
     if (! *has_module) return Ok(None());
-    auto resolved = canonical_candidate(target.source_root.as_path(),
-                                        source_root,
-                                        requested.as_path(),
-                                        Some(String::make(logical_name)));
+    auto resolved = canonical_candidate(
+        target, source_root, requested.as_path(), Some(String::make(logical_name)));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     return Ok(Some(rstd::move(resolved).unwrap()));
 }
@@ -281,16 +305,16 @@ auto module_relative_path(ref<str> root_module, ref<str> logical_name) -> Module
 
 auto module_entry_source(const ResolvedTarget& target) -> ModuleResult<ResolvedSource> {
     if (runnable_target(target.id.kind)) {
-        auto source_root_result = canonical_source_root(target.source_root.as_path());
+        auto source_root_result = canonical_source_root(target);
         if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
         auto source_root = rstd::move(source_root_result).unwrap();
         auto requested   = source_root.join(PathBuf::from("main.cppm"_str).as_path());
-        auto expected    = Option<String> {};
+        if (target.source.entry.is_some())
+            requested = target.source_root.join(target.source.entry->as_path());
+        auto expected = Option<String> {};
         if (target.source.module.is_some()) expected = Some(target.source.module->clone());
-        auto source = canonical_candidate(target.source_root.as_path(),
-                                          source_root.as_path(),
-                                          requested.as_path(),
-                                          rstd::move(expected));
+        auto source = canonical_candidate(
+            target, target.source_root.as_path(), requested.as_path(), rstd::move(expected));
         if (source.is_err()) return source;
         source->module_context_required = true;
         return source;
@@ -298,50 +322,55 @@ auto module_entry_source(const ResolvedTarget& target) -> ModuleResult<ResolvedS
     return root_module_source(target);
 }
 
-auto module_source_exists(const ResolvedTarget& target, ref<str> logical_name)
-    -> ModuleResult<bool> {
-    if (target.source.module.is_none()) return Ok(false);
-    auto source_root_result = canonical_source_root(target.source_root.as_path());
+auto module_source_exists(const ResolvedTarget& target,
+                          ref<str>              logical_name,
+                          Option<ref<str>>      inferred = None()) -> ModuleResult<bool> {
+    auto module = target.source.module.is_some() ? Some(target.source.module->as_str()) : inferred;
+    if (module.is_none()) return Ok(false);
+    auto source_root_result = canonical_source_root(target);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
-    if (logical_name == target.source.module->as_str()) {
+    if (logical_name == *module) {
+        if (! runnable_target(target.id.kind) && target.source.entry.is_some())
+            return file_exists(target.source_root.join(target.source.entry->as_path()).as_path());
         auto relative = runnable_target(target.id.kind) ? "mod.cppm"_str : "lib.cppm"_str;
         return file_exists(source_root.join(PathBuf::from(relative).as_path()).as_path());
     }
-    auto relative = module_relative_path(target.source.module->as_str(), logical_name);
+    auto relative = module_relative_path(*module, logical_name);
     if (relative.is_err()) return Ok(false);
     auto exists = relative_source_exists(source_root.as_path(), relative->as_str());
-    if (exists.is_err() || *exists ||
-        ! module_name_belongs(target.source.module->as_str(), logical_name)) {
+    if (exists.is_err() || *exists || ! module_name_belongs(*module, logical_name)) {
         return exists;
     }
 
-    auto fallback = namespace_relative_path(target.source.module->as_str(), logical_name);
+    auto fallback = namespace_relative_path(*module, logical_name);
     if (fallback.is_err() || fallback->as_str() == relative->as_str()) return exists;
     return relative_source_exists(source_root.as_path(), fallback->as_str());
 }
 
-auto module_source(const ResolvedTarget& target, ref<str> logical_name)
-    -> ModuleResult<ResolvedSource> {
-    if (target.source.module.is_none()) {
+auto module_source(const ResolvedTarget& target,
+                   ref<str>              logical_name,
+                   Option<ref<str>>      inferred = None()) -> ModuleResult<ResolvedSource> {
+    auto module = target.source.module.is_some() ? Some(target.source.module->as_str()) : inferred;
+    if (module.is_none()) {
         return Err(ModuleError::Convention(rstd::format("target '{}::{}' does not declare a module",
                                                         target.id.package.as_str(),
                                                         target.id.name.as_str())));
     }
-    if (logical_name == target.source.module->as_str()) return root_module_source(target);
+    if (logical_name == *module) return root_module_source(target, module);
 
-    auto source_root_result = canonical_source_root(target.source_root.as_path());
+    auto source_root_result = canonical_source_root(target);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
-    auto relative    = module_relative_path(target.source.module->as_str(), logical_name);
+    auto relative    = module_relative_path(*module, logical_name);
     if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
     auto source =
         relative_module_source(target, source_root.as_path(), logical_name, relative->as_str());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     if (source->is_some()) return Ok(rstd::move(**source));
 
-    if (module_name_belongs(target.source.module->as_str(), logical_name)) {
-        auto fallback = namespace_relative_path(target.source.module->as_str(), logical_name);
+    if (module_name_belongs(*module, logical_name)) {
+        auto fallback = namespace_relative_path(*module, logical_name);
         if (fallback.is_err()) return Err(rstd::move(fallback).unwrap_err());
         if (fallback->as_str() != relative->as_str()) {
             source = relative_module_source(
@@ -373,11 +402,11 @@ auto module_companion_source(const ResolvedTarget& target, const ResolvedSource&
     if (exists.is_err()) return Err(rstd::move(exists).unwrap_err());
     if (! *exists) return Ok(None());
 
-    auto source_root_result = canonical_source_root(target.source_root.as_path());
+    auto source_root_result = canonical_source_root(target);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
-    auto resolved    = canonical_candidate(
-        target.source_root.as_path(), source_root.as_path(), requested.as_path(), None());
+    auto resolved =
+        canonical_candidate(target, target.source_root.as_path(), requested.as_path(), None());
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto companion_source             = rstd::move(resolved).unwrap();
     companion_source.module_companion = true;

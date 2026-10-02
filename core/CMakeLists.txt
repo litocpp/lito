@@ -45,6 +45,7 @@ target_sources(
          src/manifest/build_script.cppm
          src/manifest/build_script_schema.cppm
          src/manifest/convention.cppm
+         src/manifest/examples.cppm
          src/manifest/conditional.cppm
          src/manifest/dependency_schema.cppm
          src/manifest/package_schema.cppm

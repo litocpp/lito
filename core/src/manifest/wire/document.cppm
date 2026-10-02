@@ -143,6 +143,7 @@ struct Document {
     Option<Vec<BinaryTarget>>                                                       bin;
     Option<Vec<TestTarget>>                                                         test;
     Option<Vec<BenchmarkTarget>>                                                    bench;
+    Option<Vec<ExampleTarget>>                                                      example;
     Option<CompileTests>                                                            compile_test;
     Option<Usage>                                                                   usage;
     Option<rstd::collections::BTreeMap<String, Dependency<DependencyMode::Normal>>> dependencies;
@@ -180,6 +181,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
         auto bin          = serde::OptionalField<Vec<BinaryTarget>>("bin"_str);
         auto test         = serde::OptionalField<Vec<TestTarget>>("test"_str);
         auto bench        = serde::OptionalField<Vec<BenchmarkTarget>>("bench"_str);
+        auto example      = serde::OptionalField<Vec<ExampleTarget>>("example"_str);
         auto compile_test = serde::OptionalField<CompileTests>("compile-test"_str);
         auto usage        = serde::OptionalField<Usage>("usage"_str);
         auto dependencies = serde::OptionalField<
@@ -212,6 +214,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
                                            bin,
                                            test,
                                            bench,
+                                           example,
                                            compile_test,
                                            usage,
                                            dependencies,
@@ -233,6 +236,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
             .bin                   = bin.take(),
             .test                  = test.take(),
             .bench                 = bench.take(),
+            .example               = example.take(),
             .compile_test          = compile_test.take(),
             .usage                 = usage.take(),
             .dependencies          = dependencies.take(),
@@ -257,6 +261,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
             if (result.bin.is_some()) return Err(d.unknown_field(bin.names().canonical()));
             if (result.test.is_some()) return Err(d.unknown_field(test.names().canonical()));
             if (result.bench.is_some()) return Err(d.unknown_field(bench.names().canonical()));
+            if (result.example.is_some()) return Err(d.unknown_field(example.names().canonical()));
             if (result.compile_test.is_some())
                 return Err(d.unknown_field(compile_test.names().canonical()));
             if (result.usage.is_some()) return Err(d.unknown_field(usage.names().canonical()));

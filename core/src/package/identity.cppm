@@ -18,6 +18,7 @@ enum class PackageTargetKind
     Benchmark,
     Attachment,
     CompileTest,
+    Example,
 };
 
 auto package_target_kind_name(PackageTargetKind kind) noexcept -> ref<str> {
@@ -30,6 +31,7 @@ auto package_target_kind_name(PackageTargetKind kind) noexcept -> ref<str> {
     case PackageTargetKind::Benchmark: return "bench"_str;
     case PackageTargetKind::Attachment: return "attachment"_str;
     case PackageTargetKind::CompileTest: return "compile-test"_str;
+    case PackageTargetKind::Example: return "example"_str;
     }
     return "unknown"_str;
 }

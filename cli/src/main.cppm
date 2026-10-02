@@ -436,6 +436,7 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
         case lito::cpp::ArtifactKind::Executable: ++counts.executables; break;
         case lito::cpp::ArtifactKind::TestExecutable: ++counts.tests; break;
         case lito::cpp::ArtifactKind::BenchmarkExecutable: ++counts.benchmarks; break;
+        case lito::cpp::ArtifactKind::ExampleExecutable: ++counts.executables; break;
         case lito::cpp::ArtifactKind::CompileTest: ++counts.compile_tests; break;
         }
     }
@@ -1234,7 +1235,7 @@ extern "C++" int main() {
     }
     auto       project        = rstd::move(loaded_config).unwrap();
     auto       active_android = Option<lito::AndroidNdkLease> {};
-    const auto build_command  = invocation.command.is_Build() ||
+    const auto build_command  = invocation.command.is_Build() || invocation.command.is_Run() ||
                                 (invocation.command.is_Install() && ! reuse_install) ||
                                 invocation.command.is_Test() || invocation.command.is_Bench() ||
                                 invocation.command.is_Doc() || invocation.command.is_Scan() ||
@@ -1959,7 +1960,9 @@ extern "C++" int main() {
         return failed == usize {} ? 0 : 1;
     }
 
-    auto options = rstd::move(invocation.command).as_Build().options;
+    const auto run_example = invocation.command.is_Run();
+    auto       options     = run_example ? rstd::move(invocation.command).as_Run().options
+                                         : rstd::move(invocation.command).as_Build().options;
     apply_source_options(project.sources,
                          project.cargo.offline,
                          project.root.as_path(),
@@ -1998,6 +2001,36 @@ extern "C++" int main() {
     auto event_context = EventContext { .verbose = options.verbose };
 
     configure_build_output(request, event_context);
+    if (run_example) {
+        auto result = lito::run(lito::RunRequest {
+            .build     = rstd::move(request),
+            .example   = rstd::move(options.examples[usize {}]),
+            .arguments = rstd::move(options.arguments),
+        });
+        if (result.is_err()) {
+            report_error(result.unwrap_err());
+            return 1;
+        }
+        auto emitted = lito::timing_output::emit(result->build, timing);
+        if (emitted.is_err()) {
+            report_error(emitted.unwrap_err());
+            return 1;
+        }
+        const auto& execution = result->execution;
+        if (execution.error.is_some()) {
+            report_error(*execution.error);
+            return 1;
+        }
+        if (auto code = execution.status->code(); code.is_some()) return code->to_primitive();
+        if (auto signal = execution.status->signal(); signal.is_some())
+            return 128 + signal->to_primitive();
+        return 1;
+    }
+    if (options.all_examples || ! options.examples.is_empty()) {
+        request.purpose = lito::package::PackageSelectionPurpose::Example;
+        for (const auto& example : options.examples)
+            request.targets.push(rstd::format("example:{}", example));
+    }
     auto result = lito::build(request);
     if (result.is_err()) {
         auto error = rstd::move(result).unwrap_err();

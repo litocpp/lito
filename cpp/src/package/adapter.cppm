@@ -898,6 +898,7 @@ auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -
     case lito::package::PackageTargetKind::Binary: return ArtifactKind::Executable;
     case lito::package::PackageTargetKind::Test: return ArtifactKind::TestExecutable;
     case lito::package::PackageTargetKind::Benchmark: return ArtifactKind::BenchmarkExecutable;
+    case lito::package::PackageTargetKind::Example: return ArtifactKind::ExampleExecutable;
     case lito::package::PackageTargetKind::Attachment: return ArtifactKind::AttachmentArchive;
     case lito::package::PackageTargetKind::CompileTest: return ArtifactKind::CompileTest;
     }
@@ -907,6 +908,7 @@ auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -
 auto development_target(lito::package::PackageTargetKind kind) noexcept -> bool {
     return kind == lito::package::PackageTargetKind::Test ||
            kind == lito::package::PackageTargetKind::Benchmark ||
+           kind == lito::package::PackageTargetKind::Example ||
            kind == lito::package::PackageTargetKind::CompileTest;
 }
 
@@ -1221,7 +1223,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             if (lito::manifest::package_library_is_shared(target)) has_link_action = true;
             if (kind == lito::package::PackageTargetKind::Binary ||
                 kind == lito::package::PackageTargetKind::Test ||
-                kind == lito::package::PackageTargetKind::Benchmark) {
+                kind == lito::package::PackageTargetKind::Benchmark ||
+                kind == lito::package::PackageTargetKind::Example) {
                 has_link_action = true;
             }
         }
@@ -1391,6 +1394,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             auto runtime_resources = Vec<lito::manifest::RuntimeResourceManifest>::make();
             if (manifest_target.is_Binary()) {
                 runtime_resources = rstd::move(manifest_target.as_Binary().resources);
+            } else if (manifest_target.is_Example()) {
+                runtime_resources = rstd::move(manifest_target.as_Example().resources);
             }
             auto target_dependencies = clone_dependencies(dependencies);
             auto target_host_tool_dependencies =

@@ -247,6 +247,7 @@ export namespace lito::manifest::wire
 {
 struct Package {
     String                         name;
+    bool                           autoexamples { true };
     Option<Inherited<String>>      version;
     Option<String>                 source_root;
     Option<Predicate>              target;
@@ -273,6 +274,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::PackageInput<Embedded>> {
         -> Result<lito::manifest::wire::PackageInput<Embedded>, typename D::error_type> {
         using namespace lito::manifest::wire;
         auto name             = serde::RequiredField<String>("name"_str);
+        auto autoexamples     = serde::DefaultedField<bool>("autoexamples"_str, true);
         auto version          = serde::OptionalField<Inherited<String>>("version"_str);
         using SourceRootInput = mtp::cond<Embedded, serde::Ignored, String>;
         auto source_root      = serde::OptionalField<SourceRootInput>("source-root"_str);
@@ -288,6 +290,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::PackageInput<Embedded>> {
         rstd_try(serde::deserialize_record(d,
                                            serde::UnknownFieldPolicy::Reject,
                                            name,
+                                           autoexamples,
                                            version,
                                            source_root,
                                            target,
@@ -301,6 +304,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::PackageInput<Embedded>> {
                                            publish));
         auto value = Package {
             .name          = rstd_try(name.take(d)),
+            .autoexamples  = autoexamples.take(),
             .version       = version.take(),
             .target        = target.take(),
             .license       = license.take(),

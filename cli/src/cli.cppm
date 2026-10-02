@@ -17,6 +17,9 @@ export namespace lito::cli
 {
 
 struct BuildOptions {
+    Vec<String>                              examples;
+    bool                                     all_examples {};
+    Vec<String>                              arguments;
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              targets;
@@ -255,6 +258,7 @@ class RegistryCommand {
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
+              (Run, (BuildOptions options;)),
               (Clean, (CleanOptions options;)),
               (Install, (InstallOptions options;)),
               (Test, (TestOptions options;)),
@@ -375,12 +379,16 @@ struct RootArgs {
 };
 
 struct BuildSchema {
-    CommandKey            command;
-    PackageProfileArgs    package;
-    ArgKey<String>        target;
-    ArgKey<String>        build_directory;
-    SourceAcquisitionArgs source_acquisition;
-    BuildExecutionArgs    execution;
+    bool                   run {};
+    ArgKey<String>         example;
+    ArgKey<bool>           examples;
+    Option<ArgKey<String>> arguments;
+    CommandKey             command;
+    PackageProfileArgs     package;
+    ArgKey<String>         target;
+    ArgKey<String>         build_directory;
+    SourceAcquisitionArgs  source_acquisition;
+    BuildExecutionArgs     execution;
 
     auto decode(const Matches& matches) const -> Result<BuildOptions, CliDecodeError>;
 };
@@ -661,6 +669,7 @@ struct RegistrySchema {
 struct CliSchema {
     RootArgs       root;
     BuildSchema    build;
+    BuildSchema    run;
     CleanSchema    clean;
     InstallSchema  install;
     TestSchema     test;
@@ -839,17 +848,38 @@ auto add_build_execution_args(Command& command) -> BuildExecutionArgs {
     };
 }
 
-auto make_build_definition() -> CommandDefinition<BuildSchema> {
-    auto command = Command::make("build"_str);
-    command.about("Build packages"_str);
-    auto key                = command.key();
-    auto package            = add_package_profile_args(command);
-    auto target             = command.add_arg(target_arg());
+auto make_build_definition(bool run = false) -> CommandDefinition<BuildSchema> {
+    auto command = Command::make(run ? "run"_str : "build"_str);
+    command.about(run ? "Build and run an example"_str : "Build packages"_str);
+    auto key      = command.key();
+    auto package  = add_package_profile_args(command);
+    auto target   = command.add_arg(target_arg());
+    auto example  = command.add_arg(Arg<String>::value("example"_str, string_parser())
+                                        .long_name("example"_str)
+                                        .value_name("NAME"_str)
+                                        .help("Select an example target"_str)
+                                        .append());
+    auto examples = command.add_arg(Arg<bool>::flag("examples"_str)
+                                        .long_name("examples"_str)
+                                        .help("Build all selected packages' examples"_str));
+    command.conflicts(example, examples);
+    command.conflicts(example, target);
+    command.conflicts(examples, target);
+    auto arguments = Option<ArgKey<String>> {};
+    if (run)
+        arguments = Some(command.add_arg(Arg<String>::value("arguments"_str, string_parser())
+                                             .value_name("ARGS"_str)
+                                             .num_args(NumArgs::any())
+                                             .allow_hyphen_values()));
     auto build_directory    = command.add_arg(build_directory_arg());
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
     return {
         BuildSchema {
+            .run                = run,
+            .example            = example,
+            .examples           = examples,
+            .arguments          = arguments,
             .command            = key,
             .package            = rstd::move(package),
             .target             = target,
@@ -1525,6 +1555,7 @@ auto make_registry_definition() -> CommandDefinition<RegistrySchema> {
 
 auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto build    = make_build_definition();
+    auto run      = make_build_definition(true);
     auto clean    = make_clean_definition();
     auto install  = make_install_definition();
     auto test     = make_test_definition();
@@ -1558,6 +1589,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .config        = root.add_arg(config_override_arg()),
     };
     root.add_subcommand(rstd::move(build.command));
+    root.add_subcommand(rstd::move(run.command));
     root.add_subcommand(rstd::move(clean.command));
     root.add_subcommand(rstd::move(install.command));
     root.add_subcommand(rstd::move(test.command));
@@ -1581,6 +1613,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     return Ok(CliSchema {
         .root     = rstd::move(root_args),
         .build    = rstd::move(build.schema),
+        .run      = rstd::move(run.schema),
         .clean    = rstd::move(clean.schema),
         .install  = rstd::move(install.schema),
         .test     = rstd::move(test.schema),
@@ -1764,10 +1797,18 @@ auto decode_build_execution(const Matches& matches, const BuildExecutionArgs& ar
 }
 
 auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, CliDecodeError> {
+    auto selected_examples = rstd_try(string_values(matches, example));
+    auto all_examples      = rstd_try(flag_value(matches, examples));
+    if (run && (selected_examples.len() != usize(1) || all_examples))
+        return Err(CliDecodeError::InvalidUsage("run requires exactly one --example NAME"_Str));
     auto package   = rstd_try(decode_package_profile(matches, this->package));
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
     return Ok(BuildOptions {
+        .examples        = rstd::move(selected_examples),
+        .all_examples    = all_examples,
+        .arguments       = arguments.is_some() ? rstd_try(string_values(matches, *arguments))
+                                               : Vec<String>::make(),
         .packages        = rstd::move(package.packages),
         .profile         = rstd::move(package.profile),
         .targets         = rstd_try(string_values(matches, target)),
@@ -2151,6 +2192,9 @@ auto RegistrySchema::decode(const Matches& matches) const
 
 auto decode_command(const CliSchema& schema, const Matches& matches)
     -> Result<CliCommand, CliDecodeError> {
+    if (auto child = matches.subcommand_matches(schema.run.command); child.is_some()) {
+        return Ok(CliCommand::Run(rstd_try(schema.run.decode(**child))));
+    }
     if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
         auto options = rstd_try(schema.build.decode(**child));
         return Ok(CliCommand::Build(rstd::move(options)));
@@ -2241,12 +2285,12 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     auto use_env_flags = rstd_try(flag_value(matches, schema.root.use_env_flags));
     auto overrides     = rstd_try(string_values(matches, schema.root.config));
     auto command       = rstd_try(decode_command(schema, matches));
-    const auto consumes_build_options = command.is_Build() || command.is_Install() ||
-                                        command.is_Test() || command.is_Bench() ||
-                                        command.is_Doc() || command.is_Scan() || command.is_Fetch();
+    const auto consumes_build_options =
+        command.is_Build() || command.is_Run() || command.is_Install() || command.is_Test() ||
+        command.is_Bench() || command.is_Doc() || command.is_Scan() || command.is_Fetch();
     if (use_env_flags && ! consumes_build_options) {
         return Err(CliDecodeError::InvalidUsage(
-            "--use-env-flags is only valid for build, install, test, bench, doc, scan, and fetch"_Str));
+            "--use-env-flags is only valid for build, run, install, test, bench, doc, scan, and fetch"_Str));
     }
     if (use_env_flags && command.is_Install() && command.as_Install().options.no_build) {
         return Err(

@@ -787,6 +787,8 @@ auto resolve_source_selection(const PackageMetadata&                     package
                     kind = Some(lito::package::PackageTargetKind::Test);
                 else if (kind_text == "bench"_str)
                     kind = Some(lito::package::PackageTargetKind::Benchmark);
+                else if (kind_text == "example"_str)
+                    kind = Some(lito::package::PackageTargetKind::Example);
                 else
                     return Err(lito::package::PackageError::Message(
                         rstd::format("target selector '{}' has unknown kind '{}'",
@@ -818,8 +820,22 @@ auto resolve_source_selection(const PackageMetadata&                     package
                 ++matches;
             }
             if (matches == usize {}) {
+                if (kind == Some(lito::package::PackageTargetKind::Example)) {
+                    auto available = String::make();
+                    for (const auto& candidate : package.default_targets) {
+                        if (candidate.kind != lito::package::PackageTargetKind::Example) continue;
+                        if (! available.is_empty()) available.push_str(", "_str);
+                        available.push_str(candidate.name.as_str());
+                    }
+                    return Err(lito::package::PackageError::Message(rstd::format(
+                        "unknown example '{}'; available examples: {}", name, available)));
+                }
                 return Err(lito::package::PackageError::Message(
                     rstd::format("unknown target selector '{}'", requested.as_str())));
+            }
+            if (kind == Some(lito::package::PackageTargetKind::Example) && matches > usize(1)) {
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "example '{}' is ambiguous across packages; select a package with -p", name)));
             }
         }
     }

@@ -25,6 +25,7 @@ enum class ArtifactKind
     TestExecutable,
     BenchmarkExecutable,
     CompileTest,
+    ExampleExecutable,
 };
 
 struct DependencySpec {

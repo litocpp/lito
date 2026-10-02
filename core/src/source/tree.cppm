@@ -100,6 +100,15 @@ public:
     auto extend(const SourceTree& other) -> SourceTreeResult<empty>;
     auto clone() const -> SourceTree;
     auto entries() const noexcept -> slice<SourceTreeEntry> { return entries_.as_slice(); }
+    auto is_directory(ref<rstd::path::Path> path) const noexcept -> bool {
+        if (path.is_empty() || path.to_str() == Some("."_str)) return true;
+        for (const auto& entry : entries_) {
+            if (! entry.path().as_path().starts_with(path)) continue;
+            if (entry.path().as_path() != path || entry.kind() == SourceEntryKind::Directory)
+                return true;
+        }
+        return false;
+    }
 };
 
 struct SourceMaterialization {

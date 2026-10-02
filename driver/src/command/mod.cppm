@@ -5,6 +5,7 @@ export import :command.clean;
 export import :command.artifact;
 export import :command.test;
 export import :command.bench;
+export import :command.run;
 export import :command.scan;
 export import :command.doc;
 export import :command.format;
