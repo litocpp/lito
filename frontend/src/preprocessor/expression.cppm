@@ -9,6 +9,63 @@ using namespace rstd::literals;
 
 using namespace lito::frontend::lexical;
 
+export namespace lito::frontend::preprocessor
+{
+struct ExpressionInteger {
+    i64  value {};
+    bool is_unsigned {};
+
+    ExpressionInteger() = default;
+    ExpressionInteger(i64 number, bool unsigned_value = false)
+        : value(number), is_unsigned(unsigned_value) {}
+
+    auto bits() const -> u64 { return as_cast<u64>(value); }
+    auto negative() const -> bool { return ! is_unsigned && value < i64 {}; }
+    auto operator==(ExpressionInteger other) const -> bool { return value == other.value; }
+    auto operator<(ExpressionInteger other) const -> bool {
+        return is_unsigned || other.is_unsigned ? bits() < other.bits() : value < other.value;
+    }
+    auto operator>(ExpressionInteger other) const -> bool { return other < *this; }
+    auto operator<=(ExpressionInteger other) const -> bool { return ! (other < *this); }
+    auto operator>=(ExpressionInteger other) const -> bool { return ! (*this < other); }
+    auto operator~() const -> ExpressionInteger { return { ~value, is_unsigned }; }
+    auto operator|(ExpressionInteger other) const -> ExpressionInteger {
+        return { value | other.value, is_unsigned || other.is_unsigned };
+    }
+    auto operator^(ExpressionInteger other) const -> ExpressionInteger {
+        return { value ^ other.value, is_unsigned || other.is_unsigned };
+    }
+    auto operator&(ExpressionInteger other) const -> ExpressionInteger {
+        return { value & other.value, is_unsigned || other.is_unsigned };
+    }
+    auto wrapping_add(ExpressionInteger other) const -> ExpressionInteger {
+        return { value.wrapping_add(other.value), is_unsigned || other.is_unsigned };
+    }
+    auto wrapping_sub(ExpressionInteger other) const -> ExpressionInteger {
+        return { value.wrapping_sub(other.value), is_unsigned || other.is_unsigned };
+    }
+    auto wrapping_mul(ExpressionInteger other) const -> ExpressionInteger {
+        return { value.wrapping_mul(other.value), is_unsigned || other.is_unsigned };
+    }
+    auto wrapping_div(ExpressionInteger other) const -> ExpressionInteger {
+        if (is_unsigned || other.is_unsigned) return { as_cast<i64>(bits() / other.bits()), true };
+        return { value.wrapping_div(other.value) };
+    }
+    auto wrapping_rem(ExpressionInteger other) const -> ExpressionInteger {
+        if (is_unsigned || other.is_unsigned) return { as_cast<i64>(bits() % other.bits()), true };
+        return { value.wrapping_rem(other.value) };
+    }
+    auto wrapping_neg() const -> ExpressionInteger { return { value.wrapping_neg(), is_unsigned }; }
+    auto wrapping_shl(u64 count) const -> ExpressionInteger {
+        return { value.wrapping_shl(count), is_unsigned };
+    }
+    auto wrapping_shr(u64 count) const -> ExpressionInteger {
+        return { is_unsigned ? as_cast<i64>(bits().wrapping_shr(count)) : value.wrapping_shr(count),
+                 is_unsigned };
+    }
+};
+} // namespace lito::frontend::preprocessor
+
 namespace lito::frontend::preprocessor
 {
 
@@ -16,7 +73,7 @@ class ExpressionParser {
 public:
     explicit ExpressionParser(slice<Token> tokens): tokens_(tokens) {}
 
-    auto parse() -> Result<i64> {
+    auto parse() -> Result<ExpressionInteger> {
         auto result = conditional();
         if (result.is_err()) return result;
         if (index_ != tokens_.len())
@@ -25,7 +82,7 @@ public:
     }
 
 private:
-    auto failure(ref<str> message) -> Result<i64> {
+    auto failure(ref<str> message) -> Result<ExpressionInteger> {
         if (index_ < tokens_.len()) {
             return Err(Error::at(
                 rstd::format("{} before '{}'", message, tokens_[index_].text.display().as_str()),
@@ -43,7 +100,7 @@ private:
         return true;
     }
 
-    auto conditional() -> Result<i64> {
+    auto conditional() -> Result<ExpressionInteger> {
         auto condition = logical_or();
         if (condition.is_err() || ! match("?"_str)) return condition;
         auto outer     = evaluating_;
@@ -55,11 +112,13 @@ private:
         auto when_false = conditional();
         evaluating_     = outer;
         if (when_false.is_err()) return when_false;
-        if (! outer) return Ok(i64 {});
-        return Ok(*condition != i64 {} ? *when_true : *when_false);
+        auto selected        = *condition != i64 {} ? *when_true : *when_false;
+        selected.is_unsigned = when_true->is_unsigned || when_false->is_unsigned;
+        if (! outer) selected.value = i64 {};
+        return Ok(selected);
     }
 
-    auto logical_or() -> Result<i64> {
+    auto logical_or() -> Result<ExpressionInteger> {
         auto left = logical_and();
         while (left.is_ok() && match("||"_str)) {
             auto outer  = evaluating_;
@@ -67,12 +126,12 @@ private:
             auto right  = logical_and();
             evaluating_ = outer;
             if (right.is_err()) return right;
-            left = Ok(outer ? i64(*left != i64 {} || *right != i64 {}) : i64 {});
+            left = Ok(ExpressionInteger(i64(outer && (*left != i64 {} || *right != i64 {}))));
         }
         return left;
     }
 
-    auto logical_and() -> Result<i64> {
+    auto logical_and() -> Result<ExpressionInteger> {
         auto left = bit_or();
         while (left.is_ok() && match("&&"_str)) {
             auto outer  = evaluating_;
@@ -80,12 +139,12 @@ private:
             auto right  = bit_or();
             evaluating_ = outer;
             if (right.is_err()) return right;
-            left = Ok(outer ? i64(*left != i64 {} && *right != i64 {}) : i64 {});
+            left = Ok(ExpressionInteger(i64(outer && *left != i64 {} && *right != i64 {})));
         }
         return left;
     }
 
-    auto bit_or() -> Result<i64> {
+    auto bit_or() -> Result<ExpressionInteger> {
         auto left = bit_xor();
         while (left.is_ok() && match("|"_str)) {
             auto right = bit_xor();
@@ -95,7 +154,7 @@ private:
         return left;
     }
 
-    auto bit_xor() -> Result<i64> {
+    auto bit_xor() -> Result<ExpressionInteger> {
         auto left = bit_and();
         while (left.is_ok() && match("^"_str)) {
             auto right = bit_and();
@@ -105,7 +164,7 @@ private:
         return left;
     }
 
-    auto bit_and() -> Result<i64> {
+    auto bit_and() -> Result<ExpressionInteger> {
         auto left = equality();
         while (left.is_ok() && match("&"_str)) {
             auto right = equality();
@@ -115,17 +174,17 @@ private:
         return left;
     }
 
-    auto equality() -> Result<i64> {
+    auto equality() -> Result<ExpressionInteger> {
         auto left = relational();
         while (left.is_ok()) {
             if (match("=="_str)) {
                 auto right = relational();
                 if (right.is_err()) return right;
-                left = Ok(i64(*left == *right));
+                left = Ok(ExpressionInteger(i64(*left == *right)));
             } else if (match("!="_str)) {
                 auto right = relational();
                 if (right.is_err()) return right;
-                left = Ok(i64(*left != *right));
+                left = Ok(ExpressionInteger(i64(*left != *right)));
             } else {
                 break;
             }
@@ -133,25 +192,25 @@ private:
         return left;
     }
 
-    auto relational() -> Result<i64> {
+    auto relational() -> Result<ExpressionInteger> {
         auto left = shift();
         while (left.is_ok()) {
             if (match("<"_str)) {
                 auto right = shift();
                 if (right.is_err()) return right;
-                left = Ok(i64(*left < *right));
+                left = Ok(ExpressionInteger(i64(*left < *right)));
             } else if (match(">"_str)) {
                 auto right = shift();
                 if (right.is_err()) return right;
-                left = Ok(i64(*left > *right));
+                left = Ok(ExpressionInteger(i64(*left > *right)));
             } else if (match("<="_str)) {
                 auto right = shift();
                 if (right.is_err()) return right;
-                left = Ok(i64(*left <= *right));
+                left = Ok(ExpressionInteger(i64(*left <= *right)));
             } else if (match(">="_str)) {
                 auto right = shift();
                 if (right.is_err()) return right;
-                left = Ok(i64(*left >= *right));
+                left = Ok(ExpressionInteger(i64(*left >= *right)));
             } else {
                 break;
             }
@@ -159,7 +218,7 @@ private:
         return left;
     }
 
-    auto shift() -> Result<i64> {
+    auto shift() -> Result<ExpressionInteger> {
         auto left = additive();
         while (left.is_ok()) {
             if (match("<<"_str)) {
@@ -169,10 +228,10 @@ private:
                     return failure("invalid left shift"_str);
                 }
                 if (! evaluating_) {
-                    left = Ok(i64 {});
+                    left->value = i64 {};
                     continue;
                 }
-                left = Ok(left->wrapping_shl(u64(as_cast<u64>(*right))));
+                left = Ok(left->wrapping_shl(right->bits()));
             } else if (match(">>"_str)) {
                 auto right = additive();
                 if (right.is_err()) return right;
@@ -180,10 +239,10 @@ private:
                     return failure("invalid right shift"_str);
                 }
                 if (! evaluating_) {
-                    left = Ok(i64 {});
+                    left->value = i64 {};
                     continue;
                 }
-                left = Ok(left->wrapping_shr(u64(as_cast<u64>(*right))));
+                left = Ok(left->wrapping_shr(right->bits()));
             } else {
                 break;
             }
@@ -191,7 +250,7 @@ private:
         return left;
     }
 
-    auto additive() -> Result<i64> {
+    auto additive() -> Result<ExpressionInteger> {
         auto left = multiplicative();
         while (left.is_ok()) {
             if (match("+"_str)) {
@@ -209,7 +268,7 @@ private:
         return left;
     }
 
-    auto multiplicative() -> Result<i64> {
+    auto multiplicative() -> Result<ExpressionInteger> {
         auto left = unary();
         while (left.is_ok()) {
             if (match("*"_str)) {
@@ -225,7 +284,7 @@ private:
                 }
                 left = evaluating_
                            ? Ok(remainder ? left->wrapping_rem(*right) : left->wrapping_div(*right))
-                           : Ok(i64 {});
+                           : Ok(ExpressionInteger(i64 {}, left->is_unsigned || right->is_unsigned));
             } else {
                 break;
             }
@@ -233,11 +292,11 @@ private:
         return left;
     }
 
-    auto unary() -> Result<i64> {
+    auto unary() -> Result<ExpressionInteger> {
         if (match("!"_str)) {
             auto value = unary();
             if (value.is_err()) return value;
-            return Ok(i64(*value == i64 {}));
+            return Ok(ExpressionInteger(i64(*value == i64 {})));
         }
         if (match("~"_str)) {
             auto value = unary();
@@ -253,7 +312,7 @@ private:
         return primary();
     }
 
-    auto primary() -> Result<i64> {
+    auto primary() -> Result<ExpressionInteger> {
         if (match("("_str)) {
             auto value = conditional();
             if (value.is_err()) return value;
@@ -266,18 +325,18 @@ private:
             token.text.utf8().is_err()) {
             return Err(Error::at("invalid UTF-8 preprocessing token"_Str, token.expansion));
         }
-        if (token.kind == TokenKind::Identifier) return Ok(i64 {});
+        if (token.kind == TokenKind::Identifier) return Ok(ExpressionInteger {});
         if (token.kind == TokenKind::CharacterLiteral) {
             auto bytes = token.text.as_bytes();
             if (bytes.len() >= usize(3))
-                return Ok(i64(bytes[bytes.len() - usize(2)].to_primitive()));
+                return Ok(ExpressionInteger(i64(bytes[bytes.len() - usize(2)].to_primitive())));
             return failure("invalid character constant"_str);
         }
         if (token.kind != TokenKind::PpNumber) return failure("expected integer constant"_str);
         auto bytes  = token.text.as_bytes();
         auto base   = uint32_t(10);
         auto cursor = usize {};
-        auto value  = i64 {};
+        auto value  = u64 {};
         auto digits = false;
         if (bytes.len() > usize(1) && bytes[usize {}] == u8('0')) {
             base   = 8;
@@ -308,7 +367,9 @@ private:
             else if (byte >= u8('A') && byte <= u8('F'))
                 digit = byte.to_primitive() - 'A' + 10;
             if (digit >= base) break;
-            value  = value.wrapping_mul(i64(base)).wrapping_add(i64(digit));
+            if (value > (u64::MAX - u64(digit)) / u64(base))
+                return failure("integer constant exceeds 64-bit range"_str);
+            value  = value * u64(base) + u64(digit);
             digits = true;
             ++cursor;
         }
@@ -317,7 +378,22 @@ private:
                 rstd::format("invalid integer constant '{}'", token.text.display().as_str()),
                 token.expansion));
         }
-        return Ok(value);
+        auto       suffix          = token.text.utf8().unwrap().get(cursor, bytes.len()).unwrap();
+        const bool unsigned_suffix = suffix.contains("u"_str) || suffix.contains("U"_str);
+        auto       normalized      = String::make();
+        for (auto byte : suffix.as_bytes()) {
+            normalized.push_ascii(byte == u8('U')   ? 'u'
+                                  : byte == u8('L') ? 'l'
+                                  : byte == u8('Z') ? 'z'
+                                                    : byte.to_primitive());
+        }
+        auto text = normalized.as_str();
+        if (! (text.is_empty() || text == "u"_str || text == "l"_str || text == "ll"_str ||
+               text == "ul"_str || text == "lu"_str || text == "ull"_str || text == "llu"_str ||
+               text == "z"_str || text == "uz"_str || text == "zu"_str))
+            return failure("invalid integer suffix"_str);
+        return Ok(ExpressionInteger(as_cast<i64>(value),
+                                    unsigned_suffix || value > as_cast<u64>(i64::MAX)));
     }
 
     slice<Token> tokens_;
@@ -330,7 +406,7 @@ private:
 export namespace lito::frontend::preprocessor
 {
 
-auto evaluate_expression(slice<Token> tokens) -> Result<i64> {
+auto evaluate_expression(slice<Token> tokens) -> Result<ExpressionInteger> {
     return ExpressionParser(tokens).parse();
 }
 

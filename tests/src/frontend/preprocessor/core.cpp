@@ -638,6 +638,77 @@ TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
 }
 
+auto preprocess_integer_expression(ref<str> expression) -> PpResult<PreprocessedTranslationUnit> {
+    auto sources = MemorySources {};
+    auto source  = rstd::format(
+        "#if {}\nPASSED\n#else\n#error incorrect integer expression\n#endif\n", expression);
+    sources.add("/integer.cpp"_str, source.as_str());
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    return preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/integer.cpp"_str),
+            .environment_identity = "integer-expression"_Str,
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+}
+
+TEST(Preprocessor, UnsignedIntegerExpressions) {
+    const ref<str> expressions[] = {
+        "0xFFFFFFFFFFFFFFFFUL > 0xFFFFFFFFUL && 0xFFFFFFFFFFFFFFFFUL == 18446744073709551615ULL"_str,
+        "(-1L * 2UL + 1UL) == 0xFFFFFFFFFFFFFFFFUL"_str,
+        "0xffffffffffffffff > 0 && 01777777777777777777777 > 0"_str,
+        "0xffffffff > 0 && -1 < 0 && -1L < 1LL"_str,
+        "-1 > 1U && -1 == 0xffffffffffffffffULL"_str,
+        "0xffffffffffffffffULL / 2 == 0x7fffffffffffffff"_str,
+        "0xffffffffffffffffULL % 2 == 1"_str,
+        "-7 / 2 == -3 && -7 % 2 == -1"_str,
+        "(0xffffffffffffffffULL >> 63) == 1 && (-2 >> 1U) == -1"_str,
+        "(1U << 63) > 0 && (1ULL << 63) >= 0x8000000000000000"_str,
+        "~0UL > 0 && (0U - 1) > 0 && -1U > 0"_str,
+        "((~0U & -1) ^ 1) == 0xfffffffffffffffeULL"_str,
+        "((1 ? -1 : 0U) > 0) && ((0 ? 0U : -1) > 0)"_str,
+        "(1 ? -1 : (0U / 0)) > 0"_str,
+        "(1 ? -1 : (0U << 99)) > 0"_str,
+        "(1 ? -1 : (0U >> -1)) > 0"_str,
+        "(1 ? -1 : (0 ? 0U : 0)) > 0"_str,
+        "(1 ? -1 : (0U % 0)) > 0"_str,
+        "(1 || 1 / 0) && !(0 && 1 / 0) && (1 ? 1 : 1 / 0)"_str,
+        "(1 ? -1 : (1U == 0)) < 0 && (1 ? -1 : !0U) < 0"_str,
+        "(1 ? -1 : (0U || 0)) < 0 && (1 ? -1 : (0U && 0)) < 0"_str,
+        "0xFFFF'FFFF'FFFF'FFFFuLL == ~0U && 0b101u == 5"_str,
+        "1uL == 1Lu && 1ULL == 1LLU && 1uz == 1zu"_str,
+    };
+    for (auto expression : expressions) {
+        auto result = preprocess_integer_expression(expression);
+        ASSERT_TRUE(result.is_ok()) << expression;
+        EXPECT_TRUE(contains_token(result->tokens, "PASSED"_str));
+    }
+}
+
+TEST(Preprocessor, RejectsInvalidIntegerExpressions) {
+    const ref<str> expressions[] = {
+        "18446744073709551616ULL"_str,
+        "0x10000000000000000"_str,
+        "1UU"_str,
+        "1.0"_str,
+        "09"_str,
+        "1U / 0"_str,
+        "1U << 64"_str,
+        "1U >> -1"_str,
+    };
+    for (auto expression : expressions)
+        EXPECT_TRUE(preprocess_integer_expression(expression).is_err());
+}
+
 auto module_translation(ref<str> contents) -> PreprocessedTranslationUnit {
     auto result        = PreprocessedTranslationUnit {};
     result.main_source = result.sources.add(SourceBuffer {

@@ -20,7 +20,7 @@ namespace lito
 {
 
 inline constexpr auto CACHE_VERSION  = u64(5);
-inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v13"_str;
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v14"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-compile-v6"_str;
 
 auto cache_string(ref<str> value) -> Json {

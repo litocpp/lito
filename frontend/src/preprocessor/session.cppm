@@ -1398,11 +1398,13 @@ private:
         }
         auto value = evaluate_expression(tokens);
         if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-        if (*value < i64 {}) {
+        if (value->negative()) {
             return Err(
                 failure(rstd::format("#embed {} must be non-negative", parameter), location));
         }
-        return Ok(usize(static_cast<size_t>(value->to_primitive())));
+        if (value->bits() > as_cast<u64>(usize::MAX))
+            return Err(failure(rstd::format("#embed {} exceeds size range", parameter), location));
+        return Ok(as_cast<usize>(value->bits()));
     }
 
     auto parse_embed(ScratchTokenVec line, SourceLocation location) -> Result<EmbedDirective> {
@@ -2094,7 +2096,7 @@ private:
                 auto physical  = end < (*loaded)->tokens.len()
                                      ? (*loaded)->token(source, end).location().line + usize(1)
                                      : (*loaded)->token(source, cursor).location().line + usize(1);
-                auto requested = as_cast<usize>(*value);
+                auto requested = as_cast<usize>(value->bits());
                 auto next      = end < (*loaded)->tokens.len() ? end + usize(1) : end;
                 auto begin_offset = next < (*loaded)->tokens.len()
                                         ? (*loaded)->token(source, next).offset()
