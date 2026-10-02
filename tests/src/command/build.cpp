@@ -713,6 +713,130 @@ auto main() -> int {
     EXPECT_EQ(second->compiled, usize {});
 }
 
+TEST_F(BuildCommand, GeneratedWriteMarkersPreserveUtf8AndXmlEscaping) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "utf8-write"
+version = "0.1.0"
+[[bin]]
+name = "utf8-write"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "main.cpp"_str, "#include \"value.h\"\nint main() { return value; }\n"_str },
+        { "данные&一.txt"_str, "input one\n"_str },
+        { "数据二.txt"_str, "input two\n"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({kind = "bin", name = "utf8-write"})
+lito.write({output = "include/value.h", inputs = {"данные&一.txt", "数据二.txt"},
+  content = "constexpr int value = 0;\n// 中文 @INPUT:1@|@INPUT:1@|@INPUT:2@\n// XML @INPUT_XML:1@|@INPUT_XML:1@|@INPUT_XML:2@\n// 尾部\n"})
+lito.target_add_generated_include(target, "include")
+)lua"_str },
+    };
+    auto project = materialize("生成-тест"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("生成-тест"_str);
+    auto request = build_request(project->root.as_path(), output.as_path(), Vec<String>::make());
+    auto built   = lito::build(request);
+    if (built.is_err()) {
+        rstd::test::fail_current(
+            error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    auto first   = project->root.join(PathBuf::from("данные&一.txt"_str).as_path());
+    auto second  = project->root.join(PathBuf::from("数据二.txt"_str).as_path());
+    auto escaped = project->root.join(PathBuf::from("данные&amp;一.txt"_str).as_path());
+    auto expected =
+        rstd::format("constexpr int value = 0;\n// 中文 {}|{}|{}\n// XML {}|{}|{}\n// 尾部\n",
+                     first.as_path(),
+                     first.as_path(),
+                     second.as_path(),
+                     escaped.as_path(),
+                     escaped.as_path(),
+                     second.as_path());
+    auto generated =
+        output.join(PathBuf::from("generated/utf8-write/include/value.h"_str).as_path());
+    auto text = rstd::fs::read_to_string(generated.as_path());
+    ASSERT_TRUE(text.is_ok());
+    EXPECT_EQ(text->as_str(), expected.as_str());
+    auto repeated = lito::build(request);
+    ASSERT_TRUE(repeated.is_ok());
+    EXPECT_EQ(repeated->compiled, usize {});
+    EXPECT_EQ(rstd::fs::read_to_string(generated.as_path()).unwrap().as_str(), expected.as_str());
+}
+
+#if RSTD_OS_UNIX
+TEST_F(BuildCommand, GeneratedToolMarkersPreserveUtf8Arguments) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "utf8-tool"
+version = "0.1.0"
+[[bin]]
+name = "utf8-tool"
+sources = ["main.cpp"]
+link-stdlib = false
+[build-tools.generator]
+path = "tools/generate"
+)toml"_str },
+        { "main.cpp"_str, "#include \"value.h\"\nint main() { return value; }\n"_str },
+        { "输入.txt"_str, "input\n"_str },
+        { "tools/generate"_str,
+          "#!/bin/sh\nprintf 'constexpr int value = 0;\\n// %s\\n// %s\\n' \"$1\" \"$3\" > \"$2\"\n"_str,
+          lito::source::SourceFileMode::Executable },
+        { "build.lua"_str, R"lua(local target = lito.target({kind = "bin", name = "utf8-tool"})
+lito.run({tool = lito.tool("generator"), cwd = ".", inputs = {"输入.txt"}, outputs = {"include/value.h"},
+  args = {"前缀 @INPUT:1@|@INPUT:1@ 后缀", "@OUTPUT:1@", "имя @OUTPUT_NAME:1@|@OUTPUT_NAME:1@"}})
+lito.target_add_generated_include(target, "include")
+)lua"_str },
+    };
+    auto project = materialize("工具-путь"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("工具-путь"_str);
+    auto request = build_request(project->root.as_path(), output.as_path(), Vec<String>::make());
+    auto built   = lito::build(request);
+    if (built.is_err()) {
+        rstd::test::fail_current(
+            error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    auto input = project->root.join(PathBuf::from("输入.txt"_str).as_path());
+    auto expected =
+        rstd::format("constexpr int value = 0;\n// 前缀 {}|{} 后缀\n// имя value.h|value.h\n",
+                     input.as_path(),
+                     input.as_path());
+    auto generated =
+        output.join(PathBuf::from("generated/utf8-tool/include/value.h"_str).as_path());
+    auto text = rstd::fs::read_to_string(generated.as_path());
+    ASSERT_TRUE(text.is_ok());
+    EXPECT_EQ(text->as_str(), expected.as_str());
+}
+
+TEST_F(BuildCommand, GeneratedWriteDoesNotRecursivelyExpandReplacement) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "marker-input"
+version = "0.1.0"
+[[bin]]
+name = "marker-input"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "input.txt"_str, "input\n"_str },
+        { "build.lua"_str, R"lua(lito.write({output = "value.txt", inputs = {"input.txt"},
+  content = "@INPUT:1@|@INPUT:1@"})
+)lua"_str },
+    };
+    auto project = materialize("replacement-@INPUT:1@"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("replacement-marker"_str);
+    auto result =
+        lito::build(build_request(project->root.as_path(), output.as_path(), Vec<String>::make()));
+    ASSERT_TRUE(result.is_err());
+    EXPECT_TRUE(
+        error_chain_text(result.unwrap_err()).as_str().contains("unresolved input marker"_str));
+}
+#endif
+
 TEST_F(BuildCommand, BuildScriptGeneratedActionsPublishDependencyOrderedSources) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

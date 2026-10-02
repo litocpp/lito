@@ -23,20 +23,18 @@ using namespace lito::system;
 
 namespace lito
 {
-constexpr auto build_host_api_identity = "lito:build-host-api:v3"_str;
+constexpr auto build_host_api_identity = "lito:build-host-api:v4"_str;
 
 auto replace_all(String& value, ref<str> marker, ref<str> replacement) -> usize {
     auto count = usize {};
-    while (value.as_str().contains(marker)) {
-        auto found = Option<usize> {};
-        for (usize index {}; index + marker.len() <= value.len(); ++index) {
-            if (value.as_str().get(index, index + marker.len()).unwrap() == marker) {
-                found = Some(index);
-                break;
-            }
-        }
+    if (marker.is_empty()) return count;
+    auto cursor = usize {};
+    while (cursor < value.len()) {
+        auto found = value.as_str().get(cursor, value.len()).unwrap().find(marker);
         if (found.is_none()) break;
-        value.replace_range(*found, *found + marker.len(), replacement);
+        auto start = cursor + *found;
+        value.replace_range(start, start + marker.len(), replacement);
+        cursor = start + replacement.len();
         ++count;
     }
     return count;
