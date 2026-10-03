@@ -328,11 +328,11 @@ auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
                          : inspect_registry_source_tree(tree, package, version);
     if (candidate.is_err()) return Err(rstd::move(candidate).unwrap_err());
     if (external_inputs == RegistryExternalInputPolicy::Reject &&
-        registry_candidate_has_external_inputs(*candidate)) {
+        registry_candidate_has_disallowed_external_inputs(*candidate)) {
         return archive_failure<InspectedRegistryArchive>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            "Registry packages must not declare external inputs"_Str,
+            "Registry packages must not declare external sources, CMake dependencies, or Cargo dependencies"_Str,
             RegistryArtifactFailureCode::ExternalInputsNotAllowed);
     }
     return Ok(InspectedRegistryArchive {

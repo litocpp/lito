@@ -58,7 +58,7 @@ auto inspect_registry_source_tree_at(const lito::source::SourceTree& tree,
 
 auto registry_dependencies_match(slice<RegistryDependencyProjection> left,
                                  slice<RegistryDependencyProjection> right) noexcept -> bool;
-auto registry_candidate_has_external_inputs(
+auto registry_candidate_has_disallowed_external_inputs(
     const VerifiedRegistrySourceCandidate& candidate) noexcept -> bool;
 
 } // namespace lito::registry
@@ -466,12 +466,10 @@ auto lito::registry::registry_dependencies_match(slice<RegistryDependencyProject
     return true;
 }
 
-auto lito::registry::registry_candidate_has_external_inputs(
+auto lito::registry::registry_candidate_has_disallowed_external_inputs(
     const VerifiedRegistrySourceCandidate& candidate) noexcept -> bool {
     const auto& manifest = candidate.manifest;
     if (! manifest.external_sources.is_empty() ||
-        ! manifest.pkg_config_external_dependencies.is_empty() ||
-        ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
         ! manifest.cmake_external_dependencies.is_empty() ||
         ! manifest.workspace_cmake_external_dependencies.is_empty() ||
         ! manifest.cargo_external_dependencies.is_empty() ||

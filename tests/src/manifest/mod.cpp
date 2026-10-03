@@ -1060,6 +1060,56 @@ sources = ["src/lib.cppm"]
     EXPECT_EQ(packed->artifact->candidate.version.text(), "1.2.3"_str);
 }
 
+TEST_F(Manifest, PackPackagePreservesWorkspacePkgConfigDependencies) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "pack-workspace-pkg-config"
+members = ["library"]
+
+[workspace.external-dependencies.pkg-config.curl]
+module = "lito-test-uninstalled-libcurl"
+version = ">= 8.0"
+)toml"_str },
+        { "library/lito.toml"_str, R"toml([package]
+name = "sample"
+version = "1.2.3"
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+
+[external-dependencies.pkg-config.curl]
+workspace = true
+pub = true
+)toml"_str },
+        { "library/src/lib.cppm"_str, "export module sample;\n"_str },
+    };
+    auto project = materialize("pack-workspace-pkg-config"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("pack-workspace-pkg-config"_str)
+                      .join(PathBuf::from("sample.tar.zst"_str).as_path());
+    auto packed = lito::pack_package(lito::PackPackageRequest {
+        .root    = project->root.clone(),
+        .package = Some("sample"_Str),
+        .output  = Some(rstd::move(output)),
+        .registry =
+            lito::PackageRegistryContext {
+                .owner =
+                    lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            },
+    });
+    ASSERT_TRUE(packed.is_ok());
+    ASSERT_TRUE(packed->artifact.is_some());
+    const auto& manifest = packed->artifact->candidate.manifest;
+    EXPECT_TRUE(manifest.workspace_pkg_config_external_dependencies.is_empty());
+    ASSERT_EQ(manifest.pkg_config_external_dependencies.len(), usize(1));
+    const auto& dependency = manifest.pkg_config_external_dependencies[usize {}];
+    EXPECT_EQ(dependency.requirement.module.as_str(), "lito-test-uninstalled-libcurl"_str);
+    ASSERT_TRUE(dependency.requirement.version.is_some());
+    EXPECT_EQ(dependency.requirement.version->value.as_str(), "8.0"_str);
+}
+
 TEST_F(Manifest, PackPackageNormalizesFilesystemMetadata) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

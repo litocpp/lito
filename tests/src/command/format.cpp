@@ -1,5 +1,4 @@
 #include <rstd/test/gtest.hpp>
-#include <atomic>
 
 import rstd;
 import rstd.test;
@@ -9,9 +8,9 @@ import lito.test.support;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using PathBuf = rstd::path::PathBuf;
-
 using namespace lito_test;
+using rstd::sync::atomic::Atomic;
+using PathBuf = rstd::path::PathBuf;
 
 class FormatCommand : public ProjectFixture {};
 
@@ -31,33 +30,33 @@ TEST(FormatExecution, BoundsWorkersAndFallsBack) {
 }
 
 TEST(FormatExecution, OverlapsBoundedWorkAndKeepsResultOrder) {
-    std::atomic<unsigned> entered { 0 };
-    std::atomic<unsigned> active { 0 };
-    std::atomic<unsigned> maximum { 0 };
-    auto                  result = lito::format_execution::run(
+    Atomic<usize> entered {};
+    Atomic<usize> active {};
+    Atomic<usize> maximum {};
+    auto          result = lito::format_execution::run(
         usize(12), usize(64), [&](usize index) -> lito::CommandResult<bool> {
-            auto current  = active.fetch_add(1) + 1;
+            auto current  = active.fetch_add(usize(1)) + usize(1);
             auto previous = maximum.load();
             while (previous < current && ! maximum.compare_exchange_weak(previous, current)) {
             }
             if (index < usize(4)) {
-                entered.fetch_add(1);
+                entered.fetch_add(usize(1));
                 auto started = rstd::time::Instant::now();
-                while (entered.load() < 4) {
+                while (entered.load() < usize(4)) {
                     if (started.elapsed() > rstd::time::Duration::from_secs(rstd::u64(30))) {
-                        active.fetch_sub(1);
+                        active.fetch_sub(usize(1));
                         return Err(
                             lito::CommandError::Message("concurrency barrier timed out"_Str));
                     }
                     rstd::thread::yield_now();
                 }
             }
-            active.fetch_sub(1);
+            active.fetch_sub(usize(1));
             return Ok(index % usize(2) == usize {});
         });
     ASSERT_TRUE(result.is_ok());
-    EXPECT_EQ(maximum.load(), 4u);
-    EXPECT_EQ(active.load(), 0u);
+    EXPECT_EQ(maximum.load(), usize(4));
+    EXPECT_EQ(active.load(), usize {});
     ASSERT_EQ(result->len(), usize(12));
     for (usize index {}; index < result->len(); ++index) {
         EXPECT_EQ((*result)[index], index % usize(2) == usize {});
@@ -65,12 +64,12 @@ TEST(FormatExecution, OverlapsBoundedWorkAndKeepsResultOrder) {
 }
 
 TEST(FormatExecution, DrainsSubmittedTasksAndChoosesEarliestError) {
-    std::atomic<unsigned> entered { 0 };
-    std::atomic<unsigned> finished { 0 };
-    std::atomic<bool>     later_failed { false };
-    auto                  result = lito::format_execution::run(
+    Atomic<usize> entered {};
+    Atomic<usize> finished {};
+    Atomic<bool>  later_failed { false };
+    auto          result = lito::format_execution::run(
         usize(20), usize(2), [&](usize index) -> lito::CommandResult<bool> {
-            entered.fetch_add(1);
+            entered.fetch_add(usize(1));
             if (index == usize {}) {
                 auto started = rstd::time::Instant::now();
                 while (! later_failed.load()) {
@@ -82,12 +81,12 @@ TEST(FormatExecution, DrainsSubmittedTasksAndChoosesEarliestError) {
             } else {
                 later_failed.store(true);
             }
-            finished.fetch_add(1);
+            finished.fetch_add(usize(1));
             return Err(lito::CommandError::Message(rstd::format("failure {}", index)));
         });
     ASSERT_TRUE(result.is_err());
-    EXPECT_EQ(entered.load(), 2u);
-    EXPECT_EQ(finished.load(), 2u);
+    EXPECT_EQ(entered.load(), usize(2));
+    EXPECT_EQ(finished.load(), usize(2));
     EXPECT_EQ(rstd::format("{}", result.unwrap_err()).as_str(), "failure 0"_str);
 }
 
@@ -104,8 +103,8 @@ TEST(FormatExecution, SingleWorkerStopsAtFailure) {
 }
 
 TEST(FormatExecution, ReordersCompletionsByInputIndex) {
-    std::atomic<bool> replenished { false };
-    auto              result = lito::format_execution::run(
+    Atomic<bool> replenished { false };
+    auto         result = lito::format_execution::run(
         usize(3), usize(2), [&](usize index) -> lito::CommandResult<bool> {
             if (index == usize {}) {
                 auto started = rstd::time::Instant::now();
