@@ -105,6 +105,22 @@ auto known_fields(luato::Table& table, initializer_list<ref<str>> names) -> luat
     return table.reject_unknown_fields(known.as_slice());
 }
 
+auto recipe_target(luato::Table table, ref<str> owner, ref<str> context)
+    -> luato::Result<lito::package::PackageTargetId> {
+    rstd_try(known_fields(table, { "kind"_str, "name"_str }));
+    auto kind = rstd_try(table.required<String>("kind"_str));
+    if (kind != "bin"_str && kind != "lib"_str) {
+        return Err(
+            luato::Error::binding(rstd::format("{} target.kind must be 'bin' or 'lib'", context)));
+    }
+    return Ok(lito::package::PackageTargetId {
+        .package = owner.into(),
+        .kind    = kind == "lib"_str ? lito::package::PackageTargetKind::Library
+                                     : lito::package::PackageTargetKind::Binary,
+        .name    = rstd_try(table.required<String>("name"_str)),
+    });
+}
+
 template<typename F>
 auto parse_array(const luato::Table& root, ref<str> field, F&& parse) -> luato::Result<empty> {
     if (! root.contains(field)) return Ok(empty {});
@@ -221,6 +237,7 @@ public:
                                 "target_runtimes"_str,
                                 "external_assets"_str,
                                 "files"_str,
+                                "generated_files"_str,
                                 "templates"_str,
                                 "pkg_config"_str,
                                 "inventories"_str }));
@@ -240,17 +257,10 @@ public:
             table, "artifacts"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
                 rstd_try(
                     known_fields(item, { "target"_str, "destination"_str, "runtime_search"_str }));
-                auto target = rstd_try(item.required<luato::Table>("target"_str));
-                rstd_try(known_fields(target, { "kind"_str, "name"_str }));
-                auto kind        = rstd_try(target.required<String>("kind"_str));
-                auto target_kind = lito::package::PackageTargetKind::Binary;
-                if (kind == "lib"_str) {
-                    target_kind = lito::package::PackageTargetKind::Library;
-                } else if (kind != "bin"_str) {
-                    return Err(luato::Error::binding(
-                        "install artifact target.kind must be 'bin' or 'lib'"_Str));
-                }
-                auto name = rstd_try(target.required<String>("name"_str));
+                auto target =
+                    rstd_try(recipe_target(rstd_try(item.required<luato::Table>("target"_str)),
+                                           package_.name.as_str(),
+                                           "install artifact"_str));
                 auto destination =
                     rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
                                          "install artifact destination"_str));
@@ -286,14 +296,25 @@ public:
                         rstd::format("{}.runtime_search must not be empty", item.path())));
                 }
                 recipe.artifacts.push(InstallArtifactRecipe {
-                    .target =
-                        lito::package::PackageTargetId {
-                            .package = package_.name.clone(),
-                            .kind    = target_kind,
-                            .name    = rstd::move(name),
-                        },
+                    .target         = rstd::move(target),
                     .destination    = rstd::move(destination),
                     .runtime_search = rstd::move(runtime_search),
+                });
+                return Ok(empty {});
+            }));
+        rstd_try(parse_array(
+            table, "generated_files"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
+                rstd_try(known_fields(item, { "target"_str, "source"_str, "destination"_str }));
+                recipe.generated_files.push(InstallGeneratedFilesRecipe {
+                    .target =
+                        rstd_try(recipe_target(rstd_try(item.required<luato::Table>("target"_str)),
+                                               package_.name.as_str(),
+                                               "install generated_files"_str)),
+                    .source = rstd_try(recipe_path(rstd_try(item.required<String>("source"_str)),
+                                                   "generated_files source"_str)),
+                    .destination =
+                        rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
+                                             "generated_files destination"_str)),
                 });
                 return Ok(empty {});
             }));

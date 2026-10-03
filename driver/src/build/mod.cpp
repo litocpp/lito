@@ -1976,6 +1976,27 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                              })
                                              .collect<Vec<BuiltCompilerPlugin>>();
 
+    for (auto& artifact : artifacts) {
+        for (const auto& target : package.targets) {
+            if (target.id != artifact.target) continue;
+            auto directory = layout.generated_package_directory(target.id.package.as_str());
+            if (directory.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(directory).unwrap_err()));
+            }
+            for (const auto& generated : target.generated_artifacts) {
+                if (generated.role != cpp::GeneratedArtifactRole::Metadata) continue;
+                artifact.companions.push(BuiltArtifactFile {
+                    .role             = ArtifactFileRole::Metadata,
+                    .path             = directory->join(generated.path.as_path()),
+                    .content_type     = "application/octet-stream"_Str,
+                    .content_identity = generated.action_identity.clone(),
+                    .publish          = false,
+                    .generated_path   = generated.path.clone(),
+                });
+            }
+        }
+    }
+
     auto product = CompletedBuildProduct {
         .profile = package_plan.profile->name.clone(),
         .target  = project.platform.effective_target.triple.clone(),

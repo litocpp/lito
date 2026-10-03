@@ -28,6 +28,51 @@ source-groups = ["generated"]
 The complete build receives the generated tree directly. Source discovery, scan cache identity,
 compile actions, and resource publication therefore share one generation result.
 
+## Staged Qt QML modules
+
+The built-in Qt script package stages a module under `lito-qml/<URI as directories>` by default.
+Its `qmldir`, QML files, resources, and generated `module.qmltypes` are target metadata that can be
+selected by `install.lua`. Generator intermediates live in the sibling `<output>.build` directory.
+Use returned output handles for generated C++ and resource inputs instead of their physical paths.
+
+To allow another process to load the staged module from disk:
+
+```lua
+local qt = require("@lito.qt")
+local target = lito.target({ kind = "lib", name = "ui" })
+qt.qml_module({
+  target = target,
+  qt = lito.external_dependency(target, "qt6"),
+  uri = "Example.Ui",
+  qml_files = { "qml/StatusDot.qml" },
+  resources = { "qml/status.svg" },
+  prefer_resources = false,
+  plugin = "none",
+})
+```
+
+`prefer_resources` defaults to `true`. Setting it to `false` omits `prefer` only from the staged
+`qmldir`; the embedded resource version still prefers the module's resource URL. The return value's
+`qmldir` refers to the staged copy and `resource_qmldir` to the embedded copy. Cache generation
+continues to use the resource version.
+
+The corresponding `install.lua` is:
+
+```lua
+lito.install({
+  generated_files = {{
+    target = { kind = "lib", name = "ui" },
+    source = "lito-qml/Example/Ui",
+    destination = "share/qml/Example/Ui",
+  }},
+})
+```
+
+Add the installed `share/qml` directory to the consumer's QML import path. `module.qmltypes` is
+generated when `moc_files` are provided; it describes C++ types for tooling, but does not implement
+or register them at runtime. A consuming process must provide any backend types required by the
+QML files. Pure-QML modules do not need a `.qmltypes` file.
+
 ## Host build tools
 
 `[build-tools.ALIAS]` declares an executable for the host, not the target. To use an installed tool:

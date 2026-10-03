@@ -76,7 +76,8 @@ auto append_entry(Vec<InstallEntry>& entries, InstallEntry entry)
 
 auto artifact_for(const CompletedBuildProduct&          product,
                   const InstallBuildRequirements&       requirements,
-                  const lito::package::PackageTargetId& target)
+                  const lito::package::PackageTargetId& target,
+                  bool                                  require_installable = true)
     -> InstallMaterializeResult<const BuiltArtifact*> {
     const RequestedArtifactLinkVariant* expected = nullptr;
     for (const auto& variant : requirements.artifact_link_variants) {
@@ -106,7 +107,7 @@ auto artifact_for(const CompletedBuildProduct&          product,
     const auto expected_kind = target.kind == lito::package::PackageTargetKind::Library
                                    ? cpp::ArtifactKind::SharedLibrary
                                    : cpp::ArtifactKind::Executable;
-    if (result == nullptr || result->kind != expected_kind) {
+    if (result == nullptr || (require_installable && result->kind != expected_kind)) {
         return Err(InstallMaterializeError::Message(
             rstd::format("build did not return the installable artifact for '{}'",
                          lito::package::package_target_id_text(target))));
@@ -241,6 +242,35 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                                       .payload = InstallEntryPayload::CopyFile(rstd::move(source)),
                                       .relative_destination = file.destination.clone(),
                                   }));
+        }
+        for (const auto& generated : recipe.generated_files) {
+            auto built   = rstd_try(artifact_for(product, requirements, generated.target, false));
+            auto matched = false;
+            for (const auto& file : built->companions) {
+                if (file.role != ArtifactFileRole::Metadata ||
+                    file.generated_path.as_path().is_empty())
+                    continue;
+                auto relative =
+                    file.generated_path.as_path().strip_prefix(generated.source.as_path());
+                if (relative.is_none() || relative->is_empty()) continue;
+                rstd_try(
+                    validate_product_file(product, file.path.as_path(), "generated metadata"_str));
+                rstd_try(
+                    append_entry(entries,
+                                 InstallEntry {
+                                     .origin = InstallEntryOrigin::GeneratedFile(
+                                         generated.target.clone(), file.generated_path.clone()),
+                                     .payload = InstallEntryPayload::CopyFile(file.path.clone()),
+                                     .relative_destination = generated.destination.join(*relative),
+                                 }));
+                matched = true;
+            }
+            if (! matched) {
+                return Err(InstallMaterializeError::Message(
+                    rstd::format("target '{}' has no generated metadata under '{}'",
+                                 lito::package::package_target_id_text(generated.target),
+                                 generated.source.as_path())));
+            }
         }
         for (const auto& artifact : recipe.artifacts) {
             auto built = rstd_try(artifact_for(product, requirements, artifact.target));

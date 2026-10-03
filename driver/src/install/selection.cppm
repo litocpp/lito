@@ -295,6 +295,31 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                              recipe.owner.as_str(),
                              target.triple.as_str())));
         }
+        for (const auto& generated : recipe.generated_files) {
+            if (generated.target.package != recipe.owner.as_str()) {
+                return Err(
+                    InstallError::Message("generated_files target belongs to another package"_Str));
+            }
+            auto found = false;
+            for (const auto& candidate : owner->manifest.targets) {
+                if (lito::manifest::package_target_kind(candidate) == generated.target.kind &&
+                    lito::manifest::package_target_name(candidate) ==
+                        generated.target.name.as_str()) {
+                    found = true;
+                    break;
+                }
+            }
+            if (! found) {
+                return Err(InstallError::Message(
+                    rstd::format("unknown generated_files target '{}'",
+                                 lito::package::package_target_id_text(generated.target))));
+            }
+            auto duplicate = false;
+            for (const auto& selected : requirements.targets) {
+                if (selected == generated.target) duplicate = true;
+            }
+            if (! duplicate) requirements.targets.push(generated.target.clone());
+        }
         for (usize artifact_index {}; artifact_index < recipe.artifacts.len(); ++artifact_index) {
             const auto& artifact = recipe.artifacts[artifact_index];
             if (artifact.target.package != recipe.owner.as_str()) {

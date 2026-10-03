@@ -1536,6 +1536,7 @@ host-tools = [
   { name = "qmltyperegistrar", target = "Qt6::qmltyperegistrar" },
   { name = "rcc", target = "Qt6::rcc" },
   { name = "qmlimportscanner", target = "Qt6::qmlimportscanner" },
+  { name = "qmlcachegen", target = "Qt6::qmlcachegen" },
   { name = "lrelease", target = "Qt6::lrelease" },
   { name = "protoc", target = "WrapProtoc::WrapProtoc" },
   { name = "qtprotobufgen", target = "Qt6::qtprotobufgen" },
@@ -1543,7 +1544,7 @@ host-tools = [
 )toml"_str },
         { "tools/adapter.cmake"_str, R"cmake(add_library(Qt6::Protobuf INTERFACE IMPORTED GLOBAL)
 add_library(Qt6::ProtobufQuick INTERFACE IMPORTED GLOBAL)
-foreach(_tool IN ITEMS moc qmltyperegistrar rcc qmlimportscanner lrelease qtprotobufgen)
+foreach(_tool IN ITEMS moc qmltyperegistrar rcc qmlimportscanner qmlcachegen lrelease qtprotobufgen)
   add_executable(Qt6::${_tool} IMPORTED GLOBAL)
   set_property(TARGET Qt6::${_tool} PROPERTY IMPORTED_LOCATION
                "${CMAKE_CURRENT_LIST_DIR}/fixture-tool")
@@ -1642,6 +1643,14 @@ message Status {
 
 Item {}
 )qml"_str },
+        { "qml/icon.svg"_str, "<svg/>\n"_str },
+        { "backend.hpp"_str, "#pragma once\n"_str },
+        { "install.lua"_str, R"lua(lito.install({generated_files = {{
+  target = {kind = "bin", name = "fixture-qt-protobuf"},
+  source = "lito-qml/Fixture/Ui",
+  destination = "share/qml/Fixture/Ui",
+}}})
+)lua"_str },
         { "i18n/fixture_zh_CN.ts"_str, R"xml(<?xml version="1.0" encoding="utf-8"?>
 <TS version="2.1" language="zh_CN">
 <context>
@@ -1674,9 +1683,16 @@ qt.qml_module({
   uri = "Fixture.Ui",
   version = "1.0",
   qml_files = { "qml/Main.qml" },
-  cache = false,
+  resources = { "qml/icon.svg" },
+  moc_files = {{source = "backend.hpp", mode = "separate", output = "moc_backend.cpp"}},
+  prefer_resources = false,
   plugin = "none",
 })
+local valid, message = pcall(qt.qml_module, {
+  target = target, qt = qt6, uri = "Invalid.Ui", qml_files = { "qml/Main.qml" },
+  prefer_resources = "false",
+})
+assert(not valid and message:find("prefer_resources must be boolean", 1, true))
 qt.translations({
   target = target,
   qt = qt6,
@@ -1716,7 +1732,7 @@ auto main() -> int {
     }
 
     auto generated = output.join(
-        PathBuf::from("generated/fixture-qt-protobuf/protobuf/control/qml"_str).as_path());
+        PathBuf::from("generated/fixture-qt-protobuf/protobuf/control/qml.build"_str).as_path());
     auto plugin_moc = rstd::fs::read_to_string(
         generated.join(PathBuf::from("moc_fixture_controlPlugin.cpp"_str).as_path()).as_path());
     ASSERT_TRUE(plugin_moc.is_ok());
@@ -1732,7 +1748,12 @@ auto main() -> int {
     EXPECT_FALSE(rstd::fs::exists(generated.join(PathBuf::from("raw.qrc"_str).as_path()).as_path())
                      .unwrap_or(true));
     EXPECT_TRUE(
-        rstd::fs::exists(generated.join(PathBuf::from("module.qmltypes"_str).as_path()).as_path())
+        rstd::fs::exists(
+            output
+                .join(PathBuf::from(
+                          "generated/fixture-qt-protobuf/protobuf/control/qml/module.qmltypes"_str)
+                          .as_path())
+                .as_path())
             .unwrap_or(false));
     auto qml_module = output.join(
         PathBuf::from("generated/fixture-qt-protobuf/lito-qml/Fixture/Ui"_str).as_path());
@@ -1741,6 +1762,40 @@ auto main() -> int {
     ASSERT_TRUE(qmldir.is_ok());
     EXPECT_TRUE(qmldir->as_str().contains("module Fixture.Ui"_str));
     EXPECT_TRUE(qmldir->as_str().contains("Main 1.0 qml/Main.qml"_str));
+    EXPECT_TRUE(qmldir->as_str().contains("typeinfo module.qmltypes"_str));
+    EXPECT_FALSE(qmldir->as_str().contains("prefer "_str));
+    auto embedded_qmldir = rstd::fs::read_to_string(
+        output
+            .join(
+                PathBuf::from("generated/fixture-qt-protobuf/lito-qml/Fixture/Ui.build/qmldir"_str)
+                    .as_path())
+            .as_path());
+    ASSERT_TRUE(embedded_qmldir.is_ok());
+    EXPECT_TRUE(embedded_qmldir->as_str().contains("prefer :/qt/qml/Fixture/Ui/"_str));
+    auto module_qrc = rstd::fs::read_to_string(
+        output
+            .join(PathBuf::from(
+                      "generated/fixture-qt-protobuf/lito-qml/Fixture/Ui.build/module.qrc"_str)
+                      .as_path())
+            .as_path());
+    ASSERT_TRUE(module_qrc.is_ok());
+    EXPECT_TRUE(module_qrc->as_str().contains("Ui.build/qmldir"_str));
+    auto cache = rstd::fs::read_to_string(
+        output
+            .join(
+                PathBuf::from(
+                    "generated/fixture-qt-protobuf/lito-qml/Fixture/Ui.build/cache/Fixture_Ui_qml_Main_qml.cpp"_str)
+                    .as_path())
+            .as_path());
+    ASSERT_TRUE(cache.is_ok());
+    EXPECT_TRUE(cache->as_str().contains("Ui.build/qmldir"_str));
+    auto default_qmldir = rstd::fs::read_to_string(
+        output
+            .join(PathBuf::from("generated/fixture-qt-protobuf/protobuf/control/qml/qmldir"_str)
+                      .as_path())
+            .as_path());
+    ASSERT_TRUE(default_qmldir.is_ok());
+    EXPECT_TRUE(default_qmldir->as_str().contains("prefer :/qt/qml/fixture/control/"_str));
     auto staged_qml = rstd::fs::read_to_string(
         qml_module.join(PathBuf::from("qml/Main.qml"_str).as_path()).as_path());
     ASSERT_TRUE(staged_qml.is_ok());
@@ -1763,6 +1818,40 @@ auto main() -> int {
     ASSERT_TRUE(translation_qrc.is_ok());
     EXPECT_TRUE(translation_qrc->as_str().contains("prefix=\"/i18n\""_str));
     EXPECT_TRUE(translation_qrc->as_str().contains("alias=\"fixture_zh_CN.qm\""_str));
+
+    auto source = lito::resolve_install_source(
+        lito::InstallSourceRequirement::LocalProject(project->root.clone()));
+    ASSERT_TRUE(source.is_ok());
+    auto prefix    = install_root("qt-qml-module"_str);
+    auto installed = lito::install(lito::InstallRequest {
+        .source = rstd::move(source).unwrap(),
+        .build  = rstd::move(request),
+        .destination =
+            lito::InstallDestination::Prefix(lito::InstallPrefix { .path = prefix.clone() }),
+        .build_mode = lito::InstallBuildMode::ReuseCompleted,
+    });
+    if (installed.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(installed.unwrap_err()));
+        FAIL();
+        return;
+    }
+    auto installed_module = prefix.join(PathBuf::from("share/qml/Fixture/Ui"_str).as_path());
+    for (auto path : rstd::initializer_list<ref<str>> {
+             "qmldir"_str, "module.qmltypes"_str, "qml/Main.qml"_str, "qml/icon.svg"_str }) {
+        auto actual = rstd::fs::read_to_string(
+            installed_module.join(PathBuf::from(path).as_path()).as_path());
+        auto expected =
+            rstd::fs::read_to_string(qml_module.join(PathBuf::from(path).as_path()).as_path());
+        ASSERT_TRUE(actual.is_ok());
+        ASSERT_TRUE(expected.is_ok());
+        EXPECT_EQ(actual->as_str(), expected->as_str());
+    }
+    EXPECT_FALSE(rstd::fs::exists(
+                     installed_module.join(PathBuf::from("imports.json"_str).as_path()).as_path())
+                     .unwrap());
+    EXPECT_FALSE(rstd::fs::exists(
+                     installed_module.join(PathBuf::from("metatypes.json"_str).as_path()).as_path())
+                     .unwrap());
 }
 
 TEST_F(BuildCommand, BuildScriptLoadsRequiredScriptPackageAndSourceRootFiles) {

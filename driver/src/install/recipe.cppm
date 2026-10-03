@@ -68,6 +68,12 @@ struct InstallFileRecipe {
     PathBuf destination;
 };
 
+struct InstallGeneratedFilesRecipe {
+    lito::package::PackageTargetId target;
+    PathBuf                        source;
+    PathBuf                        destination;
+};
+
 struct InstallTemplateRecipe {
     PathBuf         input;
     PathBuf         destination;
@@ -111,6 +117,7 @@ struct InstallRecipe {
     Vec<InstallTargetRuntimeRecipe>     target_runtimes;
     Vec<InstallExternalAssetRecipe>     external_assets;
     Vec<InstallFileRecipe>              files;
+    Vec<InstallGeneratedFilesRecipe>    generated_files;
     Vec<InstallTemplateRecipe>          templates;
     Vec<InstallPkgConfigRecipe>         pkg_config;
     Vec<InstallInventoryRecipe>         inventories;

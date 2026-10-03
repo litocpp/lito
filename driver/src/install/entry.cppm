@@ -29,6 +29,7 @@ class InstallEntryOrigin {
     RSTD_ENUM(InstallEntryOrigin,
               (PackageFile, (String package; PathBuf path;)),
               (BuildArtifact, (lito::package::PackageTargetId target;)),
+              (GeneratedFile, (lito::package::PackageTargetId target; PathBuf path;)),
               (TargetRuntime, (String name; String identity;)),
               (ExternalAsset, (String dependency; String set; PathBuf path;)),
               (Template, (PathBuf input;)),

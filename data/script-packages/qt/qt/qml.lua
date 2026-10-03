@@ -155,12 +155,14 @@ local function generate_registration(request, prefix, major, minor)
 end
 
 local function generate_qmldir(request, prefix, resource_path, version, qml_files,
-                               registration)
+                               registration, prefer_resources, staged)
   local content = "module " .. request.uri .. "\n"
   if registration ~= nil then
     content = content .. "typeinfo module.qmltypes\n"
   end
-  content = content .. "prefer :" .. resource_path .. "\n"
+  if prefer_resources then
+    content = content .. "prefer :" .. resource_path .. "\n"
+  end
   for _, path in ipairs(qml_files) do
     local qualifier = contains(request.singletons or {}, path) and "singleton " or ""
     content = content .. qualifier .. qml_type(path) .. " " .. version .. " " .. path .. "\n"
@@ -175,7 +177,11 @@ local function generate_qmldir(request, prefix, resource_path, version, qml_file
     output = prefix .. "/qmldir",
     content = content,
   }).output
-  lito.target_add_metadata(request.target, result)
+  if staged then
+    lito.target_add_metadata(request.target, result)
+  else
+    lito.target_add_auxiliary_artifact(request.target, result)
+  end
   return result
 end
 
@@ -197,14 +203,18 @@ local function scan_imports(request, prefix, qml_files)
   return scanned
 end
 
-local function stage_qml_files(request, prefix, qml_files)
+local function stage_qml_files(request, prefix, qml_files, metadata)
   local staged = {}
   for _, path in ipairs(qml_files) do
     local output = lito.copy({
       input = path,
       output = prefix .. "/" .. path,
     }).output
-    lito.target_add_metadata(request.target, output)
+    if metadata then
+      lito.target_add_metadata(request.target, output)
+    else
+      lito.target_add_auxiliary_artifact(request.target, output)
+    end
     append(staged, output)
   end
   return staged
@@ -404,6 +414,9 @@ function qml.generate_module(request)
   end
   request.singletons = singletons
   local resources = checked_files(request.resources or {}, "qt.qml_module.resources")
+  if request.prefer_resources ~= nil and type(request.prefer_resources) ~= "boolean" then
+    error("qt.qml_module.prefer_resources must be boolean")
+  end
   if #qml_files == 0 and #(request.moc_files or {}) == 0 and #resources == 0 then
     error("qt.qml_module requires QML files, moc files, or resources")
   end
@@ -419,23 +432,43 @@ function qml.generate_module(request)
   local target_path = uri:gsub("%.", "/")
   local prefix = request.output or ("lito-qml/" .. target_path)
   safe_path(prefix, "qt.qml_module.output")
+  local build_prefix = prefix .. ".build"
   local resource_base = resource_prefix(request.resource_prefix or "/qt/qml")
   local resource_prefix = resource_base .. (resource_base == "/" and "" or "/") ..
       target_path .. "/"
-  local staged_qml_files = stage_qml_files(request, prefix, qml_files)
-  local registration = generate_registration(request, prefix, major, minor)
+  stage_qml_files(request, prefix, qml_files, true)
+  local tool_qml_files = stage_qml_files(request, build_prefix, qml_files, false)
+  local staged_resources = {}
+  for _, path in ipairs(resources) do
+    if not contains(qml_files, path) and not contains(staged_resources, path) then
+      append(staged_resources, path)
+    end
+  end
+  stage_qml_files(request, prefix, staged_resources, true)
+  stage_qml_files(request, build_prefix, staged_resources, false)
+  local registration = generate_registration(request, build_prefix, major, minor)
+  local staged_qmltypes = nil
+  if registration ~= nil then
+    staged_qmltypes = lito.copy({
+      input = registration.qmltypes,
+      output = prefix .. "/module.qmltypes",
+    }).output
+    lito.target_add_metadata(request.target, staged_qmltypes)
+  end
   local qmldir = generate_qmldir(request, prefix, resource_prefix, version, qml_files,
-                                 registration)
+                                 registration, request.prefer_resources ~= false, true)
+  local resource_qmldir = generate_qmldir(request, build_prefix, resource_prefix, version,
+                                          qml_files, registration, true, false)
   local import_metadata = nil
   if #qml_files ~= 0 then
-    import_metadata = scan_imports(request, prefix, qml_files)
+    import_metadata = scan_imports(request, build_prefix, qml_files)
   end
 
   local raw_files = {}
   for _, path in ipairs(qml_files) do
     append(raw_files, { alias = path, input = path })
   end
-  for _, path in ipairs(resources) do
+  for _, path in ipairs(staged_resources) do
     append(raw_files, { alias = path, input = path })
   end
   local raw_qrc = nil
@@ -446,12 +479,12 @@ function qml.generate_module(request)
       name = output_name(uri) .. "_raw",
       prefix = resource_prefix,
       files = raw_files,
-      qrc_output = prefix .. "/raw.qrc",
-      cpp_output = prefix .. "/qrc_raw.cpp",
+      qrc_output = build_prefix .. "/raw.qrc",
+      cpp_output = build_prefix .. "/qrc_raw.cpp",
     }).qrc
   end
 
-  local module_files = { { alias = "qmldir", input = qmldir } }
+  local module_files = { { alias = "qmldir", input = resource_qmldir } }
   if registration ~= nil then
     append(module_files, { alias = "module.qmltypes", input = registration.qmltypes })
   end
@@ -461,27 +494,28 @@ function qml.generate_module(request)
     name = output_name(uri) .. "_module",
     prefix = resource_prefix,
     files = module_files,
-    qrc_output = prefix .. "/module.qrc",
-    cpp_output = prefix .. "/qrc_module.cpp",
+    qrc_output = build_prefix .. "/module.qrc",
+    cpp_output = build_prefix .. "/qrc_module.cpp",
   }).qrc
   local cache_sources = {}
   local type_sources = {}
   if #qml_files ~= 0 then
-    cache_sources = generate_cache(request, prefix, resource_prefix, qml_files, qmldir,
+    cache_sources = generate_cache(request, build_prefix, resource_prefix, qml_files, resource_qmldir,
                                    module_qrc, raw_qrc)
-    type_sources = generate_types(request, prefix, qml_files, staged_qml_files,
+    type_sources = generate_types(request, build_prefix, qml_files, tool_qml_files,
                                   module_qrc, raw_qrc, information)
   end
   local plugin_artifact = nil
   if plugin == "static" then
-    plugin_artifact = generate_static_plugin(request, prefix, registration,
+    plugin_artifact = generate_static_plugin(request, build_prefix, registration,
                                              #cache_sources ~= 0, raw_qrc ~= nil)
     lito.target_add_auxiliary_artifact(request.target, module_qrc)
   end
   return {
     qmldir = qmldir,
+    resource_qmldir = resource_qmldir,
     imports = import_metadata,
-    qmltypes = registration ~= nil and registration.qmltypes or nil,
+    qmltypes = staged_qmltypes,
     module_resource = module_qrc,
     raw_resource = raw_qrc,
     cache_sources = cache_sources,

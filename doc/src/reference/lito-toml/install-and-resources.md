@@ -66,7 +66,7 @@ configure-template name rules. Template inputs are regular non-symlink files ins
 
 ## Recipe fields
 
-The top-level recipe accepts only `artifacts`, `target_runtimes`, `external_assets`, `files`,
+The top-level recipe accepts only `artifacts`, `target_runtimes`, `external_assets`, `files`, `generated_files`,
 `templates`, `pkg_config`, and `inventories`. Each is an optional array of tables.
 
 ### Artifacts
@@ -81,7 +81,8 @@ artifacts = {{
 ```
 
 `kind` accepts `bin` or `lib`. Library artifacts must be shared libraries. Targets and
-destinations cannot be repeated within the recipe. Only selected artifact targets are built.
+destinations cannot be repeated within the recipe. Artifact and generated-file selections determine
+which targets are built.
 
 On Linux, an artifact may request an install-specific ELF `RUNPATH` through declared external
 asset sets:
@@ -99,6 +100,33 @@ artifacts = {{
 Every reference must match exactly one `external_assets` entry in the same recipe. Lito derives an
 origin-relative path from the artifact and asset destinations, then links a separate install
 variant. The normal build artifact is unchanged.
+
+### Generated metadata files
+
+`generated_files` selects files registered by `lito.target_add_metadata` in `build.lua`:
+
+```lua
+generated_files = {{
+  target = { kind = "lib", name = "ui" },
+  source = "lito-qml/Example/Ui",
+  destination = "share/qml/Example/Ui",
+}}
+```
+
+`target` belongs to the recipe package; `kind` accepts `bin` or `lib`, including static libraries.
+The target is built even when its binary or library is not selected by `artifacts`.
+`source` is a directory relative to the package's generated root, not a physical build path.
+Only that target's declared metadata below the directory is copied, preserving relative paths.
+Lito does not recursively scan the directory or include undeclared files, generated sources,
+resources, or auxiliary artifacts. A selection matching no metadata is an error.
+
+Both paths must be safe relative paths. Destination conflicts with any other recipe entry are
+errors. Completed build products retain the declared paths and file stamps, so `--no-build`
+uses the same selection without rerunning generation and rejects missing or changed files.
+Products written before this metadata format was introduced must be rebuilt once.
+
+See [staged Qt QML modules](../../guide/generated-sources-and-build-tools.md#staged-qt-qml-modules)
+for a complete producer and install recipe.
 
 ### External assets
 

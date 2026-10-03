@@ -14,6 +14,137 @@ using namespace lito_test;
 
 class InstallCommand : public ProjectFixture {};
 
+TEST_F(InstallCommand, InstallsDeclaredGeneratedMetadataFromStaticLibrary) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "fixture-generated-install"
+version = "0.1.0"
+[lib]
+name = "ui"
+module = "fixture.ui"
+archive = "ui"
+sources = ["lib.cppm"]
+)"_str },
+        { "lib.cppm"_str, "export module fixture.ui;\n"_str },
+        { "build.lua"_str, R"(local target = lito.target({kind = "lib", name = "ui"})
+for _, path in ipairs({"module/qmldir", "module/qml/Main.qml", "module/module.qmltypes"}) do
+  local file = lito.write({output = path, content = path .. "\n"}).output
+  lito.target_add_metadata(target, file)
+end
+local private = lito.write({output = "module/internal.txt", content = "private"}).output
+lito.target_add_auxiliary_artifact(target, private)
+lito.target_add_metadata(target, lito.write({output = "module-other/ignored.txt", content = "ignored"}).output)
+)"_str },
+        { "install.lua"_str, R"(lito.install({generated_files = {{
+  target = {kind = "lib", name = "ui"},
+  source = "module",
+  destination = "share/qml/Fixture/Ui",
+}}})
+)"_str },
+    };
+    auto project = materialize("generated-install"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("generated-install"_str);
+    auto prefix = install_root("generated-install"_str);
+    auto run_install =
+        [&](bool                  reuse,
+            ref<rstd::path::Path> destination) -> lito::InstallResult<lito::InstallSummary> {
+        auto source = lito::resolve_install_source(
+            lito::InstallSourceRequirement::LocalProject(project->root.clone()));
+        if (source.is_err()) {
+            return Err(lito::InstallError::Message(error_chain_text(source.unwrap_err())));
+        }
+        auto request = lito::InstallRequest {
+            .source      = rstd::move(source).unwrap(),
+            .build       = build_request(project->root.as_path(),
+                                         output.as_path(),
+                                         strings("fixture-generated-install"_str),
+                                         build_profile("release"_str)),
+            .destination = lito::InstallDestination::Prefix(
+                lito::InstallPrefix { .path = PathBuf::from(destination) }),
+        };
+        if (reuse) {
+            request.build_mode = lito::InstallBuildMode::ReuseCompleted;
+            request.build.configuration.toolchain.cxx =
+                project->root.join(PathBuf::from("missing-tool"_str).as_path());
+        }
+        return lito::install(rstd::move(request));
+    };
+    auto installed = run_install(false, prefix.as_path());
+    if (installed.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(installed.unwrap_err()));
+        FAIL();
+        return;
+    }
+    auto verify = [&](ref<rstd::path::Path> destination) {
+        auto module =
+            PathBuf::from(destination).join(PathBuf::from("share/qml/Fixture/Ui"_str).as_path());
+        for (auto path : rstd::initializer_list<ref<str>> {
+                 "qmldir"_str, "qml/Main.qml"_str, "module.qmltypes"_str }) {
+            auto contents =
+                rstd::fs::read_to_string(module.join(PathBuf::from(path).as_path()).as_path());
+            ASSERT_TRUE(contents.is_ok());
+            EXPECT_EQ(contents->as_str(), rstd::format("module/{}\n", path).as_str());
+        }
+        EXPECT_FALSE(
+            rstd::fs::exists(module.join(PathBuf::from("internal.txt"_str).as_path()).as_path())
+                .unwrap());
+        EXPECT_FALSE(
+            rstd::fs::exists(module.join(PathBuf::from("ignored.txt"_str).as_path()).as_path())
+                .unwrap());
+    };
+    verify(prefix.as_path());
+    auto built = lito::build(build_request(project->root.as_path(),
+                                           output.as_path(),
+                                           strings("fixture-generated-install"_str),
+                                           build_profile("release"_str)));
+    if (built.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(built.unwrap_err()));
+        FAIL();
+        return;
+    }
+    auto reused_prefix = install_root("generated-install-reused"_str);
+    auto reused        = run_install(true, reused_prefix.as_path());
+    if (reused.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(reused.unwrap_err()));
+        FAIL();
+        return;
+    }
+    EXPECT_TRUE(reused->build.is_Reused());
+    verify(reused_prefix.as_path());
+
+    auto script = project->root.join(PathBuf::from("install.lua"_str).as_path());
+    for (auto source : rstd::initializer_list<ref<str>> { "../module"_str, "missing"_str }) {
+        auto recipe = rstd::format(R"(lito.install({{generated_files = {{{{
+target = {{kind = "lib", name = "ui"}}, source = "{}", destination = "share/qml"
+}}}}}}))",
+                                   source);
+        ASSERT_TRUE(rstd::fs::write(script.as_path(), recipe.as_str().as_bytes()).is_ok());
+        auto rejected = run_install(true, install_root("generated-install-rejected"_str).as_path());
+        ASSERT_TRUE(rejected.is_err());
+        auto error = error_chain_text(rejected.unwrap_err());
+        EXPECT_TRUE(error.as_str().contains(source == "missing"_str ? "no generated metadata"_str
+                                                                    : "non-normal"_str));
+    }
+    constexpr auto duplicate_recipe = R"(local entry = {
+target = {kind = "lib", name = "ui"}, source = "module", destination = "share/qml"
+}
+lito.install({generated_files = {entry, entry}})
+)"_str;
+    ASSERT_TRUE(rstd::fs::write(script.as_path(), duplicate_recipe.as_bytes()).is_ok());
+    auto duplicate = run_install(true, install_root("generated-install-duplicate"_str).as_path());
+    ASSERT_TRUE(duplicate.is_err());
+    EXPECT_TRUE(
+        error_chain_text(duplicate.unwrap_err()).as_str().contains("declared more than once"_str));
+    ASSERT_TRUE(rstd::fs::write(script.as_path(), files[3].contents.as_bytes()).is_ok());
+    auto generated = output.join(
+        PathBuf::from("generated/fixture-generated-install/module/qmldir"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(generated.as_path(), "changed size\n"_str.as_bytes()).is_ok());
+    auto changed = run_install(true, install_root("generated-install-changed"_str).as_path());
+    ASSERT_TRUE(changed.is_err());
+    EXPECT_TRUE(error_chain_text(changed.unwrap_err()).as_str().contains("size changed"_str));
+}
+
 TEST_F(InstallCommand, InstallBuildConsumesTheResolvedProject) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([package]
@@ -386,7 +517,7 @@ sources = ["src/extra.cpp"]
     auto product_state = output.join(PathBuf::from(".lito/build-product.json"_str).as_path());
     auto product_json  = rstd::fs::read_to_string(product_state.as_path());
     ASSERT_TRUE(product_json.is_ok());
-    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 7"_str));
+    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 8"_str));
     EXPECT_TRUE(product_json->as_str().contains("\"install-files\""_str));
     EXPECT_TRUE(product_json->as_str().contains("\"modified-seconds\""_str));
     EXPECT_FALSE(product_json->as_str().contains("\"sha256\""_str));
@@ -409,7 +540,7 @@ sources = ["src/extra.cpp"]
     ASSERT_TRUE(
         rstd::fs::write(
             product_state.as_path(),
-            R"({"schema":7,"schema":7,"state":"building","generation":"duplicate"})"_str.as_bytes())
+            R"({"schema":8,"schema":8,"state":"building","generation":"duplicate"})"_str.as_bytes())
             .is_ok());
     auto duplicate =
         lito::load_completed_build_product(fixture.as_path(), output.as_path(), "release"_str);

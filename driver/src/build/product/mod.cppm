@@ -89,7 +89,7 @@ auto validate_completed_build_product_file(const CompletedBuildProduct& product,
 namespace lito
 {
 
-inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(7);
+inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(8);
 
 auto product_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
@@ -311,15 +311,20 @@ auto artifact_file_json(const CompletedBuildProduct& product,
     result.insert("content-type"_Str, product_string(file.content_type.as_str()));
     result.insert("content-identity"_Str, product_string(file.content_identity.as_str()));
     result.insert("publish"_Str, Json::Bool(file.publish));
+    result.insert("generated-path"_Str, rstd_try(product_path(file.generated_path.as_path())));
     return Ok(Json::Object(rstd::move(result)));
 }
 
 auto parse_artifact_file(const Json& value, ref<rstd::path::Path> base, ref<str> context)
     -> BuildProductResult<BuiltArtifactFile> {
-    rstd_try(product_known_fields(
-        value,
-        context,
-        { "role"_str, "path"_str, "content-type"_str, "content-identity"_str, "publish"_str }));
+    rstd_try(product_known_fields(value,
+                                  context,
+                                  { "role"_str,
+                                    "path"_str,
+                                    "content-type"_str,
+                                    "content-identity"_str,
+                                    "publish"_str,
+                                    "generated-path"_str }));
     auto publish_value = rstd_try(product_member(value, "publish"_str, context));
     auto publish       = publish_value->as_bool();
     if (publish.is_none()) {
@@ -332,6 +337,8 @@ auto parse_artifact_file(const Json& value, ref<rstd::path::Path> base, ref<str>
         .content_type     = rstd_try(product_required_string(value, "content-type"_str, context)),
         .content_identity = rstd_try(product_required_text(value, "content-identity"_str, context)),
         .publish          = *publish,
+        .generated_path =
+            PathBuf::from(rstd_try(product_required_text(value, "generated-path"_str, context))),
     });
 }
 
@@ -1064,6 +1071,14 @@ auto validate_product_layout(const CompletedBuildProduct& product) -> BuildProdu
                              artifact.primary.path.as_path())));
         }
         for (const auto& companion : artifact.companions) {
+            if (! companion.generated_path.as_path().is_empty()) {
+                rstd_try(validate_normal_relative_path(companion.generated_path.as_path(),
+                                                       "generated metadata path"_str));
+                if (companion.role != ArtifactFileRole::Metadata || companion.publish) {
+                    return Err(BuildProductError::Message(
+                        "generated metadata must be a non-published metadata companion"_Str));
+                }
+            }
             if (companion.content_type.is_empty()) {
                 return Err(BuildProductError::Message(
                     rstd::format("artifact companion '{}' has an empty content type",
@@ -1076,6 +1091,11 @@ auto validate_product_layout(const CompletedBuildProduct& product) -> BuildProdu
             }
             for (const auto& prior : artifact.companions) {
                 if (rstd::addressof(prior) == rstd::addressof(companion)) break;
+                if (! companion.generated_path.as_path().is_empty() &&
+                    prior.generated_path.as_path() == companion.generated_path.as_path()) {
+                    return Err(BuildProductError::Message(
+                        "artifact repeats a generated metadata path"_Str));
+                }
                 if (prior.path.as_path() == companion.path.as_path()) {
                     return Err(BuildProductError::Message(
                         rstd::format("artifact '{}' repeats companion path '{}'",

@@ -54,6 +54,7 @@ struct BuiltArtifactFile {
     String           content_type;
     String           content_identity;
     bool             publish { true };
+    PathBuf          generated_path;
 
     auto clone() const -> BuiltArtifactFile {
         return BuiltArtifactFile {
@@ -62,6 +63,7 @@ struct BuiltArtifactFile {
             .content_type     = content_type.clone(),
             .content_identity = content_identity.clone(),
             .publish          = publish,
+            .generated_path   = generated_path.clone(),
         };
     }
 };
