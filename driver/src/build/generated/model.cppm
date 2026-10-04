@@ -96,6 +96,13 @@ enum class RegisteredActionKind
     CppLeadingPreamble,
 };
 
+enum class ActionDepfileFormat
+{
+    Make,
+    NMake,
+    Dxc,
+};
+
 struct RegisteredAction {
     RegisteredActionKind             kind { RegisteredActionKind::Process };
     String                           package;
@@ -110,6 +117,8 @@ struct RegisteredAction {
     Vec<PathBuf>                     outputs;
     Option<usize>                    output_working_directory;
     Option<usize>                    depfile_output;
+    Option<usize>                    depfile_input;
+    ActionDepfileFormat              depfile_format { ActionDepfileFormat::Make };
     Vec<PathBuf>                     depfile_roots;
     String                           content;
     cpp::GeneratedSourceAvailability availability { cpp::GeneratedSourceAvailability::BeforeScan };
@@ -162,8 +171,10 @@ struct TransformScriptRequest {
     Vec<DeclaredActionOutput> outputs;
 };
 struct ActionDepfileRequest {
-    i64         output;
+    Option<i64> output;
+    Option<i64> input;
     Vec<String> roots;
+    String      format;
 };
 struct RunScriptRequest {
     BuildScriptHandle            tool;

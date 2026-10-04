@@ -9,6 +9,8 @@ import lito.cpp;
 import lito.system;
 import licrypto;
 import :build.script.support;
+import :build.generated.model;
+import :build.generated.depfile;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -87,84 +89,11 @@ struct ActionDependency {
     String               digest;
 };
 
-auto make_depfile_paths(ref<str> text, ref<rstd::path::Path> working_directory)
-    -> BuildScriptResult<Vec<PathBuf>> {
-    auto bytes     = text.as_bytes();
-    auto separator = Option<usize> {};
-    auto escaped   = false;
-    for (usize index {}; index < bytes.len(); ++index) {
-        const auto byte = bytes[index];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (byte == u8('\\')) {
-            escaped = true;
-            continue;
-        }
-        if (byte == u8(':')) {
-            separator = Some(index);
-            break;
-        }
-    }
-    if (separator.is_none()) {
-        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-            "build-tool depfile does not contain a target separator"_Str)));
-    }
-
-    auto result  = Vec<PathBuf>::make();
-    auto token   = Vec<u8>::make();
-    auto publish = [&]() -> BuildScriptResult<empty> {
-        if (token.is_empty()) return Ok(empty {});
-        auto decoded = String::from_utf8(rstd::move(token));
-        token        = Vec<u8>::make();
-        if (decoded.is_err()) {
-            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-                "build-tool depfile contains a non-UTF-8 dependency path"_Str)));
-        }
-        auto path = PathBuf::from(rstd::move(decoded).unwrap());
-        if (! path.as_path().is_absolute()) {
-            path = PathBuf::from(working_directory).join(path.as_path());
-        }
-        result.push(rstd::move(path));
-        return Ok(empty {});
-    };
-
-    for (usize index = *separator + usize(1); index < bytes.len(); ++index) {
-        const auto byte = bytes[index];
-        if (byte == u8('\\')) {
-            if (index + usize(1) >= bytes.len()) {
-                token.push(u8(byte.to_primitive()));
-                continue;
-            }
-            const auto next = bytes[index + usize(1)];
-            if (next == u8('\n')) {
-                ++index;
-                continue;
-            }
-            if (next == u8('\r') && index + usize(2) < bytes.len() &&
-                bytes[index + usize(2)] == u8('\n')) {
-                index += usize(2);
-                continue;
-            }
-            token.push(u8(next.to_primitive()));
-            ++index;
-            continue;
-        }
-        if (byte == u8(' ') || byte == u8('\t') || byte == u8('\r') || byte == u8('\n')) {
-            rstd_try(publish());
-            continue;
-        }
-        token.push(u8(byte.to_primitive()));
-    }
-    rstd_try(publish());
-    return Ok(rstd::move(result));
-}
-
 auto load_action_dependencies(ref<rstd::path::Path> depfile,
                               ref<rstd::path::Path> working_directory,
                               const Vec<PathBuf>&   allowed_roots,
-                              const Vec<PathBuf>&   direct_inputs)
+                              const Vec<PathBuf>&   direct_inputs,
+                              ActionDepfileFormat   format)
     -> BuildScriptResult<Vec<ActionDependency>> {
     auto contents = rstd::fs::read_to_string(depfile);
     if (contents.is_err()) {
@@ -172,7 +101,7 @@ auto load_action_dependencies(ref<rstd::path::Path> depfile,
                                         PathBuf::from(depfile),
                                         rstd::move(contents).unwrap_err()));
     }
-    auto paths  = rstd_try(make_depfile_paths(contents->as_str(), working_directory));
+    auto paths  = rstd_try(action_depfile_paths(contents->as_str(), working_directory, format));
     auto result = Vec<ActionDependency>::make();
     for (const auto& path : paths) {
         auto canonical = rstd::fs::canonicalize(path.as_path());

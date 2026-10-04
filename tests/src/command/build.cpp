@@ -94,6 +94,305 @@ void capture_cmake_override_events(void* context, const lito::BuildEvent& event)
 }
 
 #if RSTD_OS_UNIX
+TEST_F(BuildCommand, GeneratedDepfileParsesCompilerRules) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "depfile-rules"
+version = "0.1.0"
+[[bin]]
+name = "depfile-rules"
+sources = ["main.cpp"]
+link-stdlib = false
+[build-tools.generator]
+path = "tools/generate"
+)toml"_str },
+        { "main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "tools/generate"_str,
+          "#!/bin/sh\nset -eu\ncp \"$1\" \"$2\"\n"_str,
+          lito::source::SourceFileMode::Executable },
+    };
+    auto project = materialize("depfile-rules"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output             = build_root("depfile-rules"_str);
+    auto request            = build_request(project->root.as_path(),
+                                            output.as_path(),
+                                            Vec<String>::make(),
+                                            build_profile("release"_str));
+    request.sources.network = lito::source::NetworkPolicy::Offline;
+    struct Counts {
+        rstd::sync::atomic::Atomic<usize> executed {};
+        rstd::sync::atomic::Atomic<usize> reused {};
+    } counts;
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(counts),
+        .notify =
+            [](void* context, const lito::BuildEvent& event) noexcept {
+                auto& counts = *static_cast<Counts*>(context);
+                if (event.kind == lito::BuildEventKind::BuildToolRun)
+                    counts.executed.fetch_add(usize(1));
+                if (event.kind == lito::BuildEventKind::BuildToolRunReuse)
+                    counts.reused.fetch_add(usize(1));
+            },
+    });
+    auto write       = [&](ref<str> name, ref<str> contents) {
+        return rstd::fs::write(project->root.join(PathBuf::from(name).as_path()).as_path(),
+                               contents.as_bytes())
+            .is_ok();
+    };
+    const ref<str> paths[] = {
+        "plain.h"_str,          "space name.h"_str,    "值.h"_str,
+        "cash$.h"_str,          "hash#.h"_str,         R"(back\slash.h)"_str,
+        R"(back\ space.h)"_str, R"(back\#hash.h)"_str, R"(double\\slash.h)"_str,
+        R"(trailing\\)"_str,    R"("quote".h)"_str,    "colon:name.h"_str,
+        "second.h"_str,
+    };
+    for (auto path : paths) ASSERT_TRUE(write(path, "first\n"_str));
+    auto script = [&](ref<str> format) {
+        auto text = R"lua(lito.run({tool = lito.tool("generator"), cwd = ".",
+  args = {"@INPUT:1@", "@OUTPUT@"}, inputs = {"source.d"}, outputs = {"result.d"},
+  depfile = {output = 1, format = ")lua"_Str;
+        text.push_str(format);
+        text.push_str("\"}})\n"_str);
+        return write("build.lua"_str, text.as_str());
+    };
+    auto check = [&](bool reused) {
+        counts.executed.store(usize {});
+        counts.reused.store(usize {});
+        auto result = lito::build(request);
+        if (result.is_err()) {
+            rstd::test::fail_current(
+                error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+            return false;
+        }
+        return (reused ? counts.reused.load() : counts.executed.load()) == usize(1);
+    };
+    ASSERT_TRUE(script("make"_str));
+    ASSERT_TRUE(write("source.d"_str, R"dep(# ignored: not-a-dependency
+C:\out\first.o second.o: plain.h\
+space\ name.h 值.h cash$$.h hash\#.h back\slash.h back\\\ space.h \
+ back\\#hash.h double\\slash.h trailing\\ "quote".h colon\:name.h # absent.h
+another.o: second.h
+
+phony\ target.h:
+plain.h:
+trailing\\:
+)dep"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(check(true));
+    for (auto path : paths) {
+        ASSERT_TRUE(write(path, "second\n"_str));
+        ASSERT_TRUE(check(false));
+        ASSERT_TRUE(check(true));
+    }
+    ASSERT_TRUE(
+        write("source.d"_str, "C:/out/file.o: plain.h\\\r\nspace\\ name.h\r\nempty:\r\n"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(check(true));
+
+    ASSERT_TRUE(write("source.d"_str, "out: plain.h # ignored \\\r\n not-a-dependency\r\n"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(write("source.d"_str, "empty:\n"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(write("source.d"_str, "out: plain.h"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(script("nmake"_str));
+    ASSERT_TRUE(write("source.d"_str,
+                      R"dep("C:\out dir\file.o": plain.h "space name.h" "hash#.h" "cash$.h" \
+ back\slash.h "back\ space.h" "back\#hash.h"
+"phony target.h":
+)dep"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(check(true));
+    ASSERT_TRUE(write("space name.h"_str, "third\n"_str));
+    ASSERT_TRUE(check(false));
+    ASSERT_TRUE(check(true));
+    ASSERT_TRUE(write("source.d"_str,
+                      "\"C:\\out dir\\file.o\": \"space name.h\" \\\r\n \"cash$.h\"\r\n"_str));
+    ASSERT_TRUE(check(false));
+
+    struct Invalid {
+        ref<str> format;
+        ref<str> contents;
+        ref<str> message;
+    };
+    const Invalid invalid[] = {
+        { "make"_str, ""_str, "dependency rule"_str },
+        { "make"_str, "# comment only\n"_str, "dependency rule"_str },
+        { "make"_str, "missing separator\n"_str, "target separator"_str },
+        { "make"_str, ": plain.h\n"_str, "no target"_str },
+        { "make"_str, "out: plain.h\nbroken\n"_str, "target separator"_str },
+        { "make"_str, "out: $(HEADERS)\n"_str, "Make variables"_str },
+        { "make"_str, "out: ${HEADERS}\n"_str, "Make variables"_str },
+        { "make"_str, "out: plain.h; recipe\n"_str, "compiler dependency rules"_str },
+        { "make"_str, "out: plain.h | other.h\n"_str, "compiler dependency rules"_str },
+        { "make"_str, "out: plain.h\rspace name.h"_str, "carriage return"_str },
+        { "make"_str, "out: plain.h\0hidden.h\n"_str, "NUL"_str },
+        { "nmake"_str, "out: \"space name.h\n"_str, "unterminated quote"_str },
+        { "nmake"_str, "out: \"space name.h"_str, "unterminated quote"_str },
+    };
+    for (const auto& item : invalid) {
+        ASSERT_TRUE(script(item.format));
+        ASSERT_TRUE(write("source.d"_str, item.contents));
+        auto result = lito::build(request);
+        ASSERT_TRUE(result.is_err());
+        auto message = error_chain_text(result.unwrap_err());
+        EXPECT_TRUE(message.as_str().contains(item.message));
+    }
+}
+
+TEST_F(BuildCommand, GeneratedInputDepfileTracksUnchangedDependencyLists) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "input-depfile"
+version = "0.1.0"
+[[bin]]
+name = "input-depfile"
+sources = ["main.cpp"]
+link-stdlib = false
+[build-tools.generator]
+path = "tools/generate"
+)toml"_str },
+        { "main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "source.txt"_str, "include first.txt\n"_str },
+        { "first.txt"_str, "include 二 value.txt\n"_str },
+        { "二 value.txt"_str, "first\n"_str },
+        { "tools/generate"_str,
+          R"sh(#!/bin/sh
+set -eu
+if [ "$1" = scan ]; then
+  printf 'result: source.txt first.txt 二\\ value.txt\n' > "$2"
+elif [ "$1" = dxc ]; then
+  printf 'C:\\shader out.spv: source.txt \\\n first.txt \\\n 二 value.txt\n' > "$2"
+else
+  cat '二 value.txt' > "$2"
+fi
+)sh"_str,
+          lito::source::SourceFileMode::Executable },
+        { "build.lua"_str, R"lua(local tool = lito.tool("generator")
+local scanned = lito.run({tool = tool, cwd = ".",
+  args = {"scan", "@OUTPUT@"}, inputs = {"source.txt"},
+  outputs = {"shader.d"}, depfile = {output = 1}})
+local function invalid(depfile, inputs, output_cwd, expected)
+  local ok, message = pcall(lito.run, {tool = tool, cwd = ".",
+    args = {"compile", "@OUTPUT@"}, inputs = inputs,
+    outputs = {"invalid.txt"}, depfile = depfile, output_cwd = output_cwd})
+  assert(not ok, "expected rejection: " .. expected)
+end
+invalid({}, {scanned.outputs[1]}, nil, "exactly one")
+invalid({input = 1, output = 1}, {scanned.outputs[1]}, nil, "exactly one")
+invalid({input = 0}, {scanned.outputs[1]}, nil, "generated input")
+invalid({input = -1}, {scanned.outputs[1]}, nil, "generated input")
+invalid({input = 2}, {scanned.outputs[1]}, nil, "generated input")
+invalid({input = 1}, {"source.txt"}, nil, "generated input")
+invalid({input = 1}, {scanned.outputs[1]}, 1, "output_cwd")
+invalid({input = 1, format = "unknown"}, {scanned.outputs[1]}, nil, "format")
+lito.run({tool = tool, cwd = ".",
+  args = {"compile", "@OUTPUT@"}, inputs = {"source.txt", scanned.outputs[1]},
+  outputs = {"shader.txt"}, depfile = {input = 2}})
+local dxc = lito.run({tool = tool, cwd = ".",
+  args = {"dxc", "@OUTPUT@"}, inputs = {"source.txt"},
+  outputs = {"dxc.d"}, depfile = {output = 1, format = "dxc"}})
+lito.run({tool = tool, cwd = ".",
+  args = {"compile", "@OUTPUT@"}, inputs = {"source.txt", dxc.outputs[1]},
+  outputs = {"dxc.txt"}, depfile = {input = 2, format = "dxc"}})
+)lua"_str },
+    };
+    auto project = materialize("input-depfile"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output             = build_root("input-depfile"_str);
+    auto request            = build_request(project->root.as_path(),
+                                            output.as_path(),
+                                            Vec<String>::make(),
+                                            build_profile("release"_str));
+    request.sources.network = lito::source::NetworkPolicy::Offline;
+    struct Counts {
+        rstd::sync::atomic::Atomic<usize> executed {};
+        rstd::sync::atomic::Atomic<usize> reused {};
+    };
+    auto counts      = Counts {};
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(counts),
+        .notify =
+            [](void* context, const lito::BuildEvent& event) noexcept {
+                auto& counts = *static_cast<Counts*>(context);
+                if (event.kind == lito::BuildEventKind::BuildToolRun)
+                    counts.executed.fetch_add(usize(1));
+                if (event.kind == lito::BuildEventKind::BuildToolRunReuse)
+                    counts.reused.fetch_add(usize(1));
+            },
+    });
+    auto check       = [&](lito::BuildEventKind expected) {
+        counts.executed.store(usize {});
+        counts.reused.store(usize {});
+        auto built = lito::build(request);
+        if (built.is_err()) {
+            rstd::test::fail_current(
+                error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+            return false;
+        }
+        return (expected == lito::BuildEventKind::BuildToolRun ? counts.executed.load()
+                                                               : counts.reused.load()) == usize(4);
+    };
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRunReuse));
+    auto generated = output.join(PathBuf::from("generated/input-depfile"_str).as_path());
+    auto depfile   = generated.join(PathBuf::from("shader.d"_str).as_path());
+    auto before    = rstd::fs::read_to_string(depfile.as_path());
+    ASSERT_TRUE(before.is_ok());
+    auto leaf = project->root.join(PathBuf::from("二 value.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(leaf.as_path(), "second\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+    auto after = rstd::fs::read_to_string(depfile.as_path());
+    ASSERT_TRUE(after.is_ok());
+    EXPECT_EQ(before->as_str(), after->as_str());
+    auto artifact = rstd::fs::read_to_string(
+        generated.join(PathBuf::from("shader.txt"_str).as_path()).as_path());
+    ASSERT_TRUE(artifact.is_ok());
+    EXPECT_EQ(artifact->as_str(), "second\n"_str);
+    auto dxc_artifact =
+        rstd::fs::read_to_string(generated.join(PathBuf::from("dxc.txt"_str).as_path()).as_path());
+    ASSERT_TRUE(dxc_artifact.is_ok());
+    EXPECT_EQ(dxc_artifact->as_str(), "second\n"_str);
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRunReuse));
+    ASSERT_TRUE(rstd::fs::remove_file(leaf.as_path()).is_ok());
+    auto missing = lito::build(request);
+    ASSERT_TRUE(missing.is_err());
+    ASSERT_TRUE(rstd::fs::write(leaf.as_path(), "third\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(check(lito::BuildEventKind::BuildToolRun));
+
+    const ref<str> invalid_depfiles[] = {
+        "missing separator\n"_str,
+        ": source.txt\n"_str,
+        "result: source.txt\0hidden.txt\n"_str,
+        "result: \n"_str,
+        "result: source.txt\n first.txt\n"_str,
+        "result: missing.txt\n"_str,
+        "result: /etc/passwd\n"_str,
+    };
+    auto script_path = project->root.join(PathBuf::from("build.lua"_str).as_path());
+    for (auto contents : invalid_depfiles) {
+        auto script = "local dep = lito.write({output = 'broken.d', content = [=["_Str;
+        script.push_str(contents);
+        script.push_str(R"lua(]=]}).output
+lito.run({tool = lito.tool("generator"), cwd = ".",
+  args = {"compile", "@OUTPUT@"}, inputs = {dep}, outputs = {"broken.txt"},
+  depfile = {input = 1, format = "dxc"}})
+)lua"_str);
+        ASSERT_TRUE(rstd::fs::write(script_path.as_path(), script.as_str().as_bytes()).is_ok());
+        auto invalid = lito::build(request);
+        EXPECT_TRUE(invalid.is_err());
+    }
+    auto crlf_script = R"lua(local dep = lito.write({output = "crlf.d",
+  content = "C:\\output.spv: source.txt \\\r\n 二 value.txt\r\n"}).output
+lito.run({tool = lito.tool("generator"), cwd = ".",
+  args = {"compile", "@OUTPUT@"}, inputs = {dep}, outputs = {"crlf.txt"},
+  depfile = {input = 1, format = "dxc"}})
+)lua"_str;
+    ASSERT_TRUE(rstd::fs::write(script_path.as_path(), crlf_script.as_bytes()).is_ok());
+    auto crlf = lito::build(request);
+    ASSERT_TRUE(crlf.is_ok());
+}
+
 TEST_F(BuildCommand, PathToolActionsInvalidateOnInputsOutputsAndExecutableContent) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

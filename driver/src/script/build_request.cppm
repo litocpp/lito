@@ -219,11 +219,22 @@ auto parse_run_request(const luato::Table& table, const Option<String>& fallback
         request.output_cwd = Some(rstd_try(script_field(table.required<i64>("output_cwd"_str))));
     if (table.contains("depfile"_str)) {
         auto depfile = rstd_try(script_field(table.required<luato::Table>("depfile"_str)));
-        rstd_try(script_fields(depfile, { "output"_str, "roots"_str }));
-        auto output     = rstd_try(script_field(depfile.required<i64>("output"_str)));
+        rstd_try(script_fields(depfile, { "output"_str, "input"_str, "roots"_str, "format"_str }));
+        auto output = Option<i64> {};
+        auto input  = Option<i64> {};
+        if (depfile.contains("output"_str))
+            output = Some(rstd_try(script_field(depfile.required<i64>("output"_str))));
+        if (depfile.contains("input"_str))
+            input = Some(rstd_try(script_field(depfile.required<i64>("input"_str))));
         auto dep_roots  = rstd_try(script_array(depfile, "roots"_str, false));
+        auto format     = depfile.contains("format"_str)
+                              ? rstd_try(script_field(depfile.required<String>("format"_str)))
+                              : "make"_Str;
         request.depfile = Some(ActionDepfileRequest {
-            output, rstd_try(script_strings(dep_roots, "lito.run.depfile.roots"_str)) });
+            output,
+            input,
+            rstd_try(script_strings(dep_roots, "lito.run.depfile.roots"_str)),
+            rstd::move(format) });
     }
     return Ok(rstd::move(request));
 }

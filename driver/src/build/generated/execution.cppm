@@ -623,22 +623,25 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
     }
 
     auto dependencies = rstd_try(current_action_dependencies(action));
-    if (action.depfile_output.is_some()) {
-        auto staged_depfile = staging.join(action.outputs[*action.depfile_output].as_path());
-        auto direct_inputs  = action.inputs.iter()
-                                  .map([](auto input) {
+    if (action.depfile_output.is_some() || action.depfile_input.is_some()) {
+        auto depfile_path  = action.depfile_input.is_some()
+                                 ? action.inputs[*action.depfile_input].path.clone()
+                                 : staging.join(action.outputs[*action.depfile_output].as_path());
+        auto direct_inputs = action.inputs.iter()
+                                 .map([](auto input) {
                                      return input->path.clone();
-                                  })
-                                  .collect<Vec<PathBuf>>();
+                                 })
+                                 .collect<Vec<PathBuf>>();
         auto depfile_working_directory = action.working_directory.clone();
         if (action.output_working_directory.is_some()) {
             auto output = staging.join(action.outputs[*action.output_working_directory].as_path());
             depfile_working_directory = PathBuf::from(output.as_path().parent().unwrap());
         }
-        auto depfile = rstd_try(load_action_dependencies(staged_depfile.as_path(),
+        auto depfile = rstd_try(load_action_dependencies(depfile_path.as_path(),
                                                          depfile_working_directory.as_path(),
                                                          action.depfile_roots,
-                                                         direct_inputs));
+                                                         direct_inputs,
+                                                         action.depfile_format));
         merge_action_dependencies(dependencies, rstd::move(depfile));
     }
 

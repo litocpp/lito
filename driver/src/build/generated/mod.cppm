@@ -23,7 +23,7 @@ using namespace lito::system;
 
 namespace lito
 {
-constexpr auto build_host_api_identity = "lito:build-host-api:v4"_str;
+constexpr auto build_host_api_identity = "lito:build-host-api:v5"_str;
 
 auto replace_all(String& value, ref<str> marker, ref<str> replacement) -> usize {
     auto count = usize {};

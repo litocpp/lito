@@ -780,17 +780,46 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         }
     }
     auto depfile_output_index = Option<usize> {};
+    auto depfile_input_index  = Option<usize> {};
+    auto depfile_format       = ActionDepfileFormat::Make;
     auto depfile_roots        = Vec<PathBuf>::make();
     auto generated_root = rstd_try(layout_->create_generated_package_directory(package->as_str()));
     if (request.depfile.is_some()) {
-        auto  output       = &request.depfile->output;
-        auto& roots        = request.depfile->roots;
-        auto  output_index = usize(static_cast<size_t>(output->to_primitive()));
-        if (*output < i64(1) || output_index > output_paths.len()) {
+        if (request.depfile->format == "dxc"_str) {
+            depfile_format = ActionDepfileFormat::Dxc;
+        } else if (request.depfile->format == "nmake"_str) {
+            depfile_format = ActionDepfileFormat::NMake;
+        } else if (request.depfile->format != "make"_str) {
             return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-                "lito.run.depfile.output must identify a declared output"_Str)));
+                "lito.run.depfile.format must be 'make', 'nmake' or 'dxc'"_Str)));
         }
-        depfile_output_index = Some(output_index - usize(1));
+        const auto& output = request.depfile->output;
+        const auto& input  = request.depfile->input;
+        auto&       roots  = request.depfile->roots;
+        if (output.is_some() == input.is_some()) {
+            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                "lito.run.depfile requires exactly one of input or output"_Str)));
+        }
+        if (output.is_some()) {
+            auto index = usize(static_cast<size_t>(output->to_primitive()));
+            if (*output < i64(1) || index > output_paths.len()) {
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "lito.run.depfile.output must identify a declared output"_Str)));
+            }
+            depfile_output_index = Some(index - usize(1));
+        } else {
+            auto index = usize(static_cast<size_t>(input->to_primitive()));
+            if (*input < i64(1) || index > input_records.len() ||
+                input_records[index - usize(1)].producer.is_none()) {
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "lito.run.depfile.input must identify a generated input"_Str)));
+            }
+            if (output_working_directory.is_some()) {
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
+                    "lito.run.depfile.input cannot be combined with output_cwd"_Str)));
+            }
+            depfile_input_index = Some(index - usize(1));
+        }
         for (usize index {}; index < roots.len(); ++index) {
             auto path = PathBuf::from(roots[index].clone());
             if (! path.as_path().is_absolute()) {
@@ -863,9 +892,14 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         identity_text.push_ascii(':');
         identity_text.push_str(generated_output_kind_name(output_kinds[index]));
     }
-    if (depfile_output_index.is_some()) {
-        identity_text.push_str("\ndepfile:"_str);
-        identity_text.push_str(rstd::format("{}", *depfile_output_index + usize(1)).as_str());
+    if (request.depfile.is_some()) {
+        identity_text.push_str(depfile_output_index.is_some() ? "\ndepfile:"_str
+                                                              : "\ndepfile-input:"_str);
+        auto index = depfile_output_index.is_some() ? *depfile_output_index : *depfile_input_index;
+        identity_text.push_str(rstd::format("{}", index + usize(1)).as_str());
+        identity_text.push_str("\ndepfile-format:"_str);
+        identity_text.push_str(request.depfile->format.as_str());
+        identity_text.push_str("\ndepfile-parser:v2"_str);
         for (const auto& root : depfile_roots) {
             identity_text.push_str("\ndepfile-root:"_str);
             identity_text.push_str(root.as_path().to_string_lossy().as_str());
@@ -893,6 +927,8 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         .outputs                  = output_paths.clone(),
         .output_working_directory = output_working_directory,
         .depfile_output           = depfile_output_index,
+        .depfile_input            = depfile_input_index,
+        .depfile_format           = depfile_format,
         .depfile_roots            = rstd::move(depfile_roots),
     });
     actions_[producer].availability = resolve_action_availability(actions_[producer]);

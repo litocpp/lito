@@ -103,6 +103,48 @@ The alias is used by `build.lua`; the script does not discover an arbitrary exec
 download directory. Host tool downloads participate in source acquisition and offline/source-bundle
 policy.
 
+## Tool dependency files
+
+`lito.run` accepts a Make-style dependency file through `depfile`. A compiler that emits its
+dependency file together with its output uses `depfile = { output = 2 }`, where `2` indexes
+the declared `outputs` array.
+
+A separate dependency-scanning action can instead pass its generated output to another action:
+
+```lua
+local compiled = lito.run({
+  tool = compiler,
+  cwd = ".",
+  args = { "@INPUT:1@", "-o", "@OUTPUT@" },
+  inputs = { "source.txt", scanned.outputs[1] },
+  outputs = { "compiled.bin" },
+  depfile = { input = 2, roots = { "include" } },
+})
+```
+
+Exactly one of `input` and `output` is required. `input` is a one-based index into `inputs`
+and must select a generated output handle. Its producer runs before the consuming action.
+Relative dependency paths are resolved against the consuming action's `cwd`; input dependency
+files cannot be combined with `output_cwd`. Optional `roots` extends the allowed dependency
+directories beyond the package and generated roots, using the same rules as output dependency
+files. Dependencies are content-tracked by the consuming action even when the dependency file's
+list of paths does not change. The scanner must track its own dependencies as well.
+
+`format` defaults to `"make"`, for compiler-generated Make dependency rules. It supports
+multiple targets and rules, empty phony rules (`-MP`), comments, LF/CRLF continuations,
+escaped spaces and `#`, and `$$` for a literal dollar sign. Backslashes before ordinary
+characters are preserved; escaping follows compiler output rather than a full Make interpreter.
+Continuations separate paths, and only prerequisites are tracked, not rule targets.
+Variables, recipes and order-only prerequisites are not supported.
+
+Use `format = "nmake"` for Clang's `-MV` output: double quotes protect paths containing
+spaces or `#`, while backslashes and dollar signs remain literal. In `"make"` mode,
+quotes are ordinary filename characters. Formats are never inferred from existing files.
+
+Use `format = "dxc"` on both actions when consuming DXC's
+`-M/-MF` output: DXC writes one raw path per continuation line without Make-style escaping.
+The explicit format preserves spaces and backslashes instead of guessing from existing files.
+
 ## Generated versus external roots
 
 `root = "generated"` selects the build-script result owned by this package. `external-source =

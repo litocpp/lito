@@ -131,6 +131,7 @@ target_sources(
          src/build/configure/mod.cppm
          src/build/generated/model.cppm
          src/build/generated/cache.cppm
+         src/build/generated/depfile.cppm
          src/build/generated/mod.cppm
          src/build/generated/declaration.cppm
          src/build/generated/execution.cppm
