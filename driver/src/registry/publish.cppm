@@ -493,10 +493,11 @@ auto parse_session_response(ref<str> input, const RegistryPublishRequest& expect
         }
         auto url = rstd_try(
             string_member(**upload, "url"_str, "publish response.upload"_str, expected.package));
-        if (lito::parse::HttpsUrl::parse(url).is_err()) {
-            return publish_failure<ParsedPublishResponse>(RegistryPublishErrorKind::Protocol,
-                                                          expected.package,
-                                                          "publish upload URL must use HTTPS"_str);
+        if (RegistryFixedEndpoint::parse(url).is_err()) {
+            return publish_failure<ParsedPublishResponse>(
+                RegistryPublishErrorKind::Protocol,
+                expected.package,
+                "publish upload URL must use HTTPS, except HTTP on a loopback address"_str);
         }
         auto expires = rstd_try(string_member(
             **upload, "expires_at"_str, "publish response.upload"_str, expected.package));
