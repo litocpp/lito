@@ -53,6 +53,17 @@ inline constexpr auto LINKER_ARGUMENT      = "-Xlinker"_str;
 inline constexpr auto FORCE_LOAD           = "-force_load"_str;
 inline constexpr auto NO_STANDARD_LIBRARY  = "-nostdlib++"_str;
 
+inline void
+push_system_library(Vec<String>& command, ref<str> name, const lito::system::TargetInfo& target) {
+    if (target.is_msvc()) {
+        // Bare .lib inputs are checked by the driver before the linker searches LIB.
+        command.push(String::make(LINKER_ARGUMENT));
+        command.push(rstd::format("{}.lib", name));
+    } else {
+        command.push(rstd::format("-l{}", name));
+    }
+}
+
 constexpr auto standard_library(lito::config::StandardLibrary   value,
                                 const lito::system::TargetInfo& target) noexcept -> ref<str> {
     if (target.is_msvc()) return {};

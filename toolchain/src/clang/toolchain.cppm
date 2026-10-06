@@ -1734,11 +1734,8 @@ public:
             }
             if (requirement.name.as_str() == "dl"_str && target.platform == TargetPlatform::Macos)
                 continue;
-            auto option =
-                target.family == TargetFamily::Windows ? requirement.name.clone() : "-l"_Str;
-            option.push_str(target.family == TargetFamily::Windows ? ".lib"_str
-                                                                   : requirement.name.as_str());
-            command.push(rstd::move(option));
+            toolchain::clang_options::push_system_library(
+                command, requirement.name.as_str(), target);
         }
         if (! link_requirements.frameworks.is_empty() && target.platform != TargetPlatform::Macos) {
             const auto& requirement = link_requirements.frameworks[usize {}];

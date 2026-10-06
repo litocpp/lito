@@ -994,6 +994,28 @@ TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {
               "-stdlib=libc++"_str);
 }
 
+TEST(ClangToolchain, PassesSystemLibrariesToTheLinker) {
+    auto msvc    = lito::system::parse_target_info("x86_64-pc-windows-msvc"_str).unwrap();
+    auto command = strings("clang++"_str);
+    toolchain::clang_options::push_system_library(command, "ntdll"_str, msvc);
+    toolchain::clang_options::push_system_library(command, "ws2_32"_str, msvc);
+    ASSERT_EQ(command.len(), usize(5));
+    EXPECT_EQ(command[usize(1)].as_str(), "-Xlinker"_str);
+    EXPECT_EQ(command[usize(2)].as_str(), "ntdll.lib"_str);
+    EXPECT_EQ(command[usize(3)].as_str(), "-Xlinker"_str);
+    EXPECT_EQ(command[usize(4)].as_str(), "ws2_32.lib"_str);
+    auto targets = array<ref<str>, 3> { "x86_64-w64-windows-gnu"_str,
+                                        "x86_64-unknown-linux-gnu"_str,
+                                        "arm64-apple-darwin"_str };
+    for (auto triple : targets) {
+        auto target = lito::system::parse_target_info(triple).unwrap();
+        auto args   = Vec<String>::make();
+        toolchain::clang_options::push_system_library(args, "example"_str, target);
+        ASSERT_EQ(args.len(), usize(1));
+        EXPECT_EQ(args[usize {}].as_str(), "-lexample"_str);
+    }
+}
+
 TEST(ClangToolchain, RejectsNonLldLinkers) {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
