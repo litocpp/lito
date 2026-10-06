@@ -291,7 +291,7 @@ auto environment_identity(ref<str>                       builtin_identity,
     auto add  = [&hash](ref<str> value) {
         hash.write_zero_terminated(value);
     };
-    add("lito-clang-preprocessor-environment-v3"_str);
+    add("lito-clang-preprocessor-environment-v4"_str);
     add(context_id);
     add(builtin_identity);
     add(language == PreprocessorLanguage::C ? lito::c::C_IDENTIFIER_RULE_ID
@@ -427,17 +427,33 @@ using StandardLibraryHasCppAttribute =
 using StandardLibraryHasAttribute =
     StandardLibraryCapabilitySet<preprocessor::HasAttributeQuery,
                                  frontend::StaticName<"acquire_capability">,
+                                 frontend::StaticName<"alloc_size">,
+                                 frontend::StaticName<"always_inline">,
+                                 frontend::StaticName<"cleanup">,
+                                 frontend::StaticName<"const">,
                                  frontend::StaticName<"deprecated">,
                                  frontend::StaticName<"diagnose_if">,
                                  frontend::StaticName<"enable_if">,
                                  frontend::StaticName<"exclude_from_explicit_instantiation">,
+                                 frontend::StaticName<"fallthrough">,
+                                 frontend::StaticName<"flag_enum">,
+                                 frontend::StaticName<"format">,
+                                 frontend::StaticName<"format_arg">,
+                                 frontend::StaticName<"malloc">,
+                                 frontend::StaticName<"may_alias">,
+                                 frontend::StaticName<"no_instrument_function">,
                                  frontend::StaticName<"no_sanitize">,
                                  frontend::StaticName<"noinline">,
+                                 frontend::StaticName<"noreturn">,
+                                 frontend::StaticName<"pure">,
                                  frontend::StaticName<"release_capability">,
                                  frontend::StaticName<"require_constant_initialization">,
                                  frontend::StaticName<"requires_capability">,
+                                 frontend::StaticName<"sentinel">,
                                  frontend::StaticName<"type_visibility">,
-                                 frontend::StaticName<"using_if_exists">>;
+                                 frontend::StaticName<"unused">,
+                                 frontend::StaticName<"using_if_exists">,
+                                 frontend::StaticName<"warn_unused_result">>;
 
 using StandardLibraryHasDeclspecAttribute =
     StandardLibraryCapabilitySet<preprocessor::HasDeclspecAttributeQuery,

@@ -638,6 +638,82 @@ TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
 }
 
+auto preprocess_macro_source(ref<str> source) -> PpResult<PreprocessedTranslationUnit> {
+    auto sources = MemorySources {};
+    sources.add("/macros.cpp"_str, source);
+    sources.add("/config.hpp"_str, ""_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    return preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/macros.cpp"_str),
+            .environment_identity = "macro-rescan"_Str,
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+}
+
+TEST(Preprocessor, RescansMacroReplacementsWithFollowingTokens) {
+    struct Case {
+        ref<str> source;
+        ref<str> expected;
+    };
+    const Case cases[] = {
+        { "#define QUERY __has_attribute\nQUERY(__pure__) QUERY(__malloc__)\n"_str, "1 1"_str },
+        { "#define QUERY __has_builtin\n#define ALIAS QUERY\nALIAS(__builtin_assume)\n"_str,
+          "1"_str },
+        { "#define QUERY __has_include\nQUERY(\"config.hpp\")\n"_str, "1"_str },
+        { "#define QUERY() __has_cpp_attribute\nQUERY()(nodiscard)\n"_str, "1"_str },
+        { "#define QUERY __has_attribute(\nQUERY __pure__)\n"_str, "1"_str },
+        { "#define QUERY __has_attribute\n#if QUERY(__pure__)\nPASSED\n#endif\n"_str,
+          "PASSED"_str },
+        { "#define F(x) x\n#define A F\nA(7) A(8)\n"_str, "7 8"_str },
+        { "#define F(x) x\n#define A F\nA\n(7)\n"_str, "7"_str },
+        { "#define F(x) x\n#define A F\nA A(7)\n"_str, "F 7"_str },
+        { "#define F(x) x\n#define A F(\nA 7)\n"_str, "7"_str },
+        { "#define F(x) x\n#define A F\nA(A(7))\n"_str, "7"_str },
+        { "#define F(x) x\nF(F(7))\n"_str, "7"_str },
+        { "#define F(x,y) x y\n#define A F(A,\nA 7)\n"_str, "A 7"_str },
+        { "#define F(x,y) x y\n#define E\n#define A F\nA(E, E)\n"_str, ""_str },
+        { "#define A F\n#define F(x) A\nA(0)\n"_str, "F"_str },
+        { "#define F(x) G x\nF(F)(2)\n"_str, "G F ( 2 )"_str },
+        { "#define A B\n#define B A\nA A\n"_str, "A A"_str },
+        { "#define A A\nA A\n"_str, "A A"_str },
+        { "#define CAT(a,b) a##b\nCAT(__has_,attribute)(__pure__)\n"_str, "1"_str },
+        { "#define P _Pragma\n#define X 7\nP(\"push_macro(\\\"X\\\")\")\n"
+          "#undef X\nP(\"pop_macro(\\\"X\\\")\")\nX\n"_str,
+          "7"_str },
+    };
+    for (const auto& test : cases) {
+        auto result = preprocess_macro_source(test.source);
+        ASSERT_TRUE(result.is_ok()) << test.source;
+        auto actual = String::make();
+        for (const auto& token : result->tokens) {
+            if (token.kind == TokenKind::Newline) continue;
+            if (! actual.is_empty()) actual.push_ascii(' ');
+            actual.push_str(token.text.utf8().unwrap());
+        }
+        EXPECT_EQ(actual.as_str(), test.expected) << test.source;
+    }
+}
+
+TEST(Preprocessor, RejectsMalformedAliasedBuiltinInvocations) {
+    const ref<str> sources[] = {
+        "#define QUERY __has_attribute\nQUERY\n"_str,
+        "#define QUERY __has_attribute\nQUERY(__pure__\n"_str,
+        "#define QUERY __has_attribute\nQUERY(__pure__, __malloc__)\n"_str,
+        "#define QUERY _Pragma\nQUERY\n"_str,
+    };
+    for (auto source : sources) EXPECT_TRUE(preprocess_macro_source(source).is_err()) << source;
+}
+
 auto preprocess_integer_expression(ref<str> expression) -> PpResult<PreprocessedTranslationUnit> {
     auto sources = MemorySources {};
     auto source  = rstd::format(

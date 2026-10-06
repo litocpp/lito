@@ -130,6 +130,64 @@ class PreprocessorSession {
         usize              dynamic_builtins_ {};
     };
 
+    class ExpansionInput {
+        struct Frame {
+            ScratchTokenVec tokens;
+            usize           index {};
+            bool            macro { false };
+        };
+
+    public:
+        ExpansionInput(ScratchTokenVec          tokens,
+                       DisabledMacros&          disabled,
+                       FrontendScratchAllocator allocator)
+            : frames_(Vec<Frame, FrontendScratchAllocator>::new_in(allocator)),
+              disabled_(disabled) {
+            frames_.push(Frame { .tokens = rstd::move(tokens) });
+        }
+
+        ~ExpansionInput() {
+            while (! frames_.is_empty()) pop();
+        }
+
+        auto peek(bool skip_newlines = false) const -> const Token* {
+            // Lookahead must not re-enable the macro producing the current token.
+            for (auto frame = frames_.len(); frame != usize {};) {
+                const auto& current = frames_[--frame];
+                for (auto index = current.index; index < current.tokens.len(); ++index) {
+                    const auto& token = current.tokens[index];
+                    if (! skip_newlines || token.kind != TokenKind::Newline)
+                        return rstd::addressof(token);
+                }
+            }
+            return nullptr;
+        }
+
+        auto next() -> Option<Token> {
+            while (! frames_.is_empty()) {
+                auto& frame = frames_[frames_.len() - usize(1)];
+                if (frame.index < frame.tokens.len())
+                    return Some(rstd::move(frame.tokens[frame.index++]));
+                pop();
+            }
+            return None();
+        }
+
+        auto push(ScratchTokenVec tokens, MacroDefinitionHandle macro) -> void {
+            auto dynamic = macro->is_dynamic_builtin();
+            disabled_.push(rstd::move(macro), dynamic);
+            frames_.push(Frame { .tokens = rstd::move(tokens), .macro = true });
+        }
+
+    private:
+        auto pop() -> void {
+            if (frames_.pop().unwrap().macro) disabled_.pop();
+        }
+
+        Vec<Frame, FrontendScratchAllocator> frames_;
+        DisabledMacros&                      disabled_;
+    };
+
     enum class TokenCloneKind
     {
         SourceMaterialization,
@@ -657,58 +715,37 @@ private:
         return Ok(rstd::move(left));
     }
 
-    struct ArgumentRange {
-        usize begin;
-        usize end;
-    };
-
-    using ScratchArgumentRanges = Vec<ArgumentRange, FrontendScratchAllocator>;
-
-    struct ParsedArguments {
-        ScratchArgumentRanges ranges;
-        usize                 next;
-    };
-
-    auto parse_arguments(const ScratchTokenVec& input, usize open) -> Result<ParsedArguments> {
-        auto ranges = ScratchArgumentRanges::new_in(scratch_allocator_);
-        auto begin  = open + usize(1);
-        auto depth  = usize {};
-        for (auto index = open + usize(1); index < input.len(); ++index) {
-            const auto& token = input[index];
+    auto parse_arguments(ExpansionInput& input, DisabledMacros& disabled)
+        -> Result<ScratchTokenVecVec> {
+        auto open = input.next().unwrap();
+        while (open.kind == TokenKind::Newline) open = input.next().unwrap();
+        auto arguments = scratch_token_vectors();
+        auto argument  = scratch_tokens();
+        auto depth     = usize {};
+        for (;;) {
+            auto next = input.next();
+            if (next.is_none()) break;
+            Token token = rstd::move(next).unwrap();
+            if (token.kind == TokenKind::Newline) continue;
             if (token.text == "("_str) {
                 ++depth;
-                continue;
-            }
-            if (token.text == ")"_str) {
+            } else if (token.text == ")"_str) {
                 if (depth == usize {}) {
-                    ranges.push(ArgumentRange { .begin = begin, .end = index });
-                    return Ok(
-                        ParsedArguments { .ranges = rstd::move(ranges), .next = index + usize(1) });
+                    arguments.push(rstd::move(argument));
+                    return Ok(rstd::move(arguments));
                 }
                 --depth;
+            } else if (token.text == ","_str && depth == usize {}) {
+                arguments.push(rstd::move(argument));
+                argument = scratch_tokens();
                 continue;
             }
-            if (token.text == ","_str && depth == usize {}) {
-                ranges.push(ArgumentRange { .begin = begin, .end = index });
-                begin = index + usize(1);
-                continue;
-            }
+            if (token.kind == TokenKind::Identifier && token.text.utf8().is_ok() &&
+                disabled.contains(token.text.utf8().unwrap()))
+                token.disable_expand = true;
+            argument.push(rstd::move(token));
         }
-        return Err(failure("unterminated macro invocation"_str, input[open].expansion));
-    }
-
-    auto materialize_arguments(ScratchTokenVec& input, const ScratchArgumentRanges& ranges)
-        -> ScratchTokenVecVec {
-        auto arguments = scratch_token_vectors(ranges.len());
-        for (const auto& range : ranges) {
-            auto argument = scratch_tokens(range.end - range.begin);
-            for (auto index = range.begin; index < range.end; ++index) {
-                if (input[index].kind != TokenKind::Newline)
-                    argument.push(rstd::move(input[index]));
-            }
-            arguments.push(rstd::move(argument));
-        }
-        return arguments;
+        return Err(failure("unterminated macro invocation"_str, open.expansion));
     }
 
     auto variadic_argument(const MacroDefinition& macro,
@@ -977,34 +1014,32 @@ private:
         return Ok(resolved->is_some());
     }
 
-    auto expand(ScratchTokenVec input, DisabledMacros& disabled, bool preserve_defined = false)
+    auto expand(ScratchTokenVec tokens, DisabledMacros& disabled, bool preserve_defined = false)
         -> Result<ScratchTokenVec> {
+        auto input  = ExpansionInput(rstd::move(tokens), disabled, scratch_allocator_);
         auto output = scratch_tokens();
-        for (auto index = usize {}; index < input.len();) {
-            auto token = rstd::move(input[index]);
+        for (;;) {
+            auto next = input.next();
+            if (next.is_none()) break;
+            Token token = rstd::move(next).unwrap();
             if (preserve_defined && token.text == "defined"_str) {
                 output.push(rstd::move(token));
-                ++index;
-                auto parenthesized = index < input.len() && input[index].text == "("_str;
+                auto parenthesized = input.peek() && input.peek()->text == "("_str;
                 if (parenthesized) {
-                    output.push(rstd::move(input[index]));
-                    ++index;
+                    output.push(input.next().unwrap());
                 }
-                if (index < input.len()) {
-                    auto operand           = rstd::move(input[index]);
+                if (input.peek()) {
+                    auto operand           = input.next().unwrap();
                     operand.disable_expand = true;
                     output.push(rstd::move(operand));
-                    ++index;
                 }
-                if (parenthesized && index < input.len() && input[index].text == ")"_str) {
-                    output.push(rstd::move(input[index]));
-                    ++index;
+                if (parenthesized && input.peek() && input.peek()->text == ")"_str) {
+                    output.push(input.next().unwrap());
                 }
                 continue;
             }
             if (token.kind != TokenKind::Identifier || token.disable_expand) {
                 output.push(rstd::move(token));
-                ++index;
                 continue;
             }
             if (token.text.utf8().is_err())
@@ -1013,7 +1048,6 @@ private:
             if (token.is_known_unavailable_macro(revision)) {
                 ++raw_statistics_.macro_negative_cache_hits;
                 output.push(rstd::move(token));
-                ++index;
                 continue;
             }
             auto name       = token.text.utf8().unwrap();
@@ -1023,25 +1057,21 @@ private:
                 if (disabled.contains_dynamic(name)) {
                     token.disable_expand = true;
                     output.push(rstd::move(token));
-                    ++index;
                     continue;
                 }
                 if (token.text.matches<LineBuiltin>()) {
                     output.push(number_token(as_cast<i64>(token.expansion.line), token));
-                    ++index;
                     continue;
                 }
                 if (token.text.matches<IncludeLevelBuiltin>()) {
                     auto level =
                         include_stack_.is_empty() ? usize {} : include_stack_.len() - usize(1);
                     output.push(number_token(as_cast<i64>(level), token));
-                    ++index;
                     continue;
                 }
                 if (token.text.matches<CounterBuiltin>()) {
                     output.push(number_token(as_cast<i64>(counter_), token));
                     ++counter_;
-                    ++index;
                     continue;
                 }
                 auto file      = token.text.matches<FileBuiltin>();
@@ -1057,7 +1087,6 @@ private:
                         auto text = (*path.file_name()).to_str();
                         if (text.is_some()) {
                             output.push(string_token(*text, token));
-                            ++index;
                             continue;
                         }
                     }
@@ -1065,7 +1094,6 @@ private:
                     if (text.is_none())
                         return Err(failure("source path is not valid UTF-8"_str, token.expansion));
                     output.push(string_token(*text, token));
-                    ++index;
                     continue;
                 }
                 auto date = token.text.matches<DateBuiltin>();
@@ -1079,18 +1107,16 @@ private:
                     builtin_identity_.push_str(value->as_str());
                     builtin_identity_.push_ascii(';');
                     output.push(string_token(value->as_str(), token));
-                    ++index;
                     continue;
                 }
                 if (token.text.matches<PragmaBuiltin>()) {
-                    auto open = index + usize(1);
-                    while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                    if (open >= input.len() || input[open].text != "("_str) {
+                    auto open = input.peek(true);
+                    if (! open || open->text != "("_str) {
                         return Err(failure("_Pragma requires parentheses"_str, token.expansion));
                     }
-                    auto parsed = parse_arguments(input, open);
+                    auto parsed = parse_arguments(input, disabled);
                     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-                    auto arguments = materialize_arguments(input, parsed->ranges);
+                    auto arguments = rstd::move(parsed).unwrap();
                     if (arguments.len() != usize(1)) {
                         return Err(
                             failure("_Pragma requires one string literal"_str, token.expansion));
@@ -1108,7 +1134,6 @@ private:
                     if (pragma.is_err()) return Err(rstd::move(pragma).unwrap_err());
                     auto handled = handle_pragma(rstd::move(pragma).unwrap(), token.expansion);
                     if (handled.is_err()) return Err(rstd::move(handled).unwrap_err());
-                    index = parsed->next;
                     continue;
                 }
                 auto query_builtin      = BuiltinQuerySet::contains(name_hash, name);
@@ -1119,15 +1144,14 @@ private:
                 auto building_module    = token.text.matches<BuildingModuleBuiltin>();
                 if (query_builtin || include_builtin || embed_builtin || identifier_builtin ||
                     building_module) {
-                    auto open = index + usize(1);
-                    while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                    if (open >= input.len() || input[open].text != "("_str) {
+                    auto open = input.peek(true);
+                    if (! open || open->text != "("_str) {
                         return Err(failure(rstd::format("builtin '{}' requires parentheses", name),
                                            token.expansion));
                     }
-                    auto parsed = parse_arguments(input, open);
+                    auto parsed = parse_arguments(input, disabled);
                     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-                    auto arguments = materialize_arguments(input, parsed->ranges);
+                    auto arguments = rstd::move(parsed).unwrap();
                     if (arguments.len() != usize(1)) {
                         return Err(failure(rstd::format("builtin '{}' requires one argument", name),
                                            token.expansion));
@@ -1181,7 +1205,6 @@ private:
                     }
                     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
                     output.push(number_token(*value, token));
-                    index = parsed->next;
                     continue;
                 }
             }
@@ -1193,22 +1216,17 @@ private:
             if (found.is_none()) {
                 token.mark_unavailable_macro(revision);
                 output.push(rstd::move(token));
-                ++index;
                 continue;
             }
             if (disabled.contains(name)) {
                 token.disable_expand = true;
                 output.push(rstd::move(token));
-                ++index;
                 continue;
             }
-            auto next = index + usize(1);
             if ((**found).parameters.is_some()) {
-                auto open = next;
-                while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                if (open >= input.len() || input[open].text != "("_str) {
+                auto open = input.peek(true);
+                if (! open || open->text != "("_str) {
                     output.push(rstd::move(token));
-                    ++index;
                     continue;
                 }
             }
@@ -1217,15 +1235,12 @@ private:
             ++raw_statistics_.macro_expansions;
             auto replacement = scratch_tokens();
             if (definition.parameters.is_some()) {
-                auto open = next;
-                while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
-                auto parsed = parse_arguments(input, open);
+                auto parsed = parse_arguments(input, disabled);
                 if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-                auto arguments   = materialize_arguments(input, parsed->ranges);
+                auto arguments   = rstd::move(parsed).unwrap();
                 auto substituted = substitute(definition, arguments, token, disabled);
                 if (substituted.is_err()) return substituted;
                 replacement = rstd::move(substituted).unwrap();
-                next        = parsed->next;
             } else {
                 auto arguments   = scratch_token_vectors();
                 auto substituted = substitute(definition, arguments, token, disabled);
@@ -1235,13 +1250,7 @@ private:
             auto event =
                 emit_name(EventKind::MacroExpanded, definition.name.as_str(), token.expansion);
             if (event.is_err()) return Err(rstd::move(event).unwrap_err());
-            auto dynamic_builtin = definition.is_dynamic_builtin();
-            disabled.push(rstd::move(macro), dynamic_builtin);
-            auto rescanned = expand(rstd::move(replacement), disabled, preserve_defined);
-            disabled.pop();
-            if (rescanned.is_err()) return rescanned;
-            for (auto& item : *rescanned) output.push(rstd::move(item));
-            index = next;
+            input.push(rstd::move(replacement), rstd::move(macro));
         }
         return Ok(rstd::move(output));
     }

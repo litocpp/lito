@@ -84,6 +84,18 @@ import :missing;
 import :standard_library_capability_failure;
 #endif
 
+#define g_macro__has_attribute __has_attribute
+#if !g_macro__has_attribute(__pure__) || !g_macro__has_attribute(__malloc__) || \
+    !g_macro__has_attribute(__const__) || !g_macro__has_attribute(__alloc_size__) || \
+    !g_macro__has_attribute(__format__) || !g_macro__has_attribute(__format_arg__) || \
+    !g_macro__has_attribute(__always_inline__) || !g_macro__has_attribute(__unused__) || \
+    !g_macro__has_attribute(__noreturn__) || !g_macro__has_attribute(__sentinel__) || \
+    !g_macro__has_attribute(__no_instrument_function__) || !g_macro__has_attribute(cleanup) || \
+    !g_macro__has_attribute(fallthrough) || !g_macro__has_attribute(flag_enum) || \
+    !g_macro__has_attribute(may_alias) || !g_macro__has_attribute(warn_unused_result)
+#error missing GLib attribute capability
+#endif
+
 #if __has_builtin(__builtin_lito_missing) || __has_feature(cxx_exceptions) || \
     __has_extension(cxx_exceptions) || __has_feature(cxx_rtti) || \
     __has_extension(cxx_rtti) || __is_identifier(class) || \
