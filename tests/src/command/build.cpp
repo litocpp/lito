@@ -1802,6 +1802,55 @@ auto main() -> int {
     EXPECT_EQ(second->compiled, usize {});
 }
 
+TEST_F(BuildCommand, BuildScriptVersionUtilities) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "script-version"
+version = "0.1.0"
+
+[[bin]]
+name = "script-version"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "build.lua"_str, R"lua(local api = require("@lito")
+assert(api.version_compare("6.8.3", "6.9.0") == -1)
+assert(api.version_compare("6.10.0", "6.9.0") == 1)
+assert(api.version_compare("6.8.3", "6.8.3") == 0)
+assert(api.version_compare("6.8.0-rc.2", "6.8.0-rc.10") == -1)
+assert(api.version_compare("6.8.0-rc.10", "6.8.0") == -1)
+assert(api.version_compare("9007199254740992.0.0", "9007199254740993.0.0") == -1)
+for _, version in ipairs({ "6.8.0", "6.8.3", "6.9.0", "6.10.0", "6.11.1", "6.12.0" }) do
+  assert(api.version_matches(version, ">=6.8.0, <7.0.0"), version)
+end
+for _, version in ipairs({ "5.15.2", "6.7.9", "7.0.0", "6.8.0-rc.1", "6.9.0-beta.1" }) do
+  assert(not api.version_matches(version, ">=6.8.0, <7.0.0"), version)
+end
+assert(api.version_matches("6.8.0-rc.2", ">=6.8.0-rc.1, <7.0.0"))
+assert(api.version_matches("6.8.3", "~6.8"))
+assert(not api.version_matches("6.9.0", "~6.8"))
+for _, version in ipairs({ "", "6.8", "6.08.0", "6.8.x", "v6.8.0", "6.8.0+build", "6.8.0-01" }) do
+  assert(not pcall(api.version_compare, version, "6.8.0"))
+  assert(not pcall(api.version_compare, "6.8.0", version))
+  assert(not pcall(api.version_matches, version, ">=6.8.0"))
+end
+assert(not pcall(api.version_matches, "6.8.0", ">=broken"))
+assert(not pcall(api.version_compare, {}, "6.8.0"))
+assert(not pcall(api.version_matches, "6.8.0"))
+)lua"_str },
+    };
+    auto project = materialize("script-version"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(build_request(project->root.as_path(),
+                                           build_root("script-version"_str).as_path(),
+                                           strings("script-version"_str)));
+    if (built.is_err()) {
+        auto message = error_chain_text(built.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+    }
+}
+
 TEST_F(BuildCommand, BuildScriptGeneratesQtQmlProtobufAndTranslations) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

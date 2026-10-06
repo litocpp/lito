@@ -28,6 +28,23 @@ source-groups = ["generated"]
 The complete build receives the generated tree directly. Source discovery, scan cache identity,
 compile actions, and resource publication therefore share one generation result.
 
+## Version comparisons
+
+Both `build.lua` and `install.lua` expose version utilities through `lito` or `require("@lito")`:
+
+```lua
+assert(lito.version_compare("6.10.0", "6.9.0") == 1)
+assert(lito.version_matches("6.8.3", ">=6.8.0, <7.0.0"))
+```
+
+`version_compare(left, right)` returns `-1`, `0`, or `1`. `version_matches(version, requirement)`
+uses the same version requirements as package dependencies. Both use Lito's existing semantic
+version parser, not lexical string comparison or CMake's version grammar. Versions require
+`major.minor.patch`; a leading `v`, leading zeroes in numeric components, and build metadata
+(`+...`) are rejected. Invalid versions or requirements raise a Lua error rather than returning
+`false`. Prereleases compare below the corresponding stable version; range matching excludes
+prereleases unless the requirement explicitly admits their base version.
+
 ## Staged Qt QML modules
 
 The built-in Qt script package stages a module under `lito-qml/<URI as directories>` by default.

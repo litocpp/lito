@@ -359,6 +359,7 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                          rstd::move(configured_modules).unwrap_err_unchecked()));
     }
     auto module = luato::ModuleSpec("lito"_Str);
+    register_script_utilities(module);
     module.set("profile"_Str, String::make(profile));
     auto project_root = metadata.root.as_path().to_str();
     if (project_root.is_none()) {

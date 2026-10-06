@@ -58,7 +58,10 @@ TEST_F(InstallScript, InstallScriptProducesAnOwnedRecipeOnce) {
         { "manifest.in"_str,
           "@FRAGMENT@@RAW@@PROFILE@ @TARGET@ @ARCH@ @ENVIRONMENT@ @ENVIRONMENT_EMPTY@ @ENVIRONMENT_UNSET@ @ENVIRONMENT_UNSET_COUNT@\n"_str },
         { "resource.txt"_str, "resource @literal@\n"_str },
-        { "install.lua"_str, R"lua(local raw = lito.read_file("resource.txt")
+        { "install.lua"_str, R"lua(local api = require("@lito")
+assert(api.version_compare("6.8.3", "6.9.0") == -1)
+assert(api.version_matches("6.8.3", ">=6.8.0, <7.0.0"))
+local raw = lito.read_file("resource.txt")
 local rendered = lito.render_template({
     input = "fragment.in",
     values = { NAME = lito.package_name, VERSION = lito.package_version },

@@ -595,6 +595,7 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
                                            rstd::move(configured).unwrap_err_unchecked()));
     }
     auto module = luato::ModuleSpec("lito"_Str);
+    register_script_utilities(module);
     module.set("package_name"_Str, package.name.clone());
     module.set("package_version"_Str, package.version.clone());
     module.set("profile"_Str, context.profile.clone());
@@ -625,7 +626,7 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
     });
     module.function("env"_Str, &environment_value);
     auto native_module = luato::NativeRequireModuleSpec(
-        "@lito"_Str, "lito:install-host-api:v1"_Str, rstd::move(module));
+        "@lito"_Str, "lito:install-host-api:v2"_Str, rstd::move(module));
     native_module.set_global_alias("lito"_Str);
     auto registered = lua.register_native_require_module(rstd::move(native_module));
     if (registered.is_err()) {
