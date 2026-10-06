@@ -2,8 +2,8 @@
   "rstd": {
     "owner": "litocpp",
     "repo": "rstd",
-    "rev": "4a4bf6910cd06043b80b179eff35f229a82580b8",
-    "narHash": "sha256-hwET+YV0qxGPK9ONnk+f6T197SG11igGAdBN37+j1LE="
+    "rev": "2ec6e95c6d1067196ca572715cc5e2e3d9f9687f",
+    "narHash": "sha256-w5PeCytgTizA12WjltcnEQQQ9CJIKGXMOYZNz7n15lU="
   },
   "luato": {
     "owner": "litocpp",
@@ -14,8 +14,8 @@
   "licrypto": {
     "owner": "litocpp",
     "repo": "licrypto",
-    "rev": "18345239cc68869646a6522e6e258a4eba3dec20",
-    "narHash": "sha256-UVk3BeTA8+cBvB9XFXKNo1ua4rBflpKif7NF+9a9l/Q="
+    "rev": "286f24ae2eff79d595a968b601b47ccf0db5e563",
+    "narHash": "sha256-ovyxaDsFKodtJB7dNYaJ6/J+lCbtVu59vYK6MeBTiKI="
   },
   "zstd": {
     "owner": "facebook",

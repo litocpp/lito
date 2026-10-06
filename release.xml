@@ -1,3 +1,19 @@
+<release version="0.8.5" date="2026-10-06">
+  <description>
+    <ul>
+      <li>Support depfile inputs and formats in lito.run.</li>
+      <li>Support installation of generated files.</li>
+      <li>Add lito.version_compare and lito.version_matches.</li>
+      <li>Drop the Qt builtin package.</li>
+      <li>Allow pkg-config dependencies in Registry packages.</li>
+      <li>Fix loopback publish upload validation.</li>
+      <li>Fix macro replacement rescanning, unsigned integer evaluation and GLib attribute queries.</li>
+      <li>Fix UTF-8 marker replacement in generated actions.</li>
+      <li>Fix Clang system library arguments on Windows.</li>
+      <li>Update rstd to 0.1.7.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.4" date="2026-09-25">
   <description>
     <ul>
