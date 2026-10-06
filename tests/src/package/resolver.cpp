@@ -886,7 +886,7 @@ TEST_F(PackageResolver, ResolvesBuiltinScriptPackagesThroughRequiredDependencies
             -> lito::registry::RegistryGraphResult<lito::registry::BuiltinRegistryPackage> {
             auto& self = *static_cast<BuiltinScriptProvider*>(context);
             ++self.builtin_calls;
-            EXPECT_EQ(id, "qt"_str);
+            EXPECT_EQ(id, "example"_str);
             return Ok(lito::registry::BuiltinRegistryPackage { .release = self.release.clone() });
         }
 
@@ -924,8 +924,8 @@ module = "fixture.script.consumer"
 archive = "fixture-script-consumer"
 sources = ["lib.cppm"]
 
-[dependencies.lito-qt]
-builtin = "qt"
+[dependencies.lito-example]
+builtin = "example"
 )toml"_str },
         { "lib.cppm"_str, "export module fixture.script.consumer;\n"_str },
     };
@@ -933,7 +933,7 @@ builtin = "qt"
     ASSERT_TRUE(project.is_ok());
     const ProjectFile script_files[] = {
         { "lito.toml"_str, R"toml([package]
-name = "lito-qt"
+name = "lito-example"
 version = "0.1.0"
 
 [script]
@@ -961,7 +961,7 @@ supports = ["build"]
         .release = {
             .package = {
                 .registry = lito::registry::RegistryId::parse("https://example.invalid/"_str).unwrap(),
-                .name = lito::registry::RegistryPackageName::parse("lito-qt"_str).unwrap(),
+                .name = lito::registry::RegistryPackageName::parse("lito-example"_str).unwrap(),
             },
             .version = lito::registry::SemanticVersion::parse("0.1.0"_str).unwrap(),
         },
@@ -1005,13 +1005,13 @@ supports = ["build"]
     }
     ASSERT_EQ(graph->packages.len(), usize(2));
     ASSERT_EQ(graph->builtin_packages.len(), usize(1));
-    EXPECT_EQ(graph->builtin_packages[usize {}].as_str(), "lito-qt"_str);
+    EXPECT_EQ(graph->builtin_packages[usize {}].as_str(), "lito-example"_str);
 
     const lito::package::ResolvedPackage* consumer = nullptr;
     const lito::package::ResolvedPackage* provider = nullptr;
     for (const auto& package : graph->packages) {
         if (package.manifest.name == "fixture-script-consumer"_str) consumer = &package;
-        if (package.manifest.name == "lito-qt"_str) provider = &package;
+        if (package.manifest.name == "lito-example"_str) provider = &package;
     }
     ASSERT_NE(consumer, nullptr);
     ASSERT_NE(provider, nullptr);
@@ -1020,8 +1020,8 @@ supports = ["build"]
     ASSERT_EQ(consumer->dependencies.len(), usize(1));
     ASSERT_TRUE(consumer->dependencies[usize {}].is_Script());
     const auto& script = consumer->dependencies[usize {}].as_Script().value;
-    EXPECT_EQ(script.name.as_str(), "lito-qt"_str);
-    EXPECT_EQ(script.require_name.as_str(), "@lito.qt"_str);
+    EXPECT_EQ(script.name.as_str(), "lito-example"_str);
+    EXPECT_EQ(script.require_name.as_str(), "@lito.example"_str);
     ASSERT_EQ(script.supports.len(), usize(1));
     EXPECT_EQ(script.supports[usize {}], lito::manifest::ScriptHostKind::Build);
     EXPECT_EQ(provider->source.kind, lito::source::PackageSourceKind::Registry);

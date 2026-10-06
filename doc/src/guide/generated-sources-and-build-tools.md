@@ -47,10 +47,18 @@ prereleases unless the requirement explicitly admits their base version.
 
 ## Staged Qt QML modules
 
-The built-in Qt script package stages a module under `lito-qml/<URI as directories>` by default.
+The external `lito-qt` script package stages a module under `lito-qml/<URI as directories>` by default.
+QML, Protobuf, and translation generation require a CMake Qt 6 dependency at version 6.8 or newer.
 Its `qmldir`, QML files, resources, and generated `module.qmltypes` are target metadata that can be
 selected by `install.lua`. Generator intermediates live in the sibling `<output>.build` directory.
 Use returned output handles for generated C++ and resource inputs instead of their physical paths.
+
+Declare it as a regular dependency; `builtin = "qt"` is no longer provided:
+
+```toml
+[dependencies]
+lito-qt = "0.1.0"
+```
 
 To allow another process to load the staged module from disk:
 

@@ -854,7 +854,7 @@ rev = "v4"
 version = "4.0.0"
 
 [dev-dependencies.builtin-only]
-builtin = "qt"
+builtin = "example"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
@@ -1381,9 +1381,9 @@ name = "dependency-conflicting-source"
 module = "fixture.dependency_conflicting_source"
 archive = "fixture.dependency_conflicting_source"
 
-[dependencies.lito-qt]
-builtin = "qt"
-path = "../qt"
+[dependencies.lito-example]
+builtin = "example"
+path = "../example"
 )lito"_str },
     { "manifest-legacy-target-schema"_str, R"lito([package]
 name = "fixture-legacy-target-schema"
@@ -2383,8 +2383,8 @@ version = "0.1.0"
 [script]
 supports = ["build", "install"]
 
-[dependencies.lito-qt]
-builtin = "qt"
+[dependencies.lito-example]
+builtin = "example"
 )toml"_str,
         },
         { "lib.lua"_str, "return { enabled = true }\n"_str },
@@ -2397,9 +2397,10 @@ builtin = "qt"
     ASSERT_TRUE(loaded->script.is_some());
     ASSERT_EQ(loaded->script->supports.len(), usize(2));
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
-    EXPECT_EQ(loaded->dependencies[usize {}].name.as_str(), "lito-qt"_str);
+    EXPECT_EQ(loaded->dependencies[usize {}].name.as_str(), "lito-example"_str);
     EXPECT_TRUE(loaded->dependencies[usize {}].source.resolution.is_Builtin());
-    EXPECT_EQ(loaded->dependencies[usize {}].source.resolution.as_Builtin().id.as_str(), "qt"_str);
+    EXPECT_EQ(loaded->dependencies[usize {}].source.resolution.as_Builtin().id.as_str(),
+              "example"_str);
 }
 
 TEST_F(Manifest, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {

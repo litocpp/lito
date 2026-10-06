@@ -55,7 +55,6 @@ function(lito_embed_package id source)
 endfunction()
 
 lito_embed_package(pmacro "${PROJECT_SOURCE_DIR}/plugins/pmacro")
-lito_embed_package(qt "${PROJECT_SOURCE_DIR}/data/script-packages/qt")
 lito_embed_package(
   libxml2 "${PROJECT_SOURCE_DIR}/data/sdk/libxml2/2.13.8-minimal-elf-v1")
 file(

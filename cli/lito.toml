@@ -17,8 +17,5 @@ rstd-nostd = { workspace = true, usage = "link" }
 [external-sources.builtin-pmacro]
 path = "../plugins/pmacro"
 
-[external-sources.builtin-qt]
-path = "../data/script-packages/qt"
-
 [external-sources.builtin-libxml2]
 path = "../data/sdk/libxml2/2.13.8-minimal-elf-v1"

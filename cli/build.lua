@@ -28,12 +28,10 @@ local function embed(id, source_name)
 end
 
 local pmacro = embed("pmacro", "builtin-pmacro")
-local qt = embed("qt", "builtin-qt")
 local libxml2 = embed("libxml2", "builtin-libxml2")
 
 local inputs = {
   pmacro.outputs[1], pmacro.outputs[2],
-  qt.outputs[1], qt.outputs[2],
   libxml2.outputs[1], libxml2.outputs[2],
 }
 local generated = lito.write({
@@ -78,22 +76,15 @@ static constexpr unsigned char LITO_BUILTIN_PMACRO_ARCHIVE[] = {
 static constexpr unsigned char LITO_BUILTIN_PMACRO_DESCRIPTOR[] = {
 #embed "@INPUT:2@"
 };
-static constexpr unsigned char LITO_BUILTIN_QT_ARCHIVE[] = {
+static constexpr unsigned char LITO_BUILTIN_LIBXML2_ARCHIVE[] = {
 #embed "@INPUT:3@"
 };
-static constexpr unsigned char LITO_BUILTIN_QT_DESCRIPTOR[] = {
-#embed "@INPUT:4@"
-};
-static constexpr unsigned char LITO_BUILTIN_LIBXML2_ARCHIVE[] = {
-#embed "@INPUT:5@"
-};
 static constexpr unsigned char LITO_BUILTIN_LIBXML2_DESCRIPTOR[] = {
-#embed "@INPUT:6@"
+#embed "@INPUT:4@"
 };
 
 const PackageInput PACKAGES[] = {
     package_input("pmacro"_str, LITO_BUILTIN_PMACRO_ARCHIVE, LITO_BUILTIN_PMACRO_DESCRIPTOR),
-    package_input("qt"_str, LITO_BUILTIN_QT_ARCHIVE, LITO_BUILTIN_QT_DESCRIPTOR),
     package_input("libxml2"_str, LITO_BUILTIN_LIBXML2_ARCHIVE, LITO_BUILTIN_LIBXML2_DESCRIPTOR),
 };
 
