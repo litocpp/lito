@@ -2150,10 +2150,32 @@ condition = "feature.optional"
 [when.usage]
 private-definitions = ["FIXTURE_FEATURE_CONDITION=1"]
 )toml"_str },
-        { "src/lib.cppm"_str, R"cpp(export module fixture.feature;
-
+        { "build.lua"_str,
+          R"lua(local target = lito.target({kind = "lib", name = "fixture-feature-build"})
+local environment = lito.target_preprocessor_environment(target)
+local enabled, disabled, version = false, false, false
+for _, definition in ipairs(environment.definitions) do
+    if definition == "LITO_FEAT_OPTIONAL=1" then enabled = true end
+    if definition == 'LITO_PKG_VERSION="0.1.0"' then version = true end
+end
+for _, name in ipairs(environment.undefinitions) do
+    if name == "LITO_FEAT_OPTIONAL" then disabled = true end
+end
+assert(version and enabled ~= disabled)
+lito.write({output = "identity.txt", content = environment.identity})
+lito.write({output = "include/feature.h", content = "#define SCRIPT_OPTIONAL " .. (enabled and "1" or "0") .. "\n"})
+lito.target_add_generated_include(target, "include")
+)lua"_str },
+        { "src/lib.cppm"_str, R"cpp(module;
+#include "feature.h"
+export module fixture.feature;
 #if LITO_FEAT_OPTIONAL
 export import :optional;
+#endif
+#if LITO_FEAT_OPTIONAL
+static_assert(SCRIPT_OPTIONAL == 1);
+#else
+static_assert(SCRIPT_OPTIONAL == 0);
 #endif
 )cpp"_str },
         { "src/optional.cppm"_str, R"cpp(module;
@@ -2176,6 +2198,9 @@ export module fixture.feature:optional;
     auto disabled = lito::build(request);
     ASSERT_TRUE(disabled.is_ok());
     EXPECT_EQ(disabled->compiled, usize(1));
+    auto identity_path =
+        output.join(PathBuf::from("generated/fixture-feature-build/identity.txt"_str).as_path());
+    auto disabled_identity = rstd::fs::read_to_string(identity_path.as_path()).unwrap();
 
     request.selection.features.enabled.push("optional"_Str);
     auto enabled = lito::build(request);
@@ -2186,6 +2211,8 @@ export module fixture.feature:optional;
     }
     EXPECT_EQ(enabled->compiled, usize(2));
     EXPECT_EQ(enabled->scanned, usize(2));
+    auto enabled_identity = rstd::fs::read_to_string(identity_path.as_path()).unwrap();
+    EXPECT_NE(enabled_identity.as_str(), disabled_identity.as_str());
 
     request.selection.features.enabled.clear();
     auto disabled_again = lito::build(request);
@@ -2195,6 +2222,8 @@ export module fixture.feature:optional;
         return;
     }
     EXPECT_EQ(disabled_again->compiled, usize(1));
+    EXPECT_EQ(rstd::fs::read_to_string(identity_path.as_path()).unwrap().as_str(),
+              disabled_identity.as_str());
 }
 
 TEST_F(BuildCommand, ConditionalConflictsReportBothSources) {

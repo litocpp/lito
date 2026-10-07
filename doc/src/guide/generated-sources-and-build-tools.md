@@ -28,6 +28,25 @@ source-groups = ["generated"]
 The complete build receives the generated tree directly. Source discovery, scan cache identity,
 compile actions, and resource publication therefore share one generation result.
 
+## Target preprocessor environment
+
+`lito.target_preprocessor_environment(target)` returns the selected target's include directories,
+`definitions`, `undefinitions`, compiler flavor, target triple, and `identity`. Package metadata uses
+the same resolved macro values as source discovery and compilation: enabled features appear as
+`LITO_FEAT_NAME=1` in `definitions`, disabled declared features appear in `undefinitions`, and
+`LITO_PKG_VERSION` is a quoted definition. These values are local to the selected target's package.
+Feature and version changes also change the projection identity.
+
+```lua
+local target = lito.target({ kind = "lib", name = "media" })
+local environment = lito.target_preprocessor_environment(target)
+local video = false
+for _, definition in ipairs(environment.definitions) do
+  if definition == "LITO_FEAT_VIDEO=1" then video = true end
+end
+if not video then return end
+```
+
 ## Version comparisons
 
 Both `build.lua` and `install.lua` expose version utilities through `lito` or `require("@lito")`:

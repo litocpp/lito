@@ -1,6 +1,7 @@
 export module lito.toolchain.clang:preprocessor_model;
 
 import rstd;
+import licrypto;
 import lito.cpp;
 import lito.core;
 import lito.system;
@@ -223,6 +224,22 @@ public:
                 rstd::format("unknown package feature macro '{}'", name), location));
         }
         return Ok(None());
+    }
+
+    auto preprocessor_projection() const -> cpp::PreprocessorProjection {
+        auto result   = cpp::PreprocessorProjection {};
+        auto identity = "lito-package-preprocessor-projection-v1\n"_Str;
+        for (const auto& entry : entries_) {
+            if (entry.compiler_definition.is_some())
+                result.definitions.push(entry.compiler_definition->clone());
+            else
+                result.undefinitions.push(entry.name.clone());
+            identity.push_str(
+                rstd::format("{}:{}\n", entry.value_identity.len(), entry.value_identity.as_str())
+                    .as_str());
+        }
+        result.identity = licrypto::sha256_hex(identity.as_str());
+        return result;
     }
 
     auto schema_identity() const noexcept -> ref<str> { return schema_identity_.as_str(); }

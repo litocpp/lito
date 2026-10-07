@@ -233,8 +233,10 @@ auto ToolActionSession::preprocessor_environment(BuildScriptHandle target_handle
         return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             "target handle has no resolved compile environment"_Str)));
     }
-    auto projection = toolchain_->build_tool_preprocessor_projection(
-        target_plan_->contexts[*target], metadata_->targets[*target].root.as_path());
+    auto projection =
+        toolchain_->build_tool_preprocessor_projection(target_plan_->contexts[*target],
+                                                       metadata_->targets[*target].compile_metadata,
+                                                       metadata_->targets[*target].root.as_path());
     if (projection.is_err()) {
         return Err(rstd::into<BuildScriptError>(rstd::move(projection).unwrap_err()));
     }

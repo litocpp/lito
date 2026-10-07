@@ -1001,8 +1001,9 @@ public:
         return Ok((*environment)->identity.clone());
     }
 
-    auto build_tool_preprocessor_projection(const cpp::CompileContext& compile_context,
-                                            ref<rstd::path::Path>      working_directory) const
+    auto build_tool_preprocessor_projection(const cpp::CompileContext&         compile_context,
+                                            const cpp::PackageCompileMetadata& compile_metadata,
+                                            ref<rstd::path::Path> working_directory) const
         -> ToolchainResult<cpp::PreprocessorProjection> {
         auto environment =
             environment_for(compile_context,
@@ -1029,12 +1030,19 @@ public:
             else
                 projection.user_include_directories.push(rstd::move(directory));
         }
-        projection.identity = licrypto::sha256_hex(
-            rstd::format(
-                "lito-build-tool-preprocessor-projection-v2\nprojection={}\nenvironment={}",
-                projection.identity.as_str(),
-                (*environment)->identity.as_str())
-                .as_str());
+        auto package =
+            toolchain::PackageMacroCatalog::make(compile_metadata).preprocessor_projection();
+        for (auto& definition : package.definitions)
+            projection.definitions.push(rstd::move(definition));
+        for (auto& undefinition : package.undefinitions)
+            projection.undefinitions.push(rstd::move(undefinition));
+        projection.identity =
+            licrypto::sha256_hex(rstd::format("lito-build-tool-preprocessor-projection-"
+                                              "v3\nprojection={}\nenvironment={}\npackage={}",
+                                              projection.identity.as_str(),
+                                              (*environment)->identity.as_str(),
+                                              package.identity.as_str())
+                                     .as_str());
         return Ok(rstd::move(projection));
     }
 
