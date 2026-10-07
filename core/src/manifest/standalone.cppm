@@ -177,6 +177,9 @@ auto dependency_table(const PackageManifest&           manifest,
     if (dependency.features.is_some()) {
         table.insert("features"_Str, string_array(*dependency.features));
     }
+    if (dependency.condition.is_some()) {
+        table.insert("condition"_Str, string_value(dependency.condition->source.as_str()));
+    }
     if (dependency.default_features.is_some()) {
         table.insert("default-features"_Str, Toml::Boolean(*dependency.default_features));
     }
@@ -211,10 +214,11 @@ auto runtime_dependencies(const PackageManifest& manifest, const StandaloneManif
                 rstd::format("published runtime dependency '{}' must declare a Registry version",
                              dependency.name.as_str()));
         }
-        table.insert(
-            dependency.name.clone(),
-            Toml::Table(rstd_try(package_source_table(
-                manifest, *dependency.source.publication, dependency.name.as_str(), options))));
+        auto entry = rstd_try(package_source_table(
+            manifest, *dependency.source.publication, dependency.name.as_str(), options));
+        if (dependency.condition.is_some())
+            entry.insert("condition"_Str, string_value(dependency.condition->source.as_str()));
+        table.insert(dependency.name.clone(), Toml::Table(rstd::move(entry)));
     }
     return Ok(Some(Toml::Table(rstd::move(table))));
 }

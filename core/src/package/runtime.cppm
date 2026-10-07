@@ -81,7 +81,7 @@ private:
         }
         colors_[**index] = u8(1);
         active_.push(String::make(name));
-        for (const auto& dependency : package.runtime_dependencies) {
+        for (const auto& dependency : package.active_runtime_dependencies()) {
             result.edges.push(RuntimePackageEdge {
                 .package    = String::make(name),
                 .dependency = dependency.name.clone(),

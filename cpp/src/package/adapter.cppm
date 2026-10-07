@@ -30,33 +30,12 @@ auto make_package_condition_context(const lito::package::ResolvedPackage& packag
                                     const BuildConfiguration&             configuration,
                                     const ProfileSpec&                    profile,
                                     const BuildPlatform& platform) -> lito::condition::Context {
-    auto context = lito::condition::Context {};
-    context.set_string("target.os"_Str, String::make(platform.effective_target.platform_name()));
-    context.set_string("target.vendor"_Str, platform.effective_target.vendor.clone());
-    context.set_string("target.family"_Str, String::make(platform.effective_target.family_name()));
-    context.set_string("target.environment"_Str,
-                       String::make(platform.effective_target.environment_name()));
-    context.set_string("target.arch"_Str,
-                       String::make(architecture_name(platform.effective_target.architecture)));
-    context.set_string("target.triple"_Str, platform.effective_target.triple.clone());
-    context.set_string("host.os"_Str, platform.host.os.clone());
-    context.set_string("host.arch"_Str,
-                       String::make(architecture_name(platform.host.architecture)));
-    context.set_bool("build.cross"_Str, platform.cross);
-    context.set_string("profile.name"_Str, profile.name.clone());
-    context.set_string("toolchain.compiler"_Str, "clang"_Str);
-    context.set_string(
-        "toolchain.stdlib"_Str,
-        String::make(lito::config::standard_library_name(configuration.standard_library)));
-    context.set_string("toolchain.stdlib-runtime"_Str,
-                       String::make(lito::config::standard_library_runtime_name(
-                           configuration.standard_library_runtime)));
-    for (const auto& feature : package.features) {
-        auto key = "feature."_Str;
-        key.push_str(feature.name.as_str());
-        context.set_bool(rstd::move(key), feature.enabled);
-    }
-    return context;
+    auto environment = lito::package::make_condition_environment(
+        platform,
+        profile.name.as_str(),
+        lito::config::standard_library_name(configuration.standard_library),
+        lito::config::standard_library_runtime_name(configuration.standard_library_runtime));
+    return lito::package::make_package_condition_context(package, environment);
 }
 
 auto resolve_target_source_groups(lito::package::ResolvedPackage& package,
@@ -93,70 +72,7 @@ auto resolve_target_source_groups(lito::package::ResolvedPackage& package,
 auto resolve_external_dependency_conditions(lito::package::ResolvedPackage& package,
                                             const lito::condition::Context& context)
     -> lito::package::PackageResult<empty> {
-    auto pkg_config = Vec<lito::dependency::PkgConfigExternalDependency>::with_capacity(
-        package.manifest.pkg_config_external_dependencies.len());
-    for (auto& dependency : package.manifest.pkg_config_external_dependencies) {
-        if (dependency.condition.is_some()) {
-            auto matched = lito::condition::evaluate(dependency.condition->expression, context);
-            if (matched.is_err()) {
-                return Err(lito::package::PackageError::Message(rstd::format(
-                    "package '{}' manifest '{}' pkg-config external dependency '{}' condition "
-                    "'{}' is invalid: {}",
-                    package.manifest.name.as_str(),
-                    package.manifest.manifest_path.as_path(),
-                    dependency.alias.as_str(),
-                    dependency.condition->source.as_str(),
-                    rstd::move(matched).unwrap_err())));
-            }
-            if (! *matched) continue;
-        }
-        pkg_config.push(rstd::move(dependency));
-    }
-    package.manifest.pkg_config_external_dependencies = rstd::move(pkg_config);
-
-    auto cmake = Vec<lito::dependency::CMakeDependencyRequirement>::with_capacity(
-        package.manifest.cmake_external_dependencies.len());
-    for (auto& dependency : package.manifest.cmake_external_dependencies) {
-        if (dependency.condition.is_some()) {
-            auto matched = lito::condition::evaluate(dependency.condition->expression, context);
-            if (matched.is_err()) {
-                return Err(lito::package::PackageError::Message(rstd::format(
-                    "package '{}' manifest '{}' CMake external dependency '{}' condition '{}' "
-                    "is invalid: {}",
-                    package.manifest.name.as_str(),
-                    package.manifest.manifest_path.as_path(),
-                    dependency.alias.as_str(),
-                    dependency.condition->source.as_str(),
-                    rstd::move(matched).unwrap_err())));
-            }
-            if (! *matched) continue;
-        }
-        cmake.push(rstd::move(dependency));
-    }
-    package.manifest.cmake_external_dependencies = rstd::move(cmake);
-
-    auto cargo = Vec<lito::dependency::CargoDependencyRequirement>::with_capacity(
-        package.manifest.cargo_external_dependencies.len());
-    for (auto& dependency : package.manifest.cargo_external_dependencies) {
-        if (dependency.consumption.condition.is_some()) {
-            auto matched =
-                lito::condition::evaluate(dependency.consumption.condition->expression, context);
-            if (matched.is_err()) {
-                return Err(lito::package::PackageError::Message(rstd::format(
-                    "package '{}' manifest '{}' Cargo external dependency '{}' condition '{}' "
-                    "is invalid: {}",
-                    package.manifest.name.as_str(),
-                    package.manifest.manifest_path.as_path(),
-                    dependency.alias.as_str(),
-                    dependency.consumption.condition->source.as_str(),
-                    rstd::move(matched).unwrap_err())));
-            }
-            if (! *matched) continue;
-        }
-        cargo.push(rstd::move(dependency));
-    }
-    package.manifest.cargo_external_dependencies = rstd::move(cargo);
-    return Ok(empty {});
+    return lito::package::resolve_external_dependency_conditions(package, context);
 }
 
 } // namespace lito::cpp
@@ -361,7 +277,7 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                                    bool has_library) -> lito::package::PackageResult<empty> {
     auto context = make_package_condition_context(package, configuration, profile, platform);
 
-    rstd_try(resolve_external_dependency_conditions(package, context));
+    rstd_try(lito::package::resolve_external_dependency_conditions(package, context));
 
     auto       matched_threads        = Option<bool> {};
     auto       matched_threads_source = Option<String> {};
@@ -1174,7 +1090,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
 
     for (const auto& package : graph.packages) {
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
-        for (const auto& dependency : package.dependencies) {
+        for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
             if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
@@ -1186,7 +1102,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                  cpp_dependency.name.as_str())));
             }
         }
-        for (const auto& dependency : package.dev_dependencies) {
+        for (const auto& dependency : package.active_dev_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
             if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
@@ -1285,7 +1201,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
         auto host_tool_dependencies = Vec<HostToolDependencySpec>::make();
-        for (const auto& dependency : package.dependencies) {
+        for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
             if (package_has_host_tools(cpp_dependency.name.as_str())) {
@@ -1311,7 +1227,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         auto proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
         auto plugin_dependencies     = Vec<CompilerPluginDependencySpec>::make();
-        for (const auto& dependency : package.dependencies) {
+        for (const auto& dependency : package.active_dependencies()) {
             if (dependency.is_Plugin()) {
                 plugin_dependencies.push(CompilerPluginDependencySpec {
                     .package = dependency.as_Plugin().value.name.clone(),
@@ -1336,7 +1252,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         auto dev_plugin_dependencies     = Vec<CompilerPluginDependencySpec>::make();
         auto dev_proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
         if (development_selected) {
-            for (const auto& dependency : package.dev_dependencies) {
+            for (const auto& dependency : package.active_dev_dependencies()) {
                 if (dependency.is_Plugin()) {
                     dev_plugin_dependencies.push(CompilerPluginDependencySpec {
                         .package = dependency.as_Plugin().value.name.clone(),
@@ -1631,9 +1547,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     }
     auto resolved_script_packages = Vec<lito::package::ResolvedScriptPackageView>::make();
     for (const auto& provider : graph.packages) {
-        if (provider.manifest.script.is_none()) continue;
+        if (provider.manifest.script.is_none() ||
+            ! selected.contains_key(provider.manifest.name.as_str()))
+            continue;
         auto dependencies = Vec<String>::make();
-        for (const auto& dependency : provider.dependencies) {
+        for (const auto& dependency : provider.active_dependencies()) {
             if (dependency.is_Script()) {
                 dependencies.push(dependency.as_Script().value.name.clone());
             }
@@ -1683,7 +1601,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     for (auto& package : graph.packages) {
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
         auto script_dependencies = Vec<String>::make();
-        for (const auto& dependency : package.dependencies) {
+        for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Script()) continue;
             const auto& script = dependency.as_Script().value;
             script_dependencies.push(script.name.clone());

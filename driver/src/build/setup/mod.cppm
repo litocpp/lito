@@ -151,7 +151,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
             if (package.manifest.name == name.as_str()) selected = true;
         }
         if (! selected) continue;
-        for (const auto& dependency : package.dependencies) {
+        for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Script()) continue;
             const auto&                           script   = dependency.as_Script().value;
             const lito::package::ResolvedPackage* provider = nullptr;
@@ -192,7 +192,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
             });
         }
         auto language = lito::manifest::package_manifest_language(package.manifest);
-        for (const auto& dependency : package.manifest.cargo_external_dependencies) {
+        for (const auto& dependency : package.effective_cargo_dependencies()) {
             auto projected = resolve_cargo_profile_configuration(
                 package.manifest.name.as_str(), dependency, profile, language);
             if (projected.is_err()) continue;

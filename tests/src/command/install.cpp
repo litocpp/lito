@@ -461,7 +461,19 @@ sources = ["src/main.cpp"]
 link-stdlib = false
 name = "fixture-no-build-extra"
 sources = ["src/extra.cpp"]
+
+[dependencies]
+fixture-no-build-conditional = { path = "conditional", condition = 'profile.name != "release" || target.os == "never"' }
 )"_str },
+        { "conditional/lito.toml"_str, R"toml([package]
+name = "fixture-no-build-conditional"
+version = "0.1.0"
+[lib]
+name = "fixture-no-build-conditional"
+archive = "fixture-no-build-conditional"
+module = "fixture.no_build.conditional"
+)toml"_str },
+        { "conditional/src/lib.cppm"_str, "export module fixture.no_build.conditional;\n"_str },
         { "src/main.cpp"_str, "int main() { return 0; }\n"_str },
         { "src/extra.cpp"_str, "int main() { return 0; }\n"_str },
     };
@@ -517,7 +529,7 @@ sources = ["src/extra.cpp"]
     auto product_state = output.join(PathBuf::from(".lito/build-product.json"_str).as_path());
     auto product_json  = rstd::fs::read_to_string(product_state.as_path());
     ASSERT_TRUE(product_json.is_ok());
-    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 8"_str));
+    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 9"_str));
     EXPECT_TRUE(product_json->as_str().contains("\"install-files\""_str));
     EXPECT_TRUE(product_json->as_str().contains("\"modified-seconds\""_str));
     EXPECT_FALSE(product_json->as_str().contains("\"sha256\""_str));

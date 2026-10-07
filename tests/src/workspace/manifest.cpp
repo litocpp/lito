@@ -173,6 +173,7 @@ sources = ["main.cpp"]
 
 [dependencies.fixture-workspace-inherited-library]
 workspace = true
+condition = "true"
 
 [external-dependencies.pkg-config.curl]
 workspace = true
@@ -245,6 +246,9 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_EQ(lito::package::resolved_dependency_name(app.dependencies[usize {}]),
               "fixture-workspace-inherited-library"_str);
     ASSERT_EQ(app.manifest.dependencies.len(), usize(1));
+    ASSERT_TRUE(app.manifest.dependencies[usize {}].condition.is_some());
+    EXPECT_EQ(app.manifest.dependencies[usize {}].condition->source, "true"_str);
+    ASSERT_TRUE(app.dependencies[usize {}].activation.condition.is_some());
     ASSERT_TRUE(app.manifest.dependencies[usize {}].declaration_root.is_some());
     ASSERT_TRUE(app.manifest.dependencies[usize {}].source.publication.is_some());
     EXPECT_EQ(app.manifest.dependencies[usize {}].source.publication->requirement.text(),

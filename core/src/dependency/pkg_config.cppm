@@ -41,6 +41,21 @@ struct PkgConfigExternalDependency {
     PkgConfigDependencyRequirement      requirement;
     DependencyConsumption               consumption;
     Option<ExternalDependencyCondition> condition;
+
+    auto clone() const -> PkgConfigExternalDependency {
+        auto result = PkgConfigExternalDependency {
+            .alias       = alias.clone(),
+            .requirement = { .module = requirement.module.clone(), .mode = requirement.mode },
+            .consumption = consumption,
+            .condition   = condition.is_some() ? Some(condition->clone()) : None(),
+        };
+        if (requirement.version.is_some())
+            result.requirement.version = Some(PkgConfigVersionRequirement {
+                .comparison = requirement.version->comparison,
+                .value      = requirement.version->value.clone(),
+            });
+        return result;
+    }
 };
 
 struct PkgConfigProviderConfig {

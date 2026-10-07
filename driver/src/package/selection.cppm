@@ -21,6 +21,7 @@ export namespace lito::package
 enum class PackageSelectionPurpose
 {
     All,
+    Sources,
     Production,
     Documentation,
     Install,
@@ -62,6 +63,7 @@ struct Impl<fmt::Display, lito::package::PackageSelectionPurpose>
         auto name = "unknown"_str;
         switch (this->self()) {
         case lito::package::PackageSelectionPurpose::All: name = "all"_str; break;
+        case lito::package::PackageSelectionPurpose::Sources: name = "sources"_str; break;
         case lito::package::PackageSelectionPurpose::Production: name = "production"_str; break;
         case lito::package::PackageSelectionPurpose::Documentation:
             name = "documentation"_str;
@@ -144,178 +146,6 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
     return selected;
 }
 
-struct SelectedPackageClosure {
-    Vec<String> target;
-    Vec<String> host;
-    Vec<String> plugins;
-    Vec<String> providers;
-    Vec<String> processors;
-    Vec<String> tools;
-};
-
-auto selected_closure(const ResolvedPackageGraph& graph,
-                      const Vec<String>&          selected_roots,
-                      const Vec<PackageTargetId>& selected_targets,
-                      const TargetInfo*           target,
-                      Option<ref<str>>            artifact_processor)
-    -> PackageSelectionResult<SelectedPackageClosure> {
-    auto indices = IndexMap::make();
-    for (usize index {}; index < graph.packages.len(); ++index) {
-        indices.insert(graph.packages[index].manifest.name.clone(), index);
-    }
-
-    auto development = StringSet::make();
-    for (const auto& selected_target : selected_targets) {
-        if (selected_target.kind == PackageTargetKind::Test ||
-            selected_target.kind == PackageTargetKind::Benchmark ||
-            selected_target.kind == PackageTargetKind::Example ||
-            selected_target.kind == PackageTargetKind::CompileTest) {
-            development.insert(selected_target.package.clone(), empty {});
-        }
-    }
-
-    auto       pending_target  = Vec<String>::make();
-    auto       pending_host    = Vec<String>::make();
-    auto       selected_target = StringSet::make();
-    auto       selected_host   = StringSet::make();
-    auto       plugins         = StringSet::make();
-    auto       providers       = StringSet::make();
-    auto       processors      = StringSet::make();
-    auto       tools           = StringSet::make();
-    const auto has_host_tool   = [&](ref<str> name) noexcept {
-        auto index = indices.get(name);
-        return index.is_some() &&
-               lito::manifest::package_has_host_tool_target(graph.packages[**index].manifest);
-    };
-    for (const auto& root : selected_roots) {
-        auto has_target   = false;
-        auto has_plugin   = false;
-        auto has_provider = false;
-        for (const auto& selected : selected_targets) {
-            if (selected.package != root.as_str()) continue;
-            if (selected.kind == PackageTargetKind::Plugin)
-                has_plugin = true;
-            else if (selected.kind == PackageTargetKind::ProcMacro)
-                has_provider = true;
-            else
-                has_target = true;
-        }
-        if (! has_target && ! has_plugin && ! has_provider) has_target = true;
-        if (has_target) pending_target.push(root.clone());
-        if (has_plugin) {
-            pending_host.push(root.clone());
-            plugins.insert(root.clone(), empty {});
-        }
-        if (has_provider) {
-            pending_host.push(root.clone());
-            providers.insert(root.clone(), empty {});
-        }
-    }
-    const auto consume = [&](String current, bool host) -> PackageSelectionResult<empty> {
-        auto& selected = host ? selected_host : selected_target;
-        if (selected.contains_key(current.as_str())) return Ok(empty {});
-        auto index = indices.get(current.as_str());
-        if (index.is_none()) {
-            return Err(PackageSelectionError::Message(rstd::format(
-                "selected package '{}' is missing from resolved graph", current.as_str())));
-        }
-        if (! host && target != nullptr &&
-            ! graph.packages[**index].manifest.target.matches(*target)) {
-            return Err(PackageSelectionError::Message(
-                rstd::format("package '{}' does not support target '{}'",
-                             current.as_str(),
-                             target->triple.as_str())));
-        }
-        selected.insert(current.clone(), empty {});
-        for (const auto& dependency : graph.packages[**index].dependencies) {
-            if (dependency.is_Plugin()) {
-                if (host && plugins.contains_key(current.as_str())) {
-                    return Err(PackageSelectionError::Message(
-                        rstd::format("plugin '{}' cannot depend on plugin '{}'",
-                                     current.as_str(),
-                                     dependency.as_Plugin().value.name.as_str())));
-                }
-                pending_host.push(dependency.as_Plugin().value.name.clone());
-                plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
-            } else if (dependency.is_Pmacro()) {
-                if (host) {
-                    return Err(PackageSelectionError::Message(
-                        rstd::format("pmacro provider '{}' cannot depend on pmacro provider '{}'",
-                                     current.as_str(),
-                                     dependency.as_Pmacro().value.name.as_str())));
-                }
-                pending_host.push(dependency.as_Pmacro().value.name.clone());
-                providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
-            } else if (! host && artifact_processor.is_some() && dependency.is_Cpp() &&
-                       dependency.as_Cpp().value.name.as_str() == **artifact_processor) {
-                pending_host.push(dependency.as_Cpp().value.name.clone());
-                processors.insert(dependency.as_Cpp().value.name.clone(), empty {});
-            } else if (dependency.is_Cpp() &&
-                       has_host_tool(dependency.as_Cpp().value.name.as_str())) {
-                tools.insert(dependency.as_Cpp().value.name.clone(), empty {});
-                if (host)
-                    pending_host.push(dependency.as_Cpp().value.name.clone());
-                else
-                    pending_target.push(dependency.as_Cpp().value.name.clone());
-            } else if (host) {
-                pending_host.push(String::make(resolved_dependency_name(dependency)));
-            } else {
-                pending_target.push(String::make(resolved_dependency_name(dependency)));
-            }
-        }
-        if (! host && development.contains_key(current.as_str())) {
-            for (const auto& dependency : graph.packages[**index].dev_dependencies) {
-                if (dependency.is_Plugin()) {
-                    pending_host.push(dependency.as_Plugin().value.name.clone());
-                    plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
-                } else if (dependency.is_Pmacro()) {
-                    pending_host.push(dependency.as_Pmacro().value.name.clone());
-                    providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
-                } else if (dependency.is_Cpp() &&
-                           has_host_tool(dependency.as_Cpp().value.name.as_str())) {
-                    tools.insert(dependency.as_Cpp().value.name.clone(), empty {});
-                    pending_target.push(dependency.as_Cpp().value.name.clone());
-                } else {
-                    pending_target.push(String::make(resolved_dependency_name(dependency)));
-                }
-            }
-        }
-        return Ok(empty {});
-    };
-    while (! pending_target.is_empty() || ! pending_host.is_empty()) {
-        if (! pending_target.is_empty()) {
-            auto consumed = consume(rstd::move(pending_target.pop()).unwrap(), false);
-            if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
-        } else {
-            auto consumed = consume(rstd::move(pending_host.pop()).unwrap(), true);
-            if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
-        }
-    }
-
-    auto result = SelectedPackageClosure {};
-    for (const auto& package : graph.packages) {
-        if (selected_target.contains_key(package.manifest.name.as_str())) {
-            result.target.push(package.manifest.name.clone());
-        }
-        if (selected_host.contains_key(package.manifest.name.as_str())) {
-            result.host.push(package.manifest.name.clone());
-        }
-        if (plugins.contains_key(package.manifest.name.as_str())) {
-            result.plugins.push(package.manifest.name.clone());
-        }
-        if (providers.contains_key(package.manifest.name.as_str())) {
-            result.providers.push(package.manifest.name.clone());
-        }
-        if (processors.contains_key(package.manifest.name.as_str())) {
-            result.processors.push(package.manifest.name.clone());
-        }
-        if (tools.contains_key(package.manifest.name.as_str())) {
-            result.tools.push(package.manifest.name.clone());
-        }
-    }
-    return Ok(rstd::move(result));
-}
-
 auto effective_compile_targets(const ResolvedPackageGraph& graph,
                                const Vec<String>&          selected_packages,
                                const Vec<PackageTargetId>& selected_targets,
@@ -380,7 +210,8 @@ auto resolve_package_selection_with_environment_impl(
     lito::source::SourceEventSink             observer           = {},
     Option<lito::workspace::WorkspaceCatalog> catalog            = None(),
     lito::registry::RegistryGraphProvider     registry           = {},
-    Option<ref<str>>                          artifact_processor = None())
+    Option<ref<str>>                          artifact_processor = None(),
+    const PackageConditionEnvironment*        conditions         = nullptr)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment_impl(selection.root.as_path(),
                                                                 rstd::move(options),
@@ -393,7 +224,10 @@ auto resolve_package_selection_with_environment_impl(
     if (resolved.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(resolved).unwrap_err()));
     }
-    auto graph      = rstd::move(resolved).unwrap();
+    auto graph = rstd::move(resolved).unwrap();
+    if (purpose == PackageSelectionPurpose::Sources) {
+        return Ok(ResolvedPackageSelection { .graph = rstd::move(graph) });
+    }
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();
     for (const auto& root : graph.roots) root_roles.insert(root.name.clone(), root.role);
     auto selected_roots   = Vec<String>::make();
@@ -485,13 +319,33 @@ auto resolve_package_selection_with_environment_impl(
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
+    auto empty_conditions = PackageConditionEnvironment {};
+    if (conditions == nullptr && target != nullptr) {
+        auto host = detect_host_info();
+        if (host.is_err())
+            return Err(PackageSelectionError::Message(
+                rstd::format("cannot resolve condition host: {}", host.unwrap_err())));
+        auto platform = BuildPlatform { .host             = host->clone(),
+                                        .effective_target = target->clone(),
+                                        .cross = host->architecture != target->architecture ||
+                                                 host->os != target->platform_name() };
+        empty_conditions.target = make_target_condition_environment(platform);
+    }
+    auto selected_packages =
+        select_conditioned_packages(graph,
+                                    selected_roots,
+                                    selected_targets,
+                                    target,
+                                    artifact_processor,
+                                    selection.features,
+                                    conditions != nullptr ? *conditions : empty_conditions,
+                                    purpose == PackageSelectionPurpose::Install);
+    if (selected_packages.is_err())
+        return Err(rstd::into<PackageSelectionError>(rstd::move(selected_packages).unwrap_err()));
+
     auto install_packages = Vec<String>::make();
     if (purpose == PackageSelectionPurpose::Install) {
-        auto runtime = resolve_runtime_package_closure(graph, selected_roots, target);
-        if (runtime.is_err()) {
-            return Err(rstd::into<PackageSelectionError>(rstd::move(runtime).unwrap_err()));
-        }
-        install_packages      = rstd::move(runtime).unwrap().packages;
+        install_packages      = rstd::move(selected_packages->install);
         auto existing_targets = StringSet::make();
         for (const auto& selected_target : selected_targets) {
             existing_targets.insert(package_target_id_text(selected_target), empty {});
@@ -528,22 +382,6 @@ auto resolve_package_selection_with_environment_impl(
         }
     }
 
-    const auto& closure_roots =
-        purpose == PackageSelectionPurpose::Install ? install_packages : selected_roots;
-    auto selected_packages =
-        selected_closure(graph, closure_roots, selected_targets, target, artifact_processor);
-    if (selected_packages.is_err()) {
-        return Err(rstd::move(selected_packages).unwrap_err());
-    }
-    auto resolved_features = resolve_features(graph,
-                                              selected_roots,
-                                              selected_packages->target,
-                                              selected_targets,
-                                              selection.features,
-                                              rstd::addressof(selected_packages->host));
-    if (resolved_features.is_err()) {
-        return Err(rstd::into<PackageSelectionError>(rstd::move(resolved_features).unwrap_err()));
-    }
     auto standards = resolve_effective_language_standards(graph, selected_packages->target);
     if (standards.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(standards).unwrap_err()));
@@ -655,6 +493,7 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
                 "host selection is missing host-tool target for package '{}'", name.as_str())));
         }
     }
+    for (auto& package : selection.graph.packages) package.host_view = true;
     auto standards =
         resolve_effective_language_standards(selection.graph, selection.host_package_names);
     if (standards.is_err()) {
@@ -698,7 +537,8 @@ auto resolve_package_selection_with_environment(
     lito::source::SourceEventSink             observer           = {},
     Option<lito::workspace::WorkspaceCatalog> catalog            = None(),
     lito::registry::RegistryGraphProvider     registry           = {},
-    Option<ref<str>>                          artifact_processor = None())
+    Option<ref<str>>                          artifact_processor = None(),
+    const PackageConditionEnvironment*        conditions         = nullptr)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     return resolve_package_selection_with_environment_impl(selection,
                                                            purpose,
@@ -710,7 +550,8 @@ auto resolve_package_selection_with_environment(
                                                            observer,
                                                            rstd::move(catalog),
                                                            registry,
-                                                           artifact_processor);
+                                                           artifact_processor,
+                                                           conditions);
 }
 
 auto resolve_existing_package_selection_with_environment(
@@ -723,7 +564,8 @@ auto resolve_existing_package_selection_with_environment(
     lito::source::SourceEventSink             observer           = {},
     Option<lito::workspace::WorkspaceCatalog> catalog            = None(),
     lito::registry::RegistryGraphProvider     registry           = {},
-    Option<ref<str>>                          artifact_processor = None())
+    Option<ref<str>>                          artifact_processor = None(),
+    const PackageConditionEnvironment*        conditions         = nullptr)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     return resolve_package_selection_with_environment_impl(selection,
                                                            purpose,
@@ -735,7 +577,8 @@ auto resolve_existing_package_selection_with_environment(
                                                            observer,
                                                            rstd::move(catalog),
                                                            registry,
-                                                           artifact_processor);
+                                                           artifact_processor,
+                                                           conditions);
 }
 
 auto resolve_package_selection(const PackageSelection& selection,

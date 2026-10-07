@@ -31,21 +31,22 @@ struct BuildProductFileStamp {
 };
 
 struct CompletedBuildProduct {
-    String                       generation;
-    String                       profile;
-    String                       target;
-    String                       target_kind;
-    String                       android_abi;
-    u32                          android_minimum_api {};
-    PathBuf                      base_directory;
-    PathBuf                      build_directory;
-    Vec<BuiltArtifact>           artifacts;
-    Vec<BuiltCompilerPlugin>     compiler_plugins;
-    Vec<BuiltProcMacroProvider>  proc_macro_providers;
-    Vec<BuiltProcMacroAggregate> proc_macro_aggregates;
-    Vec<BuiltTargetRuntime>      target_runtimes;
-    ExternalAssetCatalog         external_assets;
-    Vec<BuildProductFileStamp>   install_files;
+    lito::package::PackageConditionEnvironment conditions;
+    String                                     generation;
+    String                                     profile;
+    String                                     target;
+    String                                     target_kind;
+    String                                     android_abi;
+    u32                                        android_minimum_api {};
+    PathBuf                                    base_directory;
+    PathBuf                                    build_directory;
+    Vec<BuiltArtifact>                         artifacts;
+    Vec<BuiltCompilerPlugin>                   compiler_plugins;
+    Vec<BuiltProcMacroProvider>                proc_macro_providers;
+    Vec<BuiltProcMacroAggregate>               proc_macro_aggregates;
+    Vec<BuiltTargetRuntime>                    target_runtimes;
+    ExternalAssetCatalog                       external_assets;
+    Vec<BuildProductFileStamp>                 install_files;
 };
 
 struct BuildProductPublication {
@@ -89,7 +90,7 @@ auto validate_completed_build_product_file(const CompletedBuildProduct& product,
 namespace lito
 {
 
-inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(8);
+inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(9);
 
 auto product_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
@@ -695,8 +696,40 @@ auto parse_file_stamp(const Json& value, ref<rstd::path::Path> base, ref<str> co
     });
 }
 
+auto condition_context_json(const lito::condition::Context& context) -> Json {
+    auto result = JsonMap::make();
+    for (auto key : context.entries().keys()) {
+        const auto& value = **context.get(*key);
+        result.insert(key->clone(),
+                      value.kind == lito::condition::ValueKind::Boolean
+                          ? Json::Bool(value.boolean)
+                          : product_string(value.string.as_str()));
+    }
+    return Json::Object(rstd::move(result));
+}
+
+auto parse_condition_context(const Json& value) -> BuildProductResult<lito::condition::Context> {
+    if (! value.is_Object())
+        return Err(BuildProductError::Message(
+            "build product condition environment must be an object"_Str));
+    auto result = lito::condition::Context {};
+    for (auto key : value.as_Object().value.keys()) {
+        auto member = value.get(*key).unwrap();
+        if (member->is_Bool())
+            result.set_bool(key->clone(), *member->as_bool());
+        else if (member->is_String())
+            result.set_string(key->clone(), String::make(*member->as_str()));
+        else
+            return Err(BuildProductError::Message(
+                "build product condition value must be boolean or string"_Str));
+    }
+    return Ok(rstd::move(result));
+}
+
 auto product_payload_json(const CompletedBuildProduct& product) -> BuildProductResult<Json> {
     auto root = JsonMap::make();
+    root.insert("condition-target"_Str, condition_context_json(product.conditions.target));
+    root.insert("condition-host"_Str, condition_context_json(product.conditions.host));
     root.insert("profile"_Str, product_string(product.profile.as_str()));
     root.insert("target"_Str, product_string(product.target.as_str()));
     root.insert("target-kind"_Str, product_string(product.target_kind.as_str()));
@@ -756,7 +789,9 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
     -> BuildProductResult<CompletedBuildProduct> {
     rstd_try(product_known_fields(value,
                                   "build product"_str,
-                                  { "profile"_str,
+                                  { "condition-target"_str,
+                                    "condition-host"_str,
+                                    "profile"_str,
                                     "target"_str,
                                     "target-kind"_str,
                                     "android-abi"_str,
@@ -833,6 +868,10 @@ auto parse_product(const Json& value, ref<rstd::path::Path> base)
     }
 
     auto result = CompletedBuildProduct {
+        .conditions = {
+            .target = rstd_try(parse_condition_context(*rstd_try(product_member(value, "condition-target"_str, "build product"_str)))),
+            .host = rstd_try(parse_condition_context(*rstd_try(product_member(value, "condition-host"_str, "build product"_str)))),
+        },
         .profile = rstd_try(product_required_string(value, "profile"_str, "build product"_str)),
         .target  = rstd_try(product_required_string(value, "target"_str, "build product"_str)),
         .target_kind =

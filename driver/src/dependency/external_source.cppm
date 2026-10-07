@@ -239,7 +239,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
     auto tasks = Vec<ExternalSourceTask>::with_capacity(acquired->cmake_dependencies.len());
     for (auto& source : acquired->cmake_dependencies) {
         auto& package     = graph.packages[source.package];
-        auto& declaration = package.manifest.cmake_external_dependencies[source.declaration];
+        auto& declaration = package.effective_cmake_dependencies()[source.declaration];
         tasks.push(ExternalSourceTask {
             .package            = source.package,
             .declaration        = source.declaration,

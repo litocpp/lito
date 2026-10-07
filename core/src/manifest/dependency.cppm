@@ -7,6 +7,7 @@ import :dependency.cargo;
 import :dependency.cmake;
 import :dependency.pkg_config;
 import :dependency.source;
+import :dependency.condition;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -28,31 +29,35 @@ struct PackageDependencySource {
 };
 
 struct DeclaredDependency {
-    String                                    name;
-    PackageDependencySource                   source;
-    Option<lito::dependency::DependencyUsage> usage;
-    Option<bool>                              is_public;
-    Option<Vec<String>>                       features;
-    Option<bool>                              default_features;
-    Option<PathBuf>                           declaration_root;
+    String                                        name;
+    PackageDependencySource                       source;
+    Option<lito::dependency::DependencyUsage>     usage;
+    Option<bool>                                  is_public;
+    Option<Vec<String>>                           features;
+    Option<bool>                                  default_features;
+    Option<lito::dependency::DependencyCondition> condition;
+    Option<PathBuf>                               declaration_root;
 };
 
 struct WorkspaceDependencyReference {
-    String                                    name;
-    Option<lito::dependency::DependencyUsage> usage;
-    Option<bool>                              is_public;
-    Option<Vec<String>>                       features;
-    Option<bool>                              default_features;
+    String                                        name;
+    Option<lito::dependency::DependencyUsage>     usage;
+    Option<bool>                                  is_public;
+    Option<Vec<String>>                           features;
+    Option<bool>                                  default_features;
+    Option<lito::dependency::DependencyCondition> condition;
 };
 
 struct DeclaredRuntimeDependency {
-    String                  name;
-    PackageDependencySource source;
-    Option<PathBuf>         declaration_root;
+    String                                        name;
+    PackageDependencySource                       source;
+    Option<PathBuf>                               declaration_root;
+    Option<lito::dependency::DependencyCondition> condition;
 };
 
 struct WorkspaceRuntimeDependencyReference {
-    String name;
+    String                                        name;
+    Option<lito::dependency::DependencyCondition> condition;
 };
 
 struct WorkspacePkgConfigExternalDependencyReference {

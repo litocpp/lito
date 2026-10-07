@@ -8,16 +8,18 @@ using namespace rstd::prelude;
 export namespace lito::dependency
 {
 
-struct ExternalDependencyCondition {
+struct DependencyCondition {
     String                      source;
     lito::condition::Expression expression;
 
-    auto clone() const -> ExternalDependencyCondition {
-        return ExternalDependencyCondition {
+    auto clone() const -> DependencyCondition {
+        return DependencyCondition {
             .source     = source.clone(),
             .expression = expression.clone(),
         };
     }
 };
+
+using ExternalDependencyCondition = DependencyCondition;
 
 } // namespace lito::dependency

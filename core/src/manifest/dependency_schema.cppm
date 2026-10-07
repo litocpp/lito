@@ -501,6 +501,22 @@ auto parse_package_dependency_source(wire::DependencyFields& specification,
     });
 }
 
+auto parse_dependency_condition(Option<String> source, ref<str> context)
+    -> ManifestSchemaResult<Option<lito::dependency::DependencyCondition>> {
+    if (source.is_none()) {
+        return Ok(Option<lito::dependency::DependencyCondition> {});
+    }
+    auto expression = lito::condition::parse(source->as_str());
+    if (expression.is_err()) {
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{} condition '{}': {}", context, source->as_str(), expression.unwrap_err())));
+    }
+    return Ok(Some(lito::dependency::DependencyCondition {
+        .source     = rstd::move(source).unwrap(),
+        .expression = rstd::move(expression).unwrap(),
+    }));
+}
+
 struct ParsedDependencies {
     Vec<DeclaredDependency>           explicit_dependencies;
     Vec<WorkspaceDependencyReference> workspace_dependencies;
@@ -546,6 +562,8 @@ auto parse_dependencies(Option<rstd::collections::BTreeMap<String, wire::Depende
                 .is_public        = parsed_public,
                 .features         = rstd::move(specification.features),
                 .default_features = specification.default_features,
+                .condition        = rstd_try(parse_dependency_condition(
+                    rstd::move(specification.condition), context.as_str())),
             });
         } else {
             auto source = rstd_try(
@@ -557,6 +575,8 @@ auto parse_dependencies(Option<rstd::collections::BTreeMap<String, wire::Depende
                 .is_public        = parsed_public,
                 .features         = rstd::move(specification.features),
                 .default_features = specification.default_features,
+                .condition        = rstd_try(parse_dependency_condition(
+                    rstd::move(specification.condition), context.as_str())),
             });
         }
     }
@@ -593,15 +613,19 @@ auto parse_runtime_dependencies(
         }
         auto& specification = *table.get_mut(name.as_str()).unwrap();
         if (specification.workspace.is_some()) {
-            result.workspace_dependencies.push(
-                WorkspaceRuntimeDependencyReference { .name = name.clone() });
+            result.workspace_dependencies.push(WorkspaceRuntimeDependencyReference {
+                .name      = name.clone(),
+                .condition = rstd_try(parse_dependency_condition(
+                    rstd::move(specification.condition), context.as_str())) });
             continue;
         }
         auto source = rstd_try(
             parse_package_dependency_source(specification, context.as_str(), name.as_str()));
         result.explicit_dependencies.push(DeclaredRuntimeDependency {
-            .name   = name.clone(),
-            .source = rstd::move(source),
+            .name      = name.clone(),
+            .source    = rstd::move(source),
+            .condition = rstd_try(
+                parse_dependency_condition(rstd::move(specification.condition), context.as_str())),
         });
     }
     return Ok(rstd::move(result));
@@ -666,22 +690,6 @@ auto parse_pkg_config_requirement(wire::PkgConfigFields& specification, ref<str>
     });
 }
 
-auto parse_external_dependency_condition(Option<String> source, ref<str> context)
-    -> ManifestSchemaResult<Option<lito::dependency::ExternalDependencyCondition>> {
-    if (source.is_none()) {
-        return Ok(Option<lito::dependency::ExternalDependencyCondition> {});
-    }
-    auto expression = lito::condition::parse(source->as_str());
-    if (expression.is_err()) {
-        return Err(ManifestSchemaError::Domain(rstd::format(
-            "{} condition '{}': {}", context, source->as_str(), expression.unwrap_err())));
-    }
-    return Ok(Some(lito::dependency::ExternalDependencyCondition {
-        .source     = rstd::move(source).unwrap(),
-        .expression = rstd::move(expression).unwrap(),
-    }));
-}
-
 struct ParsedPkgConfigExternalDependencies {
     Vec<lito::dependency::PkgConfigExternalDependency> explicit_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_dependencies;
@@ -738,8 +746,8 @@ auto parse_pkg_config_external_dependencies(
             auto is_public                   = specification.pub;
             dependency_consumption.is_public = is_public.is_some() && *is_public;
         }
-        auto condition = rstd_try(parse_external_dependency_condition(
-            rstd::move(specification.condition), context.as_str()));
+        auto condition = rstd_try(
+            parse_dependency_condition(rstd::move(specification.condition), context.as_str()));
         if (inherited) {
             result.workspace_dependencies.push(WorkspacePkgConfigExternalDependencyReference {
                 .alias       = alias.clone(),
@@ -988,8 +996,8 @@ auto parse_cmake_external_dependencies(
         const auto inherited     = specification.workspace.is_some();
         auto       targets       = parse_cmake_targets(rstd::move(specification.targets), path);
         if (targets.is_err()) return Err(rstd::move(targets).unwrap_err());
-        auto condition = rstd_try(parse_external_dependency_condition(
-            rstd::move(specification.condition), context.as_str()));
+        auto condition = rstd_try(
+            parse_dependency_condition(rstd::move(specification.condition), context.as_str()));
         if (inherited) {
             result.workspace_dependencies.push(WorkspaceCMakeExternalDependencyReference {
                 .alias     = alias.clone(),
@@ -1178,8 +1186,8 @@ auto parse_cargo_consumption(wire::CargoExternalFields& specification, ref<str> 
         .default_features = default_features,
         .profile          = rstd::move(profile),
         .dependency       = dependency_consumption,
-        .condition        = rstd_try(
-            parse_external_dependency_condition(rstd::move(specification.condition), context)),
+        .condition =
+            rstd_try(parse_dependency_condition(rstd::move(specification.condition), context)),
     });
 }
 

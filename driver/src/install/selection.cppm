@@ -147,7 +147,7 @@ auto resolve_pkg_config_file(const InstallRecipe&                  recipe,
     auto private_dependencies = Vec<String>::make();
     for (const auto& alias : requested.dependencies) {
         const lito::dependency::PkgConfigExternalDependency* dependency = nullptr;
-        for (const auto& candidate : owner.manifest.pkg_config_external_dependencies) {
+        for (const auto& candidate : owner.effective_pkg_config_dependencies()) {
             if (candidate.alias == alias.as_str()) {
                 dependency = rstd::addressof(candidate);
                 break;
@@ -226,7 +226,7 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             script = Some(package->manifest.install_script->clone());
         }
         auto runtime_dependencies = Vec<InstallRuntimeDependency>::make();
-        for (const auto& dependency : package->runtime_dependencies) {
+        for (const auto& dependency : package->active_runtime_dependencies()) {
             const auto* runtime =
                 rstd_try(resolved_package(selection.graph, dependency.name.as_str()));
             runtime_dependencies.push(InstallRuntimeDependency {
@@ -235,7 +235,7 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             });
         }
         auto script_dependencies = Vec<String>::make();
-        for (const auto& dependency : package->dependencies) {
+        for (const auto& dependency : package->active_dependencies()) {
             if (dependency.is_Script()) {
                 script_dependencies.push(dependency.as_Script().value.name.clone());
             }
@@ -243,8 +243,12 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
         auto script_packages = Vec<lito::package::ResolvedScriptPackageView>::make();
         for (const auto& provider : selection.graph.packages) {
             if (provider.manifest.script.is_none()) continue;
+            auto active = false;
+            for (const auto& name : selection.selected_package_names)
+                if (name == provider.manifest.name.as_str()) active = true;
+            if (! active) continue;
             auto dependencies = Vec<String>::make();
-            for (const auto& dependency : provider.dependencies) {
+            for (const auto& dependency : provider.active_dependencies()) {
                 if (dependency.is_Script()) {
                     dependencies.push(dependency.as_Script().value.name.clone());
                 }

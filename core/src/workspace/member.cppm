@@ -215,6 +215,8 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .features         = reference.features.is_some() ? Some(reference.features->clone())
                                                                  : Option<Vec<String>> {},
                 .default_features = reference.default_features,
+                .condition =
+                    reference.condition.is_some() ? Some(reference.condition->clone()) : None(),
                 .declaration_root = Some(workspace.root.clone()),
             });
         }
@@ -246,6 +248,8 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             .name             = reference.name.clone(),
             .source           = definition->source.clone(),
             .declaration_root = Some(workspace.root.clone()),
+            .condition =
+                reference.condition.is_some() ? Some(reference.condition->clone()) : None(),
         });
     }
     manifest.workspace_runtime_dependencies.clear();

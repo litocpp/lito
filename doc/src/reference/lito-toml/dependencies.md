@@ -136,3 +136,36 @@ package's relative path and external declarations remain owned by the package so
 them.
 
 See [Dependencies and the lock file](../../guide/dependencies-and-lock.md).
+
+## Dependency conditions
+
+Normal, development, and runtime dependency tables accept `condition`:
+
+```toml
+[features.image]
+default = false
+
+[dependencies]
+image-codec = { version = "0.1", condition = "feature.image", features = ["decode"] }
+
+[runtime-dependencies]
+image-tool = { version = "0.1", condition = 'feature.image && target.os == "linux"' }
+```
+
+An omitted condition is true. Version-string shorthand is unconditional; use a table to add a
+condition. Conditions use the consuming package's final features and build environment, with
+the same expression language as external dependencies. They do not create implicit features.
+
+Only active edges contribute their `features` and `default-features` requests. A provider selected
+by another consumer does not make an inactive edge visible to this package. Development and
+runtime conditions do not override the command's existing dependency-purpose rules. Script
+dependencies support conditions without gaining C++ feature-request fields.
+
+Conditions may negate features. Consequently, enabling a feature or selecting another root can
+remove a dependency guarded by `!feature.NAME`. All upstream feature requests are collected before
+the consuming package's conditions are evaluated.
+
+Conditions select build and install inputs, not candidate version resolution: inactive dependencies
+may still be fetched, validated, locked, and involved in version conflicts. Missing paths and
+candidate dependency cycles are not hidden by false conditions. Packaging preserves every
+declared condition, including inactive dependencies.

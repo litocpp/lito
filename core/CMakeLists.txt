@@ -75,6 +75,8 @@ target_sources(
          src/manifest/wire/profile.cppm
          src/manifest/wire/document.cppm
          src/package/error.cppm
+         src/package/activation.cppm
+         src/package/condition.cppm
          src/package/features.cppm
          src/package/graph.cppm
          src/package/identity.cppm

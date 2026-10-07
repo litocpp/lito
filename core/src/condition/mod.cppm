@@ -87,6 +87,20 @@ public:
         values_.insert(rstd::move(key), Value::string_value(rstd::move(value)));
     }
 
+    auto entries() const -> const rstd::collections::BTreeMap<String, Value>& { return values_; }
+
+    auto clone() const -> Context {
+        auto result = Context {};
+        for (auto key : values_.keys()) {
+            const auto& value = **values_.get(*key);
+            if (value.kind == ValueKind::Boolean)
+                result.set_bool(key->clone(), value.boolean);
+            else
+                result.set_string(key->clone(), value.string.clone());
+        }
+        return result;
+    }
+
     auto get(ref<str> key) const noexcept -> Option<ref<Value>> { return values_.get(key); }
 };
 

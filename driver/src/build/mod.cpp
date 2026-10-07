@@ -1998,8 +1998,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
 
     auto product = CompletedBuildProduct {
-        .profile = package_plan.profile->name.clone(),
-        .target  = project.platform.effective_target.triple.clone(),
+        .conditions = rstd::move(project.conditions),
+        .profile    = package_plan.profile->name.clone(),
+        .target     = project.platform.effective_target.triple.clone(),
         .target_kind =
             String::make(project.configuration.target.is_Android() ? "android"_str : "default"_str),
         .android_abi           = project.platform.android_abi.is_some()

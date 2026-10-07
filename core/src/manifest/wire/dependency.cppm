@@ -32,6 +32,7 @@ struct DependencyFields {
     Option<bool>        pub;
     Option<Vec<String>> features;
     Option<bool>        default_features;
+    Option<String>      condition;
 };
 template<DependencyMode Mode>
 struct Dependency : DependencyFields {};
@@ -70,6 +71,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Dependency<Mode>> {
             mtp::cond<Mode == DependencyMode::Runtime, serde::Ignored, bool>;
         auto features         = serde::OptionalField<FeatureInput>("features"_str);
         auto default_features = serde::OptionalField<DefaultFeatureInput>("default-features"_str);
+        auto condition        = serde::OptionalField<String>("condition"_str);
         rstd_try(serde::deserialize_record(d,
                                            serde::UnknownFieldPolicy::Reject,
                                            path,
@@ -86,7 +88,11 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Dependency<Mode>> {
                                            usage,
                                            pub,
                                            features,
-                                           default_features));
+                                           default_features,
+                                           condition));
+        result.condition = condition.take();
+        if (result.condition.is_some() && Mode == DependencyMode::Workspace)
+            return Err(d.unknown_field(condition.names().canonical()));
         result.path               = path.take();
         result.git                = git.take();
         result.branch             = branch.take();

@@ -7,6 +7,7 @@ import rstd;
 import :manifest.profile;
 import :source.requirement;
 import :dependency.consumption;
+import :dependency.condition;
 import :dependency.source;
 import :manifest.package;
 import :package.identity;
@@ -24,6 +25,44 @@ enum class ProjectRootRole
     PrimaryPackage,
     WorkspaceMember,
     AssociatedTest,
+};
+
+struct DependencyActivation {
+    Option<lito::dependency::DependencyCondition> condition;
+    bool                                          target { true };
+    bool                                          host { true };
+
+    auto active(bool host_instance) const noexcept -> bool { return host_instance ? host : target; }
+};
+
+template<typename T>
+struct ActiveDependencies {
+    slice<T> values;
+    bool     host {};
+
+    struct Iterator {
+        slice<T> values;
+        usize    index {};
+        bool     host {};
+
+        auto skip() -> void {
+            while (index < values.len() && ! values[index].activation.active(host)) ++index;
+        }
+        auto operator*() const -> const T& { return values[index]; }
+        auto operator++() -> Iterator& {
+            ++index;
+            skip();
+            return *this;
+        }
+        auto operator!=(const Iterator& other) const -> bool { return index != other.index; }
+    };
+
+    auto begin() const -> Iterator {
+        auto result = Iterator { values, usize {}, host };
+        result.skip();
+        return result;
+    }
+    auto end() const -> Iterator { return Iterator { values, values.len(), host }; }
 };
 
 struct ResolvedCppDependency {
@@ -68,6 +107,8 @@ class ResolvedRequiredDependency {
               (Script, (ResolvedScriptDependency value;)),
               (Plugin, (ResolvedPluginDependency value;)),
               (Pmacro, (ResolvedPmacroDependency value;)))
+
+    DependencyActivation activation;
 };
 
 auto resolved_dependency_name_value(const ResolvedRequiredDependency& dependency) noexcept
@@ -83,7 +124,8 @@ auto resolved_dependency_name(const ResolvedRequiredDependency& dependency) noex
 }
 
 struct ResolvedRuntimeDependency {
-    String name;
+    String               name;
+    DependencyActivation activation;
 };
 
 struct ResolvedFeature {
@@ -94,16 +136,62 @@ struct ResolvedFeature {
 };
 
 struct ResolvedPackage {
-    String                                              source_identity;
-    lito::source::ResolvedPackageSource                 source;
-    PathBuf                                             source_manifest;
-    lito::manifest::PackageManifest                     manifest;
-    Option<lito::source::SourceTree>                    embedded_source;
-    Vec<ResolvedRequiredDependency>                     dependencies;
-    Vec<ResolvedRequiredDependency>                     dev_dependencies;
-    Vec<ResolvedRuntimeDependency>                      runtime_dependencies;
-    Vec<ResolvedFeature>                                features;
-    Vec<lito::dependency::ResolvedExternalSourceRecord> externals;
+    String                                                     source_identity;
+    lito::source::ResolvedPackageSource                        source;
+    PathBuf                                                    source_manifest;
+    lito::manifest::PackageManifest                            manifest;
+    Option<lito::source::SourceTree>                           embedded_source;
+    Vec<ResolvedRequiredDependency>                            dependencies;
+    Vec<ResolvedRequiredDependency>                            dev_dependencies;
+    Vec<ResolvedRuntimeDependency>                             runtime_dependencies;
+    Vec<ResolvedFeature>                                       features;
+    Vec<lito::dependency::ResolvedExternalSourceRecord>        externals;
+    Option<Vec<lito::dependency::PkgConfigExternalDependency>> selected_pkg_config_dependencies;
+    Option<Vec<lito::dependency::CMakeDependencyRequirement>>  selected_cmake_dependencies;
+    Option<Vec<lito::dependency::CargoDependencyRequirement>>  selected_cargo_dependencies;
+    bool                                                       host_view { false };
+    auto effective_pkg_config_dependencies() const
+        -> const Vec<lito::dependency::PkgConfigExternalDependency>& {
+        return selected_pkg_config_dependencies.is_some()
+                   ? *selected_pkg_config_dependencies
+                   : manifest.pkg_config_external_dependencies;
+    }
+    auto effective_pkg_config_dependencies()
+        -> Vec<lito::dependency::PkgConfigExternalDependency>& {
+        return selected_pkg_config_dependencies.is_some()
+                   ? *selected_pkg_config_dependencies
+                   : manifest.pkg_config_external_dependencies;
+    }
+
+    auto effective_cmake_dependencies() const
+        -> const Vec<lito::dependency::CMakeDependencyRequirement>& {
+        return selected_cmake_dependencies.is_some() ? *selected_cmake_dependencies
+                                                     : manifest.cmake_external_dependencies;
+    }
+    auto effective_cmake_dependencies() -> Vec<lito::dependency::CMakeDependencyRequirement>& {
+        return selected_cmake_dependencies.is_some() ? *selected_cmake_dependencies
+                                                     : manifest.cmake_external_dependencies;
+    }
+
+    auto effective_cargo_dependencies() const
+        -> const Vec<lito::dependency::CargoDependencyRequirement>& {
+        return selected_cargo_dependencies.is_some() ? *selected_cargo_dependencies
+                                                     : manifest.cargo_external_dependencies;
+    }
+    auto effective_cargo_dependencies() -> Vec<lito::dependency::CargoDependencyRequirement>& {
+        return selected_cargo_dependencies.is_some() ? *selected_cargo_dependencies
+                                                     : manifest.cargo_external_dependencies;
+    }
+
+    auto active_dependencies() const -> ActiveDependencies<ResolvedRequiredDependency> {
+        return { dependencies.as_slice(), host_view };
+    }
+    auto active_dev_dependencies() const -> ActiveDependencies<ResolvedRequiredDependency> {
+        return { dev_dependencies.as_slice(), host_view };
+    }
+    auto active_runtime_dependencies() const -> ActiveDependencies<ResolvedRuntimeDependency> {
+        return { runtime_dependencies.as_slice(), host_view };
+    }
 };
 
 struct ResolvedProjectRoot {

@@ -192,9 +192,10 @@ auto start_project_resolution(
         lito::source::SourceMaterializationPolicy::Materialize,
     lito::lock::InvalidLockPolicy            invalid_lock = lito::lock::InvalidLockPolicy::Reject,
     const lito::config::LitoBootstrapConfig* registries   = nullptr,
-    lito::registry::RegistryGraphProvider    registry_provider  = {},
-    Option<ref<str>>                         artifact_processor = None(),
-    ProjectRegistryResolutionPolicy          registry_policy    = {})
+    lito::registry::RegistryGraphProvider    registry_provider   = {},
+    Option<ref<str>>                         artifact_processor  = None(),
+    ProjectRegistryResolutionPolicy          registry_policy     = {},
+    const lito::package::PackageConditionEnvironment* conditions = nullptr)
     -> ProjectResult<StartedProjectResolution> {
     auto lock_session          = rstd_try(lito::lock::load_lock_session(
         selection.root.as_path(), lock, locked, git, invalid_lock, registry_policy.lock));
@@ -262,7 +263,8 @@ auto start_project_resolution(
                                                                         source_observer(observer),
                                                                         rstd::move(catalog),
                                                                         registry_provider,
-                                                                        artifact_processor)
+                                                                        artifact_processor,
+                                                                        conditions)
             : lito::package::resolve_existing_package_selection_with_environment(
                   selection,
                   purpose,
@@ -273,7 +275,8 @@ auto start_project_resolution(
                   source_observer(observer),
                   rstd::move(catalog),
                   registry_provider,
-                  artifact_processor);
+                  artifact_processor,
+                  conditions);
     if (project.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(project).unwrap_err()));
     }
@@ -301,8 +304,10 @@ auto resolve_project(
     lito::lock::InvalidLockPolicy            invalid_lock   = lito::lock::InvalidLockPolicy::Reject,
     const lito::config::LitoBootstrapConfig* registries     = nullptr,
     lito::registry::RegistryGraphProvider    registry       = {},
-    Option<ref<str>>                         artifact_processor = None(),
-    ProjectRegistryResolutionPolicy registry_policy = {}) -> ProjectResult<ProjectResolution> {
+    Option<ref<str>>                         artifact_processor  = None(),
+    ProjectRegistryResolutionPolicy          registry_policy     = {},
+    const lito::package::PackageConditionEnvironment* conditions = nullptr)
+    -> ProjectResult<ProjectResolution> {
     auto started =
         rstd_try(start_project_resolution(selection,
                                           purpose,
@@ -321,7 +326,8 @@ auto resolve_project(
                                           registries,
                                           registry,
                                           artifact_processor,
-                                          registry_policy));
+                                          registry_policy,
+                                          conditions));
     auto declared_sources =
         rstd_try(resolve_external_dependency_sources(started.selection.graph,
                                                      rstd::move(started.external),
@@ -373,17 +379,18 @@ auto resolve_project_selection(const lito::package::PackageSelection&   selectio
 }
 
 auto resolve_existing_project_selection(
-    const lito::package::PackageSelection&    selection,
-    lito::package::PackageSelectionPurpose    purpose,
-    const lito::source::PackageSourceConfig&  sources,
-    const lito::lock::LockConfig&             lock,
-    const TargetInfo&                         target,
-    const ResolvedProcessEnvironment&         environment,
-    usize                                     jobs,
-    const Option<BuildEventSink>&             observer,
-    Option<lito::workspace::WorkspaceCatalog> catalog    = None(),
-    const lito::config::LitoBootstrapConfig*  registries = nullptr,
-    lito::registry::RegistryGraphProvider     registry   = {})
+    const lito::package::PackageSelection&            selection,
+    lito::package::PackageSelectionPurpose            purpose,
+    const lito::source::PackageSourceConfig&          sources,
+    const lito::lock::LockConfig&                     lock,
+    const TargetInfo&                                 target,
+    const ResolvedProcessEnvironment&                 environment,
+    usize                                             jobs,
+    const Option<BuildEventSink>&                     observer,
+    Option<lito::workspace::WorkspaceCatalog>         catalog    = None(),
+    const lito::config::LitoBootstrapConfig*          registries = nullptr,
+    lito::registry::RegistryGraphProvider             registry   = {},
+    const lito::package::PackageConditionEnvironment* conditions = nullptr)
     -> ProjectResult<lito::package::ResolvedPackageSelection> {
     auto started = start_project_resolution(selection,
                                             purpose,
@@ -400,24 +407,28 @@ auto resolve_existing_project_selection(
                                             lito::source::SourceMaterializationPolicy::ExistingOnly,
                                             lito::lock::InvalidLockPolicy::Reject,
                                             registries,
-                                            registry);
+                                            registry,
+                                            None(),
+                                            {},
+                                            conditions);
     if (started.is_err()) return Err(rstd::move(started).unwrap_err());
     return Ok(rstd::move(started).unwrap().selection);
 }
 
 struct PreparedBuildProject {
-    ClangToolchain                    toolchain;
-    cpp::BuildConfiguration           configuration;
-    BuildPlatform                     platform;
-    BuildLayout                       layout;
-    cpp::PackageMetadata              metadata;
-    ExternalAssetCatalog              external_assets;
-    Vec<ExternalSourceProvenance>     external_source_provenance;
-    Vec<BuiltTargetRuntime>           target_runtimes;
-    Option<PathBuf>                   target_stripper;
-    Option<AndroidNdkLease>           android_sdk;
-    Option<Box<PreparedBuildProject>> plugin_host;
-    Vec<ProcMacroAggregateRequest>    proc_macro_aggregates;
+    lito::package::PackageConditionEnvironment conditions;
+    ClangToolchain                             toolchain;
+    cpp::BuildConfiguration                    configuration;
+    BuildPlatform                              platform;
+    BuildLayout                                layout;
+    cpp::PackageMetadata                       metadata;
+    ExternalAssetCatalog                       external_assets;
+    Vec<ExternalSourceProvenance>              external_source_provenance;
+    Vec<BuiltTargetRuntime>                    target_runtimes;
+    Option<PathBuf>                            target_stripper;
+    Option<AndroidNdkLease>                    android_sdk;
+    Option<Box<PreparedBuildProject>>          plugin_host;
+    Vec<ProcMacroAggregateRequest>             proc_macro_aggregates;
 };
 
 struct ResolvedProjectMetadata {
@@ -723,6 +734,66 @@ auto resolve_build_context(const lito::config::ProjectBuildOptions& options,
     });
 }
 
+auto host_configuration_request(const config::BuildConfigurationRequest& configuration)
+    -> config::BuildConfigurationRequest {
+    auto request                     = configuration.clone();
+    request.target                   = config::BuildTargetRequest::Default();
+    request.toolchain.sdk            = None();
+    request.toolchain.target         = config::ToolchainTargetSelection::CompilerDefault();
+    request.toolchain.wasm           = None();
+    request.standard_library         = config::StandardLibrarySelection::Auto;
+    request.standard_library_runtime = config::StandardLibraryRuntime::Dynamic;
+    return request;
+}
+
+struct HostConditionBuild {
+    cpp::BuildConfiguration configuration;
+    ClangToolchain          toolchain;
+    ResolvedBuildContext    context;
+};
+
+struct HostConditionProvider {
+    const config::BuildConfigurationRequest* request;
+    const ResolvedProcessEnvironment*        environment;
+    ref<str>                                 profile;
+    Option<HostConditionBuild>               resolved;
+
+    auto ensure() -> ProjectResult<empty> {
+        if (resolved.is_some()) return Ok(empty {});
+        auto selected = rstd_try(resolve_configured_toolchain(*request, *environment));
+        auto created =
+            ClangToolchain::create(selected.tools.clone(), request->standard_library, *environment);
+        if (created.is_err())
+            return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
+        auto toolchain       = rstd::move(created).unwrap();
+        auto context         = rstd_try(resolve_build_context(request->global_options, toolchain));
+        auto configured      = request->clone();
+        configured.toolchain = selected.tools.clone();
+        auto configuration   = config::resolve_build_configuration(
+            rstd::move(configured), toolchain.compile_target().standard_library);
+        resolved = Some(HostConditionBuild {
+            rstd::move(configuration),
+            rstd::move(toolchain),
+            rstd::move(context),
+        });
+        return Ok(empty {});
+    }
+
+    static auto resolve(void* raw) -> lito::package::PackageResult<lito::condition::Context> {
+        auto& self  = *static_cast<HostConditionProvider*>(raw);
+        auto  ready = self.ensure();
+        if (ready.is_err())
+            return Err(lito::package::PackageError::Configuration(
+                erase_error(rstd::move(ready).unwrap_err())));
+        const auto& build = *self.resolved;
+        return Ok(lito::package::make_condition_environment(
+            build.context.platform,
+            self.profile,
+            config::standard_library_name(build.configuration.standard_library),
+            config::standard_library_runtime_name(build.configuration.standard_library_runtime)));
+    }
+};
+
 auto resolve_project_session(const lito::package::PackageSelection&         selection,
                              const lito::source::PackageSourceConfig&       sources,
                              const lito::lock::LockConfig&                  lock,
@@ -738,25 +809,31 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              const AndroidCmakeProjection*                  android_cmake = nullptr,
                              const lito::config::LitoBootstrapConfig*       registries    = nullptr,
                              lito::registry::RegistryGraphProvider          registry      = {},
-                             Option<ref<str>> artifact_processor                          = None())
+                             Option<ref<str>> artifact_processor                          = None(),
+                             const lito::package::PackageConditionEnvironment* conditions = nullptr,
+                             const TargetInfo* selection_target                           = nullptr)
     -> ProjectResult<ResolvedProjectSession> {
-    auto project = rstd_try(resolve_project(selection,
-                                            purpose,
-                                            sources,
-                                            lock,
-                                            locked,
-                                            lito::source::GitResolutionMode::ReuseLocked,
-                                            rstd::addressof(context.platform.effective_target),
-                                            tool_resolver,
-                                            environment,
-                                            cmake_build_overrides,
-                                            jobs,
-                                            observer_value(observer),
-                                            rstd::move(catalog),
-                                            lito::lock::InvalidLockPolicy::Reject,
-                                            registries,
-                                            registry,
-                                            artifact_processor));
+    auto project = rstd_try(resolve_project(
+        selection,
+        purpose,
+        sources,
+        lock,
+        locked,
+        lito::source::GitResolutionMode::ReuseLocked,
+        selection_target != nullptr ? selection_target
+                                    : rstd::addressof(context.platform.effective_target),
+        tool_resolver,
+        environment,
+        cmake_build_overrides,
+        jobs,
+        observer_value(observer),
+        rstd::move(catalog),
+        lito::lock::InvalidLockPolicy::Reject,
+        registries,
+        registry,
+        artifact_processor,
+        {},
+        conditions));
     return Ok(ResolvedProjectSession {
         .project         = rstd::move(project),
         .build_arguments = rstd::move(context.build_arguments),
@@ -1039,7 +1116,16 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
         prepared->proc_macro_aggregates = rstd::move(aggregate_requests);
         prepared_host = Some(Box<PreparedBuildProject>::make(rstd::move(prepared).unwrap()));
     }
+    auto conditions = lito::package::PackageConditionEnvironment {
+        .target = lito::package::make_condition_environment(
+            resolved.platform,
+            profile.as_str(),
+            config::standard_library_name(configuration.standard_library),
+            config::standard_library_runtime_name(configuration.standard_library_runtime)),
+    };
+    if (prepared_host.is_some()) conditions.host = (*prepared_host)->conditions.target.clone();
     return Ok(PreparedBuildProject {
+        .conditions                 = rstd::move(conditions),
         .toolchain                  = rstd::move(toolchain),
         .configuration              = configuration.clone(),
         .platform                   = rstd::move(resolved.platform),
@@ -1076,19 +1162,40 @@ auto resolve_project_metadata(
     const Option<BuildSetupReportSink>&       setup_reporter = None(),
     Option<lito::workspace::WorkspaceCatalog> catalog        = None())
     -> ProjectResult<ResolvedProjectMetadata> {
-    auto context = rstd_try(resolve_build_context(configuration.global_options, toolchain));
-    auto session = rstd_try(resolve_project_session(selection,
-                                                    sources,
-                                                    lock,
-                                                    tool_resolver,
-                                                    environment,
-                                                    cmake_build_overrides,
-                                                    locked,
-                                                    purpose,
-                                                    jobs,
-                                                    rstd::move(context),
-                                                    observer,
-                                                    rstd::move(catalog)));
+    auto context    = rstd_try(resolve_build_context(configuration.global_options, toolchain));
+    auto conditions = lito::package::PackageConditionEnvironment {
+        .target = lito::package::make_condition_environment(
+            context.platform,
+            profile.as_str(),
+            config::standard_library_name(configuration.standard_library),
+            config::standard_library_runtime_name(configuration.standard_library_runtime)),
+    };
+    auto host_request =
+        host_configuration_request(config::build_configuration_request(configuration.clone()));
+    auto host_conditions = HostConditionProvider {
+        .request     = rstd::addressof(host_request),
+        .environment = rstd::addressof(environment),
+        .profile     = profile.as_str(),
+    };
+    conditions.host_state   = rstd::addressof(host_conditions);
+    conditions.resolve_host = HostConditionProvider::resolve;
+    auto session            = rstd_try(resolve_project_session(selection,
+                                                               sources,
+                                                               lock,
+                                                               tool_resolver,
+                                                               environment,
+                                                               cmake_build_overrides,
+                                                               locked,
+                                                               purpose,
+                                                               jobs,
+                                                               rstd::move(context),
+                                                               observer,
+                                                               rstd::move(catalog),
+                                                               nullptr,
+                                                               nullptr,
+                                                               {},
+                                                               None(),
+                                                               rstd::addressof(conditions)));
     return resolve_project_metadata(rstd::move(session),
                                     configuration,
                                     profile,
@@ -1106,6 +1213,7 @@ auto resolve_project_metadata(
 }
 
 auto resolve_build_project(const lito::package::PackageSelection&         selection,
+                           const lito::manifest::BuildProfileName&        profile,
                            const config::BuildConfigurationRequest&       configuration,
                            const lito::source::PackageSourceConfig&       sources,
                            const lito::lock::LockConfig&                  lock,
@@ -1120,13 +1228,7 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
                            const lito::config::LitoBootstrapConfig*       registries = nullptr,
                            lito::registry::RegistryGraphProvider          registry   = {})
     -> ProjectResult<ResolvedBuildProject> {
-    auto host_request                     = configuration.clone();
-    host_request.target                   = config::BuildTargetRequest::Default();
-    host_request.toolchain.sdk            = None();
-    host_request.toolchain.target         = config::ToolchainTargetSelection::CompilerDefault();
-    host_request.toolchain.wasm           = None();
-    host_request.standard_library         = config::StandardLibrarySelection::Auto;
-    host_request.standard_library_runtime = config::StandardLibraryRuntime::Dynamic;
+    auto host_request    = host_configuration_request(configuration);
     auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
     auto target_runtimes = Vec<BuiltTargetRuntime>::make();
     auto target_stripper = Option<PathBuf> {};
@@ -1179,6 +1281,20 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     resolved_request.toolchain  = selected.tools.clone();
     auto resolved_configuration = config::resolve_build_configuration(
         rstd::move(resolved_request), toolchain.compile_target().standard_library);
+    auto host_conditions = HostConditionProvider {
+        .request     = rstd::addressof(host_request),
+        .environment = rstd::addressof(environment),
+        .profile     = profile.as_str(),
+    };
+    auto conditions = lito::package::PackageConditionEnvironment {
+        .target = lito::package::make_condition_environment(
+            context->platform,
+            profile.as_str(),
+            config::standard_library_name(resolved_configuration.standard_library),
+            config::standard_library_runtime_name(resolved_configuration.standard_library_runtime)),
+        .host_state   = rstd::addressof(host_conditions),
+        .resolve_host = HostConditionProvider::resolve,
+    };
     auto session = resolve_project_session(
         selection,
         sources,
@@ -1197,20 +1313,17 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         registry,
         configuration.toolchain.wasm.is_some() && configuration.toolchain.wasm->processor.is_some()
             ? Some(configuration.toolchain.wasm->processor->as_str())
-            : Option<ref<str>> {});
+            : Option<ref<str>> {},
+        rstd::addressof(conditions));
     if (session.is_err()) return Err(rstd::move(session).unwrap_err());
     auto plugin_host = Option<Box<ResolvedPluginBuildProject>> {};
     if (! session->project.selection.host_package_names.is_empty()) {
-        auto host_selected = rstd_try(resolve_configured_toolchain(host_request, environment));
-        auto host_created  = ClangToolchain::create(
-            host_selected.tools.clone(), host_request.standard_library, environment);
-        if (host_created.is_err()) {
-            return Err(rstd::into<ProjectError>(rstd::move(host_created).unwrap_err()));
-        }
-        auto host_toolchain = rstd::move(host_created).unwrap();
-        auto host_context =
-            rstd_try(resolve_build_context(host_request.global_options, host_toolchain));
-        auto host_session = rstd_try(
+        rstd_try(host_conditions.ensure());
+        conditions.host =
+            rstd_try(HostConditionProvider::resolve(rstd::addressof(host_conditions)));
+        conditions.resolve_host = nullptr;
+        auto host_context       = rstd::move(host_conditions.resolved->context);
+        auto host_session       = rstd_try(
             resolve_project_session(selection,
                                     sources,
                                     lock,
@@ -1229,20 +1342,18 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
                                     configuration.toolchain.wasm.is_some() &&
                                             configuration.toolchain.wasm->processor.is_some()
                                         ? Some(configuration.toolchain.wasm->processor->as_str())
-                                        : Option<ref<str>> {}));
+                                        : Option<ref<str>> {},
+                                    rstd::addressof(conditions),
+                                    rstd::addressof(session->platform.effective_target)));
         auto host_selection = lito::package::resolve_plugin_host_selection(
             rstd::move(host_session.project.selection));
         if (host_selection.is_err()) {
             return Err(rstd::into<ProjectError>(rstd::move(host_selection).unwrap_err()));
         }
-        host_session.project.selection  = rstd::move(host_selection).unwrap();
-        auto resolved_host_request      = host_request.clone();
-        resolved_host_request.toolchain = host_selected.tools.clone();
-        auto host_configuration         = config::resolve_build_configuration(
-            rstd::move(resolved_host_request), host_toolchain.compile_target().standard_library);
+        host_session.project.selection = rstd::move(host_selection).unwrap();
         plugin_host = Some(Box<ResolvedPluginBuildProject>::make(ResolvedPluginBuildProject {
-            .configuration = rstd::move(host_configuration),
-            .toolchain     = rstd::move(host_toolchain),
+            .configuration = rstd::move(host_conditions.resolved->configuration),
+            .toolchain     = rstd::move(host_conditions.resolved->toolchain),
             .session       = rstd::move(host_session),
         }));
     }
@@ -1279,6 +1390,7 @@ auto prepare_build_project(
     const lito::config::LitoBootstrapConfig*  registries     = nullptr)
     -> ProjectResult<PreparedBuildProject> {
     auto resolved = rstd_try(resolve_build_project(selection,
+                                                   profile,
                                                    configuration,
                                                    sources,
                                                    lock,
@@ -1336,7 +1448,7 @@ auto update_project_dependencies(
     if (available.is_ok()) jobs = available->get();
     auto resolved =
         rstd_try(resolve_project(selection,
-                                 lito::package::PackageSelectionPurpose::All,
+                                 lito::package::PackageSelectionPurpose::Sources,
                                  sources,
                                  lock,
                                  false,

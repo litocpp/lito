@@ -291,7 +291,7 @@ auto validate_cmake_build_overrides(const lito::package::ResolvedPackageGraph&  
     for (const auto& entry : overrides.entries) {
         auto matched = false;
         for (const auto& package : graph.packages) {
-            for (const auto& declaration : package.manifest.cmake_external_dependencies) {
+            for (const auto& declaration : package.effective_cmake_dependencies()) {
                 if (declaration.package != entry.package) continue;
                 matched = true;
             }
@@ -420,12 +420,11 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             }
         }
         for (usize declaration_index {};
-             declaration_index < package.manifest.cmake_external_dependencies.len();
+             declaration_index < package.effective_cmake_dependencies().len();
              ++declaration_index) {
-            const auto& declaration =
-                package.manifest.cmake_external_dependencies[declaration_index];
-            const auto installed_override = overrides.contains(declaration.package.as_str());
-            auto       active_source      = Option<usize> {};
+            const auto& declaration = package.effective_cmake_dependencies()[declaration_index];
+            const auto  installed_override = overrides.contains(declaration.package.as_str());
+            auto        active_source      = Option<usize> {};
             if (! installed_override && declaration.source.is_some()) {
                 active_source =
                     Some(rstd_try(activate_source(package_index, declaration.source->as_str())));
@@ -437,7 +436,7 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                 .active_source      = rstd::move(active_source),
             });
         }
-        for (const auto& declaration : package.manifest.cargo_external_dependencies) {
+        for (const auto& declaration : package.effective_cargo_dependencies()) {
             rstd_try(activate_source(package_index, declaration.recipe.source.as_str()));
         }
         for (const auto& target : package.manifest.targets) {

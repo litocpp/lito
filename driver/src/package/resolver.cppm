@@ -1049,8 +1049,10 @@ public:
                                       loaded.package.name.as_str(),
                                       dependency.name.as_str(),
                                       PackageDependencyKind::Normal));
-            dependencies.push(
-                rstd_try(classify_dependency(dependency, PackageDependencyKind::Normal)));
+            auto edge = rstd_try(classify_dependency(dependency, PackageDependencyKind::Normal));
+            if (dependency.condition.is_some())
+                edge.activation.condition = Some(dependency.condition->clone());
+            dependencies.push(rstd::move(edge));
         }
         rstd::slice_::sort_unstable_by(
             dependencies.as_mut_slice().as_mut_ref(),
@@ -1091,8 +1093,11 @@ public:
                                       loaded.package.name.as_str(),
                                       dependency.name.as_str(),
                                       PackageDependencyKind::Development));
-            dev_dependencies.push(
-                rstd_try(classify_dependency(dependency, PackageDependencyKind::Development)));
+            auto edge =
+                rstd_try(classify_dependency(dependency, PackageDependencyKind::Development));
+            if (dependency.condition.is_some())
+                edge.activation.condition = Some(dependency.condition->clone());
+            dev_dependencies.push(rstd::move(edge));
         }
         rstd::slice_::sort_unstable_by(
             dev_dependencies.as_mut_slice().as_mut_ref(),
@@ -1111,7 +1116,10 @@ public:
                 return Err(rstd::move(dependency_name).unwrap_err());
             }
             runtime_dependencies.push(ResolvedRuntimeDependency {
-                .name = rstd::move(dependency_name).unwrap(),
+                .name       = rstd::move(dependency_name).unwrap(),
+                .activation = { .condition = dependency.condition.is_some()
+                                                 ? Some(dependency.condition->clone())
+                                                 : None() },
             });
         }
         rstd::slice_::sort_unstable_by(

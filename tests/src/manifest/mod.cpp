@@ -2272,6 +2272,18 @@ TEST_F(Manifest, RejectsAmbiguousOrEmptyBuildToolSources) {
         EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
     }
 }
+TEST_F(Manifest, WorkspaceDependencyDefinitionsRejectConditions) {
+    auto project = manifest("workspace-condition-invalid"_str, R"toml([workspace]
+name = "condition-workspace"
+members = ["member"]
+[workspace.dependencies]
+dependency = { version = "0.1", condition = "true" }
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
+    ASSERT_TRUE(loaded.is_err());
+    EXPECT_TRUE(error_chain_text(loaded.unwrap_err()).as_str().contains("condition"_str));
+}
 
 TEST_F(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
     auto project = manifest("build-tools"_str, R"toml([package]
@@ -2792,4 +2804,64 @@ default-features = false
     EXPECT_FALSE(serialized->as_str().contains("proc-macro-dependencies"_str));
     auto reparsed = rstd::toml::from_str(serialized->as_str());
     ASSERT_TRUE(reparsed.is_ok());
+}
+
+TEST_F(Manifest, DependencyConditionsSurviveStandalonePackaging) {
+    auto project = manifest("dependency-conditions"_str, R"toml([package]
+name = "fixture-dependency-conditions"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-dependency-conditions"
+link-stdlib = false
+
+[features.extra]
+default = false
+
+[dependencies]
+normal = { version = "0.1", condition = "feature.extra" }
+[dev-dependencies]
+development = { version = "0.1", condition = "!feature.extra" }
+[runtime-dependencies]
+runtime = { version = "0.1", condition = 'target.os == "linux"' }
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->dependencies[usize {}].condition.is_some());
+    ASSERT_TRUE(loaded->dev_dependencies[usize {}].condition.is_some());
+    ASSERT_TRUE(loaded->runtime_dependencies[usize {}].condition.is_some());
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    auto copy = manifest("dependency-conditions-copy"_str, serialized->as_str());
+    ASSERT_TRUE(copy.is_ok());
+    auto reloaded = lito::manifest::load_package_manifest(copy->root.as_path());
+    ASSERT_TRUE(reloaded.is_ok());
+    EXPECT_EQ(reloaded->dependencies[usize {}].condition->source, "feature.extra"_str);
+    EXPECT_EQ(reloaded->dev_dependencies[usize {}].condition->source, "!feature.extra"_str);
+    EXPECT_EQ(reloaded->runtime_dependencies[usize {}].condition->source,
+              "target.os == \"linux\""_str);
+}
+
+TEST_F(Manifest, DependencyConditionsRejectEmptyAndWorkspaceDefinitions) {
+    constexpr ref<str> declarations[] = {
+        "[dependencies]\ndep = { version = \"0.1\", condition = \"\" }\n"_str,
+        "[dependencies]\ndep = { version = \"0.1\", condition = true }\n"_str,
+        "[dependencies]\ndep = { version = \"0.1\", condition = \"feature.\" }\n"_str,
+    };
+    usize index {};
+    for (auto declaration : declarations) {
+        auto contents = rstd::format(
+            "[package]\nname = \"condition-invalid\"\n[[bin]]\nname = \"condition-invalid\"\n{}",
+            declaration);
+        auto project =
+            manifest(rstd::format("condition-invalid-{}", index++).as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
+    }
 }

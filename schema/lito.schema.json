@@ -1211,6 +1211,7 @@
     "dependencySource": {
       "type": "object",
       "properties": {
+        "condition": { "$ref": "#/definitions/nonEmptyString" },
         "path": {
           "$ref": "#/definitions/relativePath"
         },
@@ -1387,6 +1388,7 @@
       "type": "object",
       "required": ["workspace"],
       "properties": {
+        "condition": { "$ref": "#/definitions/nonEmptyString" },
         "workspace": {
           "enum": [
             true
@@ -1453,6 +1455,7 @@
         "workspace"
       ],
       "properties": {
+        "condition": { "$ref": "#/definitions/nonEmptyString" },
         "workspace": {
           "enum": [
             true
@@ -1522,6 +1525,7 @@
               { "required": ["pub"] },
               { "required": ["features"] },
               { "required": ["default-features"] },
+              { "required": ["condition"] },
               { "required": ["package"] }
             ]
           }

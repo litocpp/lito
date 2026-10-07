@@ -2509,3 +2509,158 @@ options = ["-fvisibility=default"]
     EXPECT_EQ(artifact_count(*lto, lito::cpp::ArtifactKind::StaticLibrary), usize(2));
     EXPECT_EQ(artifact_count(*lto, lito::cpp::ArtifactKind::Executable), usize(2));
 }
+
+TEST_F(BuildCommand, DependencyConditionsChangeImportsAndCachedBuildInputs) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-condition-root"
+version = "0.1.0"
+[lib]
+name = "fixture-condition-root"
+archive = "fixture-condition-root"
+module = "fixture.condition.root"
+[features.extra]
+default = false
+[dependencies]
+fixture-condition-extra = { path = "extra", pub = true, condition = 'feature.extra && profile.name == "debug"' }
+)toml"_str },
+        { "src/lib.cppm"_str, R"cpp(export module fixture.condition.root;
+#if LITO_FEAT_EXTRA
+export import fixture.condition.extra;
+#endif
+)cpp"_str },
+        { "extra/lito.toml"_str, R"toml([package]
+name = "fixture-condition-extra"
+version = "0.1.0"
+[lib]
+name = "fixture-condition-extra"
+archive = "fixture-condition-extra"
+module = "fixture.condition.extra"
+)toml"_str },
+        { "extra/src/lib.cppm"_str, "export module fixture.condition.extra;\n"_str },
+    };
+    auto project = materialize("dependency-condition-build"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("dependency-condition-build"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-condition-root"_str));
+    auto disabled = lito::build(request);
+    if (disabled.is_err()) {
+        auto message = error_chain_text(disabled.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(disabled->compiled, usize(1));
+    request.locked = true;
+    request.selection.features.enabled.push("extra"_Str);
+    auto enabled = lito::build(request);
+    if (enabled.is_err()) {
+        auto message = error_chain_text(enabled.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(enabled->compiled, usize(2));
+    auto cached = lito::build(request);
+    if (cached.is_err()) {
+        auto message = error_chain_text(cached.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(cached->compiled, usize {});
+    request.selection.features.enabled.clear();
+    auto disabled_again = lito::build(request);
+    if (disabled_again.is_err()) {
+        auto message = error_chain_text(disabled_again.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(disabled_again->compiled, usize(1));
+}
+
+TEST_F(BuildCommand, InactiveDependencyDoesNotExecuteBuildScript) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-condition-script-root"
+version = "0.1.0"
+[lib]
+name = "fixture-condition-script-root"
+archive = "fixture-condition-script-root"
+module = "fixture.condition.script_root"
+[features.extra]
+default = false
+[dependencies]
+fixture-condition-script-extra = { path = "extra", condition = "feature.extra" }
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.condition.script_root;\n"_str },
+        { "extra/lito.toml"_str, R"toml([package]
+name = "fixture-condition-script-extra"
+version = "0.1.0"
+[lib]
+name = "fixture-condition-script-extra"
+archive = "fixture-condition-script-extra"
+module = "fixture.condition.script_extra"
+)toml"_str },
+        { "extra/src/lib.cppm"_str, "export module fixture.condition.script_extra;\n"_str },
+        { "extra/build.lua"_str, "error('condition dependency build script executed')\n"_str },
+    };
+    auto project = materialize("dependency-condition-script"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("dependency-condition-script"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-condition-script-root"_str));
+    auto disabled = lito::build(request);
+    if (disabled.is_err()) {
+        auto message = error_chain_text(disabled.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    request.selection.features.enabled.push("extra"_Str);
+    auto enabled = lito::build(request);
+    ASSERT_TRUE(enabled.is_err());
+    EXPECT_TRUE(error_chain_text(enabled.unwrap_err())
+                    .as_str()
+                    .contains("condition dependency build script executed"_str));
+}
+
+TEST_F(BuildCommand, DependencyConditionsControlScriptRequireVisibility) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-script-condition"
+version = "0.1.0"
+[lib]
+name = "fixture-script-condition"
+archive = "fixture-script-condition"
+module = "fixture.script.condition"
+[features.helper]
+default = false
+[dependencies]
+fixture-condition-helper = { path = "helper", condition = "feature.helper" }
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.script.condition;\n"_str },
+        { "build.lua"_str, "assert(require('@fixture.condition.helper').value == 42)\n"_str },
+        { "helper/lito.toml"_str, R"toml([package]
+name = "fixture-condition-helper"
+version = "0.1.0"
+[script]
+supports = ["build"]
+)toml"_str },
+        { "helper/lib.lua"_str, "return { value = 42 }\n"_str },
+    };
+    auto project = materialize("script-condition"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("script-condition"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-script-condition"_str));
+    auto disabled = lito::build(request);
+    ASSERT_TRUE(disabled.is_err());
+    request.selection.features.enabled.push("helper"_Str);
+    auto enabled = lito::build(request);
+    if (enabled.is_err()) {
+        auto message = error_chain_text(enabled.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    request.selection.features.enabled.clear();
+    auto disabled_again = lito::build(request);
+    EXPECT_TRUE(disabled_again.is_err());
+}

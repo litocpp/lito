@@ -99,7 +99,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         const auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
         auto dependencies =
-            resolve_pkg_config_dependencies(package.manifest.pkg_config_external_dependencies,
+            resolve_pkg_config_dependencies(package.effective_pkg_config_dependencies(),
                                             pkg_config,
                                             package.manifest.name.as_str(),
                                             platform,
@@ -236,7 +236,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         if (catalog_indices[package_index].is_none()) continue;
         const auto& package = graph.packages[package_index];
         auto        dependencies =
-            resolve_cargo_dependencies(package.manifest.cargo_external_dependencies,
+            resolve_cargo_dependencies(package.effective_cargo_dependencies(),
                                        package_index,
                                        package.manifest.name.as_str(),
                                        lito::manifest::package_manifest_language(package.manifest),

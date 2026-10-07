@@ -59,7 +59,7 @@ auto resolve_effective_language_standards(const ResolvedPackageGraph& graph,
             package.manifest.standard.is_none() || ! package.manifest.standard->is_C()) {
             continue;
         }
-        for (const auto& dependency : package.dependencies) {
+        for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
             if (! selected.contains_key(cpp_dependency.name.as_str())) continue;

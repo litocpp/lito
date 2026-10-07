@@ -233,7 +233,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
             Some(rstd::move(request.source.project.catalog)),
             request.build.registries.is_some() ? rstd::addressof(*request.build.registries)
                                                : nullptr,
-            registry)));
+            registry,
+            rstd::addressof(product.conditions))));
         auto recipes   = rstd_try(
             resolve_install_recipes(selection, effective_target, request.binaries, profile));
         auto requirements =
@@ -268,6 +269,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                 : lito::registry::RegistryGraphProvider {};
     auto resolved         = rstd_try(install_project_failure(resolve_build_project(
         request.build.selection,
+        *request.build.profile,
         request.build.configuration,
         request.build.sources,
         request.build.lock,

@@ -57,6 +57,40 @@ sources = ["main.cpp"]
     EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
 }
 
+TEST_F(Update, ConditionalDependenciesRemainInTheCandidateLock) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-condition-update"
+version = "0.1.0"
+[[bin]]
+name = "fixture-condition-update"
+link-stdlib = false
+[dependencies]
+fixture-condition-candidate = { path = "candidate", condition = 'profile.name == "release" && toolchain.stdlib == "libc++"' }
+)toml"_str },
+        { "candidate/lito.toml"_str, R"toml([package]
+name = "fixture-condition-candidate"
+version = "0.1.0"
+[lib]
+name = "fixture-condition-candidate"
+archive = "fixture-condition-candidate"
+module = "fixture.condition.candidate"
+)toml"_str },
+    };
+    auto project = materialize("condition-update"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto result = lito::update_dependencies(lito::UpdateRequest { .root = project->root.clone() });
+    if (result.is_err()) {
+        auto message = error_chain_text(result.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    auto path = project->root.join(PathBuf::from("lito.lock"_str).as_path());
+    auto lock = rstd::fs::read_to_string(path.as_path());
+    ASSERT_TRUE(lock.is_ok());
+    EXPECT_TRUE(lock->as_str().contains("fixture-condition-candidate"_str));
+}
+
 TEST_F(Update, DependencyUpdateReplacesInvalidCurrentLock) {
     struct InvalidLockCase {
         ref<str> name;

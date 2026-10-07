@@ -87,3 +87,19 @@ target = { family = "unix", not-os = "android" }
 
 Package and workspace manifests may both declare project profile policy. See
 [Profiles, features, and conditions](profiles-features-and-conditions.md).
+
+Dependency conditions belong to member references, not shared workspace definitions:
+
+```toml
+# Workspace manifest
+[workspace.dependencies]
+image-codec = "0.1"
+
+# Member manifest
+[dependencies]
+image-codec = { workspace = true, condition = "feature.image" }
+```
+
+The member declares the `image` feature. The condition is evaluated in that member's environment.
+This applies to normal, development, and runtime references; `workspace.dependencies` rejects
+`condition`. Existing source inheritance and member feature-request rules are unchanged.

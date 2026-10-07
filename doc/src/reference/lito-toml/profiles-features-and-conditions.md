@@ -70,3 +70,23 @@ settings are errors; declaration order does not silently choose a winner.
 
 Target-local conditional source groups use the target `when` field documented under
 [Targets and sources](targets-and-sources.md).
+
+## Dependency condition environment
+
+Package and external dependency conditions share the same context:
+
+- `feature.NAME`: a declared package-local feature's final boolean value;
+- `target.os`, `target.vendor`, `target.family`, `target.environment`, `target.arch`,
+  `target.triple`: the effective target of the consuming package instance;
+- `host.os`, `host.arch`: the build host;
+- `build.cross`: whether that instance is cross-compiled;
+- `profile.name`: the selected profile;
+- `toolchain.compiler`, `toolchain.stdlib`, `toolchain.stdlib-runtime`: the resolved toolchain policy.
+
+Host and target instances can select different edges while sharing the existing package feature
+union. A dependency providing a host tool is still selected using its consumer's environment.
+Unknown keys and incompatible value types are errors when evaluated; boolean operators retain
+short-circuit evaluation. Conditions cannot inspect another package's features or probe results.
+
+Completed build products preserve these environment values for installation without rebuilding.
+Products from older schema versions must be rebuilt before they can be reused.

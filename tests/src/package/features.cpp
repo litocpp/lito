@@ -208,8 +208,8 @@ TEST(PackageFeatures, SelectsExternalDependenciesAfterGraphFeatureUnion) {
     ASSERT_TRUE(lito::cpp::apply_package_configuration(
                     graph.packages[usize {}], configuration(), profile, native_platform(), false)
                     .is_ok());
-    EXPECT_EQ(graph.packages[usize {}].manifest.pkg_config_external_dependencies.len(), usize(1));
-    EXPECT_TRUE(graph.packages[usize {}].manifest.cmake_external_dependencies.is_empty());
+    EXPECT_EQ(graph.packages[usize {}].effective_pkg_config_dependencies().len(), usize(1));
+    EXPECT_TRUE(graph.packages[usize {}].effective_cmake_dependencies().is_empty());
 
     auto consumer_dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
     consumer_dependencies.push(dependency("provider"_str, names("qt"_str), false));
@@ -231,14 +231,11 @@ TEST(PackageFeatures, SelectsExternalDependenciesAfterGraphFeatureUnion) {
         lito::cpp::apply_package_configuration(
             enabled_graph.packages[usize(1)], configuration(), profile, native_platform(), false)
             .is_ok());
-    EXPECT_TRUE(
-        enabled_graph.packages[usize(1)].manifest.pkg_config_external_dependencies.is_empty());
-    ASSERT_EQ(enabled_graph.packages[usize(1)].manifest.cmake_external_dependencies.len(),
-              usize(1));
-    EXPECT_EQ(enabled_graph.packages[usize(1)]
-                  .manifest.cmake_external_dependencies[usize {}]
-                  .package.as_str(),
-              "Qt6"_str);
+    EXPECT_TRUE(enabled_graph.packages[usize(1)].effective_pkg_config_dependencies().is_empty());
+    ASSERT_EQ(enabled_graph.packages[usize(1)].effective_cmake_dependencies().len(), usize(1));
+    EXPECT_EQ(
+        enabled_graph.packages[usize(1)].effective_cmake_dependencies()[usize {}].package.as_str(),
+        "Qt6"_str);
 }
 
 TEST(PackageFeatures, ReportsExternalDependencyConditionContext) {
@@ -257,4 +254,173 @@ TEST(PackageFeatures, ReportsExternalDependencyConditionContext) {
     EXPECT_TRUE(message.as_str().contains("fixture/lito.toml"_str));
     EXPECT_TRUE(message.as_str().contains("curl"_str));
     EXPECT_TRUE(message.as_str().contains("feature.unknown"_str));
+}
+
+auto conditioned_dependency(ref<str> name, ref<str> condition, Vec<String> requested = {})
+    -> lito::package::ResolvedRequiredDependency {
+    auto result                 = dependency(name, rstd::move(requested), false);
+    result.activation.condition = Some(external_condition(condition));
+    return result;
+}
+
+auto selected_name(const Vec<String>& names, ref<str> name) -> bool {
+    for (const auto& value : names)
+        if (value == name) return true;
+    return false;
+}
+
+TEST(PackageFeatures, ConditionsWaitForAllConsumersAndResetBetweenSelections) {
+    auto a_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    a_edges.push(dependency("b"_str, {}, false));
+    a_edges.push(conditioned_dependency("c"_str, "feature.use-c"_str));
+    auto b_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    b_edges.push(conditioned_dependency("slow"_str, "!feature.fast"_str));
+    auto c_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    c_edges.push(dependency("b"_str, names("fast"_str), false));
+    auto a_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    a_features.push(feature("use-c"_str));
+    auto b_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    b_features.push(feature("fast"_str));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("b"_str, rstd::move(b_features), rstd::move(b_edges)));
+    graph.packages.push(package("a"_str, rstd::move(a_features), rstd::move(a_edges)));
+    graph.packages.push(package("slow"_str));
+    graph.packages.push(package("c"_str, {}, rstd::move(c_edges)));
+    auto roots       = names("a"_str);
+    auto targets     = library_targets("a"_str);
+    auto environment = lito::package::PackageConditionEnvironment {};
+    auto selection   = lito::package::FeatureSelection { .enabled = names("use-c"_str) };
+    for (int iteration = 0; iteration < 3; ++iteration) {
+        if (iteration == 1) selection.enabled.clear();
+        if (iteration == 2) selection.enabled = names("use-c"_str);
+        auto resolved = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, environment, false);
+        ASSERT_TRUE(resolved.is_ok());
+        EXPECT_EQ(selected_name(resolved->target, "slow"_str), iteration == 1);
+        EXPECT_EQ(selected_name(resolved->target, "c"_str), iteration != 1);
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "fast"_str), iteration != 1);
+        EXPECT_EQ(graph.packages[usize {}].dependencies.len(), usize(1));
+    }
+}
+
+TEST(PackageFeatures, InactiveEdgesDoNotRequestFeaturesFromAnActiveProvider) {
+    auto a_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    a_edges.push(conditioned_dependency("shared"_str, "false"_str, names("missing"_str)));
+    auto b_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    b_edges.push(dependency("shared"_str, {}, false));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("a"_str, {}, rstd::move(a_edges)));
+    graph.packages.push(package("shared"_str));
+    graph.packages.push(package("b"_str, {}, rstd::move(b_edges)));
+    auto result = lito::package::select_conditioned_packages(graph,
+                                                             names("a"_str, "b"_str),
+                                                             library_targets("a"_str, "b"_str),
+                                                             nullptr,
+                                                             None(),
+                                                             {},
+                                                             {},
+                                                             false);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(selected_name(result->target, "shared"_str));
+    EXPECT_FALSE(graph.packages[usize {}].dependencies[usize {}].activation.target);
+}
+
+TEST(PackageFeatures, ConditionsDistinguishHostAndTargetConsumers) {
+    auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    edges.push(conditioned_dependency("platform-only"_str, "target.os == \"linux\""_str));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("root"_str, {}, rstd::move(edges)));
+    graph.packages.push(package("platform-only"_str));
+    auto targets = library_targets("root"_str);
+    targets.push({ .package = "root"_Str,
+                   .kind    = lito::package::PackageTargetKind::Plugin,
+                   .name    = "root-plugin"_Str });
+    auto environment = lito::package::PackageConditionEnvironment {};
+    environment.target.set_string("target.os"_Str, "windows"_Str);
+    environment.host.set_string("target.os"_Str, "linux"_Str);
+    auto result = lito::package::select_conditioned_packages(
+        graph, names("root"_str), targets, nullptr, None(), {}, environment, false);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_FALSE(selected_name(result->target, "platform-only"_str));
+    EXPECT_TRUE(selected_name(result->host, "platform-only"_str));
+    EXPECT_FALSE(graph.packages[usize {}].dependencies[usize {}].activation.target);
+    EXPECT_TRUE(graph.packages[usize {}].dependencies[usize {}].activation.host);
+}
+
+TEST(PackageFeatures, ConditionsRespectDevelopmentAndRuntimePurposes) {
+    auto dev = Vec<lito::package::ResolvedRequiredDependency>::make();
+    dev.push(conditioned_dependency("dev"_str, "true"_str));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("root"_str, {}, {}, rstd::move(dev)));
+    graph.packages[usize {}].runtime_dependencies.push({
+        .name       = "runtime"_Str,
+        .activation = { .condition = Some(external_condition("feature.runtime"_str)) },
+    });
+    graph.packages[usize {}].manifest.features.push(feature("runtime"_str));
+    graph.packages.push(package("dev"_str));
+    graph.packages.push(package("runtime"_str));
+    auto roots   = names("root"_str);
+    auto targets = library_targets("root"_str);
+    auto result  = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), {}, {}, false);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_FALSE(selected_name(result->target, "dev"_str));
+    EXPECT_FALSE(selected_name(result->target, "runtime"_str));
+    targets[usize {}].kind = lito::package::PackageTargetKind::Test;
+    result                 = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), {}, {}, false);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(selected_name(result->target, "dev"_str));
+    auto selection         = lito::package::FeatureSelection { .enabled = names("runtime"_str) };
+    targets[usize {}].kind = lito::package::PackageTargetKind::Binary;
+    result                 = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, true);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(selected_name(result->install, "runtime"_str));
+    EXPECT_FALSE(selected_name(result->target, "dev"_str));
+}
+
+TEST(PackageFeatures, ExternalConditionSelectionPreservesDeclarations) {
+    auto package = package_with_external_backends();
+    auto context = lito::condition::Context {};
+    context.set_bool("feature.qt"_Str, false);
+    ASSERT_TRUE(lito::cpp::resolve_external_dependency_conditions(package, context).is_ok());
+    EXPECT_EQ(package.effective_pkg_config_dependencies().len(), usize(1));
+    EXPECT_TRUE(package.effective_cmake_dependencies().is_empty());
+    EXPECT_EQ(package.manifest.cmake_external_dependencies.len(), usize(1));
+    context.set_bool("feature.qt"_Str, true);
+    ASSERT_TRUE(lito::cpp::resolve_external_dependency_conditions(package, context).is_ok());
+    EXPECT_TRUE(package.effective_pkg_config_dependencies().is_empty());
+    EXPECT_EQ(package.effective_cmake_dependencies().len(), usize(1));
+    EXPECT_EQ(package.manifest.pkg_config_external_dependencies.len(), usize(1));
+}
+
+TEST(PackageFeatures, SelectionProjectsExternalConditionsBeforeBuildConsumers) {
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package_with_external_backends());
+    auto selection = lito::package::FeatureSelection { .enabled = names("qt"_str) };
+    auto result    = lito::package::select_conditioned_packages(graph,
+                                                                names("provider"_str),
+                                                                library_targets("provider"_str),
+                                                                nullptr,
+                                                                None(),
+                                                                selection,
+                                                                {},
+                                                                false);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_TRUE(graph.packages[usize {}].effective_pkg_config_dependencies().is_empty());
+    EXPECT_EQ(graph.packages[usize {}].effective_cmake_dependencies().len(), usize(1));
+    EXPECT_EQ(graph.packages[usize {}].manifest.pkg_config_external_dependencies.len(), usize(1));
+    selection.enabled.clear();
+    result = lito::package::select_conditioned_packages(graph,
+                                                        names("provider"_str),
+                                                        library_targets("provider"_str),
+                                                        nullptr,
+                                                        None(),
+                                                        selection,
+                                                        {},
+                                                        false);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_EQ(graph.packages[usize {}].effective_pkg_config_dependencies().len(), usize(1));
+    EXPECT_TRUE(graph.packages[usize {}].effective_cmake_dependencies().is_empty());
 }
