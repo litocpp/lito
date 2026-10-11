@@ -19,7 +19,7 @@ package version.
 `-c/--config KEY=VALUE` overrides one config value for the invocation and may be repeated.
 
 `--use-env-flags` appends ambient `CFLAGS`, `CXXFLAGS`, and `LDFLAGS` to the C, C++, and link option
-domains. It is valid only for `build`, `run`, `install`, `test`, `bench`, `doc`, `scan`, and `fetch`; the variables
+domains. It is valid only for `build`, `run`, `install`, `test`, `bench`, `doc`, `scan`, `fetch`, and `tree`; the variables
 are otherwise ignored.
 
 Toolchain values are configuration keys rather than dedicated CLI options. Override one invocation
@@ -37,6 +37,7 @@ persisted local config directly.
 - [`test` and `bench`](test-and-bench.md)
 - [`doc`, `scan`, and `format`](doc-scan-and-format.md)
 - [`update`, `lock`, and `config`](update-lock-and-config.md)
+- [`tree`](tree.md)
 - [`sdk`](sdk.md)
 
 Lito reports errors as a cause chain on stderr and returns a non-zero exit status. Commands that

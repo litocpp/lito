@@ -1212,22 +1212,20 @@ auto resolve_project_metadata(
                                     setup_reporter);
 }
 
-auto resolve_build_project(const lito::package::PackageSelection&         selection,
-                           const lito::manifest::BuildProfileName&        profile,
-                           const config::BuildConfigurationRequest&       configuration,
-                           const lito::source::PackageSourceConfig&       sources,
-                           const lito::lock::LockConfig&                  lock,
-                           const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
-                           lito::tools::ToolResolver&                     tool_resolver,
-                           const ResolvedProcessEnvironment&              environment,
-                           bool                                           locked,
-                           lito::package::PackageSelectionPurpose         purpose,
-                           usize                                          jobs,
-                           const Option<BuildEventSink>&                  observer   = None(),
-                           Option<lito::workspace::WorkspaceCatalog>      catalog    = None(),
-                           const lito::config::LitoBootstrapConfig*       registries = nullptr,
-                           lito::registry::RegistryGraphProvider          registry   = {})
-    -> ProjectResult<ResolvedBuildProject> {
+struct PreparedProjectEnvironment {
+    cpp::BuildConfiguration           configuration;
+    config::BuildConfigurationRequest host_request;
+    ClangToolchain                    toolchain;
+    ResolvedBuildContext              context;
+    Option<AndroidCmakeProjection>    cmake_projection;
+    Vec<BuiltTargetRuntime>           target_runtimes;
+    Option<PathBuf>                   target_stripper;
+    Option<AndroidNdkLease>           android_sdk;
+};
+
+auto prepare_project_environment(const config::BuildConfigurationRequest& configuration,
+                                 const ResolvedProcessEnvironment&        environment)
+    -> ProjectResult<PreparedProjectEnvironment> {
     auto host_request    = host_configuration_request(configuration);
     auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
     auto target_runtimes = Vec<BuiltTargetRuntime>::make();
@@ -1281,21 +1279,104 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
     resolved_request.toolchain  = selected.tools.clone();
     auto resolved_configuration = config::resolve_build_configuration(
         rstd::move(resolved_request), toolchain.compile_target().standard_library);
-    auto host_conditions = HostConditionProvider {
+    return Ok(PreparedProjectEnvironment { rstd::move(resolved_configuration),
+                                           rstd::move(host_request),
+                                           rstd::move(toolchain),
+                                           rstd::move(context).unwrap(),
+                                           rstd::move(cmake_projection),
+                                           rstd::move(target_runtimes),
+                                           rstd::move(target_stripper),
+                                           rstd::move(selected.android_sdk) });
+}
+
+auto project_condition_environment(const PreparedProjectEnvironment&       prepared,
+                                   const lito::manifest::BuildProfileName& profile,
+                                   HostConditionProvider&                  host)
+    -> lito::package::PackageConditionEnvironment {
+    return {
+        .target = lito::package::make_condition_environment(
+            prepared.context.platform,
+            profile.as_str(),
+            config::standard_library_name(prepared.configuration.standard_library),
+            config::standard_library_runtime_name(prepared.configuration.standard_library_runtime)),
+        .host_state   = rstd::addressof(host),
+        .resolve_host = HostConditionProvider::resolve,
+    };
+}
+
+auto resolve_inspection_project(const lito::package::PackageSelection&   selection,
+                                const lito::manifest::BuildProfileName&  profile,
+                                const config::BuildConfigurationRequest& configuration,
+                                const lito::source::PackageSourceConfig& sources,
+                                const lito::lock::LockConfig&            lock,
+                                lito::tools::ToolResolver&               resolver,
+                                const ResolvedProcessEnvironment&        environment,
+                                bool                                     locked,
+                                lito::package::PackageSelectionPurpose   purpose,
+                                const Option<BuildEventSink>&            observer,
+                                const lito::config::LitoBootstrapConfig* registries)
+    -> ProjectResult<ProjectResolution> {
+    auto prepared = rstd_try(prepare_project_environment(configuration, environment));
+    auto host     = HostConditionProvider {
+        .request     = rstd::addressof(prepared.host_request),
+        .environment = rstd::addressof(environment),
+        .profile     = profile.as_str(),
+    };
+    auto conditions = project_condition_environment(prepared, profile, host);
+    auto project    = rstd_try(resolve_project(
+        selection,
+        purpose,
+        sources,
+        lock,
+        locked,
+        lito::source::GitResolutionMode::ReuseLocked,
+        rstd::addressof(prepared.context.platform.effective_target),
+        resolver,
+        environment,
+        {},
+        usize(1),
+        observer_value(observer),
+        None(),
+        lito::lock::InvalidLockPolicy::Reject,
+        registries,
+        {},
+        configuration.toolchain.wasm.is_some() && configuration.toolchain.wasm->processor.is_some()
+            ? Some(configuration.toolchain.wasm->processor->as_str())
+            : Option<ref<str>> {},
+        {},
+        rstd::addressof(conditions)));
+    auto resolved_profile =
+        lito::manifest::resolve_build_profile(project.selection.graph.profile, profile);
+    if (resolved_profile.is_err())
+        return Err(ProjectError::Profile(rstd::move(resolved_profile).unwrap_err()));
+    return Ok(rstd::move(project));
+}
+
+auto resolve_build_project(const lito::package::PackageSelection&         selection,
+                           const lito::manifest::BuildProfileName&        profile,
+                           const config::BuildConfigurationRequest&       configuration,
+                           const lito::source::PackageSourceConfig&       sources,
+                           const lito::lock::LockConfig&                  lock,
+                           const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
+                           lito::tools::ToolResolver&                     tool_resolver,
+                           const ResolvedProcessEnvironment&              environment,
+                           bool                                           locked,
+                           lito::package::PackageSelectionPurpose         purpose,
+                           usize                                          jobs,
+                           const Option<BuildEventSink>&                  observer   = None(),
+                           Option<lito::workspace::WorkspaceCatalog>      catalog    = None(),
+                           const lito::config::LitoBootstrapConfig*       registries = nullptr,
+                           lito::registry::RegistryGraphProvider          registry   = {})
+    -> ProjectResult<ResolvedBuildProject> {
+    auto  prepared        = rstd_try(prepare_project_environment(configuration, environment));
+    auto& host_request    = prepared.host_request;
+    auto  host_conditions = HostConditionProvider {
         .request     = rstd::addressof(host_request),
         .environment = rstd::addressof(environment),
         .profile     = profile.as_str(),
     };
-    auto conditions = lito::package::PackageConditionEnvironment {
-        .target = lito::package::make_condition_environment(
-            context->platform,
-            profile.as_str(),
-            config::standard_library_name(resolved_configuration.standard_library),
-            config::standard_library_runtime_name(resolved_configuration.standard_library_runtime)),
-        .host_state   = rstd::addressof(host_conditions),
-        .resolve_host = HostConditionProvider::resolve,
-    };
-    auto session = resolve_project_session(
+    auto conditions = project_condition_environment(prepared, profile, host_conditions);
+    auto session    = resolve_project_session(
         selection,
         sources,
         lock,
@@ -1305,10 +1386,10 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         locked,
         purpose,
         jobs,
-        rstd::move(context).unwrap(),
+        rstd::move(prepared.context),
         observer,
         rstd::move(catalog),
-        cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr,
+        prepared.cmake_projection.is_some() ? rstd::addressof(*prepared.cmake_projection) : nullptr,
         registries,
         registry,
         configuration.toolchain.wasm.is_some() && configuration.toolchain.wasm->processor.is_some()
@@ -1358,12 +1439,12 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
         }));
     }
     return Ok(ResolvedBuildProject {
-        .configuration   = rstd::move(resolved_configuration),
-        .toolchain       = rstd::move(toolchain),
+        .configuration   = rstd::move(prepared.configuration),
+        .toolchain       = rstd::move(prepared.toolchain),
         .session         = rstd::move(session).unwrap(),
-        .target_runtimes = rstd::move(target_runtimes),
-        .target_stripper = rstd::move(target_stripper),
-        .android_sdk     = rstd::move(selected.android_sdk),
+        .target_runtimes = rstd::move(prepared.target_runtimes),
+        .target_stripper = rstd::move(prepared.target_stripper),
+        .android_sdk     = rstd::move(prepared.android_sdk),
         .plugin_host     = rstd::move(plugin_host),
     });
 }

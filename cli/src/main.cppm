@@ -1239,7 +1239,7 @@ extern "C++" int main() {
                                 (invocation.command.is_Install() && ! reuse_install) ||
                                 invocation.command.is_Test() || invocation.command.is_Bench() ||
                                 invocation.command.is_Doc() || invocation.command.is_Scan() ||
-                                invocation.command.is_Fetch();
+                                invocation.command.is_Fetch() || invocation.command.is_Tree();
     if (build_command && project.build_target.is_Android() && project.toolchain.sdk.is_none()) {
         auto active_android_result = lito::acquire_active_android_ndk();
         if (active_android_result.is_err()) {
@@ -1461,6 +1461,58 @@ extern "C++" int main() {
             rstd::io::println("updated {}", request.lock.path.as_path());
         else
             rstd::io::println("dependencies are up to date");
+        return 0;
+    }
+
+    if (invocation.command.is_Tree()) {
+        auto options = rstd::move(invocation.command).as_Tree().options;
+        apply_source_options(project.sources,
+                             project.cargo.offline,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             rstd::move(options.source_bundles));
+        auto events  = EventContext { .standard_error = true };
+        auto request = lito::TreeRequest {
+            .selection =
+                lito::package::PackageSelection {
+                    .root     = project.root.clone(),
+                    .packages = rstd::move(options.packages),
+                    .features = rstd::move(options.features),
+                },
+            .purpose       = options.purpose,
+            .profile       = rstd::move(options.profile),
+            .configuration = build_configuration(rstd::move(project.toolchain),
+                                                 project.standard_library,
+                                                 project.standard_library_runtime,
+                                                 rstd::move(project.build_options),
+                                                 rstd::move(project.build_target)),
+            .environment   = rstd::move(project.environment),
+            .tools         = rstd::move(project.tools),
+            .registries    = rstd::move(registry_bootstrap),
+            .lock          = rstd::move(project.lock),
+            .sources       = rstd::move(project.sources),
+            .locked        = options.locked || options.frozen,
+            .observer      = Some(lito::BuildEventSink {
+                .context = rstd::addressof(events),
+                .notify  = observe,
+            }),
+            .tool_reporter = Some(lito::tools::HostToolResolutionSink {
+                .context = rstd::addressof(events),
+                .notify  = report_host_tool_resolution,
+            }),
+        };
+        auto report = lito::tree(request);
+        if (report.is_err()) {
+            report_error(rstd::move(report).unwrap_err());
+            return 1;
+        }
+        auto output = lito::render_tree(*report, options.render);
+        if (output.is_err()) {
+            report_error(rstd::move(output).unwrap_err());
+            return 1;
+        }
+        rstd::io::print("{}", output->as_str());
         return 0;
     }
 

@@ -141,6 +141,20 @@ struct UpdateOptions {
     Vec<PathBuf> source_bundles;
 };
 
+struct TreeOptions {
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    lito::package::FeatureSelection          features;
+    lito::package::PackageSelectionPurpose   purpose {
+        lito::package::PackageSelectionPurpose::Production
+    };
+    TreeRenderOptions render;
+    bool              locked {};
+    bool              offline {};
+    bool              frozen {};
+    Vec<PathBuf>      source_bundles;
+};
+
 struct FetchOptions {
     bool                            locked {};
     bool                            offline {};
@@ -268,6 +282,7 @@ class CliCommand {
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
               (Fetch, (FetchOptions options;)),
+              (Tree, (TreeOptions options;)),
               (Init, (InitOptions options;)),
               (Add, (AddOptions options;)),
               (Pack, (PackOptions options;)),
@@ -487,6 +502,18 @@ struct UpdateSchema {
     auto decode(const Matches& matches) const -> Result<UpdateOptions, CliDecodeError>;
 };
 
+struct TreeSchema {
+    CommandKey            command;
+    PackageProfileArgs    package;
+    SourceAcquisitionArgs source;
+    ArgKey<String>        purpose;
+    ArgKey<usize>         depth;
+    ArgKey<bool>          no_dedupe;
+    ArgKey<String>        charset;
+    ArgKey<bool>          all_features;
+    auto decode(const Matches& matches) const -> Result<TreeOptions, CliDecodeError>;
+};
+
 struct FetchSchema {
     CommandKey     command;
     ArgKey<bool>   locked;
@@ -679,6 +706,7 @@ struct CliSchema {
     FormatSchema   format;
     UpdateSchema   update;
     FetchSchema    fetch;
+    TreeSchema     tree;
     InitSchema     init;
     AddSchema      add;
     PackSchema     pack;
@@ -1137,6 +1165,34 @@ auto make_update_definition() -> CommandDefinition<UpdateSchema> {
     };
 }
 
+auto make_tree_definition() -> CommandDefinition<TreeSchema> {
+    auto command = Command::make("tree"_str);
+    command.about("Display the active package dependency tree"_str);
+    auto key     = command.key();
+    auto package = add_package_profile_args(command);
+    auto source  = add_source_acquisition_args(command);
+    auto purpose = command.add_arg(Arg<String>::value("purpose"_str, string_parser())
+                                       .long_name("purpose"_str)
+                                       .value_name("build|test|bench|example|install"_str)
+                                       .help("Select the dependency purpose (default: build)"_str));
+    auto depth   = command.add_arg(Arg<usize>::value("depth"_str, from_str_parser<usize>())
+                                       .long_name("depth"_str)
+                                       .value_name("N"_str)
+                                       .help("Limit package depth; zero prints only roots"_str));
+    auto no_dedupe = command.add_arg(Arg<bool>::flag("no-dedupe"_str)
+                                         .long_name("no-dedupe"_str)
+                                         .help("Repeat shared dependency subtrees"_str));
+    auto charset   = command.add_arg(Arg<String>::value("charset"_str, string_parser())
+                                         .long_name("charset"_str)
+                                         .value_name("utf8|ascii"_str)
+                                         .help("Select tree characters (default: utf8)"_str));
+    auto all       = command.add_arg(all_features_arg());
+    command.conflicts(all, package.features);
+    command.conflicts(all, package.no_default_features);
+    return { TreeSchema { key, package, source, purpose, depth, no_dedupe, charset, all },
+             rstd::move(command) };
+}
+
 auto make_fetch_definition() -> CommandDefinition<FetchSchema> {
     auto command = Command::make("fetch"_str);
     command.about("Fetch project dependencies"_str);
@@ -1565,6 +1621,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto format   = make_format_definition();
     auto update   = make_update_definition();
     auto fetch    = make_fetch_definition();
+    auto tree     = make_tree_definition();
     auto init     = make_init_definition();
     auto add      = make_add_definition();
     auto pack     = make_pack_definition();
@@ -1599,6 +1656,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(format.command));
     root.add_subcommand(rstd::move(update.command));
     root.add_subcommand(rstd::move(fetch.command));
+    root.add_subcommand(rstd::move(tree.command));
     root.add_subcommand(rstd::move(init.command));
     root.add_subcommand(rstd::move(add.command));
     root.add_subcommand(rstd::move(pack.command));
@@ -1623,6 +1681,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .format   = rstd::move(format.schema),
         .update   = rstd::move(update.schema),
         .fetch    = rstd::move(fetch.schema),
+        .tree     = rstd::move(tree.schema),
         .init     = rstd::move(init.schema),
         .add      = rstd::move(add.schema),
         .pack     = rstd::move(pack.schema),
@@ -1974,6 +2033,39 @@ auto UpdateSchema::decode(const Matches& matches) const -> Result<UpdateOptions,
     });
 }
 
+auto TreeSchema::decode(const Matches& matches) const -> Result<TreeOptions, CliDecodeError> {
+    auto package      = rstd_try(decode_package_profile(matches, this->package));
+    auto source       = rstd_try(decode_source_acquisition(matches, this->source));
+    auto purpose_text = rstd_try(optional_string(matches, purpose));
+    auto charset_text = rstd_try(optional_string(matches, charset));
+    auto purpose_value =
+        parse_tree_purpose(purpose_text.is_some() ? purpose_text->as_str() : "build"_str);
+    if (purpose_value.is_err())
+        return Err(CliDecodeError::InvalidUsage(rstd::format("{}", purpose_value.unwrap_err())));
+    auto charset_value =
+        parse_tree_charset(charset_text.is_some() ? charset_text->as_str() : "utf8"_str);
+    if (charset_value.is_err())
+        return Err(CliDecodeError::InvalidUsage(rstd::format("{}", charset_value.unwrap_err())));
+    auto depth_value              = rstd_try(optional_value(matches, depth));
+    package.features.all_features = rstd_try(flag_value(matches, all_features));
+    return Ok(TreeOptions {
+        .packages = rstd::move(package.packages),
+        .profile  = rstd::move(package.profile),
+        .features = rstd::move(package.features),
+        .purpose  = *purpose_value,
+        .render =
+            TreeRenderOptions {
+                .depth     = depth_value.is_some() ? Some(usize(**depth_value)) : Option<usize> {},
+                .no_dedupe = rstd_try(flag_value(matches, no_dedupe)),
+                .charset   = *charset_value,
+            },
+        .locked         = source.locked,
+        .offline        = source.offline,
+        .frozen         = source.frozen,
+        .source_bundles = rstd::move(source.source_bundles),
+    });
+}
+
 auto FetchSchema::decode(const Matches& matches) const -> Result<FetchOptions, CliDecodeError> {
     auto all = rstd_try(flag_value(matches, all_features));
     return Ok(FetchOptions {
@@ -2231,6 +2323,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         auto options = rstd_try(schema.update.decode(**child));
         return Ok(CliCommand::Update(rstd::move(options)));
     }
+    if (auto child = matches.subcommand_matches(schema.tree.command); child.is_some()) {
+        auto options = rstd_try(schema.tree.decode(**child));
+        return Ok(CliCommand::Tree(rstd::move(options)));
+    }
     if (auto child = matches.subcommand_matches(schema.fetch.command); child.is_some()) {
         auto options = rstd_try(schema.fetch.decode(**child));
         return Ok(CliCommand::Fetch(rstd::move(options)));
@@ -2287,10 +2383,11 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     auto command       = rstd_try(decode_command(schema, matches));
     const auto consumes_build_options =
         command.is_Build() || command.is_Run() || command.is_Install() || command.is_Test() ||
-        command.is_Bench() || command.is_Doc() || command.is_Scan() || command.is_Fetch();
+        command.is_Bench() || command.is_Doc() || command.is_Scan() || command.is_Fetch() ||
+        command.is_Tree();
     if (use_env_flags && ! consumes_build_options) {
         return Err(CliDecodeError::InvalidUsage(
-            "--use-env-flags is only valid for build, run, install, test, bench, doc, scan, and fetch"_Str));
+            "--use-env-flags is only valid for build, run, install, test, bench, doc, scan, fetch, and tree"_Str));
     }
     if (use_env_flags && command.is_Install() && command.as_Install().options.no_build) {
         return Err(

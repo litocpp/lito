@@ -12,6 +12,7 @@ target_sources(
           src/command/install.cpp
           src/command/lock.cpp
           src/command/scan.cpp
+          src/command/tree.cpp
           src/command/update.cpp
           src/config/mod.cpp
           src/dependency/external_source.cpp
@@ -68,6 +69,7 @@ target_sources(
          src/command/lock.cppm
          src/command/reporting.cppm
          src/command/scan.cppm
+         src/command/tree.cppm
          src/command/test.cppm
          src/command/update.cppm
          src/command/mod.cppm

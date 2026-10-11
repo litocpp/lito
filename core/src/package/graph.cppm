@@ -200,6 +200,48 @@ struct ResolvedProjectRoot {
     ProjectRootRole role { ProjectRootRole::PrimaryPackage };
 };
 
+enum class DependencyKind
+{
+    Normal,
+    Development,
+    Runtime
+};
+enum class DependencyType
+{
+    Cpp,
+    Script,
+    Plugin,
+    Pmacro,
+    Runtime
+};
+
+struct PackageInstance {
+    usize package {};
+    bool  host { false };
+    auto  operator==(const PackageInstance& other) const noexcept -> bool {
+        return package == other.package && host == other.host;
+    }
+};
+
+struct SelectedPackageRoot {
+    PackageInstance instance;
+    ProjectRootRole role;
+};
+
+struct SelectedPackageDependency {
+    PackageInstance consumer;
+    PackageInstance provider;
+    DependencyKind  kind;
+    DependencyType  type;
+    usize           declaration {};
+};
+
+struct SelectedPackageGraph {
+    Vec<PackageInstance>           instances;
+    Vec<SelectedPackageRoot>       roots;
+    Vec<SelectedPackageDependency> dependencies;
+};
+
 struct ResolvedPackageGraph {
     String                                   name;
     Vec<ResolvedProjectRoot>                 roots;

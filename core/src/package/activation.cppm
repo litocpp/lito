@@ -21,13 +21,14 @@ export namespace lito::package
 {
 
 struct SelectedPackageClosure {
-    Vec<String> target;
-    Vec<String> host;
-    Vec<String> plugins;
-    Vec<String> providers;
-    Vec<String> processors;
-    Vec<String> tools;
-    Vec<String> install;
+    SelectedPackageGraph graph;
+    Vec<String>          target;
+    Vec<String>          host;
+    Vec<String>          plugins;
+    Vec<String>          providers;
+    Vec<String>          processors;
+    Vec<String>          tools;
+    Vec<String>          install;
 };
 
 auto select_conditioned_packages(ResolvedPackageGraph&              graph,
@@ -38,7 +39,8 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                                  const FeatureSelection&            features,
                                  const PackageConditionEnvironment& environment,
                                  bool install) -> PackageResult<SelectedPackageClosure> {
-    auto indices = IndexMap::make();
+    auto active_graph = SelectedPackageGraph {};
+    auto indices      = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
     }
@@ -95,6 +97,16 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
             selected_host.insert(root.clone(), empty {});
             providers.insert(root.clone(), empty {});
         }
+
+        const auto record_root = [&](bool host) {
+            auto role = ProjectRootRole::PrimaryPackage;
+            for (const auto& entry : graph.roots)
+                if (entry.name == root.as_str()) role = entry.role;
+            active_graph.roots.push(SelectedPackageRoot {
+                PackageInstance { **indices.get(root.as_str()), host }, role });
+        };
+        if (has_target) record_root(false);
+        if (has_plugin || has_provider) record_root(true);
     }
     const auto consume = [&](String current, bool host) -> PackageResult<empty> {
         auto& selected = host ? selected_host : selected_target;
@@ -119,11 +131,30 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
         }
         auto context =
             make_package_condition_context(package, host ? *host_environment : environment.target);
+        const auto record = [&](const ResolvedRequiredDependency& dependency,
+                                bool                              provider_host,
+                                DependencyKind                    kind,
+                                usize                             declaration) {
+            auto type = dependency.is_Cpp()      ? DependencyType::Cpp
+                        : dependency.is_Script() ? DependencyType::Script
+                        : dependency.is_Plugin() ? DependencyType::Plugin
+                                                 : DependencyType::Pmacro;
+            active_graph.dependencies.push(SelectedPackageDependency {
+                PackageInstance { **index, host },
+                PackageInstance { **indices.get(resolved_dependency_name(dependency)),
+                                  provider_host },
+                kind,
+                type,
+                declaration });
+        };
+        usize declaration {};
         for (auto& dependency : package.dependencies) {
             auto enabled = rstd_try(dependency_condition_matches(
                 package, resolved_dependency_name(dependency), dependency.activation, context));
             (host ? dependency.activation.host : dependency.activation.target) = enabled;
+            const auto edge_index                                              = declaration++;
             if (! enabled) continue;
+            auto provider_host = host;
             requests.dependency(current.as_str(), dependency);
             if (dependency.is_Plugin()) {
                 if (host && plugins.contains_key(current.as_str())) {
@@ -132,6 +163,7 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                                      current.as_str(),
                                      dependency.as_Plugin().value.name.as_str())));
                 }
+                provider_host = true;
                 selected_host.insert(dependency.as_Plugin().value.name.clone(), empty {});
                 plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
             } else if (dependency.is_Pmacro()) {
@@ -141,10 +173,12 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                                      current.as_str(),
                                      dependency.as_Pmacro().value.name.as_str())));
                 }
+                provider_host = true;
                 selected_host.insert(dependency.as_Pmacro().value.name.clone(), empty {});
                 providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
             } else if (! host && artifact_processor.is_some() && dependency.is_Cpp() &&
                        dependency.as_Cpp().value.name.as_str() == **artifact_processor) {
+                provider_host = true;
                 selected_host.insert(dependency.as_Cpp().value.name.clone(), empty {});
                 processors.insert(dependency.as_Cpp().value.name.clone(), empty {});
             } else if (dependency.is_Cpp() &&
@@ -160,17 +194,23 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                 selected_target.insert(String::make(resolved_dependency_name(dependency)),
                                        empty {});
             }
+            record(dependency, provider_host, DependencyKind::Normal, edge_index);
         }
         if (! host && development.contains_key(current.as_str())) {
+            declaration = usize {};
             for (auto& dependency : package.dev_dependencies) {
                 dependency.activation.target = rstd_try(dependency_condition_matches(
                     package, resolved_dependency_name(dependency), dependency.activation, context));
+                const auto edge_index        = declaration++;
                 if (! dependency.activation.target) continue;
+                auto provider_host = false;
                 requests.dependency(current.as_str(), dependency);
                 if (dependency.is_Plugin()) {
+                    provider_host = true;
                     selected_host.insert(dependency.as_Plugin().value.name.clone(), empty {});
                     plugins.insert(dependency.as_Plugin().value.name.clone(), empty {});
                 } else if (dependency.is_Pmacro()) {
+                    provider_host = true;
                     selected_host.insert(dependency.as_Pmacro().value.name.clone(), empty {});
                     providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
                 } else if (dependency.is_Cpp() &&
@@ -181,13 +221,22 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                     selected_target.insert(String::make(resolved_dependency_name(dependency)),
                                            empty {});
                 }
+                record(dependency, provider_host, DependencyKind::Development, edge_index);
             }
         }
         if (! host && installing.contains_key(current.as_str())) {
+            declaration = usize {};
             for (auto& dependency : package.runtime_dependencies) {
                 dependency.activation.target = rstd_try(dependency_condition_matches(
                     package, dependency.name.as_str(), dependency.activation, context));
+                const auto edge_index        = declaration++;
                 if (! dependency.activation.target) continue;
+                active_graph.dependencies.push(SelectedPackageDependency {
+                    PackageInstance { **index, false },
+                    PackageInstance { **indices.get(dependency.name.as_str()), false },
+                    DependencyKind::Runtime,
+                    DependencyType::Runtime,
+                    edge_index });
                 installing.insert(dependency.name.clone(), empty {});
                 selected_target.insert(dependency.name.clone(), empty {});
             }
@@ -254,12 +303,17 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
     if (visited != graph.packages.len())
         return Err(PackageError::Message("package dependency cycle in condition selection"_Str));
 
-    auto result = SelectedPackageClosure {};
+    auto result  = SelectedPackageClosure {};
+    result.graph = rstd::move(active_graph);
     for (const auto& package : graph.packages) {
         if (selected_target.contains_key(package.manifest.name.as_str())) {
+            result.graph.instances.push(
+                PackageInstance { **indices.get(package.manifest.name.as_str()), false });
             result.target.push(package.manifest.name.clone());
         }
         if (selected_host.contains_key(package.manifest.name.as_str())) {
+            result.graph.instances.push(
+                PackageInstance { **indices.get(package.manifest.name.as_str()), true });
             result.host.push(package.manifest.name.clone());
         }
         if (plugins.contains_key(package.manifest.name.as_str())) {

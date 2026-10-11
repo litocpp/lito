@@ -30,14 +30,33 @@ enum class PackageSelectionPurpose
     Example,
 };
 
+enum class PackageRootSelection
+{
+    Targets,
+    Metadata
+};
+
+auto default_build_profile(PackageSelectionPurpose purpose) -> lito::manifest::BuildProfileName {
+    return { .value = String::make(purpose == PackageSelectionPurpose::Benchmark ||
+                                           purpose == PackageSelectionPurpose::Install
+                                       ? "release"_str
+                                       : "debug"_str) };
+}
+
 struct PackageSelection {
-    PathBuf          root;
-    Vec<String>      packages;
-    FeatureSelection features;
+    PathBuf              root;
+    Vec<String>          packages;
+    FeatureSelection     features;
+    PackageRootSelection root_selection { PackageRootSelection::Targets };
+
+    auto clone() const -> PackageSelection {
+        return { root.clone(), packages.clone(), features.clone(), root_selection };
+    }
 };
 
 struct ResolvedPackageSelection {
     ResolvedPackageGraph       graph;
+    SelectedPackageGraph       active_graph;
     Vec<String>                selected_root_names;
     Vec<String>                install_package_names;
     Vec<String>                selected_package_names;
@@ -118,7 +137,8 @@ auto selected_by_purpose(ProjectRootRole         role,
 auto append_selected_targets(Vec<PackageTargetId>&   output,
                              const ResolvedPackage&  package,
                              ProjectRootRole         role,
-                             PackageSelectionPurpose purpose) -> bool {
+                             PackageSelectionPurpose purpose,
+                             PackageRootSelection    mode = PackageRootSelection::Targets) -> bool {
     auto selected = false;
     for (const auto& target : package.manifest.targets) {
         if (lito::manifest::package_target_is_host_tool(target)) continue;
@@ -143,6 +163,9 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
     if (purpose == PackageSelectionPurpose::Install && package.manifest.install_script.is_some()) {
         selected = true;
     }
+    if (mode == PackageRootSelection::Metadata && purpose == PackageSelectionPurpose::Production &&
+        role != ProjectRootRole::AssociatedTest && package.manifest.script.is_some())
+        selected = true;
     return selected;
 }
 
@@ -261,7 +284,11 @@ auto resolve_package_selection_with_environment_impl(
                 }
             }
             if (selected_package != nullptr && supported &&
-                append_selected_targets(selected_targets, *selected_package, root.role, purpose)) {
+                append_selected_targets(selected_targets,
+                                        *selected_package,
+                                        root.role,
+                                        purpose,
+                                        selection.root_selection)) {
                 selected_roots.push(name.clone());
             }
         }
@@ -305,7 +332,11 @@ auto resolve_package_selection_with_environment_impl(
                 }
             }
             if (selected_package == nullptr ||
-                ! append_selected_targets(selected_targets, *selected_package, **role, purpose)) {
+                ! append_selected_targets(selected_targets,
+                                          *selected_package,
+                                          **role,
+                                          purpose,
+                                          selection.root_selection)) {
                 return Err(PackageSelectionError::Message(
                     rstd::format("project package '{}' has no {} target", name.as_str(), purpose)));
             }
@@ -396,6 +427,7 @@ auto resolve_package_selection_with_environment_impl(
         graph, selected_packages->target, target_selected_targets, selected_packages->tools);
     return Ok(ResolvedPackageSelection {
         .graph                            = rstd::move(graph),
+        .active_graph                     = rstd::move(selected_packages->graph),
         .selected_root_names              = rstd::move(selected_roots),
         .install_package_names            = rstd::move(install_packages),
         .selected_package_names           = rstd::move(selected_packages->target),
@@ -513,6 +545,21 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
             ! processors.contains_key(name.as_str()))
             selection.selected_root_names.push(name.clone());
     }
+    auto host_graph = SelectedPackageGraph {};
+    for (const auto& instance : selection.active_graph.instances)
+        if (instance.host) host_graph.instances.emplace_back(instance);
+    for (const auto& edge : selection.active_graph.dependencies)
+        if (edge.consumer.host && edge.provider.host) host_graph.dependencies.emplace_back(edge);
+    for (const auto& name : selection.selected_root_names) {
+        for (const auto& instance : host_graph.instances) {
+            if (selection.graph.packages[instance.package].manifest.name != name.as_str()) continue;
+            auto role = ProjectRootRole::PrimaryPackage;
+            for (const auto& root : selection.graph.roots)
+                if (root.name == name.as_str()) role = root.role;
+            host_graph.roots.push(SelectedPackageRoot { instance, role });
+        }
+    }
+    selection.active_graph = rstd::move(host_graph);
     selection.install_package_names.clear();
     selection.selected_package_names = rstd::move(selection.host_package_names);
     selection.selected_targets       = rstd::move(selected_targets);

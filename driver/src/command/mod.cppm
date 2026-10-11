@@ -7,6 +7,7 @@ export import :command.test;
 export import :command.bench;
 export import :command.run;
 export import :command.scan;
+export import :command.tree;
 export import :command.doc;
 export import :command.format;
 export import :command.format_execution;

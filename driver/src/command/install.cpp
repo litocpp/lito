@@ -186,7 +186,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     request.build.selection.root = request.source.project.root.clone();
     request.build.purpose        = lito::package::PackageSelectionPurpose::Install;
     if (request.build.profile.is_none()) {
-        request.build.profile = Some(lito::manifest::BuildProfileName { .value = "release"_Str });
+        request.build.profile = Some(
+            lito::package::default_build_profile(lito::package::PackageSelectionPurpose::Install));
     }
     if (! request.build.targets.is_empty()) {
         return Err(InstallError::Message(

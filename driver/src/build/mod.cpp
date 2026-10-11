@@ -555,15 +555,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto tool_resolver = lito::tools::ToolResolver(
         process_environment, request.tools.clone(), request.tool_reporter);
-    auto profile =
-        request.profile.is_some()
-            ? request.profile->clone()
-            : lito::manifest::BuildProfileName {
-                  .value = String::make(request.purpose ==
-                                                lito::package::PackageSelectionPurpose::Benchmark
-                                            ? "release"_str
-                                            : "debug"_str),
-              };
+    auto profile   = request.profile.is_some()
+                         ? request.profile->clone()
+                         : lito::package::default_build_profile(request.purpose);
     auto execution = resolve_scan_execution(request.execution.scan);
     if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
     auto preparation_timing  = ExternalPreparationTimingReport {};

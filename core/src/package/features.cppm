@@ -19,6 +19,10 @@ struct FeatureSelection {
     Vec<String> enabled;
     bool        default_features { true };
     bool        all_features { false };
+
+    auto clone() const -> FeatureSelection {
+        return { enabled.clone(), default_features, all_features };
+    }
 };
 
 class FeatureRequests {
