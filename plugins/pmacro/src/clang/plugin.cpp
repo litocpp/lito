@@ -34,6 +34,7 @@ namespace pmacro::clang_bridge
 {
 
 constexpr llvm::StringLiteral define_annotation         = "pmacro.define";
+constexpr llvm::StringLiteral define_scope_annotation   = "pmacro.define:";
 constexpr llvm::StringLiteral attr_annotation           = "pmacro.attr:";
 constexpr llvm::StringLiteral attr_arguments_annotation = "pmacro.attr.arguments:";
 constexpr llvm::StringLiteral derive_annotation         = "pmacro.derive:";
@@ -55,7 +56,8 @@ struct ParsedStringArguments {
 auto parse_string_arguments(clang::Sema&             sema,
                             const clang::ParsedAttr& attribute,
                             llvm::StringRef          spelling,
-                            bool first_only) -> std::optional<ParsedStringArguments> {
+                            bool                     first_only,
+                            bool allow_empty = false) -> std::optional<ParsedStringArguments> {
     auto result = ParsedStringArguments { .range = attribute.getRange() };
     if (attribute.getNumArgs() != 0) {
         const auto count = first_only ? 1u : attribute.getNumArgs();
@@ -77,8 +79,10 @@ auto parse_string_arguments(clang::Sema&             sema,
         clang::Lexer::getLocForEndOfToken(attribute.getRange().getEnd(), 0, manager, language);
     auto token = clang::Token {};
     if (clang::Lexer::getRawToken(location, token, manager, language, true) ||
-        ! token.is(clang::tok::l_paren))
+        ! token.is(clang::tok::l_paren)) {
+        if (allow_empty) return result;
         return std::nullopt;
+    }
     location         = clang::Lexer::getLocForEndOfToken(token.getLocation(), 0, manager, language);
     auto       depth = 0u;
     auto       argument_tokens  = 0u;
@@ -99,7 +103,9 @@ auto parse_string_arguments(clang::Sema&             sema,
             token.is(clang::tok::eof))
             return std::nullopt;
         if (token.is(clang::tok::r_paren) && depth == 0) {
-            if (! finish_argument()) return std::nullopt;
+            if ((! allow_empty || argument_tokens != 0 || ! result.values.empty()) &&
+                ! finish_argument())
+                return std::nullopt;
             result.range.setEnd(token.getLocation());
             break;
         }
@@ -124,7 +130,7 @@ auto parse_string_arguments(clang::Sema&             sema,
         }
         location = clang::Lexer::getLocForEndOfToken(token.getLocation(), 0, manager, language);
     }
-    if (result.values.empty()) {
+    if (result.values.empty() && ! allow_empty) {
         auto message = spelling.str();
         message.append(" requires at least one macro identity");
         report(sema.getDiagnostics(), attribute.getLoc(), clang::DiagnosticsEngine::Error, message);
@@ -140,6 +146,7 @@ public:
             { clang::ParsedAttr::AS_CXX11, "pmacro::define" },
         };
         Spellings = spellings;
+        OptArgs   = 1;
     }
 
     auto diagAppertainsToDecl(clang::Sema&             sema,
@@ -156,8 +163,21 @@ public:
     auto handleDeclAttribute(clang::Sema&             sema,
                              clang::Decl*             declaration,
                              const clang::ParsedAttr& attribute) const -> AttrHandling override {
-        declaration->addAttr(clang::AnnotateAttr::Create(
-            sema.Context, define_annotation, nullptr, 0, attribute.getRange()));
+        auto parsed = parse_string_arguments(sema, attribute, "'pmacro::define'", false, true);
+        if (! parsed.has_value() || parsed->values.size() > 1 ||
+            (! parsed->values.empty() && llvm::StringRef(parsed->values.front()).contains("::"))) {
+            report(sema.getDiagnostics(),
+                   attribute.getLoc(),
+                   clang::DiagnosticsEngine::Error,
+                   "'pmacro::define' accepts one optional non-empty string literal macro scope "
+                   "without '::'");
+            return AttributeNotApplied;
+        }
+        auto annotation = define_annotation.str();
+        if (! parsed->values.empty())
+            annotation = define_scope_annotation.str() + parsed->values.front();
+        declaration->addAttr(
+            clang::AnnotateAttr::Create(sema.Context, annotation, nullptr, 0, parsed->range));
         return AttributeApplied;
     }
 };
@@ -466,10 +486,10 @@ public:
         auto frames  = std::vector<GroupFrame> {};
         auto current = root;
         auto lexer   = clang::Lexer(clang::SourceLocation {},
-                                  compiler_.getLangOpts(),
-                                  input.begin(),
-                                  input.begin(),
-                                  input.end());
+                                    compiler_.getLangOpts(),
+                                    input.begin(),
+                                    input.begin(),
+                                    input.end());
         for (;;) {
             auto token = clang::Token {};
             lexer.LexFromRawLexer(token);
@@ -553,8 +573,9 @@ public:
             const auto  provider = llvm::StringRef(node->provider());
             const auto& macro    = node->macro();
             if (provider.empty()) return { .status = MacroLookupStatus::InvalidRegistration };
-            if (provider != package) continue;
-            found_provider = provider;
+            const auto scope = macro.scope.empty() ? provider : llvm::StringRef(macro.scope);
+            if (scope.contains("::")) return { .status = MacroLookupStatus::InvalidRegistration };
+            if (scope != package) continue;
             const auto valid_callback =
                 (std::holds_alternative<pmacro::host::AttributeCallback>(macro.callback) &&
                  std::get<pmacro::host::AttributeCallback>(macro.callback).function != nullptr) ||
@@ -566,7 +587,8 @@ public:
             if (pmacro::host::macro_kind(macro.callback) != kind)
                 return { .status = MacroLookupStatus::KindMismatch };
             if (found != nullptr) return { .status = MacroLookupStatus::Duplicate };
-            found = &macro;
+            found          = &macro;
+            found_provider = provider;
         }
         return found == nullptr ? MacroLookup {}
                                 : MacroLookup { .macro    = found,
@@ -801,6 +823,7 @@ private:
 
 struct MacroDefinition {
     std::string             name;
+    std::string             scope;
     std::string             qualified_name;
     pmacro::host::MacroKind kind { pmacro::host::MacroKind::Attr };
     pmacro::Span            attribute_span;
@@ -946,7 +969,8 @@ public:
                    << ", pmacro::host::"
                    << (definition.kind == pmacro::host::MacroKind::Attr ? "AttributeCallback"
                                                                         : "DeriveCallback")
-                   << " { &" << definition.qualified_name << " } },\n"
+                   << " { &" << definition.qualified_name << " }, " << escaped(definition.scope)
+                   << " },\n"
                    << "};\n";
         }
         stream << "}\n";
@@ -960,7 +984,9 @@ private:
         auto* function = llvm::dyn_cast<clang::FunctionDecl>(declaration);
         if (function != nullptr && function->hasAttr<clang::AnnotateAttr>()) {
             for (const auto* attribute : function->specific_attrs<clang::AnnotateAttr>()) {
-                if (attribute->getAnnotation() == define_annotation) collect(*function, *attribute);
+                if (attribute->getAnnotation() == define_annotation ||
+                    attribute->getAnnotation().starts_with(define_scope_annotation))
+                    collect(*function, *attribute);
             }
         }
         if (auto* nested = llvm::dyn_cast<clang::DeclContext>(declaration)) traverse(*nested);
@@ -1036,9 +1062,13 @@ private:
             reject("'pmacro::define' function must be noexcept");
             return;
         }
-        const auto name = function.getNameAsString();
+        const auto name       = function.getNameAsString();
+        const auto annotation = attribute.getAnnotation();
+        const auto scope      = annotation.starts_with(define_scope_annotation)
+                                    ? annotation.drop_front(define_scope_annotation.size()).str()
+                                    : options_.provider;
         for (const auto& definition : definitions_) {
-            if (definition.name == name) {
+            if (definition.name == name && definition.scope == scope) {
                 reject("'pmacro::define' macro name is duplicated in this provider");
                 return;
             }
@@ -1050,6 +1080,7 @@ private:
         }
         definitions_.push_back(MacroDefinition {
             .name           = name,
+            .scope          = scope,
             .qualified_name = function.getQualifiedNameAsString(),
             .kind           = kind,
             .attribute_span = *definition_attribute_span,
@@ -1221,7 +1252,7 @@ private:
             report(diagnostics,
                    attribute.getLocation(),
                    clang::DiagnosticsEngine::Error,
-                   "pmacro identity must be 'package-name::macro-name'");
+                   "pmacro identity must be 'scope::macro-name'");
             failed_ = true;
             return;
         }
@@ -1470,7 +1501,7 @@ private:
                 report(diagnostics,
                        attribute.getLocation(),
                        clang::DiagnosticsEngine::Error,
-                       "pmacro identity must be 'package-name::macro-name'");
+                       "pmacro identity must be 'scope::macro-name'");
                 failed_ = true;
                 return;
             }

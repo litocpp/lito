@@ -49,7 +49,11 @@ plugin. The target automatically receives Lito's `pmacro` compiler-support packa
 provider may use ordinary C/C++ library dependencies, but cannot depend on another pmacro provider.
 An override for the builtin `pmacro` package must still provide `[plugin]`.
 
-Provider functions use `[[pmacro::define]]`. `AttributeInput` definitions are invoked through
+Provider functions use `[[pmacro::define]]`. An optional string literal selects their public macro
+scope: `[[pmacro::define("wasmto")]]` on `bindgen` registers `wasmto::bindgen`. Without an argument,
+the scope is the provider package name. The scope must be non-empty and must not contain `::`.
+Registration and dependency selection retain the actual provider package identity.
+`AttributeInput` definitions are invoked through
 `pmacro::attr`; `DeriveInput` definitions are invoked through `pmacro::derive`. Both receive and
 return token streams. Function-like macros, Clang AST access, semantic query APIs, and side outputs
 are not part of this interface.

@@ -255,6 +255,7 @@ constexpr auto macro_kind(const MacroCallback& callback) noexcept -> MacroKind {
 struct MacroDescriptor {
     std::string_view name;
     MacroCallback    callback;
+    std::string_view scope {};
 };
 
 class MacroRegistration {

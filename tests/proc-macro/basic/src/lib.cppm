@@ -16,10 +16,28 @@ auto contains_token(pmacro::TokenStream stream, std::string_view spelling) noexc
     return false;
 }
 
-[[pmacro::define]]
+[[pmacro::define()]]
 auto identity(pmacro::AttributeInput input, pmacro::Context&) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
     return input.item;
+}
+
+[[pmacro::define("pmacro-basic")]]
+auto scoped_identity(pmacro::AttributeInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (context.macro_identity() != "pmacro-basic::scoped_identity" ||
+        context.provider_identity() != "pmacro-basic-provider")
+        return std::unexpected(pmacro::Error::Failure);
+    return input.item;
+}
+
+[[pmacro::define("pmacro-basic")]]
+auto scoped_derive(pmacro::DeriveInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (context.macro_identity() != "pmacro-basic::scoped_derive" ||
+        context.provider_identity() != "pmacro-basic-provider")
+        return std::unexpected(pmacro::Error::Failure);
+    return context.parse("inline constexpr bool scoped_derive_valid = true;");
 }
 
 [[pmacro::define]]

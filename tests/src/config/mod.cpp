@@ -287,7 +287,7 @@ stdlib = "libc++"
 [toolchain.wasm]
 entry = "none"
 export-memory = false
-processor = "wasm-js-bindgen"
+processor = "wasmto-bindgen"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::config::load_project_config(project->root.as_path());
@@ -304,7 +304,7 @@ processor = "wasm-js-bindgen"
     EXPECT_EQ(loaded->toolchain.wasm->entry, lito::config::WasmEntry::None);
     EXPECT_FALSE(loaded->toolchain.wasm->export_memory);
     ASSERT_TRUE(loaded->toolchain.wasm->processor.is_some());
-    EXPECT_EQ(loaded->toolchain.wasm->processor->as_str(), "wasm-js-bindgen"_str);
+    EXPECT_EQ(loaded->toolchain.wasm->processor->as_str(), "wasmto-bindgen"_str);
 
     constexpr ref<str> invalid[] = {
         "[toolchain]\nvendor = \"unknown\"\n"_str,

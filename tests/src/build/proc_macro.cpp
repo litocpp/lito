@@ -4,6 +4,7 @@ import rstd;
 import rstd.test;
 import lito.cpp;
 import lito.driver;
+import lito.test.pmacro.consumer;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -21,4 +22,9 @@ TEST(ProcMacroBuild, AggregateSelectionIdentityIncludesProviders) {
     same[usize {}].package = "other-macros"_Str;
     EXPECT_NE(lito::proc_macro_aggregate_identity(dependencies).as_str(),
               lito::proc_macro_aggregate_identity(same).as_str());
+}
+
+TEST(ProcMacroBuild, ScopedIdentityPreservesProvider) {
+    EXPECT_TRUE(scoped_identity_valid);
+    EXPECT_TRUE(scoped_derive_valid);
 }

@@ -10,6 +10,11 @@ constexpr auto pmacro_logical_source = __FILE__;
 static_assert(pmacro_logical_source[0] != '\0');
 
 export {
+    [[pmacro::attr("pmacro-basic::scoped_identity")]]
+    inline constexpr bool scoped_identity_valid = true;
+
+    struct [[pmacro::derive("pmacro-basic::scoped_derive")]] ScopedValue {};
+
     [[pmacro::attr("pmacro-basic-provider::identity")]]
     inline constexpr int prefix_value = 7;
 
