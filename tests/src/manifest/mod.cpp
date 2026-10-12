@@ -1110,6 +1110,78 @@ pub = true
     EXPECT_EQ(dependency.requirement.version->value.as_str(), "8.0"_str);
 }
 
+TEST_F(Manifest, PackPackagePreservesWorkspaceCMakeDependenciesWithoutExecutingAdapters) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "pack-workspace-cmake"
+members = ["library"]
+
+[workspace.external-dependencies.cmake.sdk]
+package = "LitoTestUninstalledSDK"
+components = ["Core"]
+adapter = "library/cmake/adapter.cmake"
+host-tools = [{ name = "generator", target = "SDK::generator" }]
+)toml"_str },
+        { "library/lito.toml"_str, R"toml([package]
+name = "sample"
+version = "1.2.3"
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+
+[external-dependencies.cmake.sdk]
+workspace = true
+condition = "true"
+targets = [{ name = "SDK::Core", pub = true }]
+)toml"_str },
+        { "library/src/lib.cppm"_str, "export module sample;\n"_str },
+        { "library/cmake/adapter.cmake"_str,
+          "message(FATAL_ERROR \"package publishing must not execute adapters\")\n"_str },
+    };
+    auto project = materialize("pack-workspace-cmake"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output =
+        build_root("pack-workspace-cmake"_str).join(PathBuf::from("sample.tar.zst"_str).as_path());
+    auto packed = lito::pack_package(lito::PackPackageRequest {
+        .root    = project->root.clone(),
+        .package = Some("sample"_Str),
+        .output  = Some(rstd::move(output)),
+        .registry =
+            lito::PackageRegistryContext {
+                .owner =
+                    lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            },
+    });
+    if (packed.is_err()) {
+        auto message = error_chain_text(rstd::move(packed).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    ASSERT_TRUE(packed->artifact.is_some());
+    const auto& manifest = packed->artifact->candidate.manifest;
+    EXPECT_TRUE(manifest.workspace_cmake_external_dependencies.is_empty());
+    ASSERT_EQ(manifest.cmake_external_dependencies.len(), usize(1));
+    const auto& dependency = manifest.cmake_external_dependencies[usize {}];
+    EXPECT_EQ(dependency.package.as_str(), "LitoTestUninstalledSDK"_str);
+    ASSERT_EQ(dependency.components.len(), usize(1));
+    EXPECT_EQ(dependency.components[usize {}].as_str(), "Core"_str);
+    ASSERT_TRUE(dependency.condition.is_some());
+    EXPECT_EQ(dependency.condition->source.as_str(), "true"_str);
+    ASSERT_TRUE(dependency.adapter.is_some());
+    EXPECT_EQ(dependency.adapter->as_path(), PathBuf::from("cmake/adapter.cmake"_str).as_path());
+    ASSERT_EQ(dependency.targets.len(), usize(1));
+    EXPECT_EQ(dependency.targets[usize {}].name.as_str(), "SDK::Core"_str);
+    EXPECT_TRUE(dependency.targets[usize {}].consumption.is_public);
+    ASSERT_EQ(dependency.host_tools.len(), usize(1));
+    EXPECT_EQ(dependency.host_tools[usize {}].name.as_str(), "generator"_str);
+    EXPECT_EQ(dependency.host_tools[usize {}].target.as_str(), "SDK::generator"_str);
+    EXPECT_TRUE(packed->files.iter().any([](auto path) {
+        return path->as_str() == "cmake/adapter.cmake"_str;
+    }));
+}
+
 TEST_F(Manifest, PackPackageNormalizesFilesystemMetadata) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

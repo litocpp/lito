@@ -1987,12 +1987,12 @@ archive = "sample"
               "lito.registry.inspector-capabilities.v5"_str);
 }
 
-TEST(RegistryArchive, AllowsPkgConfigButRejectsCMakeDependencies) {
+TEST(RegistryArchive, PreservesPkgConfigAndCMakeDependencies) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
-    auto           owner   = rstd::move(temporary).unwrap();
-    constexpr bool cases[] = { false, true };
-    for (const auto cmake : cases) {
+    auto               owner   = rstd::move(temporary).unwrap();
+    constexpr ref<str> cases[] = { ""_str, "false"_str, "true"_str };
+    for (const auto condition : cases) {
         auto tree     = lito::source::SourceTree::make();
         auto manifest = R"toml([package]
 name = "sample"
@@ -2010,39 +2010,54 @@ static = true
 pub = true
 condition = 'target.os == "linux"'
 )toml"_Str;
-        if (cmake) {
-            manifest.push_str(R"toml(
+        if (! condition.is_empty()) {
+            manifest.push_str(rstd::format(R"toml(
 [external-dependencies.cmake.curl]
-package = "CURL"
-condition = "false"
-targets = [{ name = "CURL::libcurl" }]
-)toml"_str);
+package = "LitoTestUninstalledCURL"
+components = ["Core"]
+condition = "{}"
+targets = [{{ name = "CURL::libcurl", pub = true, usage = "compile" }}]
+)toml",
+                                           condition)
+                                  .as_str());
         }
         ASSERT_TRUE(tree.add_text("lito.toml"_str, manifest.as_str()).is_ok());
         ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
         auto package = registry_package("sample"_str);
         auto version = registry_version("1.2.3"_str);
-        auto archive =
-            PathBuf::from(owner.path())
-                .join(PathBuf::from(cmake ? "cmake.tar.zst"_str : "pkg-config.tar.zst"_str)
-                          .as_path());
-        auto built = lito::registry::PackageArchiveBuilder::build(
+        auto archive = PathBuf::from(owner.path())
+                           .join(PathBuf::from(rstd::format("{}.tar.zst",
+                                                            condition.is_empty() ? "pkg-config"_str
+                                                                                 : condition))
+                                     .as_path());
+        auto built   = lito::registry::PackageArchiveBuilder::build(
             tree, package, version, rstd::move(archive));
-        if (cmake) {
-            ASSERT_TRUE(built.is_err());
-            EXPECT_EQ(built.unwrap_err().code,
-                      lito::registry::RegistryArtifactFailureCode::ExternalInputsNotAllowed);
+        ASSERT_TRUE(built.is_ok());
+        const auto& dependencies = built->candidate.manifest.pkg_config_external_dependencies;
+        ASSERT_EQ(dependencies.len(), usize(1));
+        const auto& dependency = dependencies[usize {}];
+        EXPECT_EQ(dependency.requirement.module.as_str(), "lito-test-uninstalled-libcurl"_str);
+        ASSERT_TRUE(dependency.requirement.version.is_some());
+        EXPECT_EQ(dependency.requirement.version->value.as_str(), "8.0"_str);
+        EXPECT_EQ(dependency.requirement.mode, lito::dependency::PkgConfigQueryMode::Static);
+        ASSERT_TRUE(dependency.condition.is_some());
+        EXPECT_EQ(dependency.condition->source.as_str(), "target.os == \"linux\""_str);
+        const auto& cmake_dependencies = built->candidate.manifest.cmake_external_dependencies;
+        if (condition.is_empty()) {
+            EXPECT_TRUE(cmake_dependencies.is_empty());
         } else {
-            ASSERT_TRUE(built.is_ok());
-            const auto& dependencies = built->candidate.manifest.pkg_config_external_dependencies;
-            ASSERT_EQ(dependencies.len(), usize(1));
-            const auto& dependency = dependencies[usize {}];
-            EXPECT_EQ(dependency.requirement.module.as_str(), "lito-test-uninstalled-libcurl"_str);
-            ASSERT_TRUE(dependency.requirement.version.is_some());
-            EXPECT_EQ(dependency.requirement.version->value.as_str(), "8.0"_str);
-            EXPECT_EQ(dependency.requirement.mode, lito::dependency::PkgConfigQueryMode::Static);
-            ASSERT_TRUE(dependency.condition.is_some());
-            EXPECT_EQ(dependency.condition->source.as_str(), "target.os == \"linux\""_str);
+            ASSERT_EQ(cmake_dependencies.len(), usize(1));
+            const auto& cmake = cmake_dependencies[usize {}];
+            EXPECT_EQ(cmake.package.as_str(), "LitoTestUninstalledCURL"_str);
+            ASSERT_EQ(cmake.components.len(), usize(1));
+            EXPECT_EQ(cmake.components[usize {}].as_str(), "Core"_str);
+            ASSERT_TRUE(cmake.condition.is_some());
+            EXPECT_EQ(cmake.condition->source.as_str(), condition);
+            ASSERT_EQ(cmake.targets.len(), usize(1));
+            EXPECT_EQ(cmake.targets[usize {}].name.as_str(), "CURL::libcurl"_str);
+            EXPECT_EQ(cmake.targets[usize {}].consumption.usage,
+                      lito::dependency::DependencyUsage::compile_only());
+            EXPECT_TRUE(cmake.targets[usize {}].consumption.is_public);
         }
     }
 }

@@ -332,7 +332,7 @@ auto inspect_candidate_with_root(const VerifiedRegistryBlob&   blob,
         return archive_failure<InspectedRegistryArchive>(
             RegistryArtifactErrorKind::Manifest,
             package,
-            "Registry packages must not declare external sources, CMake dependencies, or Cargo dependencies"_Str,
+            "Registry packages must not declare external sources or Cargo dependencies"_Str,
             RegistryArtifactFailureCode::ExternalInputsNotAllowed);
     }
     return Ok(InspectedRegistryArchive {

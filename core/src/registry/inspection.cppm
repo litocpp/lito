@@ -470,8 +470,6 @@ auto lito::registry::registry_candidate_has_disallowed_external_inputs(
     const VerifiedRegistrySourceCandidate& candidate) noexcept -> bool {
     const auto& manifest = candidate.manifest;
     if (! manifest.external_sources.is_empty() ||
-        ! manifest.cmake_external_dependencies.is_empty() ||
-        ! manifest.workspace_cmake_external_dependencies.is_empty() ||
         ! manifest.cargo_external_dependencies.is_empty() ||
         ! manifest.workspace_cargo_external_dependencies.is_empty()) {
         return true;

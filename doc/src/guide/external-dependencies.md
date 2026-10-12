@@ -69,6 +69,10 @@ targets = [
 ]
 ```
 
+`lito pack` and `lito publish` preserve CMake dependency declarations without running CMake.
+Registry/Action checks decide whether those dependencies can be used in the check environment.
+External source declarations and Cargo dependencies remain disallowed in Registry archives.
+
 A CMake package or adapter can also publish runtime files as a named asset set while Lito queries
 the dependency:
 
