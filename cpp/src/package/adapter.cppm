@@ -1041,7 +1041,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     }
     auto libraries = library_targets(graph);
 
-    const auto package_has_host_tools = [&graph](ref<str> name) noexcept {
+    const auto package_has_local_host_tools = [&graph,
+                                               &host_only_dependencies](ref<str> name) noexcept {
+        for (const auto& dependency : host_only_dependencies) {
+            if (dependency == name) return false;
+        }
         for (const auto& package : graph.packages) {
             if (package.manifest.name == name)
                 return lito::manifest::package_has_host_tool_target(package.manifest);
@@ -1204,7 +1208,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
-            if (package_has_host_tools(cpp_dependency.name.as_str())) {
+            if (package_has_local_host_tools(cpp_dependency.name.as_str())) {
                 host_tool_dependencies.push(HostToolDependencySpec {
                     .package = cpp_dependency.name.clone(),
                 });
@@ -1267,7 +1271,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
                 if (! dependency.is_Cpp()) continue;
                 const auto& cpp_dependency = dependency.as_Cpp().value;
-                if (package_has_host_tools(cpp_dependency.name.as_str())) {
+                if (package_has_local_host_tools(cpp_dependency.name.as_str())) {
                     dev_host_tool_dependencies.push(HostToolDependencySpec {
                         .package = cpp_dependency.name.clone(),
                     });

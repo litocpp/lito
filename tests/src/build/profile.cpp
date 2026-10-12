@@ -1021,6 +1021,80 @@ linker-options = ["-Wl,--pop-state"]
     EXPECT_EQ(planned->linker_options[usize {}][usize(3)].as_str(), "-Wl,--pop-state"_str);
 }
 
+TEST_F(BuildProfile, HostOnlyToolDependenciesStayOutsideTargetMetadata) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "host-only-tool-consumer"
+version = "0.1.0"
+standard = "c++23"
+
+[[bin]]
+name = "consumer"
+link-stdlib = false
+sources = ["main.cpp"]
+
+[dependencies.processor]
+path = "processor"
+)toml"_str },
+        { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "processor/lito.toml"_str, R"toml([package]
+name = "processor"
+version = "0.1.0"
+standard = "c++23"
+
+[lib]
+name = "processor-core"
+module = "processor.core"
+archive = "processor.core"
+sources = ["lib.cppm"]
+
+[[bin]]
+name = "processor"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+)toml"_str },
+        { "processor/lib.cppm"_str, "export module processor.core;\n"_str },
+        { "processor/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    auto project = materialize("host-only-tool-consumer"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    auto profile             = lito::cpp::make_profile_spec(
+        build_configuration, graph->profile, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(profile.is_ok());
+    auto packages = strings("host-only-tool-consumer"_str);
+    auto targets  = Vec<lito::package::PackageTargetId>::make();
+    targets.push(lito::package::PackageTargetId {
+        .package = "host-only-tool-consumer"_Str,
+        .kind    = lito::package::PackageTargetKind::Binary,
+        .name    = "consumer"_Str,
+    });
+    auto external_usage = lito::cpp::ExternalUsageCatalog {};
+    external_usage.packages.push(lito::cpp::ExternalPackageUsage {
+        .package = "host-only-tool-consumer"_Str,
+    });
+    auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
+                                                            packages,
+                                                            targets,
+                                                            targets,
+                                                            strings("processor"_str),
+                                                            build_configuration,
+                                                            rstd::move(profile).unwrap(),
+                                                            native_platform(),
+                                                            rstd::move(external_usage),
+                                                            lito::cpp::ExternalSourceRootCatalog {},
+                                                            *parser);
+    ASSERT_TRUE(metadata.is_ok());
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_ok());
+    ASSERT_EQ(metadata->targets.len(), usize(1));
+}
+
 TEST_F(BuildProfile, PackageCodegenOptionsRemainRejectedUnderPlainProfile) {
     auto project = manifest_project("owned-option"_str, R"toml([package]
 name = "fixture-profile-owned_option"
