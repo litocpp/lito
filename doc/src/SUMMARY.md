@@ -32,4 +32,5 @@
     - [Test and bench](reference/cli/test-and-bench.md)
     - [Doc, scan, and format](reference/cli/doc-scan-and-format.md)
     - [Update, lock, and config](reference/cli/update-lock-and-config.md)
+    - [Tree](reference/cli/tree.md)
     - [SDK](reference/cli/sdk.md)
