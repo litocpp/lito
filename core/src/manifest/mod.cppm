@@ -1,4 +1,5 @@
 export module lito.core:manifest;
+export import :manifest.name;
 
 export import :manifest.profile;
 export import :manifest.conditional;

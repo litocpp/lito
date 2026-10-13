@@ -59,6 +59,7 @@ target_sources(
          src/manifest/initialize.cppm
          src/manifest/package.cppm
          src/manifest/primitives.cppm
+         src/manifest/name.cppm
          src/manifest/profile.cppm
          src/manifest/profile_schema.cppm
          src/manifest/publish.cppm
@@ -95,6 +96,7 @@ target_sources(
         src/registry/archive.cppm
         src/registry/config.cppm
         src/registry/inspection.cppm
+        src/registry/externals.cppm
         src/registry/metadata.cppm
         src/registry/provider.cppm
          src/registry/solver.cppm

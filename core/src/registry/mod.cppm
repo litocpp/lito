@@ -10,6 +10,7 @@ export import :registry.cache;
 export import :registry.archive;
 export import :registry.config;
 export import :registry.inspection;
+export import :registry.externals;
 export import :registry.metadata;
 export import :registry.provider;
 export import :registry.solver;

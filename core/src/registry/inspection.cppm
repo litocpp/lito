@@ -10,6 +10,7 @@ import :parse.value;
 import :registry.artifact;
 import :registry.identity;
 import :registry.metadata;
+import :registry.externals;
 import :registry.version;
 import :source.requirement;
 import :source.tree;
@@ -37,13 +38,14 @@ struct RegistryPackageMetadata {
 };
 
 struct VerifiedRegistrySourceCandidate {
-    RegistryPackageId                 package;
-    SemanticVersion                   version;
-    Vec<RegistryDependencyProjection> dependencies;
-    RegistryPackageMetadata           metadata;
-    lito::manifest::PackageManifest   manifest;
-    usize                             file_count {};
-    u64                               unpacked_size {};
+    RegistryPackageId                         package;
+    SemanticVersion                           version;
+    Vec<RegistryDependencyProjection>         dependencies;
+    RegistryPackageMetadata                   metadata;
+    Vec<RegistryExternalDependencyProjection> externals;
+    lito::manifest::PackageManifest           manifest;
+    usize                                     file_count {};
+    u64                                       unpacked_size {};
 };
 
 auto inspect_registry_source_tree(const lito::source::SourceTree& tree,
@@ -423,11 +425,18 @@ auto inspect_registry_source_tree_impl(const lito::source::SourceTree& tree,
                              dependencies[index].alias.as_str()));
         }
     }
+    auto externals = project_registry_external_dependencies(manifest);
+    if (externals.is_err())
+        return inspection_failure<VerifiedRegistrySourceCandidate>(
+            RegistryArtifactErrorKind::Manifest,
+            expected_package,
+            rstd::format("{}", externals.unwrap_err()));
     return Ok(VerifiedRegistrySourceCandidate {
         .package       = expected_package.clone(),
         .version       = expected_version.clone(),
         .dependencies  = rstd::move(dependencies),
         .metadata      = rstd_try(inspect_package_metadata(manifest, tree, expected_package)),
+        .externals     = rstd::move(externals).unwrap(),
         .manifest      = rstd::move(manifest),
         .file_count    = file_count,
         .unpacked_size = unpacked_size,

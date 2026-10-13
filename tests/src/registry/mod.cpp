@@ -1984,7 +1984,7 @@ archive = "sample"
         rstd::json::from_str(lito::registry::registry_inspector_capabilities_json().as_str())
             .unwrap();
     EXPECT_EQ(capabilities["schema"_str].as_str().unwrap(),
-              "lito.registry.inspector-capabilities.v5"_str);
+              "lito.registry.inspector-capabilities.v6"_str);
 }
 
 TEST(RegistryArchive, PreservesPkgConfigAndCMakeDependencies) {
@@ -2033,6 +2033,22 @@ targets = [{{ name = "CURL::libcurl", pub = true, usage = "compile" }}]
         auto built   = lito::registry::PackageArchiveBuilder::build(
             tree, package, version, rstd::move(archive));
         ASSERT_TRUE(built.is_ok());
+        auto receipt = lito::registry::serialize_verified_publish_candidate(*built);
+        auto decoded =
+            lito::registry::parse_verified_publish_candidate(receipt.as_str().as_bytes());
+        ASSERT_TRUE(decoded.is_ok());
+        ASSERT_EQ(decoded->externals.len(), condition.is_empty() ? usize(1) : usize(2));
+        const auto& pkg = decoded->externals[decoded->externals.len() - usize(1)].declaration();
+        EXPECT_EQ(pkg["kind"_str].as_str().unwrap(), "pkg-config"_str);
+        EXPECT_EQ(pkg["module"_str].as_str().unwrap(), "lito-test-uninstalled-libcurl"_str);
+        EXPECT_EQ(pkg["alias"_str].as_str().unwrap(), "curl"_str);
+        EXPECT_EQ(pkg["static"_str].as_bool().unwrap(), true);
+        EXPECT_EQ(pkg["condition"_str].as_str().unwrap(), "target.os == \"linux\""_str);
+        if (! condition.is_empty()) {
+            const auto& cmake = decoded->externals[usize()].declaration();
+            EXPECT_EQ(cmake["kind"_str].as_str().unwrap(), "cmake"_str);
+            EXPECT_EQ(cmake["condition"_str].as_str().unwrap(), condition);
+        }
         const auto& dependencies = built->candidate.manifest.pkg_config_external_dependencies;
         ASSERT_EQ(dependencies.len(), usize(1));
         const auto& dependency = dependencies[usize {}];
@@ -2060,6 +2076,25 @@ targets = [{{ name = "CURL::libcurl", pub = true, usage = "compile" }}]
             EXPECT_TRUE(cmake.targets[usize {}].consumption.is_public);
         }
     }
+}
+
+TEST(RegistryArchive, RejectsIncompleteExternalInventories) {
+    auto valid =
+        rstd::json::from_str(
+            R"json([{"kind":"pkg-config","alias":"curl","module":"libcurl","condition":null,"version":null,"static":false,"pub":false,"usage":["compile","link"]}])json"_str)
+            .unwrap();
+    EXPECT_TRUE(lito::registry::parse_registry_external_inventory(valid).is_ok());
+    auto duplicate = valid.clone();
+    duplicate.as_array_mut().unwrap()->push(valid.as_array()->get()[usize()].clone());
+    EXPECT_TRUE(lito::registry::parse_registry_external_inventory(duplicate).is_err());
+    auto unknown = valid.clone();
+    (*unknown.as_array_mut().unwrap())[usize()].as_object_mut().unwrap()->insert(
+        "probe"_Str, rstd::json::Value::Bool(true));
+    EXPECT_TRUE(lito::registry::parse_registry_external_inventory(unknown).is_err());
+    auto missing = rstd::json::from_str(
+                       R"json([{"kind":"pkg-config","alias":"curl","module":"libcurl"}])json"_str)
+                       .unwrap();
+    EXPECT_TRUE(lito::registry::parse_registry_external_inventory(missing).is_err());
 }
 
 TEST(RegistryArchive, RejectsExternalInputsWithAStableCheckCode) {

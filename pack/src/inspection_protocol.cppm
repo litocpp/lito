@@ -14,13 +14,13 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
-inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v5"_str;
-inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v5"_str;
+inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v6"_str;
+inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v6"_str;
 inline constexpr auto REGISTRY_INSPECTION_CANDIDATE_SCHEMA =
-    "lito.registry.verified-publish-candidate.v5"_str;
+    "lito.registry.verified-publish-candidate.v6"_str;
 inline constexpr auto REGISTRY_INSPECTION_FAILURE_SCHEMA =
-    "lito.registry.package-check-failure.v5"_str;
-inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v5"_str;
+    "lito.registry.package-check-failure.v6"_str;
+inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v6"_str;
 
 struct RegistryInspectionProtocolError {
     String message;
@@ -38,13 +38,14 @@ struct RegistryInspectionRequest {
 };
 
 struct VerifiedRegistryPackageDescriptor {
-    RegistryPackageId                 package;
-    SemanticVersion                   version;
-    RegistryPackageArchive            archive;
-    Vec<RegistryDependencyProjection> dependencies;
-    RegistryPackageMetadata           metadata;
-    usize                             file_count {};
-    u64                               unpacked_size {};
+    RegistryPackageId                         package;
+    SemanticVersion                           version;
+    RegistryPackageArchive                    archive;
+    Vec<RegistryDependencyProjection>         dependencies;
+    RegistryPackageMetadata                   metadata;
+    Vec<RegistryExternalDependencyProjection> externals;
+    usize                                     file_count {};
+    u64                                       unpacked_size {};
 };
 
 auto registry_inspector_capabilities_json() -> String;
@@ -446,7 +447,7 @@ auto lito::registry::registry_inspector_capabilities_json() -> String {
     auto formats = rstd::json::Array::make();
     formats.push(string_json(RegistryArchiveFormat::TAR_ZSTD_V1));
     auto root = JsonMap::make();
-    root.insert("schema"_Str, string_json("lito.registry.inspector-capabilities.v5"_str));
+    root.insert("schema"_Str, string_json("lito.registry.inspector-capabilities.v6"_str));
     root.insert("protocols"_Str, Json::Array(rstd::move(protocols)));
     root.insert("archive_formats"_Str, Json::Array(rstd::move(formats)));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
@@ -569,6 +570,7 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
                               "archive"_str,
                               "dependencies"_str,
                               "metadata"_str,
+                              "externals"_str,
                               "file_count"_str,
                               "unpacked_size"_str,
                               "receipt"_str }));
@@ -617,6 +619,10 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
     }
     auto metadata = rstd_try(
         parse_candidate_metadata(*rstd_try(member(root, "metadata"_str, "candidate"_str))));
+    auto externals =
+        rstd_try(parse_registry_value(parse_registry_external_inventory(*rstd_try(
+                                          member(root, "externals"_str, "candidate"_str))),
+                                      "candidate.externals"_str));
     auto file_count = rstd_try(canonical_size(root, "file_count"_str, "candidate"_str));
     if (file_count > as_cast<u64>(usize::MAX)) {
         return Err(RegistryInspectionProtocolError {
@@ -637,6 +643,7 @@ auto lito::registry::parse_verified_publish_candidate(slice<u8> input)
             },
         .dependencies  = rstd::move(dependencies),
         .metadata      = rstd::move(metadata),
+        .externals     = rstd::move(externals),
         .file_count    = usize(file_count.to_primitive()),
         .unpacked_size = rstd_try(canonical_size(root, "unpacked_size"_str, "candidate"_str)),
     });
@@ -663,6 +670,7 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
     root.insert("archive"_Str, Json::Object(rstd::move(archive)));
     root.insert("dependencies"_Str, Json::Array(rstd::move(dependencies)));
     root.insert("metadata"_Str, candidate_metadata_json(candidate.metadata));
+    root.insert("externals"_Str, registry_external_inventory_json(candidate.externals.as_slice()));
     root.insert("file_count"_Str, string_json(rstd::format("{}", candidate.file_count).as_str()));
     root.insert("unpacked_size"_Str,
                 string_json(rstd::format("{}", candidate.unpacked_size).as_str()));
