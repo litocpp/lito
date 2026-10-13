@@ -1,3 +1,19 @@
+<release version="0.8.6" date="2026-10-14">
+  <description>
+    <ul>
+      <li>Support package dependency conditions.</li>
+      <li>Add lito tree.</li>
+      <li>Support build.lua script packages.</li>
+      <li>Add tool dependency usage.</li>
+      <li>Add --outputs-json.</li>
+      <li>Add public scopes to pmacro::define.</li>
+      <li>Add plugin.attribute-only.</li>
+      <li>Allow CMake dependencies in Registry packages.</li>
+      <li>Use Litodoc extraction protocol 2.</li>
+      <li>Update rstd to 0.1.8.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.5" date="2026-10-06">
   <description>
     <ul>
