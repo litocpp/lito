@@ -18,6 +18,73 @@ using PathBuf = rstd::path::PathBuf;
 
 class PackageResolver : public ProjectFixture {};
 
+TEST_F(PackageResolver, ToolUsageRequiresTheDeclaredProviderInterface) {
+    struct Case {
+        bool tool;
+        bool library;
+        bool binary;
+        bool host;
+        bool valid;
+    };
+    const Case cases[] = {
+        { true, false, true, true, true },   { true, true, true, true, true },
+        { true, true, false, false, false }, { true, false, true, false, false },
+        { false, false, true, true, false }, { false, true, true, true, true },
+    };
+    auto index = usize {};
+    for (const auto& item : cases) {
+        auto root = rstd::format(R"toml([package]
+name = "tool-interface-consumer"
+version = "0.1.0"
+standard = "c++23"
+[[bin]]
+name = "consumer"
+link-stdlib = false
+sources = ["main.cpp"]
+[dependencies.provider]
+path = "provider"
+{}
+)toml",
+                                 item.tool ? "usage = \"tool\""_str : ""_str);
+        auto provider =
+            "[package]\nname = \"provider\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"_Str;
+        if (item.library)
+            provider.push_str(
+                "[lib]\nname = \"provider-core\"\nmodule = \"provider.core\"\narchive = \"provider.core\"\nsources = [\"lib.cppm\"]\n"_str);
+        if (item.binary)
+            provider.push_str(rstd::format("[[bin]]\nname = \"generate\"\nhost-tool = "
+                                           "{}\nlink-stdlib = false\nsources = [\"main.cpp\"]\n",
+                                           item.host ? "true"_str : "false"_str)
+                                  .as_str());
+        const ProjectFile files[] = {
+            { "lito.toml"_str, root.as_str() },
+            { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+            { "provider/lito.toml"_str, provider.as_str() },
+            { "provider/lib.cppm"_str, "export module provider.core;\n"_str },
+            { "provider/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        };
+        auto project = materialize(rstd::format("tool-interface-{}", index++).as_str(), files);
+        ASSERT_TRUE(project.is_ok());
+        auto graph = lito::package::resolve_package_graph(project->root.as_path());
+        EXPECT_EQ(graph.is_ok(), item.valid);
+        if (! item.valid) {
+            ASSERT_TRUE(graph.is_err());
+            auto message = error_chain_text(graph.unwrap_err());
+            EXPECT_TRUE(message.as_str().contains(item.tool ? "host-tool binary"_str
+                                                            : "usage = 'tool'"_str));
+            continue;
+        }
+        for (const auto& package : graph->packages) {
+            if (package.manifest.name != "tool-interface-consumer"_str) continue;
+            ASSERT_EQ(package.dependencies.len(), usize(1));
+            const auto& dependency = package.dependencies[usize {}].as_Cpp().value;
+            EXPECT_EQ(dependency.consumption.usage.uses_tool(), item.tool);
+            EXPECT_EQ(dependency.host_tools.len(), item.tool ? usize(1) : usize {});
+            if (item.tool) EXPECT_EQ(dependency.host_tools[usize {}].name, "generate"_str);
+        }
+    }
+}
+
 auto pmacro_source_options(ref<rstd::path::Path> support) -> lito::source::SourceResolutionOptions {
     auto options = lito::source::SourceResolutionOptions {};
     options.sources.builtin_packages.push(lito::source::BuiltinPackageSourceEntry {

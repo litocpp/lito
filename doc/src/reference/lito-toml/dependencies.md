@@ -26,8 +26,8 @@ accepted by `dev-dependencies` or `runtime-dependencies`.
 `commit` is a full 40-digit hexadecimal Git object ID. Git URLs and selectors must be non-empty, may
 not start with `-`, and URLs may not contain a fragment.
 
-After resolving the provider package, Lito classifies the dependency as a C/C++ library, script,
-plugin, or pmacro contract. A C/C++ library edge accepts two independent settings:
+After resolving the provider package, Lito classifies the dependency as a C/C++ library or tool,
+script, plugin, or pmacro contract. A C/C++ library edge accepts two independent settings:
 
 - `usage = "compile" | "link"`, or a non-empty unique array containing those facets. Omitting it
   selects both compile and link usage;
@@ -68,6 +68,38 @@ usage = "link"
 Development dependencies use the same package sources, feature fields, and compile/link usage
 selection. They are always private, so `pub = true` is rejected. They are considered when selected
 targets are tests, benchmarks, or compile tests.
+
+## Tool dependencies
+
+Use `usage = "tool"` to consume a package's host executables:
+
+```toml
+[dependencies.generator]
+version = "1.0.0"
+usage = "tool"
+```
+
+The provider must expose a `[[bin]]` with `host-tool = true`. Lito builds it and its library
+dependencies for the host, including during cross-compilation. Tool consumption contributes no
+target headers, modules, definitions, or link inputs, even when the provider also exposes a library.
+`tool` cannot be combined with compile, link, or runtime, and `pub = true` is rejected. Scalar
+`"tool"` and singleton array `["tool"]` forms are equivalent.
+
+Normal and development dependencies accept tool usage. Workspace members set it on their dependency
+reference; `[workspace.dependencies]` continues to declare only the source. Development tool inputs
+are activated for development targets under the same rules as other development dependencies.
+
+A build script selects a declared tool through its consumer target:
+
+```lua
+local target = lito.target({ kind = "bin", name = "app" })
+local generator = lito.host_tool(target, "generator", "generate")
+```
+
+Ordinary library dependencies never authorize tool calls. A tool-only provider therefore requires
+explicit tool usage; a mixed library/tool provider can still be consumed as a library through
+compile/link usage. `toolchain.wasm.processor` also requires an active tool dependency and does not
+change the execution domain of an ordinary dependency.
 
 ## Pmacro dependencies
 

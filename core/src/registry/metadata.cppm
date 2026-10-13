@@ -204,6 +204,7 @@ auto parse_usage(const Json& value, ref<str> context)
     auto compile = false;
     auto link    = false;
     auto runtime = false;
+    auto tool    = false;
     for (usize index {}; index < array->len(); ++index) {
         auto item_context = rstd::format("{}[{}]", context, index);
         auto text         = (*array)[index].as_str();
@@ -216,6 +217,8 @@ auto parse_usage(const Json& value, ref<str> context)
             selected = &link;
         else if (*text == "runtime"_str)
             selected = &runtime;
+        else if (*text == "tool"_str)
+            selected = &tool;
         else if (*text != "compile"_str)
             return metadata_failure<lito::dependency::DependencyUsage>(
                 item_context.as_str(), "has an unsupported usage facet"_str);
@@ -225,10 +228,10 @@ auto parse_usage(const Json& value, ref<str> context)
         }
         *selected = true;
     }
-    auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime);
+    auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime, tool);
     if (result.is_none()) {
         return metadata_failure<lito::dependency::DependencyUsage>(
-            context, "must contain compile, link, or runtime without mixing runtime"_str);
+            context, "must contain compile/link, runtime, or tool without mixing lifecycles"_str);
     }
     return Ok(*result);
 }
@@ -293,6 +296,10 @@ auto parse_dependency(const Json& value, ref<str> context)
         if (*kind != lito::registry::RegistryDependencyKind::Normal && *is_public) {
             return metadata_failure<lito::registry::RegistryDependencyProjection>(
                 context, "development and runtime dependencies cannot be public"_str);
+        }
+        if (usage->uses_tool() && *is_public) {
+            return metadata_failure<lito::registry::RegistryDependencyProjection>(
+                context, "tool dependencies cannot be public"_str);
         }
         consumption =
             lito::dependency::DependencyConsumption { .usage = *usage, .is_public = *is_public };

@@ -176,8 +176,8 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
 
 auto effective_compile_targets(const ResolvedPackageGraph& graph,
                                const Vec<String>&          selected_packages,
-                               const Vec<PackageTargetId>& selected_targets,
-                               const Vec<String>& host_tool_packages) -> Vec<PackageTargetId> {
+                               const Vec<PackageTargetId>& selected_targets)
+    -> Vec<PackageTargetId> {
     auto result =
         Vec<PackageTargetId>::with_capacity(selected_targets.len() + selected_packages.len());
     const auto append = [&](PackageTargetId target) -> void {
@@ -204,21 +204,6 @@ auto effective_compile_targets(const ResolvedPackageGraph& graph,
                 .name    = String::make(lito::manifest::package_target_name(target)),
             });
             break;
-        }
-        auto host_tool_package = false;
-        for (const auto& name : host_tool_packages) {
-            if (name == package.manifest.name.as_str()) host_tool_package = true;
-        }
-        if (! host_tool_package) continue;
-        for (const auto& target : package.manifest.targets) {
-            if (! target.is_Binary() || ! lito::manifest::package_target_is_host_tool(target)) {
-                continue;
-            }
-            append(PackageTargetId {
-                .package = package.manifest.name.clone(),
-                .kind    = PackageTargetKind::Binary,
-                .name    = String::make(lito::manifest::package_target_name(target)),
-            });
         }
     }
     return result;
@@ -428,8 +413,8 @@ auto resolve_package_selection_with_environment_impl(
             selected_target.kind != PackageTargetKind::ProcMacro)
             target_selected_targets.push(selected_target.clone());
     }
-    auto effective_targets = effective_compile_targets(
-        graph, selected_packages->target, target_selected_targets, selected_packages->tools);
+    auto effective_targets =
+        effective_compile_targets(graph, selected_packages->target, target_selected_targets);
     return Ok(ResolvedPackageSelection {
         .graph                            = rstd::move(graph),
         .active_graph                     = rstd::move(selected_packages->graph),

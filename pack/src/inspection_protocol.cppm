@@ -179,6 +179,7 @@ auto dependency_usage_json(lito::dependency::DependencyUsage usage) -> Json {
     if (usage.uses_compile()) result.push(string_json("compile"_str));
     if (usage.uses_link()) result.push(string_json("link"_str));
     if (usage.uses_runtime()) result.push(string_json("runtime"_str));
+    if (usage.uses_tool()) result.push(string_json("tool"_str));
     return Json::Array(rstd::move(result));
 }
 
@@ -210,6 +211,7 @@ auto dependency_usage(const Json& value, ref<str> context)
     auto compile = false;
     auto link    = false;
     auto runtime = false;
+    auto tool    = false;
     for (usize index {}; index < (*array)->len(); ++index) {
         auto text = (**array)[index].as_str();
         if (text.is_none()) {
@@ -221,6 +223,8 @@ auto dependency_usage(const Json& value, ref<str> context)
             selected = &link;
         else if (*text == "runtime"_str)
             selected = &runtime;
+        else if (*text == "tool"_str)
+            selected = &tool;
         else if (*text != "compile"_str)
             return Err(RegistryInspectionProtocolError {
                 .message = rstd::format("{}[{}] is unsupported", context, index) });
@@ -230,10 +234,10 @@ auto dependency_usage(const Json& value, ref<str> context)
         }
         *selected = true;
     }
-    auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime);
+    auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime, tool);
     if (result.is_none()) {
         return Err(RegistryInspectionProtocolError {
-            .message = rstd::format("{} is empty or mixes runtime with native usage", context) });
+            .message = rstd::format("{} is empty or mixes incompatible lifecycles", context) });
     }
     return Ok(*result);
 }
@@ -304,6 +308,10 @@ auto parse_dependency(const Json& value, usize index)
         return Err(RegistryInspectionProtocolError {
             .message = rstd::format("{}.pub cannot be true for development or runtime dependencies",
                                     context) });
+    }
+    if (usage.uses_tool() && is_public) {
+        return Err(RegistryInspectionProtocolError {
+            .message = rstd::format("{}.pub cannot be true for tool dependencies", context) });
     }
     return Ok(RegistryDependencyProjection {
         .alias = String::make(rstd_try(string_member(value, "alias"_str, context.as_str()))),

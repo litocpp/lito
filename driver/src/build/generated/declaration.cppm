@@ -167,26 +167,23 @@ auto ToolActionSession::host_tool(BuildScriptHandle target_handle, ref<str> pack
         return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
             "target handle does not belong to this build script"_Str)));
     }
-    auto allowed = false;
+    auto                                  allowed  = false;
+    const lito::package::PackageTargetId* provider = nullptr;
     for (const auto& dependency : metadata_->targets[*target].host_tool_dependencies) {
         if (dependency.package == package) {
             allowed = true;
+            for (const auto& candidate : dependency.targets) {
+                if (candidate.name == name) provider = rstd::addressof(candidate);
+            }
             break;
         }
     }
     if (! allowed) {
         return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-            rstd::format("target '{}::{}' has no host-tool dependency '{}'",
+            rstd::format("target '{}::{}' has no usage = 'tool' dependency '{}'",
                          metadata_->targets[*target].id.package.as_str(),
                          metadata_->targets[*target].id.name.as_str(),
                          package))));
-    }
-    const cpp::ResolvedTarget* provider = nullptr;
-    for (const auto& candidate : metadata_->targets) {
-        if (candidate.id.package == package && candidate.id.name == name && candidate.host_tool) {
-            provider = rstd::addressof(candidate);
-            break;
-        }
     }
     if (provider == nullptr) {
         return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
@@ -194,7 +191,7 @@ auto ToolActionSession::host_tool(BuildScriptHandle target_handle, ref<str> pack
     }
     auto bound  = Box<PackageHostToolHandle>::make(PackageHostToolHandle {
         .package = metadata_->targets[*target].id.package.clone(),
-        .target  = provider->id.clone(),
+        .target  = provider->clone(),
     });
     auto handle = BuildScriptHandle { .identity = rstd::addressof(*bound) };
     package_host_tool_handles_.push(rstd::move(bound));

@@ -1033,18 +1033,16 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   cmake_find_install_prefix));
     auto assets         = rstd::move(external_usage.assets);
     auto provenance     = rstd::move(external_usage.provenance);
-    auto host_only_dependencies = project.artifact_processor_package_names.clone();
-    auto metadata = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
-                                                      project.selected_package_names,
-                                                      project.selected_targets,
-                                                      project.effective_targets,
-                                                      host_only_dependencies,
-                                                      resolved_configuration,
-                                                      rstd::move(resolved_profile),
-                                                      session.platform,
-                                                      rstd::move(external_usage.usage),
-                                                      rstd::move(external_usage.sources),
-                                                      toolchain.argument_parser());
+    auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
+                                                            project.selected_package_names,
+                                                            project.selected_targets,
+                                                            project.effective_targets,
+                                                            resolved_configuration,
+                                                            rstd::move(resolved_profile),
+                                                            session.platform,
+                                                            rstd::move(external_usage.usage),
+                                                            rstd::move(external_usage.sources),
+                                                            toolchain.argument_parser());
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }

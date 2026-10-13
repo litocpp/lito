@@ -794,11 +794,13 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                       execution->jobs);
     });
     auto script_declaration        = rstd_try(rstd::move(script_declaration_result));
-    auto host_tool_targets         = script_declaration.host_tool_targets();
-    if (project.platform.cross && ! host_tool_targets.is_empty()) {
-        return Err(BuildError::Message(rstd::format(
-            "host-tool target '{}' requires a host execution domain for cross builds",
-            lito::package::package_target_id_text(host_tool_targets[usize {}]).as_str())));
+    auto package_tools             = ResolvedPackageHostTools {};
+    if (plugin_host.is_some())
+        package_tools.add_artifacts(plugin_host->product.artifacts.as_slice());
+    auto host_tool_targets = Vec<lito::package::PackageTargetId>::make();
+    for (const auto& requested : script_declaration.host_tool_targets()) {
+        if (package_tools.get(requested).is_some()) continue;
+        host_tool_targets.push(requested.clone());
     }
     auto host_selection = cpp::SourceTargetSelection {
         .profile          = native_target_plan.profile,
@@ -923,7 +925,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto compiled         = usize {};
     auto reused           = usize {};
     auto build_timing     = BuildTimingReport {};
-    auto package_tools    = ResolvedPackageHostTools {};
     auto compile_progress = CompileProgressTracker {};
 
     if (! host_selection.target_order.is_empty()) {

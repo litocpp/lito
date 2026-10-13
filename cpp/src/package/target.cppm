@@ -54,11 +54,17 @@ struct CompilerPluginDependencySpec {
 };
 
 struct HostToolDependencySpec {
-    String package;
+    String                              package;
+    Vec<lito::package::PackageTargetId> targets;
 
     auto clone() const -> HostToolDependencySpec {
         return HostToolDependencySpec {
             .package = package.clone(),
+            .targets = targets.iter()
+                           .map([](auto target) {
+                               return target->clone();
+                           })
+                           .collect<Vec<lito::package::PackageTargetId>>(),
         };
     }
 };

@@ -72,6 +72,17 @@ arch = "x86_64"
 stdlib = "auto"
 ```
 
+## `[toolchain.wasm]`
+
+`entry = "none" | "main"` selects the WebAssembly entry policy. `export-memory` controls the
+linear-memory export. `processor` optionally names a package that is an active `usage = "tool"`
+dependency of the target build and exposes exactly one host-tool executable.
+
+The processor runs after linking through artifact processor protocol 1. Its returned file set
+becomes the final artifact, including companion files such as JavaScript modules and TypeScript
+declarations. Processing participates in build caching and the public outputs report. Setting
+`processor` never changes an ordinary dependency's execution domain or grants tool access.
+
 ## `[tools]`
 
 Simple host tool fields accept a searchable name or an absolute path:

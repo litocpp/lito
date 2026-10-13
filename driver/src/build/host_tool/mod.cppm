@@ -10,6 +10,7 @@ import rstd.json;
 import lito.core;
 import :build.event;
 import :build.action_graph;
+import :build.artifact;
 import :build.layout;
 import :build.host_tool.error;
 import :source;
@@ -273,6 +274,17 @@ public:
     }
 
     void push(Box<ResolvedPackageHostTool> tool) { tools_.push(rstd::move(tool)); }
+
+    void add_artifacts(slice<BuiltArtifact> artifacts) {
+        for (const auto& artifact : artifacts) {
+            if (artifact.kind != cpp::ArtifactKind::Executable) continue;
+            push(Box<ResolvedPackageHostTool>::make(ResolvedPackageHostTool {
+                .target     = artifact.target.clone(),
+                .executable = artifact.primary.path.clone(),
+                .identity   = artifact.link_identity.clone(),
+            }));
+        }
+    }
 
 private:
     Vec<Box<ResolvedPackageHostTool>> tools_;

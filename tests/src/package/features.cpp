@@ -380,6 +380,103 @@ TEST(PackageFeatures, ConditionsRespectDevelopmentAndRuntimePurposes) {
     EXPECT_FALSE(selected_name(result->target, "dev"_str));
 }
 
+TEST(PackageFeatures, ToolUsageKeepsHostAndTargetInstancesSeparate) {
+    auto tool                             = dependency("generator"_str);
+    tool.as_Cpp().value.consumption.usage = lito::dependency::DependencyUsage::tool_only();
+    auto root_edges                       = Vec<lito::package::ResolvedRequiredDependency>::make();
+    root_edges.push(rstd::move(tool));
+    root_edges.push(dependency("library-user"_str));
+    auto library_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    library_edges.push(dependency("generator"_str));
+    auto generator_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    generator_edges.push(conditioned_dependency("host-library"_str, "target.os == \"linux\""_str));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("root"_str, {}, rstd::move(root_edges)));
+    graph.packages.push(package("library-user"_str, {}, rstd::move(library_edges)));
+    graph.packages.push(package("generator"_str, {}, rstd::move(generator_edges)));
+    graph.packages.push(package("host-library"_str));
+    auto environment = lito::package::PackageConditionEnvironment {};
+    environment.target.set_string("target.os"_Str, "unknown"_Str);
+    environment.host.set_string("target.os"_Str, "linux"_Str);
+    auto selected = lito::package::select_conditioned_packages(graph,
+                                                               names("root"_str),
+                                                               library_targets("root"_str),
+                                                               nullptr,
+                                                               None(),
+                                                               {},
+                                                               environment,
+                                                               false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected_name(selected->target, "generator"_str));
+    EXPECT_TRUE(selected_name(selected->host, "generator"_str));
+    EXPECT_TRUE(selected_name(selected->tools, "generator"_str));
+    EXPECT_FALSE(selected_name(selected->target, "host-library"_str));
+    EXPECT_TRUE(selected_name(selected->host, "host-library"_str));
+}
+
+TEST(PackageFeatures, ProcessorConfigurationRequiresActiveToolUsage) {
+    auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    edges.push(dependency("processor"_str));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("root"_str, {}, rstd::move(edges)));
+    graph.packages.push(package("processor"_str));
+    auto selected = lito::package::select_conditioned_packages(graph,
+                                                               names("root"_str),
+                                                               library_targets("root"_str),
+                                                               nullptr,
+                                                               Some("processor"_str),
+                                                               {},
+                                                               {},
+                                                               false);
+    ASSERT_TRUE(selected.is_err());
+    EXPECT_TRUE(error_chain_text(selected.unwrap_err()).as_str().contains("usage = 'tool'"_str));
+    graph.packages[usize {}].dependencies[usize {}].as_Cpp().value.consumption.usage =
+        lito::dependency::DependencyUsage::tool_only();
+    selected = lito::package::select_conditioned_packages(graph,
+                                                          names("root"_str),
+                                                          library_targets("root"_str),
+                                                          nullptr,
+                                                          Some("processor"_str),
+                                                          {},
+                                                          {},
+                                                          false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected_name(selected->processors, "processor"_str));
+    EXPECT_FALSE(selected_name(selected->target, "processor"_str));
+    graph.packages[usize {}].dependencies[usize {}].activation.condition =
+        Some(external_condition("false"_str));
+    selected = lito::package::select_conditioned_packages(graph,
+                                                          names("root"_str),
+                                                          library_targets("root"_str),
+                                                          nullptr,
+                                                          Some("processor"_str),
+                                                          {},
+                                                          {},
+                                                          false);
+    EXPECT_TRUE(selected.is_err());
+}
+
+TEST(PackageFeatures, DevelopmentToolUsageIsSelectedOnlyForDevelopmentTargets) {
+    auto tool                             = dependency("generator"_str);
+    tool.as_Cpp().value.consumption.usage = lito::dependency::DependencyUsage::tool_only();
+    auto development                      = Vec<lito::package::ResolvedRequiredDependency>::make();
+    development.push(rstd::move(tool));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("root"_str, {}, {}, rstd::move(development)));
+    graph.packages.push(package("generator"_str));
+    auto targets  = library_targets("root"_str);
+    auto selected = lito::package::select_conditioned_packages(
+        graph, names("root"_str), targets, nullptr, None(), {}, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected->host.is_empty());
+    targets[usize {}].kind = lito::package::PackageTargetKind::Test;
+    selected               = lito::package::select_conditioned_packages(
+        graph, names("root"_str), targets, nullptr, None(), {}, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected_name(selected->host, "generator"_str));
+    EXPECT_FALSE(selected_name(selected->target, "generator"_str));
+}
+
 TEST(PackageFeatures, ExternalConditionSelectionPreservesDeclarations) {
     auto package = package_with_external_backends();
     auto context = lito::condition::Context {};

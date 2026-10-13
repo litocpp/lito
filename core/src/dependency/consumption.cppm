@@ -12,6 +12,7 @@ enum class DependencyUsageFacet
     Compile,
     Link,
     Runtime,
+    Tool,
 };
 
 class DependencyUsage {
@@ -22,6 +23,7 @@ class DependencyUsage {
     static constexpr auto compile_bit = static_cast<unsigned char>(1U << 0U);
     static constexpr auto link_bit    = static_cast<unsigned char>(1U << 1U);
     static constexpr auto runtime_bit = static_cast<unsigned char>(1U << 2U);
+    static constexpr auto tool_bit    = static_cast<unsigned char>(1U << 3U);
 
 public:
     static constexpr auto compile_only() noexcept -> DependencyUsage {
@@ -40,8 +42,16 @@ public:
         return DependencyUsage(static_cast<unsigned char>(compile_bit | link_bit));
     }
 
-    static auto from_facets(bool compile, bool link, bool runtime) noexcept
+    static constexpr auto tool_only() noexcept -> DependencyUsage {
+        return DependencyUsage(tool_bit);
+    }
+
+    static auto from_facets(bool compile, bool link, bool runtime, bool tool) noexcept
         -> Option<DependencyUsage> {
+        if (tool) {
+            if (compile || link || runtime) return None<DependencyUsage>();
+            return Some(tool_only());
+        }
         if (runtime) {
             if (compile || link) return None<DependencyUsage>();
             return Some(runtime_only());
@@ -56,6 +66,7 @@ public:
         auto bit = compile_bit;
         if (facet == DependencyUsageFacet::Link) bit = link_bit;
         if (facet == DependencyUsageFacet::Runtime) bit = runtime_bit;
+        if (facet == DependencyUsageFacet::Tool) bit = tool_bit;
         return (bits_ & bit) != 0U;
     }
 
@@ -71,11 +82,16 @@ public:
         return contains(DependencyUsageFacet::Runtime);
     }
 
+    constexpr auto uses_tool() const noexcept -> bool {
+        return contains(DependencyUsageFacet::Tool);
+    }
+
     constexpr auto len() const noexcept -> usize {
         auto result = usize {};
         if (uses_compile()) ++result;
         if (uses_link()) ++result;
         if (uses_runtime()) ++result;
+        if (uses_tool()) ++result;
         return result;
     }
 

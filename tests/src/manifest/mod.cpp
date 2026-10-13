@@ -667,6 +667,11 @@ TEST_F(Manifest, DependencyUsageRejectsInvalidAndMixedShapes) {
         "usage = []"_str,
         "usage = [\"compile\", \"compile\"]"_str,
         "usage = [\"compile\", \"unknown\"]"_str,
+        "usage = [\"tool\", \"compile\"]"_str,
+        "usage = [\"tool\", \"link\"]"_str,
+        "usage = [\"tool\", \"runtime\"]"_str,
+        "usage = [\"tool\", \"tool\"]"_str,
+        "usage = \"tool\"\npub = true"_str,
         "usage = 1"_str,
         "visibility = \"public\"\npub = true"_str,
         "visibility = \"link\"\nusage = [\"link\"]"_str,
@@ -692,6 +697,51 @@ version = "1.0.0"
         EXPECT_TRUE(loaded.is_err());
         ++index;
     }
+}
+
+TEST_F(Manifest, ToolDependencyUsageSurvivesStandaloneSerialization) {
+    auto project = manifest("tool-dependency-usage"_str, R"toml([package]
+name = "fixture-tool-dependency-usage"
+version = "0.1.0"
+[lib]
+name = "fixture-tool-dependency-usage"
+module = "fixture.tool_usage"
+archive = "fixture-tool-dependency-usage"
+[dependencies.scalar]
+version = "1.0.0"
+usage = "tool"
+[dependencies.singleton]
+version = "1.0.0"
+usage = ["tool"]
+[dev-dependencies.development]
+version = "1.0.0"
+usage = "tool"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(2));
+    ASSERT_EQ(loaded->dev_dependencies.len(), usize(1));
+    EXPECT_EQ(*loaded->dependencies[usize {}].usage, *loaded->dependencies[usize(1)].usage);
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    auto roundtrip = manifest("tool-dependency-roundtrip"_str, serialized->as_str());
+    ASSERT_TRUE(roundtrip.is_ok());
+    auto restored = lito::manifest::load_package_manifest(roundtrip->root.as_path());
+    ASSERT_TRUE(restored.is_ok());
+    for (const auto& dependency : restored->dependencies) {
+        ASSERT_TRUE(dependency.usage.is_some());
+        EXPECT_TRUE(dependency.usage->uses_tool());
+        EXPECT_FALSE(dependency.usage->uses_compile());
+        EXPECT_FALSE(dependency.usage->uses_link());
+    }
+    ASSERT_EQ(restored->dev_dependencies.len(), usize(1));
+    EXPECT_TRUE(restored->dev_dependencies[usize {}].usage->uses_tool());
 }
 
 TEST_F(Manifest, PublicDependenciesRequireALibraryConsumer) {

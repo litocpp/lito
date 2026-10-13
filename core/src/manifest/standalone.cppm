@@ -88,6 +88,7 @@ auto dependency_usage_value(lito::dependency::DependencyUsage usage) -> Toml {
     if (usage.uses_compile()) values.push("compile"_Str);
     if (usage.uses_link()) values.push("link"_Str);
     if (usage.uses_runtime()) values.push("runtime"_Str);
+    if (usage.uses_tool()) values.push("tool"_Str);
     if (values.len() == usize(1)) return string_value(values[usize {}].as_str());
     return string_array(values);
 }

@@ -1003,7 +1003,6 @@ linker-options = ["-Wl,--pop-state"]
                                                             packages,
                                                             targets,
                                                             targets,
-                                                            {},
                                                             build_configuration,
                                                             rstd::move(profile).unwrap(),
                                                             native_platform(),
@@ -1035,6 +1034,7 @@ sources = ["main.cpp"]
 
 [dependencies.processor]
 path = "processor"
+usage = "tool"
 )toml"_str },
         { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
         { "processor/lito.toml"_str, R"toml([package]
@@ -1082,7 +1082,6 @@ sources = ["main.cpp"]
                                                             packages,
                                                             targets,
                                                             targets,
-                                                            strings("processor"_str),
                                                             build_configuration,
                                                             rstd::move(profile).unwrap(),
                                                             native_platform(),
@@ -1093,6 +1092,12 @@ sources = ["main.cpp"]
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
     ASSERT_EQ(metadata->targets.len(), usize(1));
+    EXPECT_TRUE(metadata->targets[usize {}].dependencies.is_empty());
+    ASSERT_EQ(metadata->targets[usize {}].host_tool_dependencies.len(), usize(1));
+    const auto& tool = metadata->targets[usize {}].host_tool_dependencies[usize {}];
+    EXPECT_EQ(tool.package, "processor"_str);
+    ASSERT_EQ(tool.targets.len(), usize(1));
+    EXPECT_EQ(tool.targets[usize {}].name, "processor"_str);
 }
 
 TEST_F(BuildProfile, PackageCodegenOptionsRemainRejectedUnderPlainProfile) {
@@ -1137,7 +1142,6 @@ options = ["-O2"]
                                                             packages,
                                                             targets,
                                                             targets,
-                                                            {},
                                                             build_configuration,
                                                             rstd::move(profile).unwrap(),
                                                             native_platform(),
@@ -1184,7 +1188,6 @@ options = ["-O2"]
                                                 c_packages,
                                                 c_targets,
                                                 c_targets,
-                                                {},
                                                 build_configuration,
                                                 rstd::move(c_profile).unwrap(),
                                                 native_platform(),
@@ -1302,7 +1305,6 @@ options = ["-ULITO_FEAT_API"]
                                                     packages,
                                                     targets,
                                                     targets,
-                                                    {},
                                                     build_configuration,
                                                     rstd::move(profile).unwrap(),
                                                     native_platform(),

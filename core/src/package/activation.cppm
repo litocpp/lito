@@ -55,20 +55,15 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
         }
     }
 
-    auto       requests         = FeatureRequests {};
-    auto       host_environment = Option<lito::condition::Context> {};
-    auto       installing       = StringSet::make();
-    auto       selected_target  = StringSet::make();
-    auto       selected_host    = StringSet::make();
-    auto       plugins          = StringSet::make();
-    auto       providers        = StringSet::make();
-    auto       processors       = StringSet::make();
-    auto       tools            = StringSet::make();
-    const auto has_host_tool    = [&](ref<str> name) noexcept {
-        auto index = indices.get(name);
-        return index.is_some() &&
-               lito::manifest::package_has_host_tool_target(graph.packages[**index].manifest);
-    };
+    auto requests         = FeatureRequests {};
+    auto host_environment = Option<lito::condition::Context> {};
+    auto installing       = StringSet::make();
+    auto selected_target  = StringSet::make();
+    auto selected_host    = StringSet::make();
+    auto plugins          = StringSet::make();
+    auto providers        = StringSet::make();
+    auto processors       = StringSet::make();
+    auto tools            = StringSet::make();
     for (const auto& root : selected_roots) {
         if (! indices.contains_key(root.as_str()))
             return Err(PackageError::Message(
@@ -176,18 +171,14 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                 provider_host = true;
                 selected_host.insert(dependency.as_Pmacro().value.name.clone(), empty {});
                 providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
-            } else if (! host && artifact_processor.is_some() && dependency.is_Cpp() &&
-                       dependency.as_Cpp().value.name.as_str() == **artifact_processor) {
-                provider_host = true;
-                selected_host.insert(dependency.as_Cpp().value.name.clone(), empty {});
-                processors.insert(dependency.as_Cpp().value.name.clone(), empty {});
             } else if (dependency.is_Cpp() &&
-                       has_host_tool(dependency.as_Cpp().value.name.as_str())) {
-                tools.insert(dependency.as_Cpp().value.name.clone(), empty {});
-                if (host)
-                    selected_host.insert(dependency.as_Cpp().value.name.clone(), empty {});
-                else
-                    selected_target.insert(dependency.as_Cpp().value.name.clone(), empty {});
+                       dependency.as_Cpp().value.consumption.usage.uses_tool()) {
+                provider_host    = true;
+                const auto& name = dependency.as_Cpp().value.name;
+                selected_host.insert(name.clone(), empty {});
+                tools.insert(name.clone(), empty {});
+                if (! host && artifact_processor.is_some() && name.as_str() == **artifact_processor)
+                    processors.insert(name.clone(), empty {});
             } else if (host) {
                 selected_host.insert(String::make(resolved_dependency_name(dependency)), empty {});
             } else {
@@ -214,9 +205,13 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                     selected_host.insert(dependency.as_Pmacro().value.name.clone(), empty {});
                     providers.insert(dependency.as_Pmacro().value.name.clone(), empty {});
                 } else if (dependency.is_Cpp() &&
-                           has_host_tool(dependency.as_Cpp().value.name.as_str())) {
-                    tools.insert(dependency.as_Cpp().value.name.clone(), empty {});
-                    selected_target.insert(dependency.as_Cpp().value.name.clone(), empty {});
+                           dependency.as_Cpp().value.consumption.usage.uses_tool()) {
+                    provider_host    = true;
+                    const auto& name = dependency.as_Cpp().value.name;
+                    selected_host.insert(name.clone(), empty {});
+                    tools.insert(name.clone(), empty {});
+                    if (artifact_processor.is_some() && name.as_str() == **artifact_processor)
+                        processors.insert(name.clone(), empty {});
                 } else {
                     selected_target.insert(String::make(resolved_dependency_name(dependency)),
                                            empty {});
@@ -302,6 +297,13 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
     }
     if (visited != graph.packages.len())
         return Err(PackageError::Message("package dependency cycle in condition selection"_Str));
+
+    if (artifact_processor.is_some() && ! processors.contains_key(**artifact_processor)) {
+        return Err(
+            PackageError::Message(rstd::format("artifact processor '{}' must be an active usage = "
+                                               "'tool' dependency of the target build",
+                                               **artifact_processor)));
+    }
 
     auto result  = SelectedPackageClosure {};
     result.graph = rstd::move(active_graph);

@@ -57,8 +57,9 @@ auto usage_facet(ref<str> value, ref<str> context)
     if (value == "compile"_str) return Ok(DependencyUsageFacet::Compile);
     if (value == "link"_str) return Ok(DependencyUsageFacet::Link);
     if (value == "runtime"_str) return Ok(DependencyUsageFacet::Runtime);
+    if (value == "tool"_str) return Ok(DependencyUsageFacet::Tool);
     return Err(ManifestSchemaError::Domain(
-        rstd::format("{} must be 'compile', 'link', or 'runtime'", context)));
+        rstd::format("{} must be 'compile', 'link', 'runtime', or 'tool'", context)));
 }
 
 auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
@@ -70,11 +71,13 @@ auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
     auto has_compile = false;
     auto has_link    = false;
     auto has_runtime = false;
+    auto has_tool    = false;
     auto append      = [&](DependencyUsageFacet facet,
                            ref<str>             item_context) -> ManifestSchemaResult<empty> {
         auto* selected = &has_compile;
         if (facet == DependencyUsageFacet::Link) selected = &has_link;
         if (facet == DependencyUsageFacet::Runtime) selected = &has_runtime;
+        if (facet == DependencyUsageFacet::Tool) selected = &has_tool;
         if (*selected) {
             return Err(ManifestSchemaError::Domain(
                 rstd::format("{} repeats a dependency usage facet", item_context)));
@@ -91,10 +94,10 @@ auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
         rstd_try(append(rstd_try(usage_facet(value->values[index].as_str(), item_context.as_str())),
                         item_context.as_str()));
     }
-    auto usage = DependencyUsage::from_facets(has_compile, has_link, has_runtime);
+    auto usage = DependencyUsage::from_facets(has_compile, has_link, has_runtime, has_tool);
     if (usage.is_none()) {
-        return Err(ManifestSchemaError::Domain(
-            rstd::format("{} cannot combine runtime with compile or link", context)));
+        return Err(ManifestSchemaError::Domain(rstd::format(
+            "{} cannot combine tool with other usages or runtime with compile or link", context)));
     }
     return Ok(Some(*usage));
 }
@@ -555,6 +558,11 @@ auto parse_dependencies(Option<rstd::collections::BTreeMap<String, wire::Depende
             return Err(ManifestSchemaError::Domain(
                 rstd::format("{}.pub must be false for a development dependency", context)));
         }
+        if (parsed_usage.is_some() && parsed_usage->uses_tool() && parsed_public.is_some() &&
+            *parsed_public) {
+            return Err(ManifestSchemaError::Domain(
+                rstd::format("{}.pub must be false when usage is 'tool'", context)));
+        }
         if (specification.workspace.is_some()) {
             result.workspace_dependencies.push(WorkspaceDependencyReference {
                 .name             = name.clone(),
@@ -739,9 +747,10 @@ auto parse_pkg_config_external_dependencies(
                 parse_usage(specification.usage, rstd::format("{}.usage", context).as_str()));
             dependency_consumption.usage =
                 usage.is_some() ? *usage : lito::dependency::DependencyUsage::compile_and_link();
-            if (dependency_consumption.usage.uses_runtime()) {
+            if (dependency_consumption.usage.uses_runtime() ||
+                dependency_consumption.usage.uses_tool()) {
                 return Err(ManifestSchemaError::Domain(
-                    rstd::format("{}.usage does not support runtime", context)));
+                    rstd::format("{}.usage must select compile or link", context)));
             }
             auto is_public                   = specification.pub;
             dependency_consumption.is_public = is_public.is_some() && *is_public;
@@ -836,9 +845,9 @@ auto parse_cmake_targets(Option<Vec<wire::CMakeTarget>> value, const DataPath& o
             auto usage = rstd_try(
                 parse_usage(target.usage, rstd::format("{}.usage", item_context).as_str()));
             if (usage.is_some()) consumption.usage = *usage;
-            if (consumption.usage.uses_runtime()) {
+            if (consumption.usage.uses_runtime() || consumption.usage.uses_tool()) {
                 return Err(ManifestSchemaError::Domain(
-                    rstd::format("{}.usage does not support runtime", item_context)));
+                    rstd::format("{}.usage must select compile or link", item_context)));
             }
             auto is_public        = target.pub;
             consumption.is_public = is_public.is_some() && *is_public;
@@ -1169,6 +1178,7 @@ auto parse_cargo_consumption(wire::CargoExternalFields& specification, ref<str> 
             rstd_try(parse_usage(specification.usage, rstd::format("{}.usage", context).as_str()));
         if (usage.is_some()) dependency_consumption.usage = *usage;
         if (dependency_consumption.usage.uses_compile() ||
+            dependency_consumption.usage.uses_tool() ||
             (dependency_consumption.usage.uses_link() &&
              dependency_consumption.usage.uses_runtime())) {
             return Err(ManifestSchemaError::Domain(

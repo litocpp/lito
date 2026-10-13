@@ -825,14 +825,6 @@ class PackageGraphResolver {
                     declaration.default_features.is_some() ? *declaration.default_features : true,
             }));
         }
-        if (! lito::manifest::package_has_library_target(provider->manifest) &&
-            ! lito::manifest::package_has_host_tool_target(provider->manifest)) {
-            return Err(PackageError::Message(rstd::format(
-                "dependency '{}' resolves to package '{}' which exposes neither a C/C++ library "
-                "nor a host tool, script, plugin or pmacro contract",
-                declaration.name.as_str(),
-                provider->manifest.manifest_path.as_path())));
-        }
         auto features =
             declaration.features.is_some() ? declaration.features->clone() : Vec<String>::make();
         auto consumption = lito::dependency::DependencyConsumption {};
@@ -844,6 +836,31 @@ class PackageGraphResolver {
                 provider->manifest.manifest_path.as_path())));
         }
         consumption.is_public = declaration.is_public.is_some() && *declaration.is_public;
+        auto host_tools       = Vec<PackageTargetId>::make();
+        if (consumption.usage.uses_tool()) {
+            if (consumption.is_public) {
+                return Err(PackageError::Message(rstd::format(
+                    "tool dependency '{}' cannot be public", declaration.name.as_str())));
+            }
+            for (const auto& target : provider->manifest.targets) {
+                if (! lito::manifest::package_target_is_host_tool(target)) continue;
+                host_tools.push(PackageTargetId {
+                    .package = provider->manifest.name.clone(),
+                    .kind    = PackageTargetKind::Binary,
+                    .name    = String::make(lito::manifest::package_target_name(target)),
+                });
+            }
+            if (host_tools.is_empty()) {
+                return Err(PackageError::Message(
+                    rstd::format("tool dependency '{}' requires a provider with a host-tool binary",
+                                 declaration.name.as_str())));
+            }
+        } else if (! lito::manifest::package_has_library_target(provider->manifest)) {
+            return Err(
+                PackageError::Message(rstd::format("dependency '{}' requires a C/C++ library; use "
+                                                   "usage = 'tool' to consume a host tool",
+                                                   declaration.name.as_str())));
+        }
         if (kind == PackageDependencyKind::Development && consumption.is_public) {
             return Err(PackageError::Message(
                 rstd::format("development dependency '{}' of package '{}' cannot be public",
@@ -856,6 +873,7 @@ class PackageGraphResolver {
             .features    = rstd::move(features),
             .default_features =
                 declaration.default_features.is_some() ? *declaration.default_features : true,
+            .host_tools = rstd::move(host_tools),
         }));
     }
 

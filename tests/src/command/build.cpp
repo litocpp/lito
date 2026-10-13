@@ -916,6 +916,7 @@ sources = ["src/lib.cppm", "src/main.cpp"]
 
 [dependencies.fixture-host-tool]
 workspace = true
+usage = "tool"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "bin",
@@ -959,14 +960,16 @@ auto main() -> int {
         return;
     }
     EXPECT_TRUE(first->script.executed);
-    EXPECT_EQ(first->compiled, usize(4));
+    EXPECT_EQ(first->compiled, usize(3));
     EXPECT_FALSE(capture.progress.missing);
     ASSERT_EQ(capture.progress.values.len(), usize(4));
-    for (auto index = usize {}; index < capture.progress.values.len(); ++index) {
-        EXPECT_EQ(capture.progress.values[index].current, index + usize(1));
+    EXPECT_EQ(capture.progress.values[usize {}].current, usize(1));
+    EXPECT_EQ(capture.progress.values[usize {}].total, usize(1));
+    for (auto index = usize(1); index < capture.progress.values.len(); ++index) {
+        EXPECT_EQ(capture.progress.values[index].current, index);
     }
-    EXPECT_EQ(capture.progress.values[usize(3)].current, usize(4));
-    EXPECT_EQ(capture.progress.values[usize(3)].total, usize(4));
+    EXPECT_EQ(capture.progress.values[usize(3)].current, usize(3));
+    EXPECT_EQ(capture.progress.values[usize(3)].total, usize(3));
     auto app_scan       = Option<usize> {};
     auto build_tool_run = Option<usize> {};
     auto generated_scan = Option<usize> {};
@@ -1011,6 +1014,146 @@ auto main() -> int {
     auto second = lito::build(request);
     ASSERT_TRUE(second.is_ok());
     EXPECT_EQ(second->compiled, usize {});
+}
+
+TEST_F(BuildCommand, ToolDependencyRunsOnHostWhileGeneratingWasmSources) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "wasm-tool-consumer"
+version = "0.1.0"
+standard = "c++23"
+[[bin]]
+name = "consumer"
+module = "consumer.bindings"
+link-stdlib = false
+sources = ["lib.cppm", "main.cpp"]
+[dependencies.generator]
+path = "generator"
+usage = "tool"
+)toml"_str },
+        { "lib.cppm"_str,
+          "export module consumer.bindings;\nexport auto generated_value() -> int;\n"_str },
+        { "main.cpp"_str, R"cpp(#ifndef __wasm__
+#error consumer must compile for WebAssembly
+#endif
+#ifdef GENERATOR_INTERFACE
+#error tool library interface leaked into the consumer
+#endif
+import consumer.bindings;
+extern "C" [[clang::export_name("answer")]] auto answer() -> int {
+    return generated_value();
+}
+
+)cpp"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({kind = "bin", name = "consumer"})
+local tool = lito.host_tool(target, "generator", "generate")
+local generated = lito.run({tool = tool, cwd = ".", args = {"@OUTPUT@"},
+                           inputs = {"main.cpp"}, outputs = {"generated.cpp"}})
+lito.target_add_generated_source(target, generated.outputs[1])
+)lua"_str },
+        { "generator/lito.toml"_str, R"toml([package]
+name = "generator"
+version = "0.1.0"
+standard = "c++23"
+[lib]
+name = "generator-core"
+module = "generator.core"
+archive = "generator.core"
+sources = ["lib.cppm"]
+[[bin]]
+name = "generate"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+[usage]
+public-definitions = ["GENERATOR_INTERFACE=1"]
+)toml"_str },
+        { "generator/lib.cppm"_str, R"cpp(module;
+#ifdef __wasm__
+#error generator library must compile for the host
+#endif
+export module generator.core;
+export auto generator_value() -> int { return 42; }
+)cpp"_str },
+        { "generator/main.cpp"_str, R"cpp(#include <stdio.h>
+#ifdef __wasm__
+#error generator executable must compile for the host
+#endif
+import generator.core;
+auto main(int argc, char** argv) -> int {
+    if (argc != 2) return 1;
+    auto* output = fopen(argv[1], "wb");
+    if (output == nullptr) return 2;
+    auto written = fprintf(output, "module consumer.bindings;\nauto generated_value() -> int { return %d; }\n", generator_value());
+    return fclose(output) == 0 && written > 0 ? 0 : 3;
+}
+)cpp"_str },
+    };
+    auto project = materialize("wasm-tool-consumer"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("wasm-tool-consumer"_str).as_path(),
+                                 Vec<String>::make());
+    request.configuration.toolchain.target = lito::config::ToolchainTargetSelection::Config(
+        "unknown"_Str, lito::system::require_architecture("wasm32"_str).unwrap(), None(), None());
+    request.configuration.toolchain.wasm   = Some(lito::config::WasmToolchainSpec {});
+    request.configuration.standard_library = lito::config::StandardLibrarySelection::Libcxx;
+    auto first                             = lito::build(request);
+    if (first.is_err()) {
+        rstd::test::fail_current(
+            error_chain_text(first.unwrap_err()).as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    ASSERT_EQ(first->product.artifacts.len(), usize(1));
+    EXPECT_EQ(first->product.artifacts[usize {}].format, lito::artifact::Format::WebAssembly);
+    EXPECT_TRUE(first->script.executed);
+    auto second = lito::build(request);
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(second->compiled, usize {});
+}
+
+TEST_F(BuildCommand, BuildScriptRejectsToolCallsThroughLibraryDependencies) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "library-tool-consumer"
+version = "0.1.0"
+standard = "c++23"
+[[bin]]
+name = "consumer"
+link-stdlib = false
+sources = ["main.cpp"]
+[dependencies.provider]
+path = "provider"
+)toml"_str },
+        { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({kind = "bin", name = "consumer"})
+lito.host_tool(target, "provider", "generate")
+)lua"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "provider"
+version = "0.1.0"
+standard = "c++23"
+[lib]
+name = "provider-core"
+module = "provider.core"
+archive = "provider.core"
+sources = ["lib.cppm"]
+[[bin]]
+name = "generate"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+)toml"_str },
+        { "provider/lib.cppm"_str, "export module provider.core;\n"_str },
+        { "provider/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    auto project = materialize("library-tool-consumer"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(build_request(project->root.as_path(),
+                                           build_root("library-tool-consumer"_str).as_path(),
+                                           Vec<String>::make()));
+    ASSERT_TRUE(built.is_err());
+    EXPECT_TRUE(error_chain_text(built.unwrap_err()).as_str().contains("usage = 'tool'"_str));
 }
 
 TEST_F(BuildCommand, GeneratedWriteMarkersPreserveUtf8AndXmlEscaping) {
@@ -1277,6 +1420,7 @@ sources = ["src/lib.cppm"]
 
 [dependencies.fixture-module-tool]
 workspace = true
+usage = "tool"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "lib",
@@ -1356,6 +1500,7 @@ sources = ["src/lib.cppm"]
 
 [dependencies.fixture-exported-module-tool]
 workspace = true
+usage = "tool"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "lib",
@@ -1438,6 +1583,7 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-header-tool]
 workspace = true
+usage = "tool"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "bin",
@@ -1515,6 +1661,7 @@ sources = ["src/main.cpp"]
 
 [dependencies.fixture-non-module-tool]
 workspace = true
+usage = "tool"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "bin",
@@ -1599,6 +1746,7 @@ sources = ["src/lib.cppm", "src/main.cpp"]
 
 [dependencies.fixture-implementation-tool]
 workspace = true
+usage = "tool"
 )toml"_str },
         { "app/build.lua"_str, R"lua(local target = lito.target({
   kind = "bin",
@@ -1643,7 +1791,7 @@ auto main() -> int {
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
         return;
     }
-    EXPECT_EQ(result->compiled, usize(4));
+    EXPECT_EQ(result->compiled, usize(3));
 }
 
 TEST_F(BuildCommand, BuildScriptConsumesDeclaredExternalSourceObjects) {

@@ -70,6 +70,7 @@ struct ResolvedCppDependency {
     lito::dependency::DependencyConsumption consumption;
     Vec<String>                             features;
     bool                                    default_features { true };
+    Vec<PackageTargetId>                    host_tools;
 };
 
 struct ResolvedScriptDependency {

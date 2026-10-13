@@ -854,21 +854,13 @@ auto resolve_source_selection(const PackageMetadata&                     package
     for (auto cursor = usize {}; cursor < target_order.len(); ++cursor) {
         const auto consumer = target_order[cursor];
         for (const auto& dependency : package.targets[consumer].host_tool_dependencies) {
-            auto found = false;
-            for (auto provider = TargetId {}; provider < package.targets.len(); ++provider) {
-                const auto& candidate = package.targets[provider];
-                if (candidate.id.package != dependency.package.as_str() || ! candidate.host_tool) {
-                    continue;
+            for (const auto& requested : dependency.targets) {
+                for (auto provider = TargetId {}; provider < package.targets.len(); ++provider) {
+                    const auto& candidate = package.targets[provider];
+                    if (candidate.id != requested || ! candidate.host_tool) continue;
+                    auto visited = visit_target(package, provider, colors, target_order);
+                    if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
                 }
-                found        = true;
-                auto visited = visit_target(package, provider, colors, target_order);
-                if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
-            }
-            if (! found) {
-                return Err(lito::package::PackageError::Message(rstd::format(
-                    "target '{}' has host-tool dependency '{}' without a host-tool target",
-                    target_text(package.targets[consumer].id).as_str(),
-                    dependency.package.as_str())));
             }
         }
     }

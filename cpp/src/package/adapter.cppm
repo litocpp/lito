@@ -1025,7 +1025,6 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                   const Vec<String>&                         selected_package_names,
                                   const Vec<lito::package::PackageTargetId>& selected_targets,
                                   const Vec<lito::package::PackageTargetId>& available_targets,
-                                  const Vec<String>&                         host_only_dependencies,
                                   const BuildConfiguration&                  configuration,
                                   ProfileSpec                                profile,
                                   const BuildPlatform&                       platform,
@@ -1041,33 +1040,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     }
     auto libraries = library_targets(graph);
 
-    const auto package_has_local_host_tools = [&graph,
-                                               &host_only_dependencies](ref<str> name) noexcept {
-        for (const auto& dependency : host_only_dependencies) {
-            if (dependency == name) return false;
-        }
-        for (const auto& package : graph.packages) {
-            if (package.manifest.name == name)
-                return lito::manifest::package_has_host_tool_target(package.manifest);
-        }
-        return false;
-    };
-
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
-    const auto is_host_only_dependency =
-        [&host_only_dependencies, &graph, &libraries](ref<str> name) {
-            for (const auto& dependency : host_only_dependencies) {
-                if (dependency == name) return true;
-            }
-            if (libraries.contains_key(name)) return false;
-            for (const auto& package : graph.packages) {
-                if (package.manifest.name == name &&
-                    lito::manifest::package_has_host_tool_target(package.manifest))
-                    return true;
-            }
-            return false;
-        };
 
     auto external_by_package =
         Vec<Vec<ResolvedExternalDependency>>::with_capacity(graph.packages.len());
@@ -1097,7 +1071,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
-            if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
+            if (cpp_dependency.consumption.usage.uses_tool()) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' depends on package '{}' which does not expose a "
@@ -1109,7 +1083,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dev_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
-            if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
+            if (cpp_dependency.consumption.usage.uses_tool()) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' has development dependency '{}' which does not "
@@ -1208,12 +1182,17 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
-            if (package_has_local_host_tools(cpp_dependency.name.as_str())) {
+            if (cpp_dependency.consumption.usage.uses_tool()) {
                 host_tool_dependencies.push(HostToolDependencySpec {
                     .package = cpp_dependency.name.clone(),
+                    .targets = cpp_dependency.host_tools.iter()
+                                   .map([](auto target) {
+                                       return target->clone();
+                                   })
+                                   .collect<Vec<lito::package::PackageTargetId>>(),
                 });
             }
-            if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
+            if (cpp_dependency.consumption.usage.uses_tool()) continue;
             if (! selected.contains_key(cpp_dependency.name.as_str())) {
                 return Err(lito::package::PackageError::Message(rstd::format(
                     "resolved dependency '{}' is missing", cpp_dependency.name.as_str())));
@@ -1271,12 +1250,17 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
                 if (! dependency.is_Cpp()) continue;
                 const auto& cpp_dependency = dependency.as_Cpp().value;
-                if (package_has_local_host_tools(cpp_dependency.name.as_str())) {
+                if (cpp_dependency.consumption.usage.uses_tool()) {
                     dev_host_tool_dependencies.push(HostToolDependencySpec {
                         .package = cpp_dependency.name.clone(),
+                        .targets = cpp_dependency.host_tools.iter()
+                                       .map([](auto target) {
+                                           return target->clone();
+                                       })
+                                       .collect<Vec<lito::package::PackageTargetId>>(),
                     });
                 }
-                if (is_host_only_dependency(cpp_dependency.name.as_str())) continue;
+                if (cpp_dependency.consumption.usage.uses_tool()) continue;
                 if (! selected.contains_key(cpp_dependency.name.as_str())) {
                     return Err(lito::package::PackageError::Message(
                         rstd::format("resolved development dependency '{}' is missing",

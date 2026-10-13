@@ -581,6 +581,68 @@ TEST(RegistryMetadata, ParsesTrustedRawIndexAndChecksRequestContext) {
                     .is_err());
 }
 
+TEST(RegistryMetadata, ToolUsageRejectsPublicAndMixedLifecycles) {
+    struct Case {
+        ref<str> usage;
+        bool     public_edge;
+        bool     valid;
+    };
+    const Case cases[] = {
+        { "[\"tool\"]"_str, false, true },
+        { "[\"tool\"]"_str, true, false },
+        { "[\"tool\",\"compile\"]"_str, false, false },
+        { "[\"tool\",\"link\"]"_str, false, false },
+        { "[\"tool\",\"runtime\"]"_str, false, false },
+    };
+    for (const auto& item : cases) {
+        auto input = rstd::format(
+            R"json({{"schema":"lito.registry.package-index.v1","registry":"https://registry.example/","package":"sample","releases":[{{"version":"1.2.3","checksum":"1111111111111111111111111111111111111111111111111111111111111111","dependencies":[{{"alias":"generator","registry":"https://registry.example/","package":"generator","requirement":"^1.0.0","kind":"normal","pub":{},"usage":{},"features":[],"default_features":true}}],"yanked":false,"published_at":"2026-10-13T00:00:00Z"}}]}})json",
+            item.public_edge ? "true"_str : "false"_str,
+            item.usage);
+        auto parsed = lito::registry::parse_package_index(input.as_str().as_bytes(),
+                                                          registry_package("sample"_str));
+        EXPECT_EQ(parsed.is_ok(), item.valid);
+        if (item.valid) {
+            ASSERT_TRUE(parsed.is_ok());
+            EXPECT_TRUE(
+                parsed->releases()[usize {}].dependencies[usize {}].consumption.usage.uses_tool());
+        }
+    }
+}
+
+TEST(RegistryArchive, ToolUsageSurvivesInspectionProtocol) {
+    auto tree = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str, R"toml([package]
+name = "sample"
+version = "1.0.0"
+standard = "c++23"
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+[dependencies.generator]
+version = "1.0.0"
+usage = "tool"
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto archive = lito::registry::PackageArchiveBuilder::build(
+        tree,
+        registry_package("sample"_str),
+        registry_version("1.0.0"_str),
+        PathBuf::from(owner.path()).join(PathBuf::from("tool.tar.zst"_str).as_path()));
+    ASSERT_TRUE(archive.is_ok());
+    auto protocol = lito::registry::serialize_verified_publish_candidate(*archive);
+    auto parsed   = lito::registry::parse_verified_publish_candidate(protocol.as_str().as_bytes());
+    ASSERT_TRUE(parsed.is_ok());
+    ASSERT_EQ(parsed->dependencies.len(), usize(1));
+    EXPECT_TRUE(parsed->dependencies[usize {}].consumption.usage.uses_tool());
+    EXPECT_FALSE(parsed->dependencies[usize {}].consumption.is_public);
+}
+
 TEST(RegistrySolver, BacktracksAndUnifiesEachPackageToOneVersion) {
     auto fixture = SolverFixtureProvider {};
     auto roots   = Vec<lito::registry::RegistrySolverRequirement>::make();
