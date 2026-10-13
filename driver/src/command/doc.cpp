@@ -118,7 +118,7 @@ auto extraction_request_json(const BuildSummary&                 summary,
 
     auto root = JsonMap::make();
     root.insert("format"_Str, rstd::into<Json>("litodoc-extract"_str));
-    root.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(2))));
     root.insert("request_id"_Str, rstd::into<Json>(request_id));
     root.insert("package"_Str, Json::Object(rstd::move(package_json)));
     root.insert("target"_Str, Json::Object(rstd::move(target_json)));
@@ -149,7 +149,7 @@ auto response_matches(ref<rstd::path::Path> response, ref<str> request_id) -> Do
     auto version        = parsed->get("version"_str);
     auto actual_request = parsed->get("request_id"_str);
     return Ok(format.is_some() && (**format).as_str() == Some("litodoc-extract-result"_str) &&
-              version.is_some() && (**version).as_u64() == Some(u64(1)) &&
+              version.is_some() && (**version).as_u64() == Some(u64(2)) &&
               actual_request.is_some() && (**actual_request).as_str() == Some(request_id));
 }
 
@@ -178,7 +178,7 @@ auto request_identity(const DocumentationBuildUnit&       unit,
                       const cpp::SelectedPackageMetadata& package,
                       const ResolvedDocTool&              tool) -> String {
     auto invocation_identity = unit.invocation.identity();
-    auto value = rstd::format("lito-doc-extract-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+    auto value = rstd::format("lito-doc-extract-v3\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                               package.source_identity.as_str(),
                               lito::package::package_target_id_text(unit.target).as_str(),
                               unit.source_identity.as_str(),

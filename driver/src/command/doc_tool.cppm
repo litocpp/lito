@@ -70,7 +70,7 @@ auto parse_capabilities(String                  text,
         (**build).as_str().is_none() || clang_version.is_none() ||
         (**clang_version).as_str().is_none() || clang_build.is_none() ||
         (**clang_build).as_str().is_none() ||
-        ! json_protocol_contains(*parsed, "extract_protocols"_str, u64(1)) ||
+        ! json_protocol_contains(*parsed, "extract_protocols"_str, u64(2)) ||
         ! json_protocol_contains(*parsed, "site_manifest_versions"_str, u64(1)) ||
         ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(4)) ||
         ! json_feature_contains(*parsed, "embedded-default-frontend"_str) ||
