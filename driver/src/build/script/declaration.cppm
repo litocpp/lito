@@ -11,6 +11,7 @@ import :build.configure;
 import :build.generated;
 import :build.generated.declaration;
 import :build.generated.execution;
+import :build.layout;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -40,8 +41,9 @@ struct DeclaredBuildScriptInvocation {
 
 class BuildScriptDeclaration {
 public:
-    static auto make(const Option<BuildEventSink>& observer) -> BuildScriptDeclaration {
-        return BuildScriptDeclaration(observer);
+    static auto make(const Option<BuildEventSink>& observer, const BuildLayout& layout)
+        -> BuildScriptDeclaration {
+        return BuildScriptDeclaration(observer, layout);
     }
 
     auto output_registry() noexcept -> BuildOutputRegistry& { return *outputs_; }
@@ -100,6 +102,7 @@ public:
                 .owner   = invocation.owner.clone(),
                 .script  = invocation.script.clone(),
                 .elapsed = invocation.elapsed,
+                .package = invocation.actions.default_package().clone(),
             });
             if (observer_.is_some() && observer_->notify != nullptr) {
                 for (const auto& file : finished.files) {
@@ -113,12 +116,14 @@ public:
             }
             merge_build_script_report(report, rstd::move(finished));
         }
+        report.generated_packages = outputs_->generated_packages();
         return Ok(rstd::move(report));
     }
 
 private:
-    explicit BuildScriptDeclaration(const Option<BuildEventSink>& observer)
-        : outputs_(Box<BuildOutputRegistry>::make()), observer_(observer) {}
+    explicit BuildScriptDeclaration(const Option<BuildEventSink>& observer,
+                                    const BuildLayout&            layout)
+        : outputs_(Box<BuildOutputRegistry>::make(layout)), observer_(observer) {}
 
     Box<BuildOutputRegistry>           outputs_;
     Vec<DeclaredBuildScriptInvocation> invocations_;

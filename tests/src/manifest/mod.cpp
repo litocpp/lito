@@ -2937,3 +2937,26 @@ TEST_F(Manifest, DependencyConditionsRejectEmptyAndWorkspaceDefinitions) {
         EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
     }
 }
+
+TEST_F(Manifest, BuildScriptOnlyPackageKeepsTheDiscoveredOwner) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, "[package]\nname = \"assets\"\nversion = \"0.1.0\"\n"_str },
+        { "build.lua"_str, "return\n"_str },
+    };
+    auto tree = source_tree(files);
+    ASSERT_TRUE(tree.is_ok());
+    auto embedded = lito::manifest::load_package_manifest_from_source_tree("assets"_str, *tree);
+    ASSERT_TRUE(embedded.is_ok());
+    EXPECT_TRUE(embedded->targets.is_empty());
+    EXPECT_TRUE(embedded->build_script.is_some());
+    auto project = materialize("assets"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto local = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(local.is_ok());
+    EXPECT_TRUE(local->targets.is_empty());
+    ASSERT_TRUE(local->build_script.is_some());
+    EXPECT_EQ(local->build_script->as_path().file_name()->to_str(), Some("build.lua"_str));
+    auto empty = manifest("empty-assets"_str, files[0].contents);
+    ASSERT_TRUE(empty.is_ok());
+    EXPECT_TRUE(lito::manifest::load_package_manifest(empty->root.as_path()).is_err());
+}

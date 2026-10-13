@@ -5,6 +5,7 @@ export module lito.driver:command.reporting;
 
 import rstd;
 import rstd.bench;
+import rstd.json;
 import lito.core;
 import :build.result;
 import lito.toolchain;
@@ -624,3 +625,57 @@ auto emit(const BuildSummary& summary, const OutputOptions& options) -> OutputRe
 }
 
 } // namespace lito::timing_output
+
+export namespace lito::build_output
+{
+auto render(const CompletedBuildProduct& product, const BuildScriptReport& script)
+    -> Result<String, String> {
+    using Json = rstd::json::Value;
+    auto root  = rstd::json::Map::make();
+    root.insert("format"_Str, Json::String("lito-build-outputs"_Str));
+    root.insert("version"_Str, Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert("profile"_Str, Json::String(product.profile.clone()));
+    root.insert("target"_Str, Json::String(product.target.clone()));
+    auto artifacts = rstd::json::Array::make();
+    for (const auto& artifact : product.artifacts) {
+        auto item = rstd::json::Map::make();
+        item.insert("package"_Str, Json::String(artifact.target.package.clone()));
+        item.insert("kind"_Str,
+                    Json::String(String::make(
+                        lito::package::package_target_kind_name(artifact.target.kind))));
+        item.insert("name"_Str, Json::String(artifact.target.name.clone()));
+        auto files  = rstd::json::Array::make();
+        auto append = [&](const BuiltArtifactFile& file) -> Result<empty, String> {
+            auto path = file.path.as_path().to_str();
+            if (path.is_none()) return Err("build output path is not valid UTF-8"_Str);
+            auto entry = rstd::json::Map::make();
+            entry.insert("path"_Str, Json::String(String::make(*path)));
+            entry.insert("role"_Str,
+                         Json::String(String::make(artifact_file_role_name(file.role))));
+            entry.insert("publish"_Str, Json::Bool(file.publish));
+            files.push(Json::Object(rstd::move(entry)));
+            return Ok(empty {});
+        };
+        rstd_try(append(artifact.primary));
+        for (const auto& file : artifact.companions) rstd_try(append(file));
+        item.insert("files"_Str, Json::Array(rstd::move(files)));
+        artifacts.push(Json::Object(rstd::move(item)));
+    }
+    root.insert("artifacts"_Str, Json::Array(rstd::move(artifacts)));
+    auto packages = rstd::json::Array::make();
+    for (const auto& generated : script.generated_packages) {
+        auto path = generated.directory.as_path().to_str();
+        if (path.is_none()) return Err("generated directory is not valid UTF-8"_Str);
+        auto item = rstd::json::Map::make();
+        item.insert("package"_Str, Json::String(generated.package.clone()));
+        item.insert("directory"_Str, Json::String(String::make(*path)));
+        packages.push(Json::Object(rstd::move(item)));
+    }
+    root.insert("generated-packages"_Str, Json::Array(rstd::move(packages)));
+    auto text =
+        rstd::json::to_string(Json::Object(rstd::move(root)),
+                              rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
+    text.push_ascii('\n');
+    return Ok(rstd::move(text));
+}
+} // namespace lito::build_output

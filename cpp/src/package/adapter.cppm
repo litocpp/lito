@@ -1615,7 +1615,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             .package         = Some(package.manifest.name.clone()),
             .source_identity = package.source_identity.clone(),
             .root            = package.manifest.root.clone(),
-            .script          = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
+            .script = package.manifest.build_script.is_some()
+                          ? package.manifest.build_script->clone()
+                          : package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
             .script_dependencies = rstd::move(script_dependencies),
             .script_packages     = clone_script_packages(),
         });
@@ -1624,6 +1626,11 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     auto selected_root_packages = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& target : selected_targets) {
         selected_root_packages.insert(target.package.clone(), empty {});
+    }
+    for (const auto& package : graph.packages) {
+        if (selected.contains_key(package.manifest.name.as_str()) &&
+            package.manifest.targets.is_empty() && package.manifest.build_script.is_some())
+            selected_root_packages.insert(package.manifest.name.clone(), empty {});
     }
     for (const auto& package : graph.packages) {
         if (! selected_root_packages.contains_key(package.manifest.name.as_str())) continue;

@@ -2021,9 +2021,13 @@ extern "C++" int main() {
                          options.offline,
                          options.frozen,
                          rstd::move(options.source_bundles));
-    auto timing                   = make_timing_output(project.root.as_path(),
-                                                       rstd::move(options.timing_file),
-                                                       options.verbose && ! options.no_timing);
+    auto timing = make_timing_output(project.root.as_path(),
+                                     rstd::move(options.timing_file),
+                                     options.verbose && ! options.no_timing);
+    auto outputs_json =
+        options.outputs_json.is_some()
+            ? Some(project_output_path(project.root.as_path(), rstd::move(*options.outputs_json)))
+            : Option<rstd::path::PathBuf> {};
     auto request                  = lito::BuildRequest {};
     request.selection.root        = rstd::move(project.root);
     request.environment           = rstd::move(project.environment);
@@ -2091,7 +2095,29 @@ extern "C++" int main() {
     }
 
     auto summary = rstd::move(result).unwrap();
-    auto counts  = artifact_counts(summary);
+    if (outputs_json.is_some()) {
+        auto report = lito::build_output::render(summary.product, summary.script);
+        if (report.is_err()) {
+            rstd::io::eprintln("lito: {}", report.unwrap_err());
+            return 1;
+        }
+        const auto& destination = *outputs_json;
+        auto        parent      = destination.as_path().parent();
+        if (parent.is_some()) {
+            auto created = rstd::fs::create_dir_all(*parent);
+            if (created.is_err()) {
+                rstd::io::eprintln("lito: cannot create outputs report directory: {}",
+                                   created.unwrap_err());
+                return 1;
+            }
+        }
+        auto written = rstd::fs::write_atomic(destination.as_path(), report->as_str().as_bytes());
+        if (written.is_err()) {
+            rstd::io::eprintln("lito: cannot write outputs report: {}", written.unwrap_err());
+            return 1;
+        }
+    }
+    auto counts = artifact_counts(summary);
     rstd::io::println("built {} ({}) in {}: {} scanned, {} compiled, {} reused, "
                       "{} archives, {} shared libraries, {} executables, {} tests",
                       summary.package.as_str(),

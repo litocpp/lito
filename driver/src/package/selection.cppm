@@ -163,6 +163,11 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
     if (purpose == PackageSelectionPurpose::Install && package.manifest.install_script.is_some()) {
         selected = true;
     }
+    if (package.manifest.targets.is_empty() && package.manifest.compile_tests.is_empty() &&
+        package.manifest.build_script.is_some() && role != ProjectRootRole::AssociatedTest &&
+        (purpose == PackageSelectionPurpose::Production ||
+         purpose == PackageSelectionPurpose::All || purpose == PackageSelectionPurpose::Example))
+        selected = true;
     if (mode == PackageRootSelection::Metadata && purpose == PackageSelectionPurpose::Production &&
         role != ProjectRootRole::AssociatedTest && package.manifest.script.is_some())
         selected = true;

@@ -351,6 +351,20 @@ auto assemble_manifest_document(PathBuf                               root,
     auto install_script = embedded_source.is_some() ? Ok(Option<PathBuf> {})
                                                     : discover_install_script(root.as_path());
     if (install_script.is_err()) return Err(rstd::move(install_script).unwrap_err());
+    auto build_script = Option<PathBuf> {};
+    if (embedded_source.is_some()) {
+        for (const auto& entry : (**embedded_source).entries()) {
+            if (entry.path().as_str() == "build.lua"_str &&
+                entry.kind() == lito::source::SourceEntryKind::File) {
+                build_script = Some(root.join(PathBuf::from("build.lua"_str).as_path()));
+                break;
+            }
+        }
+    } else {
+        auto discovered = discover_build_script(root.as_path());
+        if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
+        build_script = rstd::move(discovered).unwrap();
+    }
 
     const auto compile_contracts = (library.is_some() ? usize(1) : usize {}) +
                                    (plugin.is_some() ? usize(1) : usize {}) +
@@ -404,10 +418,10 @@ auto assemble_manifest_document(PathBuf                               root,
             "manifest.script cannot be combined with C or C++ targets"_Str));
     }
     if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none() &&
-        script.is_none()) {
+        build_script.is_none() && script.is_none()) {
         return Err(ManifestSchemaError::Domain(
             "manifest must contain at least one of 'lib', 'plugin', 'pmacro', 'bin', 'test', "
-            "'bench', 'example' or 'compile-test', provide install.lua, or declare a script package"_Str));
+            "'bench', 'example' or 'compile-test', provide build.lua/install.lua, or declare a script package"_Str));
     }
     auto has_benches = false;
     for (const auto& target : targets) {
@@ -416,9 +430,10 @@ auto assemble_manifest_document(PathBuf                               root,
             break;
         }
     }
-    const auto version_optional = install_script->is_none() && ! has_library && ! has_plugin &&
-                                  ! has_proc_macro && ! has_bins && ! has_benches &&
-                                  script.is_none();
+    const auto version_optional = install_script->is_none() &&
+                                  (has_compile_contract || build_script.is_none()) &&
+                                  ! has_library && ! has_plugin && ! has_proc_macro && ! has_bins &&
+                                  ! has_benches && script.is_none();
     auto       version = parse_package_version(rstd::move(package_value.version), version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     auto license = parse_package_license(rstd::move(package_value.license));
@@ -664,6 +679,7 @@ auto assemble_manifest_document(PathBuf                               root,
             .source_root                = rstd::move(source_root).unwrap(),
             .manifest_path              = rstd::move(path),
             .install_script             = rstd::move(install_script).unwrap(),
+            .build_script               = rstd::move(build_script),
             .profile                    = rstd::move(profile),
             .build_tools                = rstd::move(build_tools).unwrap(),
             .script                     = rstd::move(script),

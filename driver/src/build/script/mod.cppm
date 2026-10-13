@@ -202,7 +202,7 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
         }
     }
 
-    auto declaration = BuildScriptDeclaration::make(observer);
+    auto declaration = BuildScriptDeclaration::make(observer, layout);
     for (auto& invocation : invocations) {
         auto result = execute_build_script_invocation(metadata,
                                                       target_plan,

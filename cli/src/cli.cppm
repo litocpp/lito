@@ -24,6 +24,7 @@ struct BuildOptions {
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              targets;
     Option<PathBuf>                          build_directory;
+    Option<PathBuf>                          outputs_json;
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
@@ -402,6 +403,7 @@ struct BuildSchema {
     PackageProfileArgs     package;
     ArgKey<String>         target;
     ArgKey<String>         build_directory;
+    Option<ArgKey<String>> outputs_json;
     SourceAcquisitionArgs  source_acquisition;
     BuildExecutionArgs     execution;
 
@@ -899,7 +901,14 @@ auto make_build_definition(bool run = false) -> CommandDefinition<BuildSchema> {
                                              .value_name("ARGS"_str)
                                              .num_args(NumArgs::any())
                                              .allow_hyphen_values()));
-    auto build_directory    = command.add_arg(build_directory_arg());
+    auto build_directory = command.add_arg(build_directory_arg());
+    auto outputs_json    = Option<ArgKey<String>> {};
+    if (! run)
+        outputs_json = Some(
+            command.add_arg(Arg<String>::value("outputs-json"_str, string_parser())
+                                .long_name("outputs-json"_str)
+                                .value_name("FILE"_str)
+                                .help("Write the public build outputs report to a JSON file"_str)));
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
     return {
@@ -912,6 +921,7 @@ auto make_build_definition(bool run = false) -> CommandDefinition<BuildSchema> {
             .package            = rstd::move(package),
             .target             = target,
             .build_directory    = build_directory,
+            .outputs_json       = outputs_json,
             .source_acquisition = rstd::move(source_acquisition),
             .execution          = rstd::move(execution),
         },
@@ -1872,6 +1882,8 @@ auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, C
         .profile         = rstd::move(package.profile),
         .targets         = rstd_try(string_values(matches, target)),
         .build_directory = rstd_try(optional_path(matches, build_directory)),
+        .outputs_json    = outputs_json.is_some() ? rstd_try(optional_path(matches, *outputs_json))
+                                                  : Option<PathBuf> {},
         .locked          = source.locked,
         .offline         = source.offline,
         .frozen          = source.frozen,

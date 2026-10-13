@@ -2,6 +2,7 @@
 #include <rstd/macro.hpp>
 
 import rstd;
+import rstd.json;
 import rstd.test;
 import lito.driver;
 import lito.core;
@@ -2692,4 +2693,99 @@ supports = ["build"]
     request.selection.features.enabled.clear();
     auto disabled_again = lito::build(request);
     EXPECT_TRUE(disabled_again.is_err());
+}
+
+TEST_F(BuildCommand, BuildsAndReusesBuildScriptOnlyPackage) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, "[package]\nname = \"web-assets\"\nversion = \"0.1.0\"\n"_str },
+        { "input.txt"_str, "built asset\n"_str },
+        { "build.lua"_str,
+          R"lua(lito.configure_file({input="input.txt", output="site/index.html", values={}}))lua"_str },
+    };
+    auto project = materialize("web-assets"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("web-assets"_str).as_path(),
+                                 Vec<String>::make(),
+                                 build_profile("release"_str));
+    auto built   = lito::build(request);
+    ASSERT_TRUE(built.is_ok()) << (built.is_err() ? rstd::format("{}", built.unwrap_err())
+                                                  : String::make());
+    EXPECT_TRUE(built->product.artifacts.is_empty());
+    ASSERT_EQ(built->script.files.len(), usize(1));
+    auto contents = rstd::fs::read_to_string(built->script.files[usize()].output.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    EXPECT_EQ(contents->as_str(), "built asset\n"_str);
+    auto report = lito::build_output::render(built->product, built->script);
+    ASSERT_TRUE(report.is_ok());
+    EXPECT_TRUE(report->as_str().contains("web-assets"_str));
+    EXPECT_TRUE(report->as_str().contains("generated-packages"_str));
+    auto reused = lito::build(request);
+    ASSERT_TRUE(reused.is_ok());
+    EXPECT_EQ(reused->script.unchanged, usize(1));
+}
+
+TEST_F(BuildCommand, ReportsWorkspaceGeneratedPackagesOnBuildAndReuse) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "workspace-output-report"
+members = ["alpha", "beta", "empty"]
+)toml"_str },
+        { "build.lua"_str, R"lua(
+lito.configure_file({package="alpha-assets", input="input.txt", output="site/index.html", values={}})
+lito.write({package="beta-assets", output="site/main.js", content="workspace script\n"})
+)lua"_str },
+        { "alpha/lito.toml"_str, "[package]\nname = \"alpha-assets\"\nversion = \"0.1.0\"\n"_str },
+        { "alpha/input.txt"_str, "workspace asset\n"_str },
+        { "alpha/build.lua"_str,
+          R"lua(lito.configure_file({input="input.txt", output="extra.txt", values={}}))lua"_str },
+        { "beta/lito.toml"_str, "[package]\nname = \"beta-assets\"\nversion = \"0.1.0\"\n"_str },
+        { "beta/build.lua"_str, "return\n"_str },
+        { "empty/lito.toml"_str, "[package]\nname = \"empty-assets\"\nversion = \"0.1.0\"\n"_str },
+        { "empty/build.lua"_str, "return\n"_str },
+    };
+    auto project = materialize("workspace-output-report"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("workspace-output-report"_str).as_path(),
+                                 Vec<String>::make(),
+                                 build_profile("release"_str));
+    auto built   = lito::build(request);
+    if (built.is_err()) {
+        auto message = error_chain_text(rstd::move(built).unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    ASSERT_EQ(built->script.generated_packages.len(), usize(2));
+    ASSERT_EQ(built->script.executions.len(), usize(4));
+    EXPECT_TRUE(built->script.executions[usize {}].package.is_none());
+    const auto& alpha = built->script.generated_packages[usize {}];
+    const auto& beta  = built->script.generated_packages[usize(1)];
+    EXPECT_EQ(alpha.package.as_str(), "alpha-assets"_str);
+    EXPECT_EQ(beta.package.as_str(), "beta-assets"_str);
+    auto html = rstd::fs::read_to_string(
+        alpha.directory.join(PathBuf::from("site/index.html"_str).as_path()).as_path());
+    auto js = rstd::fs::read_to_string(
+        beta.directory.join(PathBuf::from("site/main.js"_str).as_path()).as_path());
+    ASSERT_TRUE(html.is_ok());
+    ASSERT_TRUE(js.is_ok());
+    EXPECT_EQ(html->as_str(), "workspace asset\n"_str);
+    EXPECT_EQ(js->as_str(), "workspace script\n"_str);
+    auto report = lito::build_output::render(built->product, built->script);
+    ASSERT_TRUE(report.is_ok());
+    auto        document = rstd::json::from_str(report->as_str()).unwrap();
+    const auto& packages = *document["generated-packages"_str].as_array().unwrap();
+    ASSERT_EQ(packages.len(), usize(2));
+    EXPECT_EQ(packages[usize {}]["package"_str].as_str().unwrap(), "alpha-assets"_str);
+    EXPECT_EQ(packages[usize(1)]["package"_str].as_str().unwrap(), "beta-assets"_str);
+    EXPECT_EQ(packages[usize {}]["directory"_str].as_str().unwrap(),
+              alpha.directory.as_path().to_str().unwrap());
+    EXPECT_EQ(packages[usize(1)]["directory"_str].as_str().unwrap(),
+              beta.directory.as_path().to_str().unwrap());
+    auto reused = lito::build(request);
+    ASSERT_TRUE(reused.is_ok());
+    EXPECT_EQ(reused->script.unchanged, usize(2));
+    auto repeated = lito::build_output::render(reused->product, reused->script);
+    ASSERT_TRUE(repeated.is_ok());
+    EXPECT_EQ(repeated->as_str(), report->as_str());
 }

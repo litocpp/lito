@@ -10,6 +10,8 @@ import lito.system;
 import rstd.json;
 import :build.script.error;
 import :build.generated.error;
+import :build.artifact;
+import :build.layout;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -36,6 +38,8 @@ auto normal_relative_path(String text, ref<str> context) -> BuildScriptResult<Pa
 
 class BuildOutputRegistry {
 public:
+    explicit BuildOutputRegistry(const BuildLayout& layout): layout_(layout.clone()) {}
+
     auto claim(ref<str> package, ref<rstd::path::Path> relative, ref<str> owner)
         -> BuildScriptResult<empty> {
         auto key = String::make(package);
@@ -50,11 +54,29 @@ public:
                              **existing,
                              owner)));
         }
+        if (! packages_.contains_key(package)) {
+            auto directory = layout_.generated_package_directory(package);
+            if (directory.is_err()) {
+                return Err(BuildScriptError::Message(rstd::format("{}", directory.unwrap_err())));
+            }
+            packages_.insert(String::make(package), rstd::move(directory).unwrap());
+        }
         owners_.insert(rstd::move(key), String::make(owner));
         return Ok(empty {});
     }
 
+    auto generated_packages() const -> Vec<GeneratedPackageDirectory> {
+        auto result = Vec<GeneratedPackageDirectory>::with_capacity(packages_.len());
+        for (auto [package, directory] : packages_.iter()) {
+            result.push(GeneratedPackageDirectory { package->clone(), directory->clone() });
+        }
+        return result;
+    }
+
 private:
+    BuildLayout                                  layout_;
+    rstd::collections::BTreeMap<String, PathBuf> packages_ =
+        rstd::collections::BTreeMap<String, PathBuf>::make();
     rstd::collections::BTreeMap<String, String> owners_ =
         rstd::collections::BTreeMap<String, String>::make();
 };
@@ -177,6 +199,9 @@ auto encode_receipt(const Vec<OwnedOutput>& outputs) -> String {
 
 auto find_package_root(const cpp::PackageMetadata& metadata, ref<str> name)
     -> Option<ref<rstd::path::Path>> {
+    for (const auto& package : metadata.selected_packages) {
+        if (package.name.as_str() == name) return Some(package.root.as_path());
+    }
     for (const auto& target : metadata.targets) {
         if (target.id.package == name) return Some(target.root.as_path());
     }

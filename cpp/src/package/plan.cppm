@@ -904,6 +904,19 @@ auto resolve_build_script_packages(const PackageMetadata&       package,
         }
         if (allowed) append_unique(result, name);
     }
+    for (const auto& owner : package.build_scripts) {
+        if (owner.kind != BuildScriptOwnerKind::Package || owner.package.is_none()) continue;
+        const auto name = owner.package->as_str();
+        if (! package.selected_packages.iter().any([&](auto selected) {
+                return selected->name.as_str() == name;
+            }))
+            continue;
+        if (package.targets.iter().any([&](auto target) {
+                return target->id.package.as_str() == name;
+            }))
+            continue;
+        append_unique(result, name);
+    }
     return Ok(rstd::move(result));
 }
 

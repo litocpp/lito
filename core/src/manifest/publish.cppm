@@ -504,16 +504,9 @@ auto validate_references(const FileSetState& state) -> PackageFileSetResult<empt
         rstd_try(require_published_path(
             state, state.manifest.install_script->as_path(), "install script"_str));
     }
-    auto build_script     = state.manifest.root.join(PathBuf::from("build.lua"_str).as_path());
-    auto has_build_script = rstd::fs::exists(build_script.as_path());
-    if (has_build_script.is_err()) {
-        return Err(
-            PackageFileSetError { .message = rstd::format("cannot inspect build script '{}': {}",
-                                                          build_script.as_path(),
-                                                          has_build_script.unwrap_err()) });
-    }
-    if (*has_build_script) {
-        rstd_try(require_published_path(state, build_script.as_path(), "build script"_str));
+    if (state.manifest.build_script.is_some()) {
+        rstd_try(require_published_path(
+            state, state.manifest.build_script->as_path(), "build script"_str));
     }
     rstd_try(require_include_directories(
         state, state.manifest.usage.public_include_directory_requirements));

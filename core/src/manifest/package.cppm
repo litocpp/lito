@@ -104,6 +104,7 @@ struct PackageManifest {
     PathBuf                                            source_root;
     PathBuf                                            manifest_path;
     Option<PathBuf>                                    install_script;
+    Option<PathBuf>                                    build_script;
     Option<ProjectProfile>                             profile;
     Vec<BuildToolRequirement>                          build_tools;
     Option<ScriptPackageManifest>                      script;

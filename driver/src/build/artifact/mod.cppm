@@ -262,17 +262,24 @@ struct BuildScriptExecution {
     String               owner;
     PathBuf              script;
     rstd::time::Duration elapsed;
+    Option<String>       package;
+};
+
+struct GeneratedPackageDirectory {
+    String  package;
+    PathBuf directory;
 };
 
 struct BuildScriptReport {
-    bool                      executed { false };
-    rstd::time::Duration      elapsed;
-    usize                     created {};
-    usize                     replaced {};
-    usize                     unchanged {};
-    usize                     stale_removed {};
-    Vec<ConfiguredFile>       files;
-    Vec<BuildScriptExecution> executions;
+    bool                           executed { false };
+    rstd::time::Duration           elapsed;
+    usize                          created {};
+    usize                          replaced {};
+    usize                          unchanged {};
+    usize                          stale_removed {};
+    Vec<ConfiguredFile>            files;
+    Vec<BuildScriptExecution>      executions;
+    Vec<GeneratedPackageDirectory> generated_packages;
 };
 
 } // namespace lito
