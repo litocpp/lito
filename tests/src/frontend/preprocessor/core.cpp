@@ -660,6 +660,82 @@ auto preprocess_macro_source(ref<str> source) -> PpResult<PreprocessedTranslatio
         events);
 }
 
+TEST(Preprocessor, AttributeScopesIncludeHeadersMacrosAndUsingSyntax) {
+    auto sources = MemorySources {};
+    sources.add("/macros.cpp"_str, R"cpp(
+#include "attributes.hpp"
+#define MARK [[example_plugin::macro]]
+MARK int value;
+[[using example_plugin: first, second(1, 2)]] int other;
+#if ! __has_cpp_attribute(queried_plugin::marker)
+[[queried_plugin::marker]] int queried;
+#endif
+#if 0
+[[inactive_plugin::marker]] int inactive;
+#endif
+)cpp"_str);
+    sources.add("/attributes.hpp"_str, "[[header_plugin::marker]] int header;\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto consumer    = lito::frontend::parser::ModuleDependencyConsumer::make();
+    auto translation =
+        preprocess_to(PreprocessRequest { .source = rstd::path::PathBuf::from("/macros.cpp"_str),
+                                          .environment_identity = "attribute-scopes"_Str },
+                      sources,
+                      includes,
+                      builtins,
+                      identifiers,
+                      pragmas,
+                      events,
+                      consumer);
+    ASSERT_TRUE(translation.is_ok());
+    auto facts = consumer.finish(*translation);
+    ASSERT_TRUE(facts.is_ok());
+    EXPECT_TRUE(facts->attribute_scopes.complete);
+    EXPECT_TRUE(facts->attribute_scopes.may_use("example_plugin"_str));
+    EXPECT_TRUE(facts->attribute_scopes.may_use("header_plugin"_str));
+    EXPECT_TRUE(facts->attribute_scopes.may_use("queried_plugin"_str));
+    EXPECT_FALSE(facts->attribute_scopes.may_use("example"_str));
+    EXPECT_FALSE(facts->attribute_scopes.may_use("Example_plugin"_str));
+    EXPECT_FALSE(facts->attribute_scopes.may_use("inactive_plugin"_str));
+    auto using_first = false, using_second = false;
+    for (const auto& attribute : facts->scoped_attributes) {
+        EXPECT_NE(attribute.scope.as_str(), "header_plugin"_str);
+        EXPECT_NE(attribute.scope.as_str(), "queried_plugin"_str);
+        using_first |= attribute.scope == "example_plugin"_str && attribute.name == "first"_str;
+        using_second |= attribute.scope == "example_plugin"_str && attribute.name == "second"_str;
+    }
+    EXPECT_TRUE(using_first);
+    EXPECT_TRUE(using_second);
+    auto restored = lito::frontend::restore(lito::frontend::snapshot(*facts));
+    ASSERT_TRUE(restored.is_some());
+    EXPECT_TRUE(restored->attribute_scopes.complete);
+    EXPECT_TRUE(restored->attribute_scopes.may_use("header_plugin"_str));
+    EXPECT_FALSE(restored->attribute_scopes.may_use("absent"_str));
+}
+
+TEST(Preprocessor, AttributeScopesRemainConservativeForImportsAndPragmas) {
+    constexpr ref<str> cases[] = {
+        "export module example; import dependency;"_str,
+        "module example;"_str,
+        "#pragma clang attribute push(__attribute__((annotate(\"tag\"))), apply_to = function)\n"_str,
+        "_Pragma(\"clang attribute pop\")\n"_str,
+        "[[using example: marker"_str,
+    };
+    for (auto source : cases) {
+        auto translation = preprocess_macro_source(source);
+        ASSERT_TRUE(translation.is_ok());
+        auto facts = lito::frontend::parser::parse_module_dependencies(*translation);
+        ASSERT_TRUE(facts.is_ok());
+        EXPECT_FALSE(facts->attribute_scopes.complete);
+        EXPECT_TRUE(facts->attribute_scopes.may_use("absent"_str));
+    }
+    EXPECT_TRUE(lito::frontend::AttributeScopeUsage {}.may_use("absent"_str));
+}
+
 TEST(Preprocessor, RescansMacroReplacementsWithFollowingTokens) {
     struct Case {
         ref<str> source;

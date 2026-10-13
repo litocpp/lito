@@ -6,6 +6,7 @@ module lito.core:manifest.target_schema;
 import rstd;
 import rstd.serde;
 import :manifest.target;
+import :manifest.name;
 import :manifest.conditional;
 import :condition;
 import :manifest.error;
@@ -564,7 +565,7 @@ auto parse_library_target(Option<wire::LibraryTarget> value, PackageLanguage lan
         rstd::move(name), rstd::move(output), rstd::move(source), rstd::move(linker_options))));
 }
 
-auto parse_plugin_target(Option<wire::ModuleTarget> value,
+auto parse_plugin_target(Option<wire::PluginTarget> value,
                          ref<str>                   package_name,
                          PackageLanguage            language)
     -> ManifestSchemaResult<Option<PackageTargetManifest>> {
@@ -572,13 +573,20 @@ auto parse_plugin_target(Option<wire::ModuleTarget> value,
     if (language != PackageLanguage::Cpp) {
         return Err(ManifestSchemaError::Domain("manifest.plugin requires a C++ package"_Str));
     }
-    auto wire   = rstd::move(value).unwrap();
+    auto wire           = rstd::move(value).unwrap();
+    auto attribute_only = wire.attribute_only;
+    if (attribute_only && ! package_attribute_scope_is_valid(package_name)) {
+        return Err(ManifestSchemaError::Domain(
+            "manifest.plugin.attribute-only requires the package name to be a non-reserved "
+            "attribute scope; the scope must match the package name exactly"_Str));
+    }
     auto source = rstd_try(parse_target_source(rstd::move(wire),
                                                "manifest.plugin"_str,
                                                DataPath().with_field("plugin"_str),
                                                true,
                                                language));
-    return Ok(Some(PackageTargetManifest::Plugin(String::make(package_name), rstd::move(source))));
+    return Ok(Some(PackageTargetManifest::Plugin(
+        String::make(package_name), rstd::move(source), attribute_only)));
 }
 
 auto parse_pmacro_target(Option<wire::ModuleTarget> value,

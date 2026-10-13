@@ -69,6 +69,7 @@ auto project_frontend_analysis(frontend::FrontendAnalysis      analysis,
     auto result = CppScanResult {
         .common            = rstd::move(common),
         .scoped_attributes = rstd::move(facts.scoped_attributes),
+        .attribute_scopes  = rstd::move(facts.attribute_scopes),
     };
     if (facts.provided.is_some()) {
         result.provided = Some(rstd::move(facts.provided).unwrap());

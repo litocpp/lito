@@ -55,6 +55,7 @@ struct CppScanResult {
     Option<String>                    implementation_module;
     Vec<RequiredModule>               required_modules;
     Vec<frontend::ScopedAttributeUse> scoped_attributes;
+    frontend::AttributeScopeUsage     attribute_scopes;
 };
 
 class LanguageScanResult {
@@ -89,6 +90,11 @@ struct SourceScanArtifact {
                 language.as_Cpp().facts.required_modules.capacity() * usize(sizeof(RequiredModule));
             bytes += language.as_Cpp().facts.scoped_attributes.capacity() *
                      usize(sizeof(frontend::ScopedAttributeUse));
+            bytes +=
+                language.as_Cpp().facts.attribute_scopes.scopes.capacity() * usize(sizeof(String));
+            for (const auto& scope : language.as_Cpp().facts.attribute_scopes.scopes) {
+                bytes += scope.capacity();
+            }
         }
         return bytes;
     }

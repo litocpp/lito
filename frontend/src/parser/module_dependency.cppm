@@ -36,6 +36,9 @@ struct ScopedAttributeParseState {
     usize          braces {};
     usize          squares {};
     Option<String> scope;
+    Option<String> using_scope;
+    bool           using_prefix {};
+    bool           using_colon {};
     bool           separator {};
     bool           complete {};
 };
@@ -139,6 +142,17 @@ public:
 
     auto finish(const preprocessor::PreprocessedTranslationUnit& translation)
         -> lexical::Result<FrontendResult> {
+        auto attribute_scopes     = translation.attribute_scopes.clone();
+        attribute_scopes.complete = attribute_scopes.complete && attribute_scopes_complete_ &&
+                                    implementation_module_.is_none();
+        for (const auto& state : attribute_states_) {
+            if (state.in_list) attribute_scopes.complete = false;
+        }
+        for (const auto& attributes : scoped_attributes_) {
+            for (const auto& attribute : attributes) {
+                attribute_scopes.observe(attribute.scope.as_str());
+            }
+        }
         auto facts = FrontendResult {
             .source = rstd::path::PathBuf::from(translation.sources.path(translation.main_source)),
             .provided              = rstd::move(provided_),
@@ -146,6 +160,7 @@ public:
             .scoped_attributes     = translation.main_source < scoped_attributes_.len()
                                          ? rstd::move(scoped_attributes_[translation.main_source])
                                          : Vec<ScopedAttributeUse>::make(),
+            .attribute_scopes      = rstd::move(attribute_scopes),
             .header_inputs =
                 [&]() {
                     auto paths = translation.header_inputs.iter()
@@ -261,6 +276,22 @@ private:
         }
         if (state.complete) return;
         if (token.kind == lexical::TokenKind::Identifier) {
+            if (state.using_prefix) {
+                if (state.using_scope.is_none()) {
+                    state.using_scope = Some(String::make(text.utf8().unwrap()));
+                } else if (state.using_colon) {
+                    append_scoped_attribute(
+                        attributes, state.using_scope->as_str(), text.utf8().unwrap());
+                    state.complete = true;
+                } else {
+                    state.complete = true;
+                }
+                return;
+            }
+            if (state.scope.is_none() && text == "using"_str) {
+                state.using_prefix = true;
+                return;
+            }
             if (state.scope.is_none()) {
                 state.scope = Some(String::make(text.utf8().unwrap()));
             } else if (state.separator) {
@@ -269,6 +300,10 @@ private:
             } else {
                 state.complete = true;
             }
+            return;
+        }
+        if (text == ":"_str && state.using_scope.is_some() && ! state.using_colon) {
+            state.using_colon = true;
             return;
         }
         if (text == "::"_str && state.scope.is_some()) {
@@ -284,6 +319,7 @@ private:
         if (exported) declaration = usize(1);
         if (declaration >= candidate.len()) return Ok(empty {});
         auto keyword = candidate[declaration].text.utf8().unwrap();
+        if (keyword == "import"_str) attribute_scopes_complete_ = false;
         if (keyword == "module"_str && declaration + usize(1) < candidate.len() &&
             candidate[declaration + usize(1)].text == ";"_str) {
             return Ok(empty {});
@@ -347,6 +383,7 @@ private:
     Vec<SourceParseState>          states_;
     Vec<ScopedAttributeParseState> attribute_states_;
     Vec<Vec<ScopedAttributeUse>>   scoped_attributes_;
+    bool                           attribute_scopes_complete_ { true };
 };
 
 auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& translation)

@@ -92,6 +92,8 @@ struct Snapshot {
     Option<String>          implementation_module;
     Vec<ModuleImport>       imports;
     Vec<ScopedAttributeUse> scoped_attributes;
+    Vec<String>             attribute_scopes;
+    bool                    attribute_scopes_complete {};
     Vec<String>             header_inputs;
     Vec<EmbeddedInput>      embedded_inputs;
     Vec<ExternalMacro>      external_macros;
@@ -628,7 +630,10 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSnapshot> {
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::WriteSnapshot& value)
         -> typename Serializer::result_type {
         const auto& result = *value.value;
-        auto        map    = rstd_try(serializer.begin_map(usize(10)));
+        auto        map    = rstd_try(serializer.begin_map(usize(12)));
+        rstd_try(serde::field(map, "attribute-scopes"_str, result.attribute_scopes.scopes));
+        rstd_try(
+            serde::field(map, "attribute-scopes-complete"_str, result.attribute_scopes.complete));
         rstd_try(serde::field(map,
                               "embedded-inputs"_str,
                               lito::scan_cache_wire::WriteEmbeddedInputs {
@@ -859,7 +864,10 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::Snapshot> {
     template<typename Serializer>
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::Snapshot& value) ->
         typename Serializer::result_type {
-        auto map = rstd_try(serializer.begin_map(usize(10)));
+        auto map = rstd_try(serializer.begin_map(usize(12)));
+        rstd_try(serde::field(map, "attribute-scopes"_str, value.attribute_scopes));
+        rstd_try(
+            serde::field(map, "attribute-scopes-complete"_str, value.attribute_scopes_complete));
         rstd_try(serde::field(map, "embedded-inputs"_str, value.embedded_inputs));
         rstd_try(serde::field(map, "external-macros"_str, value.external_macros));
         rstd_try(serde::field(map, "header-inputs"_str, value.header_inputs));
@@ -1144,6 +1152,9 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
         auto scoped_attributes =
             serde::RequiredField<Vec<lito::scan_cache_wire::ScopedAttributeUse>>(
                 "scoped-attributes"_str);
+        auto attribute_scopes = serde::RequiredField<Vec<String>>("attribute-scopes"_str);
+        auto attribute_scopes_complete =
+            serde::RequiredField<bool>("attribute-scopes-complete"_str);
         auto headers = serde::RequiredField<Vec<String>>("header-inputs"_str);
         auto embedded =
             serde::RequiredField<Vec<lito::scan_cache_wire::EmbeddedInput>>("embedded-inputs"_str);
@@ -1158,22 +1169,26 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
                                            implementation,
                                            imports,
                                            scoped_attributes,
+                                           attribute_scopes,
+                                           attribute_scopes_complete,
                                            headers,
                                            embedded,
                                            macros,
                                            environment,
                                            input_bytes));
         return Ok(lito::scan_cache_wire::Snapshot {
-            .source                   = rstd_try(source.take(deserializer)),
-            .provided                 = rstd_try(provided.take(deserializer)),
-            .implementation_module    = rstd_try(implementation.take(deserializer)),
-            .imports                  = rstd_try(imports.take(deserializer)),
-            .scoped_attributes        = rstd_try(scoped_attributes.take(deserializer)),
-            .header_inputs            = rstd_try(headers.take(deserializer)),
-            .embedded_inputs          = rstd_try(embedded.take(deserializer)),
-            .external_macros          = rstd_try(macros.take(deserializer)),
-            .preprocessor_environment = rstd_try(environment.take(deserializer)),
-            .input_bytes              = rstd_try(input_bytes.take(deserializer)),
+            .source                    = rstd_try(source.take(deserializer)),
+            .provided                  = rstd_try(provided.take(deserializer)),
+            .implementation_module     = rstd_try(implementation.take(deserializer)),
+            .imports                   = rstd_try(imports.take(deserializer)),
+            .scoped_attributes         = rstd_try(scoped_attributes.take(deserializer)),
+            .attribute_scopes          = rstd_try(attribute_scopes.take(deserializer)),
+            .attribute_scopes_complete = rstd_try(attribute_scopes_complete.take(deserializer)),
+            .header_inputs             = rstd_try(headers.take(deserializer)),
+            .embedded_inputs           = rstd_try(embedded.take(deserializer)),
+            .external_macros           = rstd_try(macros.take(deserializer)),
+            .preprocessor_environment  = rstd_try(environment.take(deserializer)),
+            .input_bytes               = rstd_try(input_bytes.take(deserializer)),
         });
     }
 };

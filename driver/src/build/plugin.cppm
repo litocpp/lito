@@ -250,6 +250,7 @@ auto compiler_plugin_for_package(const Vec<BuiltCompilerPlugin>& products, ref<s
 auto attach_target_compiler_plugins(const cpp::PackageSpec&         package,
                                     const cpp::PackagePlan&         plan,
                                     const Vec<Vec<cpp::UnitId>>&    target_units,
+                                    const Vec<cpp::ScanResult>&     scans,
                                     const Vec<BuiltCompilerPlugin>& products,
                                     const ClangToolchain&           toolchain,
                                     CompilePlan& compile_plan) -> BuildResult<empty> {
@@ -274,6 +275,11 @@ auto attach_target_compiler_plugins(const cpp::PackageSpec&         package,
                                  dependency.package.as_str())));
             }
             for (auto unit : target_units[target]) {
+                if (dependency.attribute_only && unit < scans.len() && scans[unit].unit == unit &&
+                    scans[unit].language.is_Cpp() &&
+                    ! scans[unit].language.as_Cpp().facts.attribute_scopes.may_use(
+                        dependency.package.as_str()))
+                    continue;
                 auto invocation = compile_plan_invocation(compile_plan, unit);
                 if (invocation == nullptr) {
                     return Err(BuildError::Message(

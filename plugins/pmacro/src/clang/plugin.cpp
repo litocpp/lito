@@ -17,18 +17,9 @@ module;
 #include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
-#include <algorithm>
-#include <expected>
-#include <memory>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <system_error>
-#include <utility>
-#include <variant>
-#include <vector>
-
 module pmacro;
+
+import std;
 
 namespace pmacro::clang_bridge
 {
@@ -480,7 +471,7 @@ public:
 
         struct GroupFrame {
             pmacro::host::StreamHandle parent;
-            size_t                     token;
+            std::size_t                token;
             clang::tok::TokenKind      closing;
         };
         auto frames  = std::vector<GroupFrame> {};
@@ -497,7 +488,7 @@ public:
             if (token.is(clang::tok::comment)) continue;
             const auto* end        = lexer.getBufferLocation();
             const auto* begin      = end - token.getLength();
-            const auto  offset     = static_cast<uint32_t>(begin - input.begin());
+            const auto  offset     = static_cast<std::uint32_t>(begin - input.begin());
             auto        token_span = pmacro::Span(
                 span.source(), span.begin() + offset, span.begin() + offset + token.getLength());
 
@@ -706,13 +697,13 @@ private:
     }
 
     auto stream_size(pmacro::host::StreamHandle handle) const noexcept
-        -> std::expected<size_t, pmacro::Error> override {
+        -> std::expected<std::size_t, pmacro::Error> override {
         const auto* stream = get_stream(handle);
         if (stream == nullptr) return std::unexpected(pmacro::Error::InvalidArgument);
         return stream->tokens.size();
     }
 
-    auto stream_token(pmacro::host::StreamHandle handle, size_t index) const noexcept
+    auto stream_token(pmacro::host::StreamHandle handle, std::size_t index) const noexcept
         -> std::expected<pmacro::host::RuntimeToken, pmacro::Error> override {
         const auto* stream = get_stream(handle);
         if (stream == nullptr || index >= stream->tokens.size())
@@ -783,7 +774,7 @@ private:
                             std::max(left.end(), right.end()));
     }
 
-    auto subspan(pmacro::Span span, uint32_t begin, uint32_t end) const noexcept
+    auto subspan(pmacro::Span span, std::uint32_t begin, std::uint32_t end) const noexcept
         -> std::expected<pmacro::Span, pmacro::Error> override {
         if (! valid_span(span) || begin > end || end > span.end() - span.begin())
             return std::unexpected(pmacro::Error::InvalidArgument);
@@ -855,8 +846,9 @@ auto attribute_span(clang::CompilerInstance& compiler, const clang::AnnotateAttr
     const auto before = source.slice(opening + 2, span->begin());
     const auto after  = source.slice(span->end(), closing);
     if (before.trim().empty() && after.trim().empty()) {
-        return pmacro::Span(
-            span->source(), static_cast<uint32_t>(opening), static_cast<uint32_t>(closing + 2));
+        return pmacro::Span(span->source(),
+                            static_cast<std::uint32_t>(opening),
+                            static_cast<std::uint32_t>(closing + 2));
     }
     const auto next_comma = after.find(',');
     if (next_comma != llvm::StringRef::npos &&
@@ -864,20 +856,21 @@ auto attribute_span(clang::CompilerInstance& compiler, const clang::AnnotateAttr
         auto end = next_comma + 1;
         while (end < after.size() && llvm::isSpace(after[end])) ++end;
         return pmacro::Span(
-            span->source(), span->begin(), span->end() + static_cast<uint32_t>(end));
+            span->source(), span->begin(), span->end() + static_cast<std::uint32_t>(end));
     }
     const auto previous_comma = before.rfind(',');
     if (previous_comma != llvm::StringRef::npos &&
         before.drop_front(previous_comma + 1).trim().empty()) {
         return pmacro::Span(
-            span->source(), static_cast<uint32_t>(opening + 2 + previous_comma), span->end());
+            span->source(), static_cast<std::uint32_t>(opening + 2 + previous_comma), span->end());
     }
     return span;
 }
 
 auto mask_span(std::string& source, pmacro::Span span) -> bool {
     if (span.begin() > span.end() || span.end() > source.size()) return false;
-    for (auto index = static_cast<size_t>(span.begin()); index < static_cast<size_t>(span.end());
+    for (auto index = static_cast<std::size_t>(span.begin());
+         index < static_cast<std::size_t>(span.end());
          ++index) {
         if (source[index] != '\n' && source[index] != '\r') source[index] = ' ';
     }
@@ -960,7 +953,7 @@ public:
         }
         auto& stream = output.os();
         stream << source << "\nnamespace {\n";
-        for (size_t index = 0; index < definitions_.size(); ++index) {
+        for (std::size_t index = 0; index < definitions_.size(); ++index) {
             const auto& definition = definitions_[index];
             stream << "static const pmacro::host::MacroRegistration "
                    << "pmacro_generated_registration_" << index << " {\n"
@@ -1022,6 +1015,8 @@ private:
         for (const auto* candidate : function.getDeclContext()->lookup(function.getDeclName())) {
             const auto* overload = llvm::dyn_cast<clang::FunctionDecl>(candidate);
             if (overload != nullptr &&
+                overload->getTopLevelOwningNamedModule() ==
+                    function.getTopLevelOwningNamedModule() &&
                 overload->getCanonicalDecl() != function.getCanonicalDecl()) {
                 reject("'pmacro::define' function must not be overloaded");
                 return;
@@ -1223,8 +1218,8 @@ private:
         if (removal.begin() < item_range.begin() || removal.end() > item_range.end() ||
             removal.begin() > removal.end())
             return false;
-        item.erase(static_cast<size_t>(removal.begin() - item_range.begin()),
-                   static_cast<size_t>(removal.end() - removal.begin()));
+        item.erase(static_cast<std::size_t>(removal.begin() - item_range.begin()),
+                   static_cast<std::size_t>(removal.end() - removal.begin()));
         return true;
     }
 
@@ -1232,8 +1227,8 @@ private:
         if (removal.begin() < item_range.begin() || removal.end() > item_range.end() ||
             removal.begin() > removal.end())
             return false;
-        for (auto index = static_cast<size_t>(removal.begin() - item_range.begin());
-             index < static_cast<size_t>(removal.end() - item_range.begin());
+        for (auto index = static_cast<std::size_t>(removal.begin() - item_range.begin());
+             index < static_cast<std::size_t>(removal.end() - item_range.begin());
              ++index) {
             if (item[index] != '\n' && item[index] != '\r') item[index] = ' ';
         }
@@ -1385,7 +1380,7 @@ private:
                        const std::vector<const clang::AnnotateAttr*>& invocations) -> void {
         auto&      diagnostics          = compiler_.getDiagnostics();
         const auto first_attribute_span = this->attribute_span(*invocations.front());
-        for (size_t index = 1; index < invocations.size(); ++index) {
+        for (std::size_t index = 1; index < invocations.size(); ++index) {
             const auto span = this->attribute_span(*invocations[index]);
             if (! first_attribute_span.has_value() || ! span.has_value() ||
                 span->begin() != first_attribute_span->begin() ||
@@ -1480,10 +1475,10 @@ private:
         }
         const auto item_stream = state_.make_stream(provider_item, *item_span);
         auto       generated   = std::string {};
-        for (size_t index = 0; index < invocations.size(); ++index) {
+        for (std::size_t index = 0; index < invocations.size(); ++index) {
             const auto& attribute  = *invocations[index];
             const auto  annotation = attribute.getAnnotation().drop_front(derive_annotation.size());
-            for (size_t prior = 0; prior < index; ++prior) {
+            for (std::size_t prior = 0; prior < index; ++prior) {
                 if (invocations[prior]->getAnnotation().drop_front(derive_annotation.size()) ==
                     annotation) {
                     report(diagnostics,

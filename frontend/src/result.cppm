@@ -117,12 +117,37 @@ struct ExternalMacroMaterialization : DefaultInClass<ExternalMacroMaterializatio
     auto clone() const -> ExternalMacroMaterialization;
 };
 
+struct AttributeScopeUsage : DefaultInClass<AttributeScopeUsage, Clone> {
+    Vec<String> scopes;
+    bool        complete {};
+
+    auto clone() const -> AttributeScopeUsage {
+        return AttributeScopeUsage { .scopes = as<Clone>(scopes).clone(), .complete = complete };
+    }
+
+    auto observe(ref<str> scope) -> void {
+        for (const auto& existing : scopes) {
+            if (existing == scope) return;
+        }
+        scopes.push(String::make(scope));
+    }
+
+    auto may_use(ref<str> scope) const -> bool {
+        if (! complete) return true;
+        for (const auto& existing : scopes) {
+            if (existing == scope) return true;
+        }
+        return false;
+    }
+};
+
 struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
     rstd::path::PathBuf               source;
     Option<ProvidedModule>            provided;
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
     Vec<ScopedAttributeUse>           scoped_attributes;
+    AttributeScopeUsage               attribute_scopes;
     Vec<rstd::path::PathBuf>          header_inputs;
     Vec<EmbeddedInput>                embedded_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
@@ -138,6 +163,7 @@ struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
     Vec<ScopedAttributeUse>           scoped_attributes;
+    AttributeScopeUsage               attribute_scopes;
     Vec<rstd::path::PathBuf>          header_inputs;
     Vec<EmbeddedInput>                embedded_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
@@ -225,6 +251,7 @@ auto FrontendResult::clone() const -> FrontendResult {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .scoped_attributes        = as<Clone>(scoped_attributes).clone(),
+        .attribute_scopes         = attribute_scopes.clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
         .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
         .external_macros          = as<Clone>(external_macros).clone(),
@@ -240,6 +267,7 @@ auto FrontendSnapshot::clone() const -> FrontendSnapshot {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .scoped_attributes        = as<Clone>(scoped_attributes).clone(),
+        .attribute_scopes         = attribute_scopes.clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
         .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
         .external_macros          = as<Clone>(external_macros).clone(),
@@ -255,6 +283,7 @@ auto snapshot(const FrontendResult& result) -> FrontendSnapshot {
         .implementation_module    = as<Clone>(result.implementation_module).clone(),
         .imports                  = as<Clone>(result.imports).clone(),
         .scoped_attributes        = as<Clone>(result.scoped_attributes).clone(),
+        .attribute_scopes         = result.attribute_scopes.clone(),
         .header_inputs            = as<Clone>(result.header_inputs).clone(),
         .embedded_inputs          = as<Clone>(result.embedded_inputs).clone(),
         .external_macros          = as<Clone>(result.external_macros).clone(),
@@ -270,6 +299,9 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
         return None();
     for (const auto& imported : value.imports) {
         if (imported.logical_name.is_empty() || imported.location.path.is_empty()) return None();
+    }
+    for (const auto& scope : value.attribute_scopes.scopes) {
+        if (scope.is_empty()) return None();
     }
     for (const auto& attribute : value.scoped_attributes) {
         if (attribute.scope.is_empty() || attribute.name.is_empty()) return None();
@@ -299,6 +331,7 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
         .implementation_module    = rstd::move(value.implementation_module),
         .imports                  = rstd::move(value.imports),
         .scoped_attributes        = rstd::move(value.scoped_attributes),
+        .attribute_scopes         = rstd::move(value.attribute_scopes),
         .header_inputs            = rstd::move(value.header_inputs),
         .embedded_inputs          = rstd::move(value.embedded_inputs),
         .external_macros          = rstd::move(value.external_macros),

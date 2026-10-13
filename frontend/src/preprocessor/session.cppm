@@ -35,6 +35,7 @@ struct PreprocessedTranslationUnit {
     Vec<frontend::EmbeddedInput>                embedded_inputs;
     Vec<frontend::ExternalMacroMaterialization> external_macros;
     String                                      environment_identity;
+    frontend::AttributeScopeUsage               attribute_scopes;
     usize                                       input_bytes {};
     PreprocessorStatistics                      statistics;
 };
@@ -317,6 +318,7 @@ public:
             .embedded_inputs      = rstd::move(embedded_inputs_),
             .external_macros      = rstd::move(external_macros_),
             .environment_identity = environment_identity(),
+            .attribute_scopes     = rstd::move(attribute_scopes_),
             .input_bytes          = input_bytes_,
             .statistics           = statistics,
         });
@@ -664,6 +666,10 @@ private:
             }
             return Ok(empty {});
         }
+        if (tokens.len() >= usize(2) && tokens[usize {}].text == "clang"_str &&
+            tokens[usize(1)].text == "attribute"_str) {
+            attribute_scopes_.complete = false;
+        }
         auto outcome =
             as<PragmaHandler>(pragma_handler_)
                 .handle(PragmaRequest { .tokens = tokens.as_slice(), .location = location });
@@ -954,8 +960,12 @@ private:
         } else {
             value = joined_argument(argument);
         }
-        return as<BuiltinProvider>(builtin_provider_)
-            .evaluate(BuiltinQueryKey::template make<Query>(value.as_str()));
+        auto key = BuiltinQueryKey::template make<Query>(value.as_str());
+        if (key.template is<HasCppAttributeQuery>()) {
+            auto scoped = key.argument.as_str().split_once("::"_str);
+            if (scoped.is_some()) attribute_scopes_.observe(scoped->template get<0>());
+        }
+        return as<BuiltinProvider>(builtin_provider_).evaluate(key);
     }
 
     auto include_query(const Token& origin, bool include_next, const ScratchTokenVec& argument)
@@ -2161,6 +2171,7 @@ private:
     rstd::collections::BTreeMap<String, empty>  resolved_external_macros_;
     Vec<frontend::ExternalMacroMaterialization> external_macros_;
     Vec<frontend::EmbeddedInput>                embedded_inputs_;
+    frontend::AttributeScopeUsage               attribute_scopes_ { .complete = true };
     Vec<IncludeFrame>                           include_stack_;
     Vec<PresumedLineMapping>                    line_mappings_;
     Vec<CommentTrivia>                          active_comments_;

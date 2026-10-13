@@ -1338,15 +1338,16 @@ module = "fixture.plugin_consumer"
 archive = "fixture-plugin-consumer"
 sources = ["lib.cppm"]
 
-[dependencies.fixture-compiler-plugin]
+[dependencies.fixture_compiler_plugin]
 path = "plugin"
 )toml"_str },
         { "lib.cppm"_str, "export module fixture.plugin_consumer;\n"_str },
         { "plugin/lito.toml"_str, R"toml([package]
-name = "fixture-compiler-plugin"
+name = "fixture_compiler_plugin"
 version = "0.1.0"
 
 [plugin]
+attribute-only = true
 module = "fixture.compiler_plugin"
 sources = ["lib.cppm"]
 )toml"_str },
@@ -1369,10 +1370,11 @@ sources = ["lib.cppm"]
     ASSERT_NE(consumer, nullptr);
     ASSERT_EQ(consumer->dependencies.len(), usize(1));
     EXPECT_TRUE(consumer->dependencies[usize {}].is_Plugin());
+    EXPECT_TRUE(consumer->dependencies[usize {}].as_Plugin().value.attribute_only);
     ASSERT_EQ(selected->plugin_package_names.len(), usize(1));
-    EXPECT_EQ(selected->plugin_package_names[usize {}].as_str(), "fixture-compiler-plugin"_str);
+    EXPECT_EQ(selected->plugin_package_names[usize {}].as_str(), "fixture_compiler_plugin"_str);
     ASSERT_EQ(selected->host_package_names.len(), usize(1));
-    EXPECT_EQ(selected->host_package_names[usize {}].as_str(), "fixture-compiler-plugin"_str);
+    EXPECT_EQ(selected->host_package_names[usize {}].as_str(), "fixture_compiler_plugin"_str);
 }
 
 TEST_F(PackageResolver, PluginDependencyRejectsConsumptionFields) {

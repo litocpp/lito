@@ -25,7 +25,7 @@ For a C package selected by `[package].standard`, `module` is forbidden and eith
 A package has at most one compiler plugin target and cannot also declare `[lib]` or `[pmacro]`.
 The package name is also the registered Clang plugin name. The target accepts `module`, `sources`,
 `source-groups`, and `when` with the same source ownership rules as a C++ library, and requires a
-C++ package standard.
+C++ package standard. `attribute-only` is an optional boolean and defaults to `false`.
 
 Lito builds plugin sources with the host toolchain as PIC objects. The resulting support archive
 is linked into a loadable library and retained with the action and host compiler identity as one
@@ -36,6 +36,33 @@ An ordinary dependency that resolves to `[plugin]` is a host-only compiler depen
 it before target compilation and attaches the completed product to the dependent target's compile
 invocations. It does not contribute target include directories, modules, archives, shared
 libraries, or install artifacts. `pub` and `usage` are therefore rejected for a plugin dependency.
+
+By default, the plugin is loaded for every source in the dependent target. Opt in to scope-based
+loading with:
+
+```toml
+[package]
+name = "example_plugin"
+version = "0.1.0"
+
+[plugin]
+module = "example.plugin"
+attribute-only = true
+```
+
+An attribute-only plugin must register its C++ attributes under its exact package name, such as
+`[[example_plugin::marker]]` or `[[using example_plugin: marker]]`. The attribute name does not
+affect selection. No custom prefix or name normalization is supported: `example-plugin` cannot
+opt in, and it is never mapped to `example_plugin`. The package name must start with an ASCII
+letter and contain only ASCII letters, digits, and underscores, without `__`. The reserved scopes
+`clang`, `gnu`, `msvc`, `gsl`, `omp`, and `std` cannot opt in.
+
+Lito uses frontend facts from the source, expanded macros, and included headers to choose plugins
+per compile unit. A scoped `__has_cpp_attribute` query also keeps that plugin loaded. Missing or
+incomplete facts, module imports, and `#pragma clang attribute` keep plugins loaded conservatively.
+This controls loading only; plugin dependencies are still resolved and built on the host.
+Attribute-only plugins must not require execution on sources without their scope. Lito validates
+the manifest name, but does not inspect or enforce attribute registrations inside a plugin's code.
 
 ## `[pmacro]`
 

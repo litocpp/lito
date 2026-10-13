@@ -799,13 +799,17 @@ class PackageGraphResolver {
                     declaration.name.as_str(),
                     provider->manifest.manifest_path.as_path())));
             }
-            auto features = declaration.features.is_some() ? declaration.features->clone()
-                                                           : Vec<String>::make();
+            auto features       = declaration.features.is_some() ? declaration.features->clone()
+                                                                 : Vec<String>::make();
+            auto attribute_only = provider->manifest.targets.iter().any([](auto target) {
+                return target->is_Plugin() && target->as_Plugin().attribute_only;
+            });
             return Ok(ResolvedRequiredDependency::Plugin(ResolvedPluginDependency {
                 .name     = provider->manifest.name.clone(),
                 .features = rstd::move(features),
                 .default_features =
                     declaration.default_features.is_some() ? *declaration.default_features : true,
+                .attribute_only = attribute_only,
             }));
         }
         if (package_has_proc_macro(provider->manifest)) {

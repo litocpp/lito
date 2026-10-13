@@ -2937,3 +2937,129 @@ lito.write({package="beta-assets", output="site/main.js", content="workspace scr
     ASSERT_TRUE(repeated.is_ok());
     EXPECT_EQ(repeated->as_str(), report->as_str());
 }
+
+TEST_F(BuildCommand, AttributeOnlyPluginsSelectCompileUnitsAndReuseScanFacts) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "attribute-consumer"
+version = "0.1.0"
+[lib]
+name = "attribute-consumer"
+archive = "attribute-consumer"
+module = "attribute.consumer"
+sources = ["lib.cppm", "main_attr.cpp", "header_attr.cpp", "using_attr.cpp", "plain.cpp"]
+[dependencies.marker_plugin]
+path = "plugin"
+[usage]
+options = ["-Werror=unknown-attributes"]
+)toml"_str },
+        { "lib.cppm"_str, "export module attribute.consumer;\n"_str },
+        { "main_attr.cpp"_str,
+          "#define MARK [[marker_plugin::required]]\nMARK int main_attr;\n"_str },
+        { "marked.hpp"_str, "[[marker_plugin::required]] int header_attr;\n"_str },
+        { "header_attr.cpp"_str, "#include \"marked.hpp\"\n"_str },
+        { "using_attr.cpp"_str, "[[using marker_plugin: required]] int using_attr;\n"_str },
+        { "plain.cpp"_str, "int plain;\n"_str },
+        { "plugin/lito.toml"_str, R"toml([package]
+name = "marker_plugin"
+version = "0.1.0"
+[plugin]
+module = "marker.plugin"
+sources = ["lib.cppm", "plugin.cpp"]
+attribute-only = true
+)toml"_str },
+        { "plugin/lib.cppm"_str, "export module marker.plugin;\n"_str },
+        { "plugin/plugin.cpp"_str, R"cpp(
+#include <clang/AST/ASTConsumer.h>
+#include <clang/Frontend/CompilerInstance.h>
+#include <clang/Frontend/FrontendPluginRegistry.h>
+#include <clang/Sema/ParsedAttr.h>
+#include <clang/Sema/Sema.h>
+
+class MarkerAttribute final : public clang::ParsedAttrInfo {
+public:
+    MarkerAttribute() {
+        static constexpr Spelling spellings[] = {
+            { clang::ParsedAttr::AS_CXX11, "marker_plugin::required" },
+        };
+        Spellings = spellings;
+    }
+    auto handleDeclAttribute(clang::Sema&, clang::Decl*, const clang::ParsedAttr&) const
+        -> AttrHandling override {
+        return AttributeApplied;
+    }
+};
+
+class MarkerPlugin final : public clang::PluginASTAction {
+public:
+    auto CreateASTConsumer(clang::CompilerInstance& compiler, llvm::StringRef)
+        -> std::unique_ptr<clang::ASTConsumer> override {
+        if (compiler.getFrontendOpts().Inputs.front().getFile().ends_with("plain.cpp")) {
+            auto& diagnostics = compiler.getDiagnostics();
+            auto id = diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error,
+                                                    "marker_plugin loaded for plain.cpp");
+            diagnostics.Report(id);
+        }
+        return std::make_unique<clang::ASTConsumer>();
+    }
+    auto ParseArgs(const clang::CompilerInstance&, const std::vector<std::string>&)
+        -> bool override { return true; }
+    auto getActionType() -> ActionType override { return AddBeforeMainAction; }
+};
+
+static clang::ParsedAttrInfoRegistry::Add<MarkerAttribute>
+    attribute("marker_plugin_required", "test attribute");
+static clang::FrontendPluginRegistry::Add<MarkerPlugin>
+    plugin("marker_plugin", "test plugin");
+)cpp"_str },
+    };
+    auto project = materialize("attribute-plugin-selection"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request  = build_request(project->root.as_path(),
+                                  build_root("attribute-plugin-selection"_str).as_path(),
+                                  Vec<String>::make());
+    auto build_ok = [&]() {
+        auto built = lito::build(request);
+        if (built.is_err()) {
+            rstd::test::fail_current(
+                error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+        }
+        return built;
+    };
+    auto cold = build_ok();
+    ASSERT_TRUE(cold.is_ok());
+    auto warm = build_ok();
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+    EXPECT_TRUE(warm->frontend.persistent_scan_hits > usize {});
+
+    auto plain = project->root.join(PathBuf::from("plain.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(plain.as_path(), "int plain = 1;\n"_str.as_bytes()).is_ok());
+    auto cached_selection = build_ok();
+    ASSERT_TRUE(cached_selection.is_ok());
+    EXPECT_EQ(cached_selection->compiled, usize(1));
+
+    ASSERT_TRUE(rstd::fs::write(plain.as_path(),
+                                "[[using marker_plugin: required]] int plain;\n"_str.as_bytes())
+                    .is_ok());
+    auto now_required = lito::build(request);
+    ASSERT_TRUE(now_required.is_err());
+    EXPECT_TRUE(error_chain_text(now_required.unwrap_err())
+                    .as_str()
+                    .contains("marker_plugin loaded for plain.cpp"_str));
+
+    auto plugin_manifest = project->root.join(PathBuf::from("plugin/lito.toml"_str).as_path());
+    auto contents        = rstd::fs::read_to_string(plugin_manifest.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    auto prefix = contents->as_str().strip_suffix("attribute-only = true\n"_str);
+    ASSERT_TRUE(prefix.is_some());
+    auto always = String::make(*prefix);
+    always.push_str("attribute-only = false\n"_str);
+    ASSERT_TRUE(rstd::fs::write(plugin_manifest.as_path(), always.as_str().as_bytes()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(plain.as_path(), "int plain;\n"_str.as_bytes()).is_ok());
+    auto default_loaded = lito::build(request);
+    ASSERT_TRUE(default_loaded.is_err());
+    EXPECT_TRUE(error_chain_text(default_loaded.unwrap_err())
+                    .as_str()
+                    .contains("marker_plugin loaded for plain.cpp"_str));
+}

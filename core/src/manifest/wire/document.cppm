@@ -138,7 +138,7 @@ struct Document {
     Option<Workspace>                                                               workspace;
     Option<Package>                                                                 package;
     Option<LibraryTarget>                                                           lib;
-    Option<ModuleTarget>                                                            plugin;
+    Option<PluginTarget>                                                            plugin;
     Option<ModuleTarget>                                                            pmacro;
     Option<Vec<BinaryTarget>>                                                       bin;
     Option<Vec<TestTarget>>                                                         test;
@@ -176,7 +176,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
         auto workspace    = serde::OptionalField<Workspace>("workspace"_str);
         auto package      = serde::OptionalField<PackageInput<Embedded>>("package"_str);
         auto lib          = serde::OptionalField<LibraryTarget>("lib"_str);
-        auto plugin       = serde::OptionalField<ModuleTarget>("plugin"_str);
+        auto plugin       = serde::OptionalField<PluginTarget>("plugin"_str);
         auto pmacro       = serde::OptionalField<ModuleTarget>("pmacro"_str);
         auto bin          = serde::OptionalField<Vec<BinaryTarget>>("bin"_str);
         auto test         = serde::OptionalField<Vec<TestTarget>>("test"_str);

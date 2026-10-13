@@ -45,10 +45,12 @@ struct ProcMacroDependencySpec {
 
 struct CompilerPluginDependencySpec {
     String package;
+    bool   attribute_only {};
 
     auto clone() const -> CompilerPluginDependencySpec {
         return CompilerPluginDependencySpec {
-            .package = package.clone(),
+            .package        = package.clone(),
+            .attribute_only = attribute_only,
         };
     }
 };

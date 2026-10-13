@@ -7,3 +7,4 @@ standard = "c++23"
 [plugin]
 module = "pmacro"
 sources = ["src/lib.cppm", "src/clang/plugin.cpp"]
+attribute-only = true

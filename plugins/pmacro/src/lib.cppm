@@ -1,17 +1,11 @@
-module;
-
-#include <cstddef>
-#include <cstdint>
-#include <expected>
-#include <string_view>
-#include <variant>
-
 export module pmacro;
+
+import std;
 
 export namespace pmacro
 {
 
-enum class TokenKind : uint32_t
+enum class TokenKind : std::uint32_t
 {
     Ident,
     Literal,
@@ -19,7 +13,7 @@ enum class TokenKind : uint32_t
     Group,
 };
 
-enum class Delimiter : uint32_t
+enum class Delimiter : std::uint32_t
 {
     None,
     Parenthesis,
@@ -27,20 +21,20 @@ enum class Delimiter : uint32_t
     Bracket,
 };
 
-enum class Spacing : uint32_t
+enum class Spacing : std::uint32_t
 {
     Alone,
     Joint,
 };
 
-enum class DiagnosticLevel : uint32_t
+enum class DiagnosticLevel : std::uint32_t
 {
     Note,
     Warning,
     Error,
 };
 
-enum class Error : uint32_t
+enum class Error : std::uint32_t
 {
     Failure,
     InvalidArgument,
@@ -49,17 +43,17 @@ enum class Error : uint32_t
 class Span {
 public:
     constexpr Span() noexcept = default;
-    constexpr Span(uint64_t source, uint32_t begin, uint32_t end) noexcept
+    constexpr Span(std::uint64_t source, std::uint32_t begin, std::uint32_t end) noexcept
         : source_(source), begin_(begin), end_(end) {}
 
-    constexpr auto source() const noexcept -> uint64_t { return source_; }
-    constexpr auto begin() const noexcept -> uint32_t { return begin_; }
-    constexpr auto end() const noexcept -> uint32_t { return end_; }
+    constexpr auto source() const noexcept -> std::uint64_t { return source_; }
+    constexpr auto begin() const noexcept -> std::uint32_t { return begin_; }
+    constexpr auto end() const noexcept -> std::uint32_t { return end_; }
 
 private:
-    uint64_t source_ {};
-    uint32_t begin_ {};
-    uint32_t end_ {};
+    std::uint64_t source_ {};
+    std::uint32_t begin_ {};
+    std::uint32_t end_ {};
 };
 
 class TokenStream;
@@ -69,7 +63,7 @@ class Context;
 namespace host
 {
 
-using StreamHandle = uint64_t;
+using StreamHandle = std::uint64_t;
 
 struct RuntimeToken {
     TokenKind        kind { TokenKind::Literal };
@@ -111,8 +105,8 @@ public:
 
     constexpr TokenStream() noexcept = default;
 
-    auto           size() const noexcept -> size_t;
-    auto           operator[](size_t index) const noexcept -> TokenTree;
+    auto           size() const noexcept -> std::size_t;
+    auto           operator[](std::size_t index) const noexcept -> TokenTree;
     auto           append(const TokenTree& token) noexcept -> bool;
     auto           append(const TokenStream& stream) noexcept -> bool;
     constexpr auto valid() const noexcept -> bool { return runtime_ != nullptr && handle_ != 0; }
@@ -144,12 +138,14 @@ public:
 private:
     friend class TokenStream;
 
-    constexpr Iterator(host::Runtime* runtime, host::StreamHandle handle, size_t index) noexcept
+    constexpr Iterator(host::Runtime*     runtime,
+                       host::StreamHandle handle,
+                       std::size_t        index) noexcept
         : runtime_(runtime), handle_(handle), index_(index) {}
 
     host::Runtime*     runtime_ {};
     host::StreamHandle handle_ {};
-    size_t             index_ {};
+    std::size_t        index_ {};
 };
 
 class Context {
@@ -160,7 +156,7 @@ public:
         -> bool;
     auto call_site() const noexcept -> std::expected<Span, Error>;
     auto join(Span left, Span right) const noexcept -> std::expected<Span, Error>;
-    auto subspan(Span span, uint32_t begin, uint32_t end) const noexcept
+    auto subspan(Span span, std::uint32_t begin, std::uint32_t end) const noexcept
         -> std::expected<Span, Error>;
     auto macro_identity() const noexcept -> std::string_view;
     auto provider_identity() const noexcept -> std::string_view;
@@ -196,14 +192,14 @@ public:
     virtual auto parse_stream(std::string_view source) noexcept
         -> std::expected<StreamHandle, Error> = 0;
     virtual auto stream_size(StreamHandle handle) const noexcept
-        -> std::expected<size_t, Error> = 0;
-    virtual auto stream_token(StreamHandle handle, size_t index) const noexcept
+        -> std::expected<std::size_t, Error> = 0;
+    virtual auto stream_token(StreamHandle handle, std::size_t index) const noexcept
         -> std::expected<RuntimeToken, Error> = 0;
     virtual auto push_token(StreamHandle handle, const RuntimeToken& token) noexcept
         -> std::expected<void, Error>                                                           = 0;
     virtual auto call_site_span() const noexcept -> std::expected<Span, Error>                  = 0;
     virtual auto join_spans(Span left, Span right) const noexcept -> std::expected<Span, Error> = 0;
-    virtual auto subspan(Span span, uint32_t begin, uint32_t end) const noexcept
+    virtual auto subspan(Span span, std::uint32_t begin, std::uint32_t end) const noexcept
         -> std::expected<Span, Error>                                       = 0;
     virtual auto emit_diagnostic(DiagnosticLevel  level,
                                  Span             span,
@@ -300,13 +296,13 @@ auto registered_macros() noexcept -> const MacroRegistration* {
 
 } // namespace host
 
-auto TokenStream::size() const noexcept -> size_t {
+auto TokenStream::size() const noexcept -> std::size_t {
     if (! valid()) return 0;
     auto size = runtime_->stream_size(handle_);
     return size ? *size : 0;
 }
 
-auto TokenStream::operator[](size_t index) const noexcept -> TokenTree {
+auto TokenStream::operator[](std::size_t index) const noexcept -> TokenTree {
     if (! valid()) return {};
     auto token = runtime_->stream_token(handle_, index);
     return token ? TokenTree(runtime_, *token) : TokenTree {};
@@ -319,7 +315,7 @@ auto TokenStream::append(const TokenTree& token) noexcept -> bool {
 auto TokenStream::append(const TokenStream& stream) noexcept -> bool {
     if (! valid() || ! stream.valid() || runtime_ != stream.runtime_) return false;
     const auto count = stream.size();
-    for (size_t index = 0; index < count; ++index) {
+    for (std::size_t index = 0; index < count; ++index) {
         if (! append(stream[index])) return false;
     }
     return true;
@@ -366,7 +362,7 @@ auto Context::join(Span left, Span right) const noexcept -> std::expected<Span, 
     return runtime_->join_spans(left, right);
 }
 
-auto Context::subspan(Span span, uint32_t begin, uint32_t end) const noexcept
+auto Context::subspan(Span span, std::uint32_t begin, std::uint32_t end) const noexcept
     -> std::expected<Span, Error> {
     if (runtime_ == nullptr) return std::unexpected(Error::InvalidArgument);
     return runtime_->subspan(span, begin, end);

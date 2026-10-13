@@ -2773,6 +2773,7 @@ sources = ["src/lib.cppm", "src/plugin.cpp"]
     ASSERT_EQ(loaded->targets.len(), usize(1));
     ASSERT_TRUE(loaded->targets[usize {}].is_Plugin());
     EXPECT_EQ(loaded->targets[usize {}].as_Plugin().name.as_str(), "fixture-compiler-plugin"_str);
+    EXPECT_FALSE(loaded->targets[usize {}].as_Plugin().attribute_only);
 
     constexpr ref<str> invalid[] = {
         R"toml([package]
@@ -2806,6 +2807,66 @@ module = "fixture.mixed_plugin_support"
         EXPECT_TRUE(
             lito::manifest::load_package_manifest(invalid_project->root.as_path()).is_err());
         ++index;
+    }
+}
+
+TEST_F(Manifest, AttributeOnlyPluginUsesAnExactPackageScope) {
+    auto project = manifest("attribute-plugin"_str, R"toml([package]
+name = "example_plugin"
+version = "0.1.0"
+[plugin]
+module = "example.plugin"
+attribute-only = true
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_TRUE(loaded->targets[usize {}].as_Plugin().attribute_only);
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    EXPECT_TRUE(serialized->as_str().contains("attribute-only = true"_str));
+
+    constexpr ref<str> invalid_names[] = {
+        "example-plugin"_str,
+        "1plugin"_str,
+        "_plugin"_str,
+        "example__plugin"_str,
+        "clang"_str,
+        "gnu"_str,
+        "msvc"_str,
+        "gsl"_str,
+        "omp"_str,
+        "std"_str,
+    };
+    for (auto name : invalid_names) {
+        auto invalid =
+            manifest(name,
+                     rstd::format("[package]\nname = \"{}\"\nversion = \"0.1.0\"\n"
+                                  "[plugin]\nmodule = \"example.plugin\"\nattribute-only = true\n",
+                                  name)
+                         .as_str());
+        ASSERT_TRUE(invalid.is_ok());
+        EXPECT_TRUE(lito::manifest::load_package_manifest(invalid->root.as_path()).is_err());
+    }
+    constexpr ref<str> invalid_fields[] = {
+        "[plugin]\nmodule = \"example.plugin\"\nattribute-only = \"true\"\n"_str,
+        "[plugin]\nmodule = \"example.plugin\"\nattribute-prefix = \"custom\"\n"_str,
+        "[pmacro]\nmodule = \"example.plugin\"\nattribute-only = true\n"_str,
+        "[lib]\nmodule = \"example.plugin\"\nattribute-only = true\n"_str,
+    };
+    auto index = usize {};
+    for (auto fields : invalid_fields) {
+        auto invalid = manifest(
+            rstd::format("invalid-attribute-field-{}", index++).as_str(),
+            rstd::format("[package]\nname = \"example_plugin\"\nversion = \"0.1.0\"\n{}", fields)
+                .as_str());
+        ASSERT_TRUE(invalid.is_ok());
+        EXPECT_TRUE(lito::manifest::load_package_manifest(invalid->root.as_path()).is_err());
     }
 }
 

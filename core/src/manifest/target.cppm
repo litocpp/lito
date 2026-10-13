@@ -76,7 +76,7 @@ class PackageTargetManifest {
               (Library,
                (String name; LibraryOutput output; TargetSourceManifest source;
                 Vec<String>                                             linker_options;)),
-              (Plugin, (String name; TargetSourceManifest source;)),
+              (Plugin, (String name; TargetSourceManifest source; bool attribute_only;)),
               (ProcMacro, (String name; TargetSourceManifest source;)),
               (Binary,
                (String name; TargetSourceManifest source; bool link_stdlib; bool host_tool;

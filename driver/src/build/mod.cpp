@@ -1565,13 +1565,23 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 }
             }
         }
-        auto attached = attach_target_compiler_plugins(
-            package, package_plan, target_units, compiler_plugins, toolchain, actions.compile);
+        auto attached = attach_target_compiler_plugins(package,
+                                                       package_plan,
+                                                       target_units,
+                                                       scans,
+                                                       compiler_plugins,
+                                                       toolchain,
+                                                       actions.compile);
         if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
         stage_timing.record(BuildStage::Plugin, plugin_started.elapsed());
     } else if (! compiler_plugins.is_empty()) {
-        auto attached = attach_target_compiler_plugins(
-            package, package_plan, target_units, compiler_plugins, toolchain, actions.compile);
+        auto attached = attach_target_compiler_plugins(package,
+                                                       package_plan,
+                                                       target_units,
+                                                       scans,
+                                                       compiler_plugins,
+                                                       toolchain,
+                                                       actions.compile);
         if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
     }
 

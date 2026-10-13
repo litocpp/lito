@@ -20,7 +20,7 @@ using namespace rstd::literals;
 namespace lito
 {
 
-constexpr auto SCAN_CACHE_VERSION = u64(7);
+constexpr auto SCAN_CACHE_VERSION = u64(8);
 
 enum class ScanCacheMissReason
 {
@@ -230,11 +230,16 @@ auto restore_snapshot(scan_cache_wire::Snapshot value) -> Option<frontend::Front
         macros.push(rstd::move(macro).unwrap_unchecked());
     }
     return Some(frontend::FrontendSnapshot {
-        .source                   = PathBuf::from(value.source.as_str()),
-        .provided                 = rstd::move(provided),
-        .implementation_module    = rstd::move(value.implementation_module),
-        .imports                  = rstd::move(imports),
-        .scoped_attributes        = rstd::move(scoped_attributes),
+        .source                = PathBuf::from(value.source.as_str()),
+        .provided              = rstd::move(provided),
+        .implementation_module = rstd::move(value.implementation_module),
+        .imports               = rstd::move(imports),
+        .scoped_attributes     = rstd::move(scoped_attributes),
+        .attribute_scopes =
+            frontend::AttributeScopeUsage {
+                .scopes   = rstd::move(value.attribute_scopes),
+                .complete = value.attribute_scopes_complete,
+            },
         .header_inputs            = rstd::move(headers),
         .embedded_inputs          = rstd::move(embedded),
         .external_macros          = rstd::move(macros),

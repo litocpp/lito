@@ -90,6 +90,7 @@ struct ResolvedPluginDependency {
     String      name;
     Vec<String> features;
     bool        default_features { true };
+    bool        attribute_only {};
 };
 
 struct ResolvedScriptPackageView {

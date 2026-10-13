@@ -1213,7 +1213,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dependencies()) {
             if (dependency.is_Plugin()) {
                 plugin_dependencies.push(CompilerPluginDependencySpec {
-                    .package = dependency.as_Plugin().value.name.clone(),
+                    .package        = dependency.as_Plugin().value.name.clone(),
+                    .attribute_only = dependency.as_Plugin().value.attribute_only,
                 });
                 continue;
             }
@@ -1238,7 +1239,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             for (const auto& dependency : package.active_dev_dependencies()) {
                 if (dependency.is_Plugin()) {
                     dev_plugin_dependencies.push(CompilerPluginDependencySpec {
-                        .package = dependency.as_Plugin().value.name.clone(),
+                        .package        = dependency.as_Plugin().value.name.clone(),
+                        .attribute_only = dependency.as_Plugin().value.attribute_only,
                     });
                     continue;
                 }

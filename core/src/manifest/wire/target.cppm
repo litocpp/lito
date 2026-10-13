@@ -17,6 +17,7 @@ enum class TargetKind
 {
     Library,
     Module,
+    Plugin,
     Binary,
     Test,
     Example,
@@ -40,6 +41,7 @@ struct TargetFields : TargetSource {
     Vec<String>                   linker_options;
     bool                          link_stdlib { true };
     bool                          host_tool {};
+    bool                          attribute_only {};
     Option<Vec<RuntimeResource>>  resources;
     Option<Vec<TargetAttachment>> attach;
 };
@@ -49,6 +51,7 @@ struct Target : TargetFields {};
 
 using LibraryTarget   = Target<TargetKind::Library>;
 using ModuleTarget    = Target<TargetKind::Module>;
+using PluginTarget    = Target<TargetKind::Plugin>;
 using BinaryTarget    = Target<TargetKind::Binary>;
 using TestTarget      = Target<TargetKind::Test>;
 using ExampleTarget   = Target<TargetKind::Example>;
@@ -86,6 +89,10 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
         auto result = lito::manifest::wire::Target<Kind> {};
         if constexpr (Kind == TargetKind::Module) {
             rstd_try(read());
+        } else if constexpr (Kind == TargetKind::Plugin) {
+            auto attribute_only = serde::DefaultedField<bool>("attribute-only"_str, false);
+            rstd_try(read(attribute_only));
+            result.attribute_only = attribute_only.take();
         } else {
             auto name = serde::RequiredField<String>("name"_str);
             if constexpr (Kind == TargetKind::Library) {
