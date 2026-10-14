@@ -2938,6 +2938,101 @@ lito.write({package="beta-assets", output="site/main.js", content="workspace scr
     EXPECT_EQ(repeated->as_str(), report->as_str());
 }
 
+TEST_F(BuildCommand, CompilerPluginDependencyChangesInvalidateConsumers) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "plugin-consumer"
+version = "0.1.0"
+[lib]
+name = "plugin-consumer"
+archive = "plugin-consumer"
+module = "plugin.consumer"
+sources = ["lib.cppm", "marked.cpp"]
+[dependencies.marker_plugin]
+path = "plugin"
+)toml"_str },
+        { "lib.cppm"_str, "export module plugin.consumer;\n"_str },
+        { "marked.cpp"_str, "[[marker_plugin::required]] int marked;\n"_str },
+        { "plugin/lito.toml"_str, R"toml([package]
+name = "marker_plugin"
+version = "0.1.0"
+[plugin]
+module = "marker.plugin"
+sources = ["lib.cppm", "plugin.cpp"]
+attribute-only = true
+[dependencies.marker-support]
+path = "../support"
+)toml"_str },
+        { "plugin/lib.cppm"_str, "export module marker.plugin;\n"_str },
+        { "support/lito.toml"_str, R"toml([package]
+name = "marker-support"
+version = "0.1.0"
+[lib]
+name = "marker-support"
+archive = "marker-support"
+module = "marker.support"
+sources = ["lib.cppm", "value.cpp"]
+)toml"_str },
+        { "support/lib.cppm"_str,
+          "export module marker.support;\nexport bool marker_support_enabled();\n"_str },
+        { "support/value.cpp"_str,
+          "module marker.support;\nbool marker_support_enabled() { return true; }\n"_str },
+        { "plugin/plugin.cpp"_str, R"cpp(
+#include <clang/AST/ASTConsumer.h>
+#include <clang/Frontend/CompilerInstance.h>
+#include <clang/Frontend/FrontendPluginRegistry.h>
+#include <clang/Sema/ParsedAttr.h>
+#include <clang/Sema/Sema.h>
+import marker.support;
+class MarkerAttribute final : public clang::ParsedAttrInfo {
+public:
+    MarkerAttribute() {
+        static constexpr Spelling spellings[] {{clang::ParsedAttr::AS_CXX11,"marker_plugin::required"}};
+        Spellings = spellings;
+    }
+    AttrHandling handleDeclAttribute(clang::Sema&,clang::Decl*,const clang::ParsedAttr&) const override { return AttributeApplied; }
+};
+class MarkerPlugin final : public clang::PluginASTAction {
+public:
+    std::unique_ptr<clang::ASTConsumer> CreateASTConsumer(clang::CompilerInstance& compiler,llvm::StringRef) override {
+        if (!marker_support_enabled()) {
+            auto& diagnostics = compiler.getDiagnostics();
+            diagnostics.Report(diagnostics.getCustomDiagID(clang::DiagnosticsEngine::Error,"marker support changed"));
+        }
+        return std::make_unique<clang::ASTConsumer>();
+    }
+    bool ParseArgs(const clang::CompilerInstance&,const std::vector<std::string>&) override { return true; }
+    ActionType getActionType() override { return AddBeforeMainAction; }
+};
+static clang::ParsedAttrInfoRegistry::Add<MarkerAttribute> attribute("marker_plugin_required","test attribute");
+static clang::FrontendPluginRegistry::Add<MarkerPlugin> plugin("marker_plugin","test plugin");
+)cpp"_str }
+    };
+    auto project = materialize("plugin-dependency-change"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("plugin-dependency-change"_str).as_path(),
+                                 Vec<String>::make());
+    auto cold    = lito::build(request);
+    if (cold.is_err())
+        rstd::test::fail_current(
+            error_chain_text(cold.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(cold.is_ok());
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+    auto implementation = project->root.join(PathBuf::from("support/value.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(
+                    implementation.as_path(),
+                    "module marker.support;\nbool marker_support_enabled() { return false; }\n"_str
+                        .as_bytes())
+                    .is_ok());
+    auto changed = lito::build(request);
+    ASSERT_TRUE(changed.is_err());
+    EXPECT_TRUE(
+        error_chain_text(changed.unwrap_err()).as_str().contains("marker support changed"_str));
+}
+
 TEST_F(BuildCommand, AttributeOnlyPluginsSelectCompileUnitsAndReuseScanFacts) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]
@@ -3062,4 +3157,72 @@ static clang::FrontendPluginRegistry::Add<MarkerPlugin>
     EXPECT_TRUE(error_chain_text(default_loaded.unwrap_err())
                     .as_str()
                     .contains("marker_plugin loaded for plain.cpp"_str));
+}
+
+TEST_F(BuildCommand, CompilerPluginStandardModulesCompleteOnce) {
+    const ref<str> names[] { "std"_str, "std.compat"_str };
+    for (auto logical_name : names) {
+        auto              name    = rstd::format("plugin-{}-completion", logical_name);
+        auto              source  = rstd::format(R"cpp(export module std_plugin;
+import {};
+export auto value() -> int {{ return std::vector<int>{{42}}.front(); }}
+)cpp",
+                                                 logical_name);
+        const ProjectFile files[] = {
+            { "lito.toml"_str, R"toml([package]
+name = "std_plugin"
+version = "0.1.0"
+standard = "c++23"
+[plugin]
+module = "std_plugin"
+sources = ["plugin.cppm"]
+)toml"_str },
+            { "plugin.cppm"_str, source.as_str() },
+        };
+        auto project = materialize(name.as_str(), files);
+        ASSERT_TRUE(project.is_ok());
+        auto request = build_request(
+            project->root.as_path(), build_root(name.as_str()).as_path(), Vec<String>::make());
+        struct Events {
+            usize compiled {};
+            usize reused {};
+        } events;
+        request.observer = Some(lito::BuildEventSink {
+            .context = rstd::addressof(events),
+            .notify =
+                [](void* raw, const lito::BuildEvent& event) noexcept {
+                    if (! event.target.starts_with("standard-library::"_str)) return;
+                    auto& counts = *static_cast<Events*>(raw);
+                    if (event.kind == lito::BuildEventKind::Compile) ++counts.compiled;
+                    if (event.kind == lito::BuildEventKind::Reuse) ++counts.reused;
+                },
+        });
+        auto cold        = lito::build(request);
+        if (cold.is_err()) {
+            auto message = error_chain_text(cold.unwrap_err());
+            if (message.as_str().contains("has no module manifest"_str)) {
+                GTEST_SKIP() << message.as_str();
+            }
+            rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+            return;
+        }
+        auto expected = logical_name == "std"_str ? usize(1) : usize(2);
+        EXPECT_EQ(events.compiled, expected);
+        EXPECT_EQ(events.reused, usize {});
+        events    = {};
+        auto warm = lito::build(request);
+        ASSERT_TRUE(warm.is_ok());
+        EXPECT_EQ(events.compiled, usize {});
+        EXPECT_EQ(events.reused, expected);
+        source.push_str("export int changed() { return 7; }\n"_str);
+        ASSERT_TRUE(rstd::fs::write(
+                        project->root.join(PathBuf::from("plugin.cppm"_str).as_path()).as_path(),
+                        source.as_str().as_bytes())
+                        .is_ok());
+        events       = {};
+        auto changed = lito::build(request);
+        ASSERT_TRUE(changed.is_ok());
+        EXPECT_EQ(events.compiled, usize {});
+        EXPECT_EQ(events.reused, expected);
+    }
 }

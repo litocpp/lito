@@ -351,8 +351,10 @@ auto execute_native_action_graph(NativeActionGraph&                   actions,
         auto ready      = actions.graph.ready_actions();
         for (auto action : ready) {
             auto unit = actions.compile_unit(action);
-            if (unit.is_some() && *unit < object_identities.len() &&
-                object_identities[*unit].is_some()) {
+            if (unit.is_some() &&
+                (compile_plan.nodes[*unit].completed ||
+                 (*unit < object_identities.len() && object_identities[*unit].is_some()))) {
+                compile_plan.nodes[*unit].completed = true;
                 rstd_try(actions.graph.mark_succeeded(action));
                 marked_existing = true;
                 continue;

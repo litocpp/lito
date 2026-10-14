@@ -152,10 +152,12 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
             libraries[target]->as_path(), "read compiler plugin support archive"_str));
         auto content_identity = rstd_try(
             plugin_file_digest(output.as_path(), "read compiler plugin shared object"_str));
-        auto identity_source = "lito-compiler-plugin-v2\n"_Str;
+        auto identity_source = "lito-compiler-plugin-v3\n"_Str;
         identity_source.push_str(lito::package::package_target_id_text(spec.id).as_str());
         identity_source.push_ascii('\n');
         identity_source.push_str(archive_identity.as_str());
+        identity_source.push_ascii('\n');
+        identity_source.push_str(content_identity.as_str());
         identity_source.push_ascii('\n');
         identity_source.push_str(toolchain.compiler_identity().build_identity.as_str());
         identity_source.push_ascii('\n');

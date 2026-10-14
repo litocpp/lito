@@ -129,6 +129,7 @@ struct CompileNodePlan {
     Vec<cpp::UnitId>          dependents;
     Vec<DependencyArtifact>   dependencies;
     Option<CompileInvocation> invocation;
+    bool                      completed {};
 };
 
 struct CompilePlan {
@@ -642,6 +643,7 @@ public:
         auto cache_retained = usize {};
         for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
             if (selection[unit] == u8 {}) continue;
+            if (plan.nodes[unit].completed) continue;
             if (plan.nodes[unit].invocation.is_none()) {
                 return Err(BuildError::Message(
                     "compile action session contains an invocation that was already consumed"_Str));
@@ -699,6 +701,8 @@ public:
     }
 
     auto submit(cpp::UnitId unit) -> BuildResult<CompileActionSubmission> {
+        if (unit < plan_->nodes.len() && plan_->nodes[unit].completed)
+            return Ok(CompileActionSubmission { .completed = true });
         if (! has_capacity() || unit >= plan_->nodes.len() || decisions_[unit].is_none() ||
             plan_->nodes[unit].invocation.is_none()) {
             return Err(BuildError::Message("compile action is not available for submission"_Str));
@@ -712,6 +716,7 @@ public:
             if (identity.is_some()) (*object_identities_)[unit] = Some((**identity).clone());
             ++result_.reused;
             ++result_.statistics.reused;
+            plan_->nodes[unit].completed = true;
             emit_compile_event(*observer_, *package_, *units_, unit, BuildEventKind::Reuse);
             result_.statistics.coordinator_work =
                 result_.statistics.coordinator_work.saturating_add(started.elapsed());
@@ -731,6 +736,7 @@ public:
             compile_tests_[unit] = Some(rstd::move(execution));
             ++result_.reused;
             ++result_.statistics.reused;
+            plan_->nodes[unit].completed = true;
             emit_compile_event(*observer_, *package_, *units_, unit, BuildEventKind::Reuse);
             result_.statistics.coordinator_work =
                 result_.statistics.coordinator_work.saturating_add(started.elapsed());
@@ -745,7 +751,7 @@ public:
             return Err(rstd::into<BuildError>(rstd::move(begun).unwrap_err()));
         }
         decisions_[unit] = Some(rstd::move(cache_decision));
-        auto invocation  = rstd::move(plan_->nodes[unit].invocation).unwrap_unchecked();
+        auto invocation  = plan_->nodes[unit].invocation.take().unwrap_unchecked();
         auto submitted =
             executor_.submit(unit,
                              [compile = compile_, invocation = rstd::move(invocation)]() mutable
@@ -834,6 +840,7 @@ public:
         }
         result_.statistics.coordinator_work =
             result_.statistics.coordinator_work.saturating_add(started.elapsed());
+        plan_->nodes[unit].completed = true;
         return Ok(CompileActionCompletion { .unit = unit });
     }
 
