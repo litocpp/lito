@@ -96,6 +96,12 @@ local target = lito.target({ kind = "bin", name = "app" })
 local generator = lito.host_tool(target, "generator", "generate")
 ```
 
+Host products already built in the host domain are resolved before build-script actions are
+scheduled. Their generated headers and module interfaces are available before the target source
+scan. Explicit generated sources use the declared C++ source kind even without a file extension.
+Action identities include the executable digest, so rebuilding a generator invalidates its outputs.
+Host and target compilation contexts remain separate.
+
 Ordinary library dependencies never authorize tool calls. A tool-only provider therefore requires
 explicit tool usage; a mixed library/tool provider can still be consumed as a library through
 compile/link usage. `toolchain.wasm.processor` also requires an active tool dependency and does not

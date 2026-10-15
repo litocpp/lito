@@ -77,7 +77,7 @@ the intended consumption.
 
 ## CMake external dependencies
 
-`[external-dependencies.cmake.NAME]` requires `package` and a non-empty `targets` array:
+`[external-dependencies.cmake.NAME]` requires `package` and at least one target or host tool:
 
 ```toml
 [external-dependencies.cmake.vulkan]
@@ -96,6 +96,10 @@ C/C++ dependency.
 
 Optional fields are:
 
+- `host-tools`: executable targets exposed to `build.lua` through
+  `lito.external_tool(lito.external_dependency(target, NAME), tool_name)`. Each entry has
+  `name` and `target`. A dependency supplying only host tools may omit `targets` or use
+  `targets = []`; it contributes no target compile or link requirements;
 - `source`: the name of a package external source;
 - `adapter`: a relative adapter source used by the generated consumer project;
 - `cache`: CMake cache values whose keys contain letters, digits, or `_` and whose values are
@@ -108,7 +112,9 @@ or Git source.
 `[workspace.external-dependencies.cmake.NAME]` declares `package`, `source`, `adapter`, `cache`, and
 `config-directory` but omits targets. A package reference uses `workspace = true` and supplies its
 selected target names, usage, and publicity. The package identity comes from the workspace declaration;
-the member reference does not repeat it.
+the member reference does not repeat it. Host tools belong to the workspace declaration.
+A member may omit targets when it inherits host tools; the resolved dependency must still
+provide at least one target or host tool.
 
 ### CMake asset sets
 

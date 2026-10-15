@@ -293,6 +293,7 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                      lito::tools::ToolResolver&               resolver,
                                      const ResolvedProcessEnvironment&        environment,
                                      const lito::source::PackageSourceConfig& sources,
+                                     const ResolvedPackageHostTools&          package_tools,
                                      usize                                    jobs)
     -> BuildScriptResult<DeclaredBuildScriptInvocation> {
     auto default_package = as<Clone>(invocation.package).clone();
@@ -331,6 +332,7 @@ auto execute_build_script_invocation(cpp::PackageMetadata&                    me
                                              output_registry,
                                              toolchain,
                                              rstd::move(tools),
+                                             package_tools,
                                              target_info,
                                              environment,
                                              observer);

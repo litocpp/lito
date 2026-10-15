@@ -805,18 +805,10 @@ auto parse_workspace_pkg_config_external_dependencies(
 
 auto parse_cmake_targets(Option<Vec<wire::CMakeTarget>> value, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<lito::dependency::CMakeTargetRequirement>> {
-    auto path = owner_path.with_field("targets"_str);
-    if (value.is_none()) {
-        return Err(ManifestSchemaError::Data(
-            rstd::serde::Error::invalid_value(rstd::move(path), "is required"_str)));
-    }
-    auto targets = rstd::move(value).unwrap();
-    if (targets.is_empty()) {
-        return Err(ManifestSchemaError::Data(
-            rstd::serde::Error::invalid_value(rstd::move(path), "must not be empty"_str)));
-    }
-    auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
-    auto names  = rstd::collections::BTreeMap<String, empty>::make();
+    auto path    = owner_path.with_field("targets"_str);
+    auto targets = rstd::move(value).unwrap_or(Vec<wire::CMakeTarget>::make());
+    auto result  = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
+    auto names   = rstd::collections::BTreeMap<String, empty>::make();
     for (usize index {}; index < targets.len(); ++index) {
         auto  item         = path.with_index(index);
         auto& target       = targets[index];
@@ -1018,8 +1010,8 @@ auto parse_cmake_external_dependencies(
         auto definition = parse_cmake_external_dependency_definition(
             specification, alias.clone(), context.as_str(), path);
         if (definition.is_err()) return Err(rstd::move(definition).unwrap_err());
-        auto value = rstd::move(definition).unwrap();
-        result.explicit_dependencies.push(lito::dependency::CMakeDependencyRequirement {
+        auto value       = rstd::move(definition).unwrap();
+        auto requirement = lito::dependency::CMakeDependencyRequirement {
             .alias            = rstd::move(value.alias),
             .package          = rstd::move(value.package),
             .components       = rstd::move(value.components),
@@ -1030,7 +1022,12 @@ auto parse_cmake_external_dependencies(
             .cache            = rstd::move(value.cache),
             .targets          = rstd::move(targets).unwrap(),
             .host_tools       = rstd::move(value.host_tools),
-        });
+        };
+        if (! requirement.has_requirements()) {
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(path), "requires at least one target or host tool"_str)));
+        }
+        result.explicit_dependencies.push(rstd::move(requirement));
     }
     return Ok(rstd::move(result));
 }

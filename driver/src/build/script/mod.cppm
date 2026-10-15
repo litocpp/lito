@@ -128,6 +128,7 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
                             lito::tools::ToolResolver&               resolver,
                             const ResolvedProcessEnvironment&        environment,
                             const lito::source::PackageSourceConfig& sources,
+                            const ResolvedPackageHostTools&          package_tools,
                             usize jobs) -> BuildScriptResult<BuildScriptDeclaration> {
     auto invocations       = Vec<BuildScriptInvocation>::make();
     auto scripted_packages = Vec<String>::make();
@@ -217,6 +218,7 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
                                                       resolver,
                                                       environment,
                                                       sources,
+                                                      package_tools,
                                                       jobs);
         if (result.is_err()) return Err(rstd::move(result).unwrap_err());
         declaration.push(rstd::move(result).unwrap());

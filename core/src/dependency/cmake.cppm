@@ -68,6 +68,10 @@ struct CMakeDependencyRequirement {
     Option<PathBuf>                     declaration_root;
     Option<PathBuf>                     adapter_root;
 
+    auto has_requirements() const noexcept -> bool {
+        return ! targets.is_empty() || ! host_tools.is_empty();
+    }
+
     auto clone() const -> CMakeDependencyRequirement {
         auto cache_copy = Vec<CMakeCacheEntry>::with_capacity(cache.len());
         for (const auto& entry : cache) {

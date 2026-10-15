@@ -994,7 +994,7 @@ auto main() -> int {
     ASSERT_TRUE(app_scan.is_some());
     ASSERT_TRUE(build_tool_run.is_some());
     ASSERT_TRUE(generated_scan.is_some());
-    EXPECT_TRUE(*app_scan < *build_tool_run);
+    EXPECT_TRUE(*build_tool_run < *app_scan);
     EXPECT_TRUE(*build_tool_run < *generated_scan);
     auto scans_after_build_tool = usize {};
     for (usize index = *build_tool_run + usize(1); index < capture.events.len(); ++index) {
@@ -1003,7 +1003,7 @@ auto main() -> int {
             ++scans_after_build_tool;
         }
     }
-    EXPECT_EQ(scans_after_build_tool, usize(1));
+    EXPECT_EQ(scans_after_build_tool, usize(3));
     ASSERT_EQ(first->product.artifacts.len(), usize(1));
     EXPECT_EQ(first->product.artifacts[usize {}].target.package.as_str(),
               "fixture-host-tool-app"_str);
@@ -1376,7 +1376,7 @@ export import fixture.generated.provider;
     EXPECT_EQ(result->compiled, usize(2));
 }
 
-TEST_F(BuildCommand, BuildScriptRejectsModuleInterfaceProducedAfterScan) {
+TEST_F(BuildCommand, BuildScriptScansHostGeneratedModuleInterface) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-generated-module-provider"
@@ -1446,17 +1446,17 @@ lito.target_add_generated_source(target, generated.outputs[1])
                                  output.as_path(),
                                  strings("fixture-generated-module-provider"_str));
     auto result  = lito::build(request);
-    ASSERT_TRUE(result.is_err());
-    auto message = error_chain_text(result.unwrap_err());
-    EXPECT_TRUE(message.as_str().contains("produced after source scan"_str));
-    EXPECT_TRUE(message.as_str().contains("module interface source"_str));
+    if (result.is_err())
+        rstd::test::fail_current(
+            error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(result.is_ok());
     auto generated = output.join(
         PathBuf::from("generated/fixture-generated-module-provider/src/generated.cppm"_str)
             .as_path());
-    EXPECT_FALSE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
 }
 
-TEST_F(BuildCommand, BuildScriptRejectsExportedModuleProducedAfterScan) {
+TEST_F(BuildCommand, BuildScriptScansHostGeneratedExportedModule) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-generated-exported-module"
@@ -1530,17 +1530,17 @@ lito.target_add_generated_source(target, generated.outputs[1])
                                  output.as_path(),
                                  strings("fixture-generated-exported-module"_str));
     auto result  = lito::build(request);
-    ASSERT_TRUE(result.is_err());
-    auto message = error_chain_text(result.unwrap_err());
-    EXPECT_TRUE(message.as_str().contains("produced after source scan"_str));
-    EXPECT_TRUE(message.as_str().contains("cannot declare an exported module"_str));
+    if (result.is_err())
+        rstd::test::fail_current(
+            error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(result.is_ok());
     auto generated = output.join(
         PathBuf::from("generated/fixture-generated-exported-module/src/generated.cpp"_str)
             .as_path());
     EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
 }
 
-TEST_F(BuildCommand, BuildScriptRejectsHeaderProducedAfterScanBeforeRunningTool) {
+TEST_F(BuildCommand, BuildScriptScansHostGeneratedHeader) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-generated-header"
@@ -1568,7 +1568,7 @@ auto main(int argc, char** argv) -> int {
     if (argc != 2) return 2;
     auto* output = fopen(argv[1], "wb");
     if (output == nullptr) return 3;
-    auto result = fputs("#pragma once\n", output);
+    auto result = fputs("#pragma once\n#define GENERATED_VALUE 1\n", output);
     return fclose(output) == 0 && result >= 0 ? 0 : 4;
 }
 )cpp"_str },
@@ -1597,8 +1597,10 @@ lito.run({
   inputs = { "src/main.cpp" },
   outputs = { "include/generated.hpp" },
 })
+lito.target_add_generated_include(target, "include")
 )lua"_str },
-        { "app/src/main.cpp"_str, R"cpp(auto main() -> int {
+        { "app/src/main.cpp"_str, R"cpp(#include "generated.hpp"
+auto main() -> int {
     return 0;
 }
 )cpp"_str },
@@ -1609,16 +1611,43 @@ lito.run({
     auto request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-generated-header"_str));
     auto result = lito::build(request);
-    ASSERT_TRUE(result.is_err());
-    auto message = error_chain_text(result.unwrap_err());
-    EXPECT_TRUE(message.as_str().contains("generated header"_str));
-    EXPECT_TRUE(message.as_str().contains("cannot be produced after source scan"_str));
+    if (result.is_err())
+        rstd::test::fail_current(
+            error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(result.is_ok());
     auto generated = output.join(
         PathBuf::from("generated/fixture-generated-header/include/generated.hpp"_str).as_path());
-    EXPECT_FALSE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+    auto warm = lito::build(request);
+    if (warm.is_err())
+        rstd::test::fail_current(
+            error_chain_text(warm.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+    auto tool_source = project->root.join(PathBuf::from("tool/src/main.cpp"_str).as_path());
+    auto contents    = rstd::fs::read_to_string(tool_source.as_path()).unwrap();
+    auto marker      = contents.as_str().find("GENERATED_VALUE 1"_str).unwrap();
+    contents.replace_range(marker, marker + usize(17), "GENERATED_VALUE 2"_str);
+    ASSERT_TRUE(rstd::fs::write_atomic(tool_source.as_path(), contents->as_bytes()).is_ok());
+    auto changed = lito::build(request);
+    if (changed.is_err())
+        rstd::test::fail_current(
+            error_chain_text(changed.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(changed.is_ok());
+    EXPECT_TRUE(rstd::fs::read_to_string(generated.as_path())
+                    .unwrap()
+                    .as_str()
+                    .contains("GENERATED_VALUE 2"_str));
+    ASSERT_TRUE(rstd::fs::remove_file(generated.as_path()).is_ok());
+    auto restored = lito::build(request);
+    ASSERT_TRUE(restored.is_ok());
+    EXPECT_TRUE(rstd::fs::read_to_string(generated.as_path())
+                    .unwrap()
+                    .as_str()
+                    .contains("GENERATED_VALUE 2"_str));
 }
 
-TEST_F(BuildCommand, BuildScriptRejectsNonModuleSourceProducedAfterScan) {
+TEST_F(BuildCommand, BuildScriptScansHostGeneratedNonModuleSource) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-generated-non-module"
@@ -1688,16 +1717,16 @@ lito.target_add_generated_source(target, generated.outputs[1])
     auto request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-generated-non-module"_str));
     auto result = lito::build(request);
-    ASSERT_TRUE(result.is_err());
-    auto message = error_chain_text(result.unwrap_err());
-    EXPECT_TRUE(message.as_str().contains("produced after source scan"_str));
-    EXPECT_TRUE(message.as_str().contains("must declare a module implementation"_str));
+    if (result.is_err())
+        rstd::test::fail_current(
+            error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(result.is_ok());
     auto generated = output.join(
         PathBuf::from("generated/fixture-generated-non-module/src/generated.cpp"_str).as_path());
     EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
 }
 
-TEST_F(BuildCommand, BuildScriptAcceptsImplementationModuleProducedAfterScanWithoutExtension) {
+TEST_F(BuildCommand, BuildScriptScansHostGeneratedImplementationWithoutExtension) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-generated-implementation"
@@ -1878,7 +1907,6 @@ path = "tools"
 package = "FixtureTools"
 source = "tools"
 adapter = "tools/adapter.cmake"
-targets = [{ name = "FixtureTools::usage" }]
 host-tools = [
   { name = "shell", target = "FixtureTools::shell" },
   { name = "copy", target = "FixtureTools::copy" },
@@ -1890,7 +1918,6 @@ add_executable(FixtureTools::shell IMPORTED GLOBAL)
 set_property(TARGET FixtureTools::shell PROPERTY IMPORTED_LOCATION "${FIXTURE_SHELL}")
 add_executable(FixtureTools::copy IMPORTED GLOBAL)
 set_property(TARGET FixtureTools::copy PROPERTY IMPORTED_LOCATION "${FIXTURE_COPY}")
-add_library(FixtureTools::usage INTERFACE IMPORTED GLOBAL)
 set(FixtureTools_VERSION "1.0.0")
 )cmake"_str },
         { "payload/generated.hpp"_str, R"cpp(#pragma once

@@ -269,12 +269,6 @@ auto ToolActionSession::add_generated_source(BuildScriptHandle target_handle,
             rstd::format("generated output '{}' is not declared or inferred as a source",
                          output->relative.as_path()))));
     }
-    if (output->availability == cpp::GeneratedSourceAvailability::BeforeScan &&
-        ! lito::manifest::cpp_manifest_source(output->relative.as_path())) {
-        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-            rstd::format("generated compile source '{}' has an unsupported C++ extension",
-                         output->relative.as_path()))));
-    }
     return Ok(cpp::add_generated_source(
         metadata_->targets[*target], output->relative.clone(), output->availability));
 }
@@ -626,12 +620,13 @@ auto ToolActionSession::bind_host_tools(const ResolvedPackageHostTools& tools)
     };
     auto bound = false;
     for (auto& action : actions_) {
-        if (action.tool.is_some() && action.tool->target.is_some()) {
+        if (action.tool.is_some() && action.tool->target.is_some() &&
+            action.tool->executable.is_empty()) {
             rstd_try(bind(*action.tool));
             bound = true;
         }
         for (auto& tool : action.tools) {
-            if (tool.target.is_none()) continue;
+            if (tool.target.is_none() || ! tool.executable.is_empty()) continue;
             rstd_try(bind(tool));
             bound = true;
         }
@@ -849,6 +844,10 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
                                       primary_tool.identity.as_str(),
                                       cwd_relative.as_path(),
                                       script_digest.as_str());
+    identity_text.push_str("\nprimary-tool:"_str);
+    identity_text.push_str(primary_tool.digest.as_str());
+    identity_text.push_ascii(':');
+    identity_text.push_str(primary_tool.executable.as_path().to_string_lossy().as_str());
     identity_text.push_str("\nmodule-resolver=lito-restricted-v1"_str);
     {
         auto loaded_identities = module_identities_.clone();
@@ -943,11 +942,13 @@ auto ToolActionSession::action_availability(usize index) const noexcept
 
 auto ToolActionSession::resolve_action_availability(const RegisteredAction& action) const noexcept
     -> cpp::GeneratedSourceAvailability {
-    if ((action.tool.is_some() && action.tool->target.is_some())) {
+    if (action.tool.is_some() && action.tool->target.is_some() &&
+        action.tool->executable.is_empty()) {
         return cpp::GeneratedSourceAvailability::AfterScan;
     }
     for (const auto& tool : action.tools) {
-        if (tool.target.is_some()) return cpp::GeneratedSourceAvailability::AfterScan;
+        if (tool.target.is_some() && tool.executable.is_empty())
+            return cpp::GeneratedSourceAvailability::AfterScan;
     }
     for (const auto& input : action.inputs) {
         if (input.producer.is_some() &&
@@ -1031,6 +1032,19 @@ auto ToolActionSession::resolve_action_tool(BuildScriptHandle handle) const
     }
     for (const auto& binding : package_host_tool_handles_) {
         if (rstd::addressof(*binding) != handle.identity) continue;
+        auto ready = package_tools_->get(binding->target);
+        if (ready.is_some()) {
+            return Ok(ResolvedActionTool {
+                .package = binding->package.clone(),
+                .alias   = rstd::format(
+                    "{}:{}", binding->target.package.as_str(), binding->target.name.as_str()),
+                .identity   = (**ready).identity.clone(),
+                .digest     = rstd_try(action_file_digest((**ready).executable.as_path())),
+                .executable = (**ready).executable.clone(),
+                .target     = Some(binding->target.clone()),
+                .artifact   = (**ready).artifact,
+            });
+        }
         return Ok(ResolvedActionTool {
             .package = binding->package.clone(),
             .alias   = rstd::format(

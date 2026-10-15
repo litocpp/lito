@@ -399,12 +399,11 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
             bool                  generated,
             bool                  module_provider_allowed,
             bool implementation_module_required) -> cpp::SourceDiscoveryResult<empty> {
-        auto resolved =
-            resolve_declared_source(root, declared.as_path(), ! implementation_module_required);
+        auto resolved = resolve_declared_source(root, declared.as_path(), ! generated);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto       source = rstd::move(resolved).unwrap();
         const auto language_matches =
-            implementation_module_required ? target.language == lito::manifest::PackageLanguage::Cpp
+            generated ? target.language == lito::manifest::PackageLanguage::Cpp
             : target.language == lito::manifest::PackageLanguage::C
                 ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
                 : lito::manifest::cpp_manifest_source(source.canonical_path.as_path());
@@ -749,9 +748,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
             if (! includes_generated(group, scope)) continue;
             for (const auto& declared : group.sources) {
                 auto resolved = resolve_declared_source(
-                    group.root.as_path(),
-                    declared.as_path(),
-                    group.availability != cpp::GeneratedSourceAvailability::AfterScan);
+                    group.root.as_path(), declared.as_path(), ! group.generated);
                 if (resolved.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
                 }

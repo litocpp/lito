@@ -347,6 +347,13 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             .declaration_root = Some(workspace.root.clone()),
             .adapter_root     = Some(workspace.root.clone()),
         };
+        if (! requirement.has_requirements()) {
+            return Err(
+                WorkspaceError::Message(rstd::format("workspace member '{}' CMake dependency '{}' "
+                                                     "requires at least one target or host tool",
+                                                     manifest.name.as_str(),
+                                                     reference.alias.as_str())));
+        }
         if (definition->source.is_some()) {
             requirement.source = Some(definition->source->clone());
             if (! inherit_workspace_external_source(

@@ -80,6 +80,7 @@ public:
                       BuildOutputRegistry&              outputs,
                       const ClangToolchain&             toolchain,
                       ResolvedHostBuildTools            tools,
+                      const ResolvedPackageHostTools&   package_tools,
                       const TargetInfo&                 target_info,
                       const ResolvedProcessEnvironment& environment,
                       const Option<BuildEventSink>&     observer)
@@ -94,6 +95,7 @@ public:
           output_registry_(rstd::addressof(outputs)),
           toolchain_(rstd::addressof(toolchain)),
           tools_(rstd::move(tools)),
+          package_tools_(rstd::addressof(package_tools)),
           target_info_(rstd::addressof(target_info)),
           environment_(rstd::addressof(environment)),
           observer_(rstd::addressof(observer)) {}
@@ -257,6 +259,7 @@ private:
     BuildOutputRegistry*              output_registry_ {};
     const ClangToolchain*             toolchain_ {};
     ResolvedHostBuildTools            tools_;
+    const ResolvedPackageHostTools*   package_tools_;
     const TargetInfo*                 target_info_ {};
     const ResolvedProcessEnvironment* environment_ {};
     const Option<BuildEventSink>*     observer_ {};

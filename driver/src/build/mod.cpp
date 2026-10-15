@@ -779,6 +779,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto native_graph = make_native_action_graph(metadata.targets.len());
 
     stage_timing.record(BuildStage::TargetPrepare, target_prepare_started.elapsed());
+    auto package_tools = ResolvedPackageHostTools {};
+    if (plugin_host.is_some())
+        package_tools.add_artifacts(plugin_host->product.artifacts.as_slice());
     auto script_declaration_result = stage_timing.measure(BuildStage::Script, [&] {
         return evaluate_build_scripts(metadata,
                                       native_target_plan,
@@ -793,13 +796,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                       tool_resolver,
                                       process_environment,
                                       request.sources,
+                                      package_tools,
                                       execution->jobs);
     });
     auto script_declaration        = rstd_try(rstd::move(script_declaration_result));
-    auto package_tools             = ResolvedPackageHostTools {};
-    if (plugin_host.is_some())
-        package_tools.add_artifacts(plugin_host->product.artifacts.as_slice());
-    auto host_tool_targets = Vec<lito::package::PackageTargetId>::make();
+    auto host_tool_targets         = Vec<lito::package::PackageTargetId>::make();
     for (const auto& requested : script_declaration.host_tool_targets()) {
         if (package_tools.get(requested).is_some()) continue;
         host_tool_targets.push(requested.clone());

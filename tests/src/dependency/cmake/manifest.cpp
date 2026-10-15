@@ -152,6 +152,89 @@ targets = [
     EXPECT_TRUE(targets[usize(2)].consumption.usage.uses_link());
 }
 
+TEST_F(CMakeManifest, HostToolsDoNotRequireLibraryTargets) {
+    const ref<str> declarations[] = { ""_str, "targets = []\n"_str };
+    for (auto targets : declarations) {
+        auto source = rstd::format(R"toml([package]
+name = "cmake-tools"
+version = "0.1.0"
+[lib]
+name = "cmake-tools"
+module = "cmake.tools"
+archive = "cmake.tools"
+[external-dependencies.cmake.sdk]
+package = "SDK"
+{}host-tools = [{{name = "generator", target = "SDK::generator"}}]
+)toml",
+                                   targets);
+        auto project =
+            manifest_project(targets.is_empty() ? "host-tools-omitted"_str : "host-tools-empty"_str,
+                             source.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_ok());
+        ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
+        const auto& dependency = loaded->cmake_external_dependencies[usize {}];
+        EXPECT_TRUE(dependency.targets.is_empty());
+        EXPECT_TRUE(dependency.has_requirements());
+        ASSERT_EQ(dependency.host_tools.len(), usize(1));
+        EXPECT_EQ(dependency.host_tools[usize {}].target.as_str(), "SDK::generator"_str);
+    }
+}
+
+TEST_F(CMakeManifest, EmptyCMakeDependencyIsRejectedAfterWorkspaceInheritance) {
+    const bool choices[] = { false, true };
+    for (bool with_tool : choices) {
+        auto root = rstd::format(
+            R"toml([workspace]
+name = "cmake-inherited-tools"
+members = ["consumer"]
+[workspace.external-dependencies.cmake.sdk]
+package = "SDK"
+{}
+)toml",
+            with_tool ? "host-tools = [{name = \"generator\", target = \"SDK::generator\"}]"_str
+                      : ""_str);
+        const ProjectFile files[] = {
+            { "lito.toml"_str, root.as_str() },
+            { "consumer/lito.toml"_str, R"toml([package]
+name = "cmake-tools-consumer"
+version = "0.1.0"
+[lib]
+name = "cmake-tools-consumer"
+module = "cmake.tools.consumer"
+archive = "cmake.tools.consumer"
+[external-dependencies.cmake.sdk]
+workspace = true
+)toml"_str },
+            { "consumer/src/lib.cppm"_str, "export module cmake.tools.consumer;\n"_str },
+        };
+        auto project =
+            materialize(with_tool ? "inherited-host-tools"_str : "inherited-empty"_str, files);
+        ASSERT_TRUE(project.is_ok());
+        auto graph = lito::package::resolve_package_graph(project->root.as_path());
+        EXPECT_EQ(graph.is_ok(), with_tool);
+        if (graph.is_ok()) {
+            const auto& dependency = graph->packages[usize {}].manifest.cmake_external_dependencies;
+            ASSERT_EQ(dependency.len(), usize(1));
+            EXPECT_TRUE(dependency[usize {}].targets.is_empty());
+            EXPECT_EQ(dependency[usize {}].host_tools.len(), usize(1));
+        }
+    }
+    auto project = manifest_project("empty-host-tools"_str, R"toml([package]
+name = "empty-cmake-tools"
+version = "0.1.0"
+[lib]
+name = "empty-cmake-tools"
+module = "empty.cmake.tools"
+archive = "empty.cmake.tools"
+[external-dependencies.cmake.sdk]
+package = "SDK"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
+}
+
 TEST_F(CMakeManifest, CMakeSourceAdapterIsTypedAndResolvedByPackageOwner) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([package]

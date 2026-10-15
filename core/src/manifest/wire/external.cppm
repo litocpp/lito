@@ -351,8 +351,6 @@ struct Impl<serde::Deserialize, lito::manifest::wire::CMakeExternal<Workspace>> 
 
         if (result.targets.is_some() && Workspace)
             return Err(d.unknown_field(targets.names().canonical()));
-        if (! Workspace && result.targets.is_none())
-            return Err(d.missing_field(targets.names().canonical()));
         if (result.components.is_some() && inherited)
             return Err(d.unknown_field(components.names().canonical()));
 
