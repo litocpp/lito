@@ -851,6 +851,15 @@ auto resolve_source_selection(const PackageMetadata&                     package
         auto visited = visit_target(package, *found, colors, target_order);
         if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
     }
+    auto product_targets = Vec<TargetId>::make();
+    for (auto target : target_order) {
+        for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
+            const auto& attachment = package.targets[candidate].attachment;
+            if (attachment.is_some() && attachment->consumer_target == package.targets[target].id)
+                product_targets.emplace_back(candidate);
+        }
+        product_targets.emplace_back(target);
+    }
     for (auto cursor = usize {}; cursor < target_order.len(); ++cursor) {
         const auto consumer = target_order[cursor];
         for (const auto& dependency : package.targets[consumer].host_tool_dependencies) {
@@ -863,6 +872,20 @@ auto resolve_source_selection(const PackageMetadata&                     package
                 }
             }
         }
+        const auto add_provider = [&](ref<str>     name,
+                                      ArtifactKind kind) -> lito::package::PackageResult<empty> {
+            for (auto provider = TargetId {}; provider < package.targets.len(); ++provider) {
+                const auto& candidate = package.targets[provider];
+                if (candidate.id.package != name || candidate.artifact_kind != kind) continue;
+                auto visited = visit_target(package, provider, colors, target_order);
+                if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
+            }
+            return Ok(empty {});
+        };
+        for (const auto& dependency : package.targets[consumer].plugin_dependencies)
+            rstd_try(add_provider(dependency.package.as_str(), ArtifactKind::CompilerPlugin));
+        for (const auto& dependency : package.targets[consumer].proc_macro_dependencies)
+            rstd_try(add_provider(dependency.package.as_str(), ArtifactKind::ProcMacroProvider));
     }
 
     auto selected_targets = Vec<TargetId>::with_capacity(selected_identities.len());
@@ -873,6 +896,7 @@ auto resolve_source_selection(const PackageMetadata&                     package
         .profile          = *profile,
         .selected_targets = rstd::move(selected_targets),
         .target_order     = rstd::move(target_order),
+        .product_targets  = rstd::move(product_targets),
     });
 }
 
@@ -927,19 +951,49 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
     auto profile      = selection.profile;
     auto target_order = rstd::move(selection.target_order);
 
-    auto public_usage      = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
-    auto public_targets    = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto contexts          = Vec<CompileContext>::with_capacity(package.targets.len());
-    auto visible_targets   = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto link_inputs       = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
-    auto link_requirements = Vec<lito::link::Requirements>::with_capacity(package.targets.len());
-    auto linker_options    = Vec<Vec<String>>::with_capacity(package.targets.len());
-    auto compiler_extension_graph = false;
+    auto public_usage        = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
+    auto public_targets      = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto contexts            = Vec<CompileContext>::with_capacity(package.targets.len());
+    auto visible_targets     = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto link_inputs         = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
+    auto link_requirements   = Vec<lito::link::Requirements>::with_capacity(package.targets.len());
+    auto linker_options      = Vec<Vec<String>>::with_capacity(package.targets.len());
+    auto compiler_extensions = Vec<bool>::with_capacity(package.targets.len());
+    for (auto id = TargetId {}; id < package.targets.len(); ++id)
+        compiler_extensions.emplace_back(false);
+    auto pending_extensions = Vec<TargetId>::make();
     for (auto target : target_order) {
         auto kind = package.targets[target].artifact_kind;
-        if (kind == ArtifactKind::CompilerPlugin || kind == ArtifactKind::ProcMacroProvider) {
-            compiler_extension_graph = true;
-            break;
+        if (kind == ArtifactKind::CompilerPlugin || kind == ArtifactKind::ProcMacroProvider)
+            pending_extensions.emplace_back(target);
+    }
+    while (! pending_extensions.is_empty()) {
+        auto target = rstd::move(pending_extensions.pop()).unwrap();
+        if (compiler_extensions[target]) continue;
+        compiler_extensions[target] = true;
+        for (const auto& dependency : package.targets[target].dependencies) {
+            auto provider = target_index(package, dependency.target);
+            if (provider.is_some()) pending_extensions.emplace_back(*provider);
+        }
+    }
+    auto ordinary_targets = Vec<bool>::with_capacity(package.targets.len());
+    for (auto id = TargetId {}; id < package.targets.len(); ++id)
+        ordinary_targets.emplace_back(false);
+    auto pending_ordinary = Vec<TargetId>::make();
+    for (auto target : selection.selected_targets) {
+        auto kind = package.targets[target].artifact_kind;
+        if (kind != ArtifactKind::CompilerPlugin && kind != ArtifactKind::ProcMacroProvider)
+            pending_ordinary.emplace_back(target);
+    }
+    for (auto target : target_order)
+        if (package.targets[target].host_tool) pending_ordinary.emplace_back(target);
+    while (! pending_ordinary.is_empty()) {
+        auto target = rstd::move(pending_ordinary.pop()).unwrap();
+        if (ordinary_targets[target]) continue;
+        ordinary_targets[target] = true;
+        for (const auto& dependency : package.targets[target].dependencies) {
+            auto provider = target_index(package, dependency.target);
+            if (provider.is_some()) pending_ordinary.emplace_back(*provider);
         }
     }
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
@@ -1154,7 +1208,14 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                     erase_error(rstd::move(applied).unwrap_err())));
             }
             cpp.options = rstd::move(applied).unwrap();
-            if (compiler_extension_graph) {
+            if (compiler_extensions[target]) {
+                if (ordinary_targets[target] &&
+                    (cpp.options.language.exceptions || cpp.options.language.rtti))
+                    return Err(lito::package::PackageError::Message(rstd::format(
+                        "target '{}' has incompatible ordinary and compiler-extension requirements "
+                        "in one build environment: compiler extensions require exceptions and RTTI "
+                        "disabled",
+                        target_text(spec.id))));
                 cpp.options.language.exceptions = false;
                 cpp.options.language.rtti       = false;
             }

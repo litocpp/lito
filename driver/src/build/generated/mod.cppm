@@ -152,7 +152,8 @@ public:
 
     auto host_tool_targets() const -> Vec<lito::package::PackageTargetId>;
 
-    auto validate_action_schedule() const -> BuildScriptResult<empty>;
+    auto validate_action_schedule(slice<cpp::TargetId> host_targets) const
+        -> BuildScriptResult<empty>;
 
     auto bind_host_tools(const ResolvedPackageHostTools& tools) -> BuildScriptResult<empty>;
 
@@ -172,6 +173,8 @@ public:
                  usize                            jobs) -> BuildScriptResult<empty>;
 
 private:
+    auto requires_package_host_tool(usize action) const noexcept -> bool;
+
     auto action_availability(usize index) const noexcept -> cpp::GeneratedSourceAvailability;
 
     auto resolve_action_availability(const RegisteredAction& action) const noexcept

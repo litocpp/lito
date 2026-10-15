@@ -26,6 +26,8 @@ using namespace rstd::literals;
 export namespace lito::cpp
 {
 
+auto clone_usage_requirements(const UsageRequirements& usage) -> UsageRequirements;
+
 auto make_package_condition_context(const lito::package::ResolvedPackage& package,
                                     const BuildConfiguration&             configuration,
                                     const ProfileSpec&                    profile,

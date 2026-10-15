@@ -67,9 +67,10 @@ public:
         return result;
     }
 
-    auto validate_action_schedule() const -> BuildScriptResult<empty> {
+    auto validate_action_schedule(slice<cpp::TargetId> host_targets) const
+        -> BuildScriptResult<empty> {
         for (const auto& invocation : invocations_) {
-            rstd_try(invocation.actions.validate_action_schedule());
+            rstd_try(invocation.actions.validate_action_schedule(host_targets));
         }
         return Ok(empty {});
     }
@@ -78,7 +79,7 @@ public:
         -> BuildScriptResult<empty> {
         for (auto& invocation : invocations_) {
             rstd_try(invocation.actions.execute(
-                graph, domain, cpp::GeneratedSourceAvailability::BeforeScan, jobs));
+                graph, domain, cpp::GeneratedSourceAvailability::BeforeHostTools, jobs));
         }
         return Ok(empty {});
     }
@@ -94,7 +95,7 @@ public:
             rstd_try(invocation.actions.bind_host_tools(tools));
             invocation.actions.synchronize_generated_identities(package, plan);
             rstd_try(invocation.actions.execute(
-                graph, domain, cpp::GeneratedSourceAvailability::AfterScan, jobs));
+                graph, domain, cpp::GeneratedSourceAvailability::AfterHostTools, jobs));
             invocation.configure.report().executed = true;
             invocation.configure.report().elapsed  = invocation.elapsed;
             auto finished                          = rstd_try(invocation.configure.finish());

@@ -96,11 +96,28 @@ local target = lito.target({ kind = "bin", name = "app" })
 local generator = lito.host_tool(target, "generator", "generate")
 ```
 
-Host products already built in the host domain are resolved before build-script actions are
-scheduled. Their generated headers and module interfaces are available before the target source
-scan. Explicit generated sources use the declared C++ source kind even without a file extension.
+When a package host tool needs compilation, Lito first scans and builds the tool and its library
+dependencies. Its consumers are scanned after the tool's generation actions finish, so generated
+`.cppm` interfaces and partitions participate in the complete module dependency graph. Register
+these outputs with `lito.target_add_generated_source`. Explicit generated sources use the declared
+C++ source kind even without a file extension.
+
+Package host tools cannot generate headers, including `.inc` and `.inl` include fragments. This
+restriction also applies to outputs derived from their generated files and files exposed through
+`lito.target_add_generated_include`. It applies whether the tool was just compiled or already built.
+Preconfigured external tools and configure actions retain their existing output support.
+
 Action identities include the executable digest, so rebuilding a generator invalidates its outputs.
-Host and target compilation contexts remain separate.
+Compatible native host tools share the project's build environment and output directory. Their
+common libraries are scanned, compiled, and archived once, including across the generation boundary.
+Tools whose platform, effective profile, global options, or dependency requirements cannot coexist
+with the project use a separate `plugin-host/` environment. Each environment builds one version of
+each library; scan records, BMIs, and object files are not reused across these environments.
+Compiler plugin requirements apply to the plugin's dependency closure, not unrelated project targets.
+Compiler plugins needed by a host tool are prepared before compiling that tool. Nested tool
+generation, where a tool itself needs another tool's generated sources, is not supported yet.
+Host-tool prerequisites that require pmacro expansion before generation are also rejected with
+an execution-order diagnostic.
 
 Ordinary library dependencies never authorize tool calls. A tool-only provider therefore requires
 explicit tool usage; a mixed library/tool provider can still be consumed as a library through

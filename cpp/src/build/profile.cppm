@@ -8,6 +8,7 @@ import rstd;
 import :build.configuration;
 import :bmi.artifact;
 import :compiler.option;
+import :compiler.identity;
 import :compiler.parser;
 import :compiler.policy;
 import :usage;
@@ -69,6 +70,43 @@ struct ProfileSpec {
     Option<String>                     linker_strip_source;
     Vec<String>                        linker_options;
 };
+
+enum class BuildEnvironmentDifference
+{
+    COptions,
+    CppOptions,
+    Profile,
+    Link,
+};
+
+auto compiler_extension_environment_difference(const ProfileSpec& project) -> Option<ref<str>> {
+    if (project.cpp.language.exceptions)
+        return Some("compiler extensions require exceptions disabled"_str);
+    if (project.cpp.language.rtti) return Some("compiler extensions require RTTI disabled"_str);
+    return None();
+}
+
+auto check_build_environment(const ProfileSpec& project, const ProfileSpec& host)
+    -> Option<BuildEnvironmentDifference> {
+    if (lito::c::c_compile_identity(project.c) != lito::c::c_compile_identity(host.c))
+        return Some(BuildEnvironmentDifference::COptions);
+    if (cpp_compile_identity(project.cpp) != cpp_compile_identity(host.cpp))
+        return Some(BuildEnvironmentDifference::CppOptions);
+    if (project.name != host.name || project.family != host.family ||
+        project.bmi.representation != host.bmi.representation ||
+        project.bmi.source_embedding != host.bmi.source_embedding ||
+        project.c_ndebug != host.c_ndebug || project.cpp_ndebug != host.cpp_ndebug ||
+        project.strip != host.strip)
+        return Some(BuildEnvironmentDifference::Profile);
+    if (project.link_lto != host.link_lto || project.linker_strip != host.linker_strip ||
+        project.linker_options != host.linker_options ||
+        lito::link::requirements_identity(project.c_link_requirements) !=
+            lito::link::requirements_identity(host.c_link_requirements) ||
+        lito::link::requirements_identity(project.cpp_link_requirements) !=
+            lito::link::requirements_identity(host.cpp_link_requirements))
+        return Some(BuildEnvironmentDifference::Link);
+    return None();
+}
 
 struct EffectiveNativeProfile {
     lito::manifest::PackageLanguage      language { lito::manifest::PackageLanguage::Cpp };

@@ -57,8 +57,8 @@ struct ExternalSourceRootCatalog {
 
 enum class GeneratedSourceAvailability
 {
-    BeforeScan,
-    AfterScan,
+    BeforeHostTools,
+    AfterHostTools,
 };
 
 struct ResolvedSourceGroup {
@@ -68,7 +68,7 @@ struct ResolvedSourceGroup {
     Vec<PathBuf>                sources;
     bool                        generated { false };
     bool                        external { false };
-    GeneratedSourceAvailability availability { GeneratedSourceAvailability::BeforeScan };
+    GeneratedSourceAvailability availability { GeneratedSourceAvailability::BeforeHostTools };
 };
 
 enum class GeneratedArtifactRole
@@ -156,7 +156,7 @@ auto add_generated_include_directory(ResolvedTarget& target, PathBuf path) -> bo
 
 auto has_deferred_generated_sources(const ResolvedTarget& target) noexcept -> bool {
     for (const auto& group : target.source_groups) {
-        if (group.generated && group.availability == GeneratedSourceAvailability::AfterScan &&
+        if (group.generated && group.availability == GeneratedSourceAvailability::AfterHostTools &&
             ! group.sources.is_empty()) {
             return true;
         }

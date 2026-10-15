@@ -499,21 +499,17 @@ private:
     friend class ScanCacheTransaction;
 
     auto lookup(const ScanCacheInput& input) -> CacheResult<ScanCacheLookup> {
-        if (state_->force_refresh) {
-            return miss(ScanCacheMissReason::Refresh);
-        }
+        if (state_->force_refresh) return miss(ScanCacheMissReason::Refresh);
         auto exists = rstd::fs::exists(input.record.as_path());
         if (exists.is_err()) {
-            return Err(CacheError::Io("inspect scan record"_Str,
-                                      PathBuf::from(input.record.as_path()),
-                                      rstd::move(exists).unwrap_err()));
+            return Err(CacheError::Io(
+                "inspect scan record"_Str, input.record.clone(), rstd::move(exists).unwrap_err()));
         }
         if (! *exists) return miss(ScanCacheMissReason::Absent);
         auto contents = rstd::fs::read_to_string(input.record.as_path());
         if (contents.is_err()) {
-            return Err(CacheError::Io("read scan record"_Str,
-                                      PathBuf::from(input.record.as_path()),
-                                      rstd::move(contents).unwrap_err()));
+            return Err(CacheError::Io(
+                "read scan record"_Str, input.record.clone(), rstd::move(contents).unwrap_err()));
         }
         auto decoded = rstd::json::decode_direct<scan_cache_wire::Receipt>(contents->as_str());
         if (decoded.is_err()) return miss(ScanCacheMissReason::Corrupt);

@@ -570,26 +570,53 @@ auto ToolActionSession::host_tool_targets() const -> Vec<lito::package::PackageT
     return result;
 }
 
-auto ToolActionSession::validate_action_schedule() const -> BuildScriptResult<empty> {
+auto ToolActionSession::requires_package_host_tool(usize index) const noexcept -> bool {
+    const auto& action = actions_[index];
+    if (action.tool.is_some() && action.tool->target.is_some()) return true;
+    for (const auto& tool : action.tools) {
+        if (tool.target.is_some()) return true;
+    }
+    for (const auto& input : action.inputs) {
+        if (input.producer.is_some() && requires_package_host_tool(*input.producer)) return true;
+    }
+    return false;
+}
+
+auto ToolActionSession::validate_action_schedule(slice<cpp::TargetId> host_targets) const
+    -> BuildScriptResult<empty> {
     for (const auto& output : generated_outputs_) {
-        if (output->availability != cpp::GeneratedSourceAvailability::AfterScan ||
-            output->kind == GeneratedOutputKind::Other) {
-            continue;
+        if (! requires_package_host_tool(output->producer)) continue;
+        auto header =
+            output->kind == GeneratedOutputKind::Header ||
+            inferred_generated_output_kind(output->relative.as_path().to_string_lossy().as_str()) ==
+                GeneratedOutputKind::Header;
+        for (const auto& target : metadata_->targets) {
+            if (target.id.package != output->package.as_str()) continue;
+            for (const auto& requirement : target.usage.private_include_directory_requirements) {
+                if (requirement.root == lito::dependency::IncludeDirectoryRoot::Generated &&
+                    output->relative.as_path().strip_prefix(requirement.path.as_path()).is_some())
+                    header = true;
+            }
         }
-        auto extension = output->relative.as_path().extension();
-        auto text      = extension.is_some() ? extension->to_str() : None();
-        if (output->kind == GeneratedOutputKind::Header || text == Some("h"_str) ||
-            text == Some("hpp"_str)) {
-            return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-                rstd::format("generated header '{}' cannot be produced after source scan",
-                             output->relative.as_path()))));
+        if (header)
+            return Err(BuildScriptError::Message(
+                rstd::format("package host-tool output '{}' cannot be a generated header; generate "
+                             "a module source instead",
+                             output->relative.as_path())));
+    }
+    for (auto target_id : host_targets) {
+        const auto& target = metadata_->targets[target_id];
+        if (cpp::has_deferred_generated_sources(target)) {
+            return Err(BuildScriptError::Message(rstd::format(
+                "host-tool target '{}' depends on sources produced by an unbuilt host tool; "
+                "nested host-tool generation is not supported",
+                lito::package::package_target_id_text(target.id).as_str())));
         }
-        if (text == Some("cppm"_str)) {
-            return Err(
-                BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(rstd::format(
-                    "generated module interface source '{}' cannot be produced after source scan",
-                    output->relative.as_path()))));
-        }
+        if (! target.proc_macro_dependencies.is_empty())
+            return Err(BuildScriptError::Message(rstd::format(
+                "host-tool prerequisite '{}' requires proc-macro expansion before tool execution; "
+                "this generation order is not supported",
+                lito::package::package_target_id_text(target.id))));
     }
     return Ok(empty {});
 }
@@ -632,7 +659,7 @@ auto ToolActionSession::bind_host_tools(const ResolvedPackageHostTools& tools)
         }
     }
     return bound ? refresh_action_identities(closure.as_str(),
-                                             Some(cpp::GeneratedSourceAvailability::AfterScan))
+                                             Some(cpp::GeneratedSourceAvailability::AfterHostTools))
                  : Ok(empty {});
 }
 
@@ -936,7 +963,7 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
 
 auto ToolActionSession::action_availability(usize index) const noexcept
     -> cpp::GeneratedSourceAvailability {
-    if (index >= actions_.len()) return cpp::GeneratedSourceAvailability::AfterScan;
+    if (index >= actions_.len()) return cpp::GeneratedSourceAvailability::AfterHostTools;
     return actions_[index].availability;
 }
 
@@ -944,19 +971,19 @@ auto ToolActionSession::resolve_action_availability(const RegisteredAction& acti
     -> cpp::GeneratedSourceAvailability {
     if (action.tool.is_some() && action.tool->target.is_some() &&
         action.tool->executable.is_empty()) {
-        return cpp::GeneratedSourceAvailability::AfterScan;
+        return cpp::GeneratedSourceAvailability::AfterHostTools;
     }
     for (const auto& tool : action.tools) {
         if (tool.target.is_some() && tool.executable.is_empty())
-            return cpp::GeneratedSourceAvailability::AfterScan;
+            return cpp::GeneratedSourceAvailability::AfterHostTools;
     }
     for (const auto& input : action.inputs) {
-        if (input.producer.is_some() &&
-            action_availability(*input.producer) == cpp::GeneratedSourceAvailability::AfterScan) {
-            return cpp::GeneratedSourceAvailability::AfterScan;
+        if (input.producer.is_some() && action_availability(*input.producer) ==
+                                            cpp::GeneratedSourceAvailability::AfterHostTools) {
+            return cpp::GeneratedSourceAvailability::AfterHostTools;
         }
     }
-    return cpp::GeneratedSourceAvailability::BeforeScan;
+    return cpp::GeneratedSourceAvailability::BeforeHostTools;
 }
 
 auto ToolActionSession::refresh_action_identities(

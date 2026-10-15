@@ -105,12 +105,24 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
                             const ClangSdk&                    sdk,
                             const cpp::PackageSpec&            package,
                             const cpp::PackagePlan&            plan,
-                            const Vec<Option<PathBuf>>&        libraries)
+                            const Vec<Option<PathBuf>>&        libraries,
+                            const Vec<BuiltCompilerPlugin>&    completed = {},
+                            Option<slice<cpp::TargetId>>       selected  = None())
     -> BuildResult<Vec<BuiltCompilerPlugin>> {
     auto result = Vec<BuiltCompilerPlugin>::make();
     for (auto target : plan.target_order) {
         const auto& spec = package.targets[target];
         if (spec.artifact_kind != cpp::ArtifactKind::CompilerPlugin) continue;
+        if (selected.is_some()) {
+            auto included = false;
+            for (auto candidate : *selected)
+                if (candidate == target) included = true;
+            if (! included) continue;
+        }
+        auto ready = false;
+        for (const auto& product : completed)
+            if (product.target == spec.id) ready = true;
+        if (ready) continue;
         if (target >= libraries.len() || libraries[target].is_none()) {
             return Err(BuildError::Message(
                 rstd::format("compiler plugin target '{}' has no support archive",
@@ -258,6 +270,7 @@ auto attach_target_compiler_plugins(const cpp::PackageSpec&         package,
                                     CompilePlan& compile_plan) -> BuildResult<empty> {
     for (auto target : plan.target_order) {
         const auto& spec = package.targets[target];
+        if (target_units[target].is_empty()) continue;
         if (spec.artifact_kind == cpp::ArtifactKind::ProcMacroProvider) continue;
         for (const auto& dependency : spec.plugin_dependencies) {
             const BuiltCompilerPlugin* product = nullptr;

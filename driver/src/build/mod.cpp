@@ -818,12 +818,17 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             return Err(rstd::into<BuildError>(rstd::move(resolved_host).unwrap_err()));
         }
         host_selection = rstd::move(resolved_host).unwrap();
-        for (auto target : host_selection.target_order) {
-            if (! cpp::has_deferred_generated_sources(metadata.targets[target])) continue;
-            return Err(BuildError::Message(rstd::format(
-                "host-tool target '{}' cannot consume generated sources produced after scan",
-                lito::package::package_target_id_text(metadata.targets[target].id).as_str())));
+    }
+    rstd_try(script_declaration.validate_action_schedule(host_selection.target_order.as_slice()));
+    const auto& initial_selection =
+        host_selection.target_order.is_empty() ? *selected : host_selection;
+    auto remaining_targets = Vec<cpp::TargetId>::make();
+    for (auto target : native_target_plan.target_order) {
+        auto initial = false;
+        for (auto existing : initial_selection.target_order) {
+            if (existing == target) initial = true;
         }
+        if (! initial) remaining_targets.emplace_back(target);
     }
 
     auto before_scan_script = stage_timing.measure(BuildStage::Script, [&] {
@@ -831,35 +836,37 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             native_graph.graph, execution_domain, execution->jobs);
     });
     rstd_try(rstd::move(before_scan_script));
-    rstd_try(
-        materialize_build_script_inputs(metadata, native_target_plan.contexts, layout, *selected));
+    rstd_try(materialize_build_script_inputs(
+        metadata, native_target_plan.contexts, layout, initial_selection));
 
-    auto scan_started           = rstd::time::Instant::now();
-    auto scan_span              = profiler.span(ScanProbe::Total);
-    auto toolchain_header_roots = profiler.measure(
-        ScanProbe::Environment, [&]() -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
-            auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
-            for (auto target : native_target_plan.target_order) {
-                auto resolved =
-                    toolchain.header_roots(native_target_plan.contexts[target],
-                                           metadata.targets[target].source_root.as_path());
-                if (resolved.is_err()) {
-                    return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
-                }
-                for (auto& root : *resolved) roots.push(rstd::move(root));
-            }
-            if (plugin_sdk.is_some()) {
-                for (const auto& root : plugin_sdk->header_roots) roots.push(root.clone());
-            }
-            return Ok(rstd::move(roots));
-        });
+    auto       scan_started = rstd::time::Instant::now();
+    auto       scan_span    = profiler.span(ScanProbe::Total);
+    const auto collect_header_roots =
+        [&](slice<cpp::TargetId>            targets,
+            const Vec<cpp::CompileContext>& contexts) -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
+        auto roots = Vec<cpp::ResolvedHeaderRoot>::make();
+        for (auto target : targets) {
+            auto resolved = toolchain.header_roots(contexts[target],
+                                                   metadata.targets[target].source_root.as_path());
+            if (resolved.is_err())
+                return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+            for (auto& root : *resolved) roots.push(rstd::move(root));
+        }
+        return Ok(rstd::move(roots));
+    };
+    auto toolchain_header_roots = profiler.measure(ScanProbe::Environment, [&] {
+        return collect_header_roots(initial_selection.target_order.as_slice(),
+                                    native_target_plan.contexts);
+    });
     if (toolchain_header_roots.is_err()) {
         return Err(rstd::move(toolchain_header_roots).unwrap_err());
     }
-    auto header_ownership =
-        cpp::resolve_header_ownership(metadata,
-                                      native_target_plan.target_order.as_slice(),
-                                      rstd::move(toolchain_header_roots).unwrap());
+    if (plugin_sdk.is_some()) {
+        for (const auto& root : plugin_sdk->header_roots)
+            toolchain_header_roots->push(root.clone());
+    }
+    auto header_ownership = cpp::resolve_header_ownership(
+        metadata, native_target_plan.target_order.as_slice(), toolchain_header_roots->clone());
     auto analysis_service = FrontendAnalysisService::make(
         layout, toolchain, header_ownership, frontend_service, scan_cache, profiler);
     auto semantic_scan_graph =
@@ -868,14 +875,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto existing_source_sets = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_source_selection(metadata,
                                                  native_target_plan,
-                                                 native_target_plan.target_order,
+                                                 initial_selection.target_order,
                                                  semantic_scan_graph,
                                                  analysis_service,
                                                  request.observer,
                                                  execution->jobs,
                                                  execution->max_in_flight,
                                                  false,
-                                                 SourceDiscoveryScope::BeforeScan);
+                                                 SourceDiscoveryScope::BeforeHostTools);
     });
     if (existing_source_sets.is_err()) {
         return Err(rstd::move(existing_source_sets).unwrap_err());
@@ -919,6 +926,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto cache             = CompileCacheSession::create(cache_environment, layout.output());
     auto archive_cache     = ArchiveCacheSession::create(cache_environment, layout.output());
     auto object_identities = Vec<Option<CachedArtifactIdentity>>::make();
+    auto artifacts         = Vec<BuiltArtifact>::make();
     auto completed_targets = Vec<u8>::with_capacity(package.targets.len());
     auto library_paths     = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
@@ -929,6 +937,98 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto reused           = usize {};
     auto build_timing     = BuildTimingReport {};
     auto compile_progress = CompileProgressTracker {};
+
+    auto compiler_plugins = Vec<BuiltCompilerPlugin>::make();
+    if (plugin_host.is_some()) {
+        compiler_plugins.reserve(plugin_host->compiler_plugins.len());
+        for (const auto& product : plugin_host->compiler_plugins) {
+            compiler_plugins.push(product.clone());
+        }
+    }
+    const auto prepare_plugins =
+        [&](CompilePlan& compile, const Vec<cpp::TargetId>& ready_targets) -> BuildResult<empty> {
+        auto plugin_targets = Vec<u8>::with_capacity(package.targets.len());
+        for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
+            plugin_targets.push(u8 {});
+        }
+        auto pending_plugin_targets = Vec<cpp::TargetId>::make();
+        for (auto target : ready_targets) {
+            if (package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin) {
+                pending_plugin_targets.emplace_back(target);
+            }
+        }
+        while (! pending_plugin_targets.is_empty()) {
+            const auto target = rstd::move(pending_plugin_targets.pop()).unwrap_unchecked();
+            if (plugin_targets[target] != u8 {}) continue;
+            plugin_targets[target] = u8(1);
+            for (const auto& input : package_plan.link_inputs[target]) {
+                if (input.is_Target())
+                    pending_plugin_targets.emplace_back(input.as_Target().target);
+            }
+        }
+
+        auto roots = Vec<cpp::UnitId>::make();
+        for (auto target : ready_targets)
+            if (plugin_targets[target] != u8 {})
+                for (auto unit : target_units[target]) roots.emplace_back(unit);
+        if (roots.is_empty()) return Ok(empty {});
+        auto plugin_selection = compile_plan_prerequisite_closure(compile, roots);
+        for (auto unit = cpp::UnitId {}; unit < plugin_selection.len(); ++unit)
+            if (object_identities[unit].is_some()) plugin_selection[unit] = u8 {};
+        auto plugin_compile = execute_compile_plan_selection(package,
+                                                             units,
+                                                             compile,
+                                                             plugin_selection,
+                                                             rstd::move(object_identities),
+                                                             cache,
+                                                             toolchain.compile_executor(),
+                                                             request.observer,
+                                                             *compile_execution);
+        if (plugin_compile.is_err()) {
+            return Err(rstd::move(plugin_compile).unwrap_err());
+        }
+        auto plugin_result = rstd::move(plugin_compile).unwrap();
+        object_identities  = rstd::move(plugin_result.object_identities);
+        compiled += plugin_result.compiled;
+        reused += plugin_result.reused;
+        for (auto target : package_plan.target_order) {
+            if (plugin_targets[target] == u8 {} || completed_targets[target] != u8 {}) continue;
+            const auto kind = package.targets[target].artifact_kind;
+            if (kind == cpp::ArtifactKind::SharedLibrary) {
+                return Err(BuildError::Message(
+                    "compiler plugin host dependency cannot be a shared library"_Str));
+            }
+            if (kind != cpp::ArtifactKind::StaticLibrary &&
+                kind != cpp::ArtifactKind::CompilerPlugin) {
+                continue;
+            }
+            auto archived = build_archive_target(request,
+                                                 layout,
+                                                 toolchain,
+                                                 archive_cache,
+                                                 package.targets[target],
+                                                 units,
+                                                 target_units[target],
+                                                 object_identities,
+                                                 build_timing);
+            if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
+            library_paths[target]     = Some(rstd::move(archived).unwrap());
+            completed_targets[target] = u8(1);
+        }
+        auto built_plugins = build_compiler_plugins(project.configuration,
+                                                    project.platform,
+                                                    layout,
+                                                    toolchain,
+                                                    plugin_sdk->sdk,
+                                                    package,
+                                                    package_plan,
+                                                    library_paths,
+                                                    compiler_plugins,
+                                                    Some(ready_targets.as_slice()));
+        if (built_plugins.is_err()) return Err(rstd::move(built_plugins).unwrap_err());
+        for (auto& plugin : *built_plugins) compiler_plugins.push(rstd::move(plugin));
+        return Ok(empty {});
+    };
 
     if (! host_selection.target_order.is_empty()) {
         auto incremental = semantic_scan_graph.snapshot(units, scans);
@@ -963,6 +1063,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         while (object_identities.len() < host_action_plan.compile.nodes.len()) {
             object_identities.emplace_back();
         }
+        rstd_try(prepare_plugins(host_action_plan.compile, host_selection.target_order));
+        rstd_try(attach_target_compiler_plugins(package,
+                                                package_plan,
+                                                target_units,
+                                                scans,
+                                                compiler_plugins,
+                                                toolchain,
+                                                host_action_plan.compile));
         auto host_graph = extend_native_action_graph(native_graph,
                                                      package,
                                                      package_plan,
@@ -1017,6 +1125,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                     .artifact   = Some(*native_graph.target_artifacts[target]),
                 }));
             }
+            auto selected_product = false;
+            for (const auto& requested : selected_targets)
+                if (requested == artifact.target) selected_product = true;
+            if (selected_product) artifacts.push(rstd::move(artifact));
             return Ok(empty {});
         };
         auto host_execution = execute_native_action_graph(native_graph,
@@ -1041,7 +1153,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
     }
 
-    auto script_result     = stage_timing.measure(BuildStage::Script, [&] {
+    auto script_result = stage_timing.measure(BuildStage::Script, [&] {
         return script_declaration.execute(package_tools,
                                           package,
                                           package_plan,
@@ -1049,7 +1161,17 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                           execution_domain,
                                           execution->jobs);
     });
-    auto script_report     = rstd_try(rstd::move(script_result));
+    auto script_report = rstd_try(rstd::move(script_result));
+    rstd_try(materialize_build_script_inputs(metadata, package, package_plan, layout, *selected));
+    auto remaining_header_roots = profiler.measure(ScanProbe::Environment, [&] {
+        return collect_header_roots(remaining_targets.as_slice(), package_plan.contexts);
+    });
+    if (remaining_header_roots.is_err())
+        return Err(rstd::move(remaining_header_roots).unwrap_err());
+    for (auto& root : *remaining_header_roots) toolchain_header_roots->push(rstd::move(root));
+    header_ownership = cpp::resolve_header_ownership(metadata,
+                                                     native_target_plan.target_order.as_slice(),
+                                                     rstd::move(toolchain_header_roots).unwrap());
     auto runtime_result    = stage_timing.measure(BuildStage::RuntimeResource, [&] {
         return resolve_runtime_resources(metadata, layout, selected_targets, request.observer);
     });
@@ -1058,14 +1180,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto generated_sources = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_source_selection(metadata,
                                                  package_plan,
-                                                 package_plan.target_order,
+                                                 remaining_targets,
                                                  semantic_scan_graph,
                                                  analysis_service,
                                                  request.observer,
                                                  execution->jobs,
                                                  execution->max_in_flight,
                                                  true,
-                                                 SourceDiscoveryScope::AfterScan);
+                                                 SourceDiscoveryScope::All);
     });
     if (generated_sources.is_err()) return Err(rstd::move(generated_sources).unwrap_err());
     auto appended_sources =
@@ -1155,7 +1277,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     auto initial_plan_started = rstd::time::Instant::now();
     auto proc_macro_sources   = Vec<u8>::make();
-    if (plugin_host.is_some()) {
+    if (plugin_host.is_some() || ! project.proc_macro_aggregates.is_empty()) {
         auto selected = select_proc_macro_sources(package, package_plan, target_units, scans);
         if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
         proc_macro_sources = rstd::move(selected).unwrap();
@@ -1189,7 +1311,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
     }
 
-    auto rebuild_after_source_transformation = [&]() -> BuildResult<empty> {
+    auto rebuild_after_source_transformation =
+        [&](Vec<Option<CachedArtifactIdentity>>& completed) -> BuildResult<empty> {
         auto authoritative_profiler_result = ScanProfiler::create();
         if (authoritative_profiler_result.is_err()) {
             return Err(BuildError::Message(
@@ -1259,12 +1382,20 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         if (authoritative_units.is_err()) {
             return Err(rstd::move(authoritative_units).unwrap_err());
         }
+        auto previous_build         = rstd::move(prepared_build);
+        auto previous_prerequisites = Vec<Vec<cpp::UnitId>>::make();
+        auto previous_completed     = Vec<bool>::make();
+        for (const auto& node : actions.compile.nodes) {
+            previous_prerequisites.push(node.prerequisites.clone());
+            previous_completed.emplace_back(node.completed);
+        }
         prepared_build                      = rstd::move(authoritative_units).unwrap();
         auto authoritative_standard_modules = prepare_standard_library_modules(
             prepared_build, scans, authoritative_analysis, layout, toolchain);
         if (authoritative_standard_modules.is_err()) {
             return Err(rstd::move(authoritative_standard_modules).unwrap_err());
         }
+        rstd_try(align_build_units(prepared_build, previous_build));
         auto authoritative_incremental = rstd::move(authoritative_graph).finalize(units, scans);
         if (authoritative_incremental.is_err()) {
             return Err(BuildError::Message(rstd::move(authoritative_incremental).unwrap_err()));
@@ -1314,16 +1445,221 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         actions                = rstd::move(authoritative_actions).unwrap();
         documentation_units    = rstd::move(actions.documentation);
         documentation_retained = documentation_retained_bytes(documentation_units);
-        prerequisite_selection.clear();
-        prerequisite_identities.clear();
-        for (auto unit = cpp::UnitId {}; unit < actions.compile.nodes.len(); ++unit) {
-            prerequisite_selection.push(u8 {});
-            prerequisite_identities.emplace_back();
+        auto retained          = Vec<bool>::with_capacity(units.len());
+        for (cpp::UnitId unit {}; unit < units.len(); ++unit) {
+            auto same = unit < previous_build.units.len() && unit < completed.len() &&
+                        (completed[unit].is_some() || previous_completed[unit]);
+            if (same) {
+                const auto& previous = previous_build.units[unit];
+                same = previous.source_content_identity == units[unit].source_content_identity &&
+                       previous.unit.context->id == units[unit].unit.context->id &&
+                       previous_prerequisites[unit] == actions.compile.nodes[unit].prerequisites;
+            }
+            retained.emplace_back(same);
         }
+        auto changed = true;
+        while (changed) {
+            changed = false;
+            for (cpp::UnitId unit {}; unit < units.len(); ++unit) {
+                if (! retained[unit]) continue;
+                for (auto dependency : actions.compile.nodes[unit].prerequisites)
+                    if (! retained[dependency]) {
+                        retained[unit] = false;
+                        changed        = true;
+                        break;
+                    }
+            }
+        }
+        auto identities = Vec<Option<CachedArtifactIdentity>>::with_capacity(units.len());
+        prerequisite_selection.clear();
+        for (cpp::UnitId unit {}; unit < units.len(); ++unit) {
+            actions.compile.nodes[unit].completed = retained[unit];
+            prerequisite_selection.push(retained[unit] ? u8(1) : u8 {});
+            if (retained[unit])
+                identities.push(rstd::move(completed[unit]));
+            else
+                identities.emplace_back();
+        }
+        completed = rstd::move(identities);
+        for (auto target : package_plan.target_order)
+            for (auto unit : target_units[target])
+                if (! retained[unit]) completed_targets[target] = u8 {};
         return Ok(empty {});
     };
 
-    if (plugin_host.is_some()) {
+    if (! compile_plan_recorded) {
+        stage_timing.record(BuildStage::CompilePlan, initial_plan_elapsed);
+    }
+
+    object_identities       = rstd::move(prerequisite_identities);
+    auto compile_tests      = Vec<CompileTestExecution>::make();
+    auto compile_statistics = CompileExecutionStatistics {};
+    auto plugin_targets     = Vec<u8>::with_capacity(package.targets.len());
+    for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
+        plugin_targets.push(u8 {});
+    }
+    auto pending_plugin_targets = Vec<cpp::TargetId>::make();
+    for (auto target : package_plan.target_order) {
+        if (package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin) {
+            pending_plugin_targets.emplace_back(target);
+        }
+    }
+    while (! pending_plugin_targets.is_empty()) {
+        const auto target = rstd::move(pending_plugin_targets.pop()).unwrap_unchecked();
+        if (plugin_targets[target] != u8 {}) continue;
+        plugin_targets[target] = u8(1);
+        for (const auto& input : package_plan.link_inputs[target]) {
+            if (input.is_Target()) pending_plugin_targets.emplace_back(input.as_Target().target);
+        }
+    }
+
+    auto plugin_roots   = Vec<cpp::UnitId>::make();
+    auto provider_roots = Vec<cpp::UnitId>::make();
+    for (auto target : package_plan.target_order) {
+        if (plugin_targets[target] != u8 {}) {
+            for (auto unit : target_units[target]) plugin_roots.emplace_back(unit);
+        }
+        if (package.targets[target].artifact_kind == cpp::ArtifactKind::ProcMacroProvider) {
+            for (auto unit : target_units[target]) provider_roots.emplace_back(unit);
+        }
+    }
+    auto plugin_selection    = compile_plan_prerequisite_closure(actions.compile, plugin_roots);
+    auto completed_selection = prerequisite_selection.clone();
+    for (auto unit = cpp::UnitId {}; unit < completed_selection.len(); ++unit) {
+        if (plugin_selection[unit] != u8 {}) completed_selection[unit] = u8(1);
+    }
+    if (! plugin_roots.is_empty()) {
+        auto plugin_started = rstd::time::Instant::now();
+        rstd_try(prepare_plugins(actions.compile, package_plan.target_order));
+        if (! provider_roots.is_empty()) {
+            auto provider_prerequisites =
+                compile_plan_prerequisite_closure(actions.compile, provider_roots);
+            for (auto root : provider_roots) provider_prerequisites[root] = u8 {};
+            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
+                if (completed_selection[unit] != u8 {}) provider_prerequisites[unit] = u8 {};
+            }
+            auto provider_dependency_compile =
+                execute_compile_plan_selection(package,
+                                               units,
+                                               actions.compile,
+                                               provider_prerequisites,
+                                               rstd::move(object_identities),
+                                               cache,
+                                               toolchain.compile_executor(),
+                                               request.observer,
+                                               *compile_execution);
+            if (provider_dependency_compile.is_err()) {
+                return Err(rstd::move(provider_dependency_compile).unwrap_err());
+            }
+            auto provider_dependency_result = rstd::move(provider_dependency_compile).unwrap();
+            object_identities = rstd::move(provider_dependency_result.object_identities);
+            compiled += provider_dependency_result.compiled;
+            reused += provider_dependency_result.reused;
+            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
+                if (provider_prerequisites[unit] != u8 {}) completed_selection[unit] = u8(1);
+            }
+            auto provider_transformed = transform_proc_macro_provider_sources(
+                layout, toolchain, package, package_plan, units, target_units, compiler_plugins);
+            if (provider_transformed.is_err()) {
+                return Err(rstd::move(provider_transformed).unwrap_err());
+            }
+            if (*provider_transformed) {
+                auto expected_units = actions.compile.nodes.len();
+                rstd_try(rebuild_after_source_transformation(object_identities));
+                if (actions.compile.nodes.len() != expected_units ||
+                    object_identities.len() != actions.compile.nodes.len()) {
+                    return Err(BuildError::Message(
+                        "proc-macro provider transformation changed compile unit alignment"_Str));
+                }
+                completed_selection.clear();
+                for (const auto& identity : object_identities) {
+                    completed_selection.push(identity.is_some() ? u8(1) : u8 {});
+                }
+            }
+        }
+        auto attached = attach_target_compiler_plugins(package,
+                                                       package_plan,
+                                                       target_units,
+                                                       scans,
+                                                       compiler_plugins,
+                                                       toolchain,
+                                                       actions.compile);
+        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
+        stage_timing.record(BuildStage::Plugin, plugin_started.elapsed());
+    } else if (! compiler_plugins.is_empty()) {
+        auto attached = attach_target_compiler_plugins(package,
+                                                       package_plan,
+                                                       target_units,
+                                                       scans,
+                                                       compiler_plugins,
+                                                       toolchain,
+                                                       actions.compile);
+        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
+    }
+
+    auto local_macro_products = Option<BuiltProcMacroProducts> {};
+    auto available_aggregates = Vec<BuiltProcMacroAggregate>::make();
+    if (plugin_host.is_some())
+        for (const auto& aggregate : plugin_host->proc_macro_aggregates)
+            available_aggregates.push(aggregate.clone());
+    if (! provider_roots.is_empty()) {
+        auto provider_selection =
+            compile_plan_prerequisite_closure(actions.compile, provider_roots);
+        for (auto unit = cpp::UnitId {}; unit < provider_selection.len(); ++unit)
+            if (object_identities[unit].is_some()) provider_selection[unit] = u8 {};
+        auto built        = rstd_try(execute_compile_plan_selection(package,
+                                                                    units,
+                                                                    actions.compile,
+                                                                    provider_selection,
+                                                                    rstd::move(object_identities),
+                                                                    cache,
+                                                                    toolchain.compile_executor(),
+                                                                    request.observer,
+                                                                    *compile_execution));
+        object_identities = rstd::move(built.object_identities);
+        compiled += built.compiled;
+        reused += built.reused;
+        auto provider_targets = Vec<u8>::with_capacity(package.targets.len());
+        for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target)
+            provider_targets.emplace_back(u8 {});
+        for (auto target : package_plan.target_order) {
+            if (package.targets[target].artifact_kind != cpp::ArtifactKind::ProcMacroProvider)
+                continue;
+            provider_targets[target] = u8(1);
+            for (const auto& input : package_plan.link_inputs[target])
+                if (input.is_Target()) provider_targets[input.as_Target().target] = u8(1);
+        }
+        for (auto target : package_plan.target_order) {
+            if (provider_targets[target] == u8 {} || completed_targets[target] != u8 {}) continue;
+            library_paths[target]     = Some(rstd_try(build_archive_target(request,
+                                                                           layout,
+                                                                           toolchain,
+                                                                           archive_cache,
+                                                                           package.targets[target],
+                                                                           units,
+                                                                           target_units[target],
+                                                                           object_identities,
+                                                                           build_timing)));
+            completed_targets[target] = u8(1);
+        }
+        local_macro_products =
+            Some(rstd_try(build_proc_macro_aggregates(project.configuration,
+                                                      project.platform,
+                                                      layout,
+                                                      toolchain,
+                                                      package,
+                                                      package_plan,
+                                                      library_paths,
+                                                      compiler_plugins,
+                                                      project.proc_macro_aggregates)));
+        for (const auto& aggregate : local_macro_products->aggregates)
+            available_aggregates.push(aggregate.clone());
+    }
+    prerequisite_identities = rstd::move(object_identities);
+    prerequisite_selection.clear();
+    for (const auto& identity : prerequisite_identities)
+        prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
+    if (! available_aggregates.is_empty()) {
         auto plugin_action_started = rstd::time::Instant::now();
         auto pending_sources       = proc_macro_sources.clone();
         while (true) {
@@ -1371,6 +1707,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             auto prepared_dependency_result = rstd::move(prepared_dependencies).unwrap();
             prerequisite_identities = rstd::move(prepared_dependency_result.object_identities);
+            compiled += prepared_dependency_result.compiled;
+            reused += prepared_dependency_result.reused;
             for (auto unit = cpp::UnitId {}; unit < available.len(); ++unit) {
                 if (available[unit] != u8 {}) prerequisite_selection[unit] = u8(1);
             }
@@ -1390,7 +1728,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                             units,
                                                             target_units,
                                                             selected_sources,
-                                                            plugin_host->proc_macro_aggregates);
+                                                            available_aggregates);
             if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
             if (! *transformed) continue;
 
@@ -1399,10 +1737,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 compile_plan_recorded = true;
             }
             auto authoritative_plan_started = rstd::time::Instant::now();
-            rstd_try(rebuild_after_source_transformation());
+            rstd_try(rebuild_after_source_transformation(prerequisite_identities));
             stage_timing.record(BuildStage::CompilePlan, authoritative_plan_started.elapsed());
 
             auto transformed_selection = compile_plan_prerequisite_closure(actions.compile, ready);
+            for (cpp::UnitId unit {}; unit < transformed_selection.len(); ++unit)
+                if (prerequisite_identities[unit].is_some()) transformed_selection[unit] = u8 {};
             auto transformed_compile =
                 execute_compile_plan_selection(package,
                                                units,
@@ -1418,177 +1758,24 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             auto transformed_result = rstd::move(transformed_compile).unwrap();
             prerequisite_identities = rstd::move(transformed_result.object_identities);
-            prerequisite_selection  = rstd::move(transformed_selection);
+            prerequisite_selection.clear();
+            for (const auto& identity : prerequisite_identities)
+                prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
+            compiled += transformed_result.compiled;
+            reused += transformed_result.reused;
         }
         stage_timing.record(BuildStage::Plugin, plugin_action_started.elapsed());
     }
-    if (! compile_plan_recorded) {
-        stage_timing.record(BuildStage::CompilePlan, initial_plan_elapsed);
-    }
 
-    object_identities       = rstd::move(prerequisite_identities);
-    auto compile_tests      = Vec<CompileTestExecution>::make();
-    auto compile_statistics = CompileExecutionStatistics {};
-    auto compiler_plugins   = Vec<BuiltCompilerPlugin>::make();
-    if (plugin_host.is_some()) {
-        compiler_plugins.reserve(plugin_host->compiler_plugins.len());
-        for (const auto& product : plugin_host->compiler_plugins) {
-            compiler_plugins.push(product.clone());
-        }
-    }
-    auto plugin_targets = Vec<u8>::with_capacity(package.targets.len());
-    for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
-        plugin_targets.push(u8 {});
-    }
-    auto pending_plugin_targets = Vec<cpp::TargetId>::make();
-    for (auto target : package_plan.target_order) {
-        if (package.targets[target].artifact_kind == cpp::ArtifactKind::CompilerPlugin) {
-            pending_plugin_targets.emplace_back(target);
-        }
-    }
-    while (! pending_plugin_targets.is_empty()) {
-        const auto target = rstd::move(pending_plugin_targets.pop()).unwrap_unchecked();
-        if (plugin_targets[target] != u8 {}) continue;
-        plugin_targets[target] = u8(1);
-        for (const auto& input : package_plan.link_inputs[target]) {
-            if (input.is_Target()) pending_plugin_targets.emplace_back(input.as_Target().target);
-        }
-    }
-
-    auto plugin_roots   = Vec<cpp::UnitId>::make();
-    auto provider_roots = Vec<cpp::UnitId>::make();
-    for (auto target : package_plan.target_order) {
-        if (plugin_targets[target] != u8 {}) {
-            for (auto unit : target_units[target]) plugin_roots.emplace_back(unit);
-        }
-        if (package.targets[target].artifact_kind == cpp::ArtifactKind::ProcMacroProvider) {
-            for (auto unit : target_units[target]) provider_roots.emplace_back(unit);
-        }
-    }
-    auto plugin_selection    = compile_plan_prerequisite_closure(actions.compile, plugin_roots);
-    auto completed_selection = prerequisite_selection.clone();
-    for (auto unit = cpp::UnitId {}; unit < completed_selection.len(); ++unit) {
-        if (plugin_selection[unit] != u8 {}) completed_selection[unit] = u8(1);
-    }
-    if (! plugin_roots.is_empty()) {
-        auto plugin_started = rstd::time::Instant::now();
-        auto plugin_compile = execute_compile_plan_selection(package,
-                                                             units,
-                                                             actions.compile,
-                                                             plugin_selection,
-                                                             rstd::move(object_identities),
-                                                             cache,
-                                                             toolchain.compile_executor(),
-                                                             request.observer,
-                                                             *compile_execution);
-        if (plugin_compile.is_err()) {
-            return Err(rstd::move(plugin_compile).unwrap_err());
-        }
-        auto plugin_result = rstd::move(plugin_compile).unwrap();
-        object_identities  = rstd::move(plugin_result.object_identities);
-        compiled += plugin_result.compiled;
-        reused += plugin_result.reused;
-        for (auto target : package_plan.target_order) {
-            if (plugin_targets[target] == u8 {}) continue;
-            const auto kind = package.targets[target].artifact_kind;
-            if (kind == cpp::ArtifactKind::SharedLibrary) {
-                return Err(BuildError::Message(
-                    "compiler plugin host dependency cannot be a shared library"_Str));
-            }
-            if (kind != cpp::ArtifactKind::StaticLibrary &&
-                kind != cpp::ArtifactKind::CompilerPlugin) {
-                continue;
-            }
-            auto archived = build_archive_target(request,
-                                                 layout,
-                                                 toolchain,
-                                                 archive_cache,
-                                                 package.targets[target],
-                                                 units,
-                                                 target_units[target],
-                                                 object_identities,
-                                                 build_timing);
-            if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
-            library_paths[target]     = Some(rstd::move(archived).unwrap());
-            completed_targets[target] = u8(1);
-        }
-        auto built_plugins = build_compiler_plugins(project.configuration,
-                                                    project.platform,
-                                                    layout,
-                                                    toolchain,
-                                                    plugin_sdk->sdk,
-                                                    package,
-                                                    package_plan,
-                                                    library_paths);
-        if (built_plugins.is_err()) return Err(rstd::move(built_plugins).unwrap_err());
-        compiler_plugins = rstd::move(built_plugins).unwrap();
-        if (! provider_roots.is_empty()) {
-            auto provider_prerequisites =
-                compile_plan_prerequisite_closure(actions.compile, provider_roots);
-            for (auto root : provider_roots) provider_prerequisites[root] = u8 {};
-            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
-                if (completed_selection[unit] != u8 {}) provider_prerequisites[unit] = u8 {};
-            }
-            auto provider_dependency_compile =
-                execute_compile_plan_selection(package,
-                                               units,
-                                               actions.compile,
-                                               provider_prerequisites,
-                                               rstd::move(object_identities),
-                                               cache,
-                                               toolchain.compile_executor(),
-                                               request.observer,
-                                               *compile_execution);
-            if (provider_dependency_compile.is_err()) {
-                return Err(rstd::move(provider_dependency_compile).unwrap_err());
-            }
-            auto provider_dependency_result = rstd::move(provider_dependency_compile).unwrap();
-            object_identities = rstd::move(provider_dependency_result.object_identities);
-            compiled += provider_dependency_result.compiled;
-            reused += provider_dependency_result.reused;
-            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
-                if (provider_prerequisites[unit] != u8 {}) completed_selection[unit] = u8(1);
-            }
-            auto provider_transformed = transform_proc_macro_provider_sources(
-                layout, toolchain, package, package_plan, units, target_units, compiler_plugins);
-            if (provider_transformed.is_err()) {
-                return Err(rstd::move(provider_transformed).unwrap_err());
-            }
-            if (*provider_transformed) {
-                auto expected_units = actions.compile.nodes.len();
-                rstd_try(rebuild_after_source_transformation());
-                if (actions.compile.nodes.len() != expected_units ||
-                    object_identities.len() != actions.compile.nodes.len()) {
-                    return Err(BuildError::Message(
-                        "proc-macro provider transformation changed compile unit alignment"_Str));
-                }
-                completed_selection.clear();
-                for (const auto& identity : object_identities) {
-                    completed_selection.push(identity.is_some() ? u8(1) : u8 {});
-                }
-            }
-        }
-        auto attached = attach_target_compiler_plugins(package,
-                                                       package_plan,
-                                                       target_units,
-                                                       scans,
-                                                       compiler_plugins,
-                                                       toolchain,
-                                                       actions.compile);
-        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
-        stage_timing.record(BuildStage::Plugin, plugin_started.elapsed());
-    } else if (! compiler_plugins.is_empty()) {
-        auto attached = attach_target_compiler_plugins(package,
-                                                       package_plan,
-                                                       target_units,
-                                                       scans,
-                                                       compiler_plugins,
-                                                       toolchain,
-                                                       actions.compile);
-        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
-    }
-
-    auto                 artifacts                     = Vec<BuiltArtifact>::make();
+    object_identities = rstd::move(prerequisite_identities);
+    if (! available_aggregates.is_empty())
+        rstd_try(attach_target_compiler_plugins(package,
+                                                package_plan,
+                                                target_units,
+                                                scans,
+                                                compiler_plugins,
+                                                toolchain,
+                                                actions.compile));
     const BuiltArtifact* configured_artifact_processor = nullptr;
     if (project.configuration.toolchain.wasm.is_some() &&
         project.configuration.toolchain.wasm->processor.is_some()) {
@@ -1761,6 +1948,32 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         build_timing.record(BuildOperation::Compile, compile_timing.total);
     }
     stage_timing.record(BuildStage::CompileExecute, compile_statistics.wall);
+    auto projected_artifacts = Vec<BuiltArtifact>::make();
+    for (auto target : selected->product_targets) {
+        const auto& spec     = package.targets[target];
+        auto        recorded = false;
+        for (auto& artifact : artifacts) {
+            if (artifact.target != spec.id) continue;
+            projected_artifacts.push(rstd::move(artifact));
+            recorded = true;
+            break;
+        }
+        if (recorded || library_paths[target].is_none()) continue;
+        projected_artifacts.push(BuiltArtifact {
+            .target = spec.id.clone(),
+            .kind   = spec.artifact_kind,
+            .format = lito::artifact::Format::Archive,
+            .primary =
+                BuiltArtifactFile {
+                    .role         = ArtifactFileRole::LinkInput,
+                    .path         = library_paths[target]->clone(),
+                    .content_type = "application/x-archive"_Str,
+                },
+            .package_root  = spec.root.clone(),
+            .link_identity = String::make(),
+        });
+    }
+    artifacts                 = rstd::move(projected_artifacts);
     auto cache_finish_started = rstd::time::Instant::now();
     for (auto target : package_plan.target_order) {
         auto records = Vec<PathBuf>::with_capacity(target_units[target].len());
@@ -1923,15 +2136,18 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
     }
 
-    auto proc_macro_products = build_proc_macro_aggregates(project.configuration,
-                                                           project.platform,
-                                                           layout,
-                                                           toolchain,
-                                                           package,
-                                                           package_plan,
-                                                           library_paths,
-                                                           compiler_plugins,
-                                                           project.proc_macro_aggregates);
+    auto proc_macro_products =
+        local_macro_products.is_some()
+            ? BuildResult<BuiltProcMacroProducts>(Ok(rstd::move(local_macro_products).unwrap()))
+            : build_proc_macro_aggregates(project.configuration,
+                                          project.platform,
+                                          layout,
+                                          toolchain,
+                                          package,
+                                          package_plan,
+                                          library_paths,
+                                          compiler_plugins,
+                                          project.proc_macro_aggregates);
     if (proc_macro_products.is_err()) {
         return Err(rstd::move(proc_macro_products).unwrap_err());
     }
@@ -1957,13 +2173,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
     }
     if (plugin_host.is_some()) {
-        proc_macro_providers =
-            Vec<BuiltProcMacroProvider>::with_capacity(plugin_host->proc_macro_providers.len());
         for (const auto& provider : plugin_host->proc_macro_providers) {
             proc_macro_providers.push(provider.clone());
         }
-        proc_macro_aggregates =
-            Vec<BuiltProcMacroAggregate>::with_capacity(plugin_host->proc_macro_aggregates.len());
         for (const auto& aggregate : plugin_host->proc_macro_aggregates) {
             proc_macro_aggregates.push(aggregate.clone());
         }

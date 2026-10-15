@@ -17,6 +17,105 @@ using namespace lito_test;
 
 class BuildEnvironment : public ProjectFixture {};
 
+TEST_F(BuildEnvironment, HostPlacementKeepsWholeClosuresInTwoEnvironments) {
+    using namespace lito::package;
+    auto       project = ResolvedPackageSelection {};
+    auto       host    = ResolvedPackageSelection {};
+    const auto names =
+        strings("shared-tool"_str, "isolated-tool"_str, "common"_str, "different"_str);
+    for (const auto& name : names) {
+        ResolvedPackageSelection* selections[] = { &project, &host };
+        for (auto* selection : selections) {
+            auto package            = ResolvedPackage {};
+            package.manifest.name   = name.clone();
+            package.manifest.root   = PathBuf::from(name.as_str());
+            package.source_identity = name.clone();
+            selection->graph.packages.push(rstd::move(package));
+        }
+        host.selected_package_names.push(name.clone());
+    }
+    project.selected_package_names                = strings("common"_str, "different"_str);
+    host.graph.packages[usize(3)].source_identity = "different-host-source"_Str;
+    for (usize index {}; index < usize(4); ++index) {
+        auto id = PackageTargetId {
+            .package = names[index].clone(),
+            .kind    = index < usize(2) ? PackageTargetKind::Binary : PackageTargetKind::Library,
+            .name    = names[index].clone(),
+        };
+        host.effective_targets.push(id.clone());
+        if (index < usize(2))
+            host.selected_targets.push(rstd::move(id));
+        else
+            project.effective_targets.push(rstd::move(id));
+    }
+    for (usize index {}; index < usize(2); ++index)
+        host.active_graph.dependencies.push(SelectedPackageDependency {
+            .consumer = { index, true },
+            .provider = { index + usize(2), true },
+            .kind     = DependencyKind::Normal,
+            .type     = DependencyType::Cpp,
+        });
+    auto placements = merge_host_build_selection(project, host, None(), None());
+    ASSERT_TRUE(placements.is_ok());
+    ASSERT_EQ(placements->len(), usize(2));
+    EXPECT_TRUE((*placements)[usize {}].shared);
+    EXPECT_FALSE((*placements)[usize(1)].shared);
+    EXPECT_TRUE((*placements)[usize(1)].reason.as_str().contains("package source differs"_str));
+    EXPECT_TRUE(project.graph.packages[usize {}].host_view);
+    EXPECT_FALSE(project.graph.packages[usize(2)].host_view);
+    EXPECT_TRUE(project.selected_targets.is_empty());
+    ASSERT_EQ(host.selected_targets.len(), usize(1));
+    EXPECT_EQ(host.selected_targets[usize {}].package.as_str(), "isolated-tool"_str);
+    ASSERT_EQ(host.selected_package_names.len(), usize(2));
+    EXPECT_EQ(host.selected_package_names[usize(1)].as_str(), "different"_str);
+}
+
+TEST_F(BuildEnvironment, SharedBuildRequiresMoreThanBmiCompatibility) {
+    auto project = lito::cpp::ProfileSpec {};
+    auto host    = lito::cpp::ProfileSpec {};
+    EXPECT_TRUE(lito::cpp::check_build_environment(project, host).is_none());
+    host.cpp.common.codegen.optimization = Some(lito::manifest::Optimization::Level3);
+    EXPECT_EQ(lito::cpp::check_build_environment(project, host).unwrap(),
+              lito::cpp::BuildEnvironmentDifference::CppOptions);
+    host = lito::cpp::ProfileSpec {};
+    host.linker_options.push("-Wl,--as-needed"_Str);
+    EXPECT_EQ(lito::cpp::check_build_environment(project, host).unwrap(),
+              lito::cpp::BuildEnvironmentDifference::Link);
+    host      = lito::cpp::ProfileSpec {};
+    host.name = "other-profile"_Str;
+    EXPECT_EQ(lito::cpp::check_build_environment(project, host).unwrap(),
+              lito::cpp::BuildEnvironmentDifference::Profile);
+}
+
+TEST_F(BuildEnvironment, HostPlacementSeparatesProductsOfTheSamePackage) {
+    using namespace lito::package;
+    auto                      project      = ResolvedPackageSelection {};
+    auto                      host         = ResolvedPackageSelection {};
+    ResolvedPackageSelection* selections[] = { &project, &host };
+    for (auto* selection : selections) {
+        auto package            = ResolvedPackage {};
+        package.manifest.name   = "support"_Str;
+        package.manifest.root   = PathBuf::from("support"_str);
+        package.source_identity = "support-source"_Str;
+        selection->graph.packages.push(rstd::move(package));
+        selection->selected_package_names = strings("support"_str);
+    }
+    auto tool   = PackageTargetId { "support"_Str, PackageTargetKind::Binary, "generator"_Str };
+    auto plugin = PackageTargetId { "support"_Str, PackageTargetKind::Plugin, "marker"_Str };
+    host.selected_targets.push(tool.clone());
+    host.selected_targets.push(plugin.clone());
+    host.effective_targets.push(tool.clone());
+    host.effective_targets.push(plugin.clone());
+    auto placements = merge_host_build_selection(project, host, None(), Some("RTTI differs"_str));
+    ASSERT_TRUE(placements.is_ok());
+    EXPECT_TRUE((*placements)[usize {}].shared);
+    EXPECT_FALSE((*placements)[usize(1)].shared);
+    ASSERT_EQ(project.effective_targets.len(), usize(1));
+    EXPECT_EQ(project.effective_targets[usize {}], tool);
+    ASSERT_EQ(host.effective_targets.len(), usize(1));
+    EXPECT_EQ(host.effective_targets[usize {}], plugin);
+}
+
 TEST_F(BuildEnvironment, PathBuildToolsUseOwnerAndEffectivePathIdentity) {
     const ProjectFile files[] = {
         { "first/lito-fixture-generator"_str,

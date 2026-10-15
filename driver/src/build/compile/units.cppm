@@ -21,6 +21,48 @@ struct PreparedBuildUnits {
     Vec<cpp::ScanResult>          scans;
 };
 
+auto align_build_units(PreparedBuildUnits& next, const PreparedBuildUnits& previous)
+    -> BuildResult<empty> {
+    auto order    = Vec<cpp::UnitId>::make();
+    auto selected = Vec<bool>::with_capacity(next.units.len());
+    for (const auto& unit : next.units) selected.emplace_back(false);
+    for (const auto& unit : previous.units) {
+        auto found = false;
+        for (cpp::UnitId candidate {}; candidate < next.units.len(); ++candidate) {
+            if (selected[candidate] ||
+                next.units[candidate].unit.object.as_path() != unit.unit.object.as_path())
+                continue;
+            selected[candidate] = true;
+            order.emplace_back(candidate);
+            found = true;
+            break;
+        }
+        if (! found)
+            return Err(BuildError::Message(
+                rstd::format("source transformation removed existing compile unit '{}'",
+                             unit.unit.source.as_path())));
+    }
+    for (cpp::UnitId candidate {}; candidate < next.units.len(); ++candidate)
+        if (! selected[candidate]) order.emplace_back(candidate);
+    auto units = Vec<cpp::PreparedUnit>::with_capacity(order.len());
+    auto scans = Vec<cpp::ScanResult>::with_capacity(order.len());
+    for (auto& targets : next.target_units) targets.clear();
+    for (auto prior : order) {
+        auto id      = units.len();
+        auto unit    = rstd::move(next.units[prior]);
+        auto scan    = rstd::move(next.scans[prior]);
+        unit.unit.id = id;
+        scan.unit    = id;
+        auto target  = cpp::project_target(unit.unit);
+        if (target.is_some()) next.target_units[*target].emplace_back(id);
+        units.push(rstd::move(unit));
+        scans.push(rstd::move(scan));
+    }
+    next.units = rstd::move(units);
+    next.scans = rstd::move(scans);
+    return Ok(empty {});
+}
+
 auto append_build_units(PreparedBuildUnits&       result,
                         cpp::PackageSpec&         package,
                         const cpp::PackagePlan&   package_plan,

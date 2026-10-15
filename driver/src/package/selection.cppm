@@ -563,6 +563,246 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     return Ok(rstd::move(selection));
 }
 
+struct HostBuildPlacement {
+    PackageTargetId target;
+    bool            shared {};
+    String          reason;
+};
+
+auto merge_host_build_selection(ResolvedPackageSelection& project,
+                                ResolvedPackageSelection& host,
+                                Option<ref<str>>          environment_difference,
+                                Option<ref<str>>          extension_difference)
+    -> PackageSelectionResult<Vec<HostBuildPlacement>> {
+    auto       placements = Vec<HostBuildPlacement>::make();
+    const auto index_of   = [](const ResolvedPackageGraph& graph, ref<str> name) -> Option<usize> {
+        for (usize index {}; index < graph.packages.len(); ++index)
+            if (graph.packages[index].manifest.name == name) return Some(index);
+        return None();
+    };
+    const auto selected = [](const Vec<String>& names, ref<str> name) {
+        return names.iter().any([&](auto value) {
+            return value->as_str() == name;
+        });
+    };
+    const auto closure = [&](ref<str> root) {
+        auto indices    = Vec<usize>::make();
+        auto root_index = index_of(host.graph, root);
+        if (root_index.is_none()) return indices;
+        indices.emplace_back(*root_index);
+        for (usize cursor {}; cursor < indices.len(); ++cursor) {
+            for (const auto& edge : host.active_graph.dependencies) {
+                if (edge.consumer.package != indices[cursor]) continue;
+                auto repeated = false;
+                for (auto existing : indices)
+                    if (existing == edge.provider.package) repeated = true;
+                if (! repeated) indices.emplace_back(edge.provider.package);
+            }
+        }
+        return indices;
+    };
+    const auto package_difference = [&](usize host_index) -> Option<String> {
+        const auto& candidate     = host.graph.packages[host_index];
+        auto        project_index = index_of(project.graph, candidate.manifest.name.as_str());
+        if (project_index.is_none()) return Some("package is absent from project resolution"_Str);
+        const auto& existing = project.graph.packages[*project_index];
+        if (candidate.source_identity != existing.source_identity ||
+            candidate.manifest.root.as_path() != existing.manifest.root.as_path())
+            return Some("package source differs"_Str);
+        if (candidate.features.len() != existing.features.len())
+            return Some("package features differ"_Str);
+        for (const auto& feature : candidate.features) {
+            auto found = false;
+            for (const auto& other : existing.features)
+                if (other.name == feature.name && other.enabled == feature.enabled &&
+                    other.macro_name == feature.macro_name)
+                    found = true;
+            if (! found) return Some("package features differ"_Str);
+        }
+        if (! selected(project.selected_package_names, candidate.manifest.name.as_str()))
+            return None();
+        const bool directions[] = { false, true };
+        for (bool reverse : directions) {
+            const auto& from       = reverse ? project : host;
+            const auto& to         = reverse ? host : project;
+            auto        from_index = reverse ? *project_index : host_index;
+            auto        to_index   = reverse ? host_index : *project_index;
+            for (const auto& edge : from.active_graph.dependencies) {
+                if (edge.consumer.package != from_index ||
+                    edge.consumer.host != (reverse ? existing.host_view : true))
+                    continue;
+                auto found = false;
+                for (const auto& other : to.active_graph.dependencies) {
+                    if (other.consumer.package != to_index ||
+                        other.consumer.host != (reverse ? true : existing.host_view))
+                        continue;
+                    if (edge.kind == other.kind && edge.type == other.type &&
+                        edge.declaration == other.declaration &&
+                        from.graph.packages[edge.provider.package].manifest.name ==
+                            to.graph.packages[other.provider.package].manifest.name &&
+                        from.graph.packages[edge.provider.package].source_identity ==
+                            to.graph.packages[other.provider.package].source_identity)
+                        found = true;
+                }
+                if (! found) return Some("active package dependencies differ"_Str);
+            }
+        }
+        return None();
+    };
+    auto closures = Vec<Vec<usize>>::make();
+    for (const auto& root : host.selected_targets) {
+        auto dependencies = closure(root.package.as_str());
+        auto reason       = environment_difference.is_some() ? String::make(*environment_difference)
+                                                             : String::make();
+        for (auto index : dependencies) {
+            if (! reason.is_empty()) break;
+            auto difference = package_difference(index);
+            if (difference.is_some())
+                reason =
+                    rstd::format("{}: {}", host.graph.packages[index].manifest.name, *difference);
+        }
+        if (reason.is_empty() && extension_difference.is_some() &&
+            (root.kind == PackageTargetKind::Plugin || root.kind == PackageTargetKind::ProcMacro)) {
+            for (auto index : dependencies) {
+                const auto& package = host.graph.packages[index];
+                if (selected(project.selected_package_names, package.manifest.name.as_str()))
+                    reason = rstd::format("{}: {}", package.manifest.name, *extension_difference);
+            }
+        }
+        placements.push(HostBuildPlacement { root.clone(), reason.is_empty(), rstd::move(reason) });
+        closures.push(rstd::move(dependencies));
+    }
+    if (extension_difference.is_some()) {
+        for (usize extension {}; extension < placements.len(); ++extension) {
+            auto& placement = placements[extension];
+            if (! placement.shared || (placement.target.kind != PackageTargetKind::Plugin &&
+                                       placement.target.kind != PackageTargetKind::ProcMacro))
+                continue;
+            for (usize ordinary {}; ordinary < placements.len(); ++ordinary) {
+                if (! placements[ordinary].shared ||
+                    placements[ordinary].target.kind != PackageTargetKind::Binary)
+                    continue;
+                for (auto library : closures[extension]) {
+                    if (! lito::manifest::package_has_library_target(
+                            host.graph.packages[library].manifest))
+                        continue;
+                    for (auto other : closures[ordinary]) {
+                        if (library != other) continue;
+                        placement.shared = false;
+                        placement.reason = rstd::format("{}: {}",
+                                                        host.graph.packages[library].manifest.name,
+                                                        *extension_difference);
+                    }
+                }
+            }
+        }
+    }
+    auto isolated_macro = false;
+    for (const auto& placement : placements)
+        if (placement.target.kind == PackageTargetKind::ProcMacro && ! placement.shared)
+            isolated_macro = true;
+    if (isolated_macro)
+        for (auto& placement : placements)
+            if (placement.target.kind == PackageTargetKind::ProcMacro && placement.shared) {
+                placement.shared = false;
+                placement.reason = "proc-macro aggregate requires one host environment"_Str;
+            }
+    // A tool product cannot be supplied by both environments.
+    auto changed = true;
+    while (changed) {
+        changed = false;
+        for (usize consumer {}; consumer < placements.len(); ++consumer) {
+            for (usize provider {}; provider < placements.len(); ++provider) {
+                if (consumer == provider ||
+                    placements[consumer].shared == placements[provider].shared)
+                    continue;
+                bool        depends = false;
+                const auto& product = placements[provider].target;
+                for (auto index : closures[consumer]) {
+                    const auto& package  = host.graph.packages[index];
+                    const auto  consumes = [&](const auto& dependencies) {
+                        for (const auto& dependency : dependencies) {
+                            if (dependency.is_Cpp()) {
+                                for (const auto& tool : dependency.as_Cpp().value.host_tools)
+                                    if (tool == product) return true;
+                            } else if (dependency.is_Plugin() &&
+                                       product.kind == PackageTargetKind::Plugin &&
+                                       dependency.as_Plugin().value.name == product.package) {
+                                return true;
+                            } else if (dependency.is_Pmacro() &&
+                                       product.kind == PackageTargetKind::ProcMacro &&
+                                       dependency.as_Pmacro().value.name == product.package) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    };
+                    if (consumes(package.active_dependencies()) ||
+                        consumes(package.active_dev_dependencies()))
+                        depends = true;
+                }
+                if (! depends) continue;
+                auto& shared =
+                    placements[consumer].shared ? placements[consumer] : placements[provider];
+                shared.shared = false;
+                shared.reason = "host product dependency requires the isolated environment"_Str;
+                changed       = true;
+            }
+        }
+    }
+    auto shared_packages   = StringSet::make();
+    auto isolated_packages = StringSet::make();
+    auto isolated_targets  = Vec<PackageTargetId>::make();
+    for (usize index {}; index < placements.len(); ++index) {
+        auto& names = placements[index].shared ? shared_packages : isolated_packages;
+        for (auto package : closures[index])
+            names.insert(host.graph.packages[package].manifest.name.clone(), empty {});
+        if (! placements[index].shared) isolated_targets.push(placements[index].target.clone());
+    }
+    for (const auto& name : host.selected_package_names) {
+        if (! shared_packages.contains_key(name.as_str())) continue;
+        auto index = index_of(project.graph, name.as_str());
+        if (index.is_none())
+            return Err(PackageSelectionError::Message("shared host package is absent"_Str));
+        if (! selected(project.selected_package_names, name.as_str())) {
+            project.graph.packages[*index].host_view = true;
+            project.selected_package_names.push(name.clone());
+        }
+    }
+    for (const auto& target : host.effective_targets) {
+        if (! shared_packages.contains_key(target.package.as_str())) continue;
+        if (target.kind != PackageTargetKind::Library) {
+            auto shared = false;
+            for (const auto& placement : placements)
+                if (placement.target == target && placement.shared) shared = true;
+            if (! shared) continue;
+        }
+        auto repeated = false;
+        for (const auto& existing : project.effective_targets)
+            if (existing == target) repeated = true;
+        if (! repeated) project.effective_targets.push(target.clone());
+    }
+    auto remaining_packages  = Vec<String>::make();
+    auto remaining_effective = Vec<PackageTargetId>::make();
+    for (const auto& name : host.selected_package_names)
+        if (isolated_packages.contains_key(name.as_str())) remaining_packages.push(name.clone());
+    for (const auto& target : host.effective_targets) {
+        if (! isolated_packages.contains_key(target.package.as_str())) continue;
+        auto isolated = target.kind == PackageTargetKind::Library;
+        for (const auto& placement : placements)
+            if (placement.target == target && ! placement.shared) isolated = true;
+        if (isolated) remaining_effective.push(target.clone());
+    }
+    host.selected_root_names.clear();
+    for (const auto& target : isolated_targets)
+        if (! selected(host.selected_root_names, target.package.as_str()))
+            host.selected_root_names.push(target.package.clone());
+    host.selected_targets       = rstd::move(isolated_targets);
+    host.effective_targets      = rstd::move(remaining_effective);
+    host.selected_package_names = rstd::move(remaining_packages);
+    return Ok(rstd::move(placements));
+}
+
 auto resolve_package_selection_with_environment(
     const PackageSelection&                   selection,
     PackageSelectionPurpose                   purpose,

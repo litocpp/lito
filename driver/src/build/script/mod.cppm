@@ -223,7 +223,6 @@ auto evaluate_build_scripts(cpp::PackageMetadata&                    metadata,
         if (result.is_err()) return Err(rstd::move(result).unwrap_err());
         declaration.push(rstd::move(result).unwrap());
     }
-    rstd_try(declaration.validate_action_schedule());
     return Ok(rstd::move(declaration));
 }
 
@@ -233,6 +232,20 @@ auto materialize_build_script_inputs(cpp::PackageMetadata&             metadata,
                                      const cpp::SourceTargetSelection& selection)
     -> BuildScriptResult<empty> {
     return materialize_generated_inputs(metadata, contexts, layout, selection);
+}
+
+auto materialize_build_script_inputs(cpp::PackageMetadata&             metadata,
+                                     cpp::PackageSpec&                 package,
+                                     cpp::PackagePlan&                 plan,
+                                     const BuildLayout&                layout,
+                                     const cpp::SourceTargetSelection& selection)
+    -> BuildScriptResult<empty> {
+    rstd_try(materialize_generated_inputs(metadata, plan.contexts, layout, selection));
+    for (auto target : selection.target_order) {
+        package.targets[target].usage =
+            cpp::clone_usage_requirements(metadata.targets[target].usage);
+    }
+    return Ok(empty {});
 }
 
 } // namespace lito

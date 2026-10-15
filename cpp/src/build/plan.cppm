@@ -37,11 +37,14 @@ struct SourceTargetSelection {
     Vec<TargetId> selected_targets;
     Vec<TargetId> target_order;
 
+    Vec<TargetId> product_targets;
+
     auto clone() const -> SourceTargetSelection {
         return SourceTargetSelection {
             .profile          = profile,
             .selected_targets = as<Clone>(selected_targets).clone(),
             .target_order     = as<Clone>(target_order).clone(),
+            .product_targets  = as<Clone>(product_targets).clone(),
         };
     }
 };

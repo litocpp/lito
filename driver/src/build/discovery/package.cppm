@@ -14,8 +14,7 @@ namespace lito
 enum class SourceDiscoveryScope
 {
     Existing,
-    BeforeScan,
-    AfterScan,
+    BeforeHostTools,
     All,
 };
 

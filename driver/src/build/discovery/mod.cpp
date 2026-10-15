@@ -370,19 +370,11 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
 namespace lito
 {
 
-constexpr auto includes_existing(SourceDiscoveryScope scope) noexcept -> bool {
-    return scope == SourceDiscoveryScope::Existing || scope == SourceDiscoveryScope::BeforeScan ||
-           scope == SourceDiscoveryScope::All;
-}
-
 constexpr auto includes_generated(const cpp::ResolvedSourceGroup& group,
                                   SourceDiscoveryScope            scope) noexcept -> bool {
     if (! group.generated || scope == SourceDiscoveryScope::Existing) return false;
-    if (scope == SourceDiscoveryScope::All) return true;
-    if (scope == SourceDiscoveryScope::BeforeScan) {
-        return group.availability == cpp::GeneratedSourceAvailability::BeforeScan;
-    }
-    return group.availability == cpp::GeneratedSourceAvailability::AfterScan;
+    return scope == SourceDiscoveryScope::All ||
+           group.availability == cpp::GeneratedSourceAvailability::BeforeHostTools;
 }
 
 static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
@@ -390,15 +382,12 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
     auto       owners  = StringMap::make();
     auto       entries = Vec<SourceEntry>::make();
-    const auto append =
-        [&](ref<rstd::path::Path> root,
-            const PathBuf&        declared,
-            ref<str>              group,
-            ref<str>              identity,
-            bool                  external,
-            bool                  generated,
-            bool                  module_provider_allowed,
-            bool implementation_module_required) -> cpp::SourceDiscoveryResult<empty> {
+    const auto append  = [&](ref<rstd::path::Path> root,
+                             const PathBuf&        declared,
+                             ref<str>              group,
+                             ref<str>              identity,
+                             bool                  external,
+                             bool                  generated) -> cpp::SourceDiscoveryResult<empty> {
         auto resolved = resolve_declared_source(root, declared.as_path(), ! generated);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto       source = rstd::move(resolved).unwrap();
@@ -435,12 +424,10 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
             virtual_root.push(source.relative_path.as_path());
             source.relative_path = rstd::move(virtual_root);
         }
-        source.source_root                    = PathBuf::from(root);
-        source.origin_identity                = String::make(identity);
-        source.external                       = external;
-        source.generated                      = generated;
-        source.module_provider_allowed        = module_provider_allowed;
-        source.implementation_module_required = implementation_module_required;
+        source.source_root     = PathBuf::from(root);
+        source.origin_identity = String::make(identity);
+        source.external        = external;
+        source.generated       = generated;
         owners.insert(source_key.clone(), String::make(owner));
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
@@ -450,33 +437,28 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
         return Err(rstd::move(local_identity_result).unwrap_err());
     }
     auto local_identity = rstd::move(local_identity_result).unwrap();
-    if (includes_existing(scope)) {
+    {
         for (const auto& declared : target.source.declared_sources) {
             auto appended = append(target.source_root.as_path(),
                                    declared,
                                    ""_str,
                                    local_identity.as_str(),
                                    false,
-                                   false,
-                                   true,
                                    false);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
     for (const auto& group : target.source_groups) {
-        if (group.generated ? ! includes_generated(group, scope) : ! includes_existing(scope)) {
+        if (group.generated && ! includes_generated(group, scope)) {
             continue;
         }
         for (const auto& declared : group.sources) {
-            auto appended =
-                append(group.root.as_path(),
-                       declared,
-                       group.name.as_str(),
-                       group.identity.as_str(),
-                       group.external,
-                       group.generated,
-                       group.availability == cpp::GeneratedSourceAvailability::BeforeScan,
-                       group.availability == cpp::GeneratedSourceAvailability::AfterScan);
+            auto appended = append(group.root.as_path(),
+                                   declared,
+                                   group.name.as_str(),
+                                   group.identity.as_str(),
+                                   group.external,
+                                   group.generated);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
@@ -630,31 +612,6 @@ auto resolve_source_target(const cpp::PackageMetadata&          package,
 namespace lito
 {
 
-auto validate_generated_source_module(const cpp::ResolvedSource&     source,
-                                      const cpp::SourceScanArtifact& artifact)
-    -> BuildResult<empty> {
-    if (! source.implementation_module_required) return Ok(empty {});
-    if (! artifact.language.is_Cpp()) {
-        return Err(BuildError::Message(
-            rstd::format("generated source '{}' produced after source scan is not C++",
-                         source.canonical_path.as_path())));
-    }
-    const auto& facts = artifact.language.as_Cpp().facts;
-    if (facts.implementation_module.is_some() && facts.provided.is_none()) return Ok(empty {});
-    if (facts.provided.is_some()) {
-        return Err(BuildError::Message(rstd::format(
-            "generated source '{}' produced after source scan must be a module implementation "
-            "unit and cannot declare {} '{}'",
-            source.canonical_path.as_path(),
-            facts.provided->is_interface ? "an exported module"_str : "a module partition"_str,
-            facts.provided->logical_name.as_str())));
-    }
-    return Err(BuildError::Message(rstd::format(
-        "generated source '{}' produced after source scan must declare a module implementation "
-        "with 'module <name>;'",
-        source.canonical_path.as_path())));
-}
-
 auto validate_source_dialect(const cpp::ResolvedSource&     source,
                              const cpp::SourceScanArtifact& artifact) -> BuildResult<empty> {
     if (source.cpp_dialect != cpp::CppSourceDialect::ObjectiveCpp) return Ok(empty {});
@@ -672,9 +629,7 @@ auto validate_source_dialect(const cpp::ResolvedSource&     source,
 
 auto validate_source_scan(const cpp::ResolvedSource&     source,
                           const cpp::SourceScanArtifact& artifact) -> BuildResult<empty> {
-    auto dialect = validate_source_dialect(source, artifact);
-    if (dialect.is_err()) return dialect;
-    return validate_generated_source_module(source, artifact);
+    return validate_source_dialect(source, artifact);
 }
 
 template<typename Plan>
@@ -716,7 +671,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
             }
             continue;
         }
-        if (includes_existing(scope)) {
+        {
             auto entry = cpp::module_entry_source(resolved_target);
             if (entry.is_err()) {
                 return Err(rstd::into<BuildError>(rstd::move(entry).unwrap_err()));
@@ -756,12 +711,8 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                 auto virtual_root = PathBuf::from("source-groups"_str);
                 virtual_root.push(PathBuf::from(group.name.as_str()).as_path());
                 virtual_root.push(source.relative_path.as_path());
-                source.relative_path = rstd::move(virtual_root);
-                source.generated     = true;
-                source.module_provider_allowed =
-                    group.availability == cpp::GeneratedSourceAvailability::BeforeScan;
-                source.implementation_module_required =
-                    group.availability == cpp::GeneratedSourceAvailability::AfterScan;
+                source.relative_path   = rstd::move(virtual_root);
+                source.generated       = true;
                 source.source_root     = group.root.clone();
                 source.origin_identity = group.identity.clone();
                 source.external        = group.external;
@@ -801,8 +752,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                 graph.register_project_unit(candidate.target,
                                             candidate.source.canonical_path.as_path(),
                                             context.scan_id.as_str(),
-                                            context.id.as_str(),
-                                            candidate.source.module_provider_allowed);
+                                            context.id.as_str());
             if (candidate.source.scan_artifact.is_some()) {
                 auto valid =
                     validate_source_scan(candidate.source, *candidate.source.scan_artifact);
@@ -1037,8 +987,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                 graph.register_project_unit(candidate.target,
                                             candidate.source.canonical_path.as_path(),
                                             context.scan_id.as_str(),
-                                            context.id.as_str(),
-                                            candidate.source.module_provider_allowed);
+                                            context.id.as_str());
         }
         if (finish) {
             auto released = graph.seal_ready_targets();

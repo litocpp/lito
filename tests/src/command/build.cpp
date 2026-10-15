@@ -69,7 +69,9 @@ void capture_generated_scan_order(void* context, const lito::BuildEvent& event) 
     capture_compile_progress(rstd::addressof(capture.progress), event);
     if (event.kind != lito::BuildEventKind::Scan && event.kind != lito::BuildEventKind::ScanReuse &&
         event.kind != lito::BuildEventKind::BuildToolRun &&
-        event.kind != lito::BuildEventKind::BuildToolRunReuse) {
+        event.kind != lito::BuildEventKind::BuildToolRunReuse &&
+        event.kind != lito::BuildEventKind::Compile &&
+        event.kind != lito::BuildEventKind::Archive) {
         return;
     }
     capture.events.push(GeneratedScanOrderEvent {
@@ -960,16 +962,16 @@ auto main() -> int {
         return;
     }
     EXPECT_TRUE(first->script.executed);
-    EXPECT_EQ(first->compiled, usize(3));
+    EXPECT_EQ(first->compiled, usize(4));
     EXPECT_FALSE(capture.progress.missing);
     ASSERT_EQ(capture.progress.values.len(), usize(4));
     EXPECT_EQ(capture.progress.values[usize {}].current, usize(1));
     EXPECT_EQ(capture.progress.values[usize {}].total, usize(1));
     for (auto index = usize(1); index < capture.progress.values.len(); ++index) {
-        EXPECT_EQ(capture.progress.values[index].current, index);
+        EXPECT_EQ(capture.progress.values[index].current, index + usize(1));
     }
-    EXPECT_EQ(capture.progress.values[usize(3)].current, usize(3));
-    EXPECT_EQ(capture.progress.values[usize(3)].total, usize(3));
+    EXPECT_EQ(capture.progress.values[usize(3)].current, usize(4));
+    EXPECT_EQ(capture.progress.values[usize(3)].total, usize(4));
     auto app_scan       = Option<usize> {};
     auto build_tool_run = Option<usize> {};
     auto generated_scan = Option<usize> {};
@@ -1014,6 +1016,145 @@ auto main() -> int {
     auto second = lito::build(request);
     ASSERT_TRUE(second.is_ok());
     EXPECT_EQ(second->compiled, usize {});
+}
+
+TEST_F(BuildCommand, HostToolsShareOnlyMatchingBuildEnvironments) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "scan-consumer"
+version = "0.1.0"
+[lib]
+name = "scan-consumer"
+module = "scan.consumer"
+archive = "scan.consumer"
+sources = ["lib.cppm"]
+[dependencies.generator]
+path = "generator"
+usage = "tool"
+[dependencies.shared]
+path = "shared"
+)toml"_str },
+        { "lib.cppm"_str, R"cpp(export module scan.consumer;
+import scan.shared;
+export import :generated;
+export int value() { return shared_value() + generated_value; }
+)cpp"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({kind = "lib", name = "scan-consumer"})
+local tool = lito.host_tool(target, "generator", "generate")
+local generated = lito.run({tool = tool, cwd = ".", args = {"@OUTPUT@"},
+                           inputs = {"lib.cppm"}, outputs = {"generated.cppm"}})
+lito.target_add_generated_source(target, generated.outputs[1])
+)lua"_str },
+        { "shared/lito.toml"_str, R"toml([package]
+name = "shared"
+version = "0.1.0"
+[lib]
+name = "shared"
+module = "scan.shared"
+archive = "scan.shared"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "shared/lib.cppm"_str, R"cpp(export module scan.shared;
+export int shared_value() { return 42; }
+)cpp"_str },
+        { "generator/lito.toml"_str, R"toml([package]
+name = "generator"
+version = "0.1.0"
+[[bin]]
+name = "generate"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+[dependencies.shared]
+path = "../shared"
+)toml"_str },
+        { "generator/main.cpp"_str, R"cpp(#include <stdio.h>
+import scan.shared;
+int main(int argc, char** argv) {
+    if (argc != 2) return 1;
+    auto* output = fopen(argv[1], "wb");
+    if (!output) return 2;
+    auto written = fprintf(output, "export module scan.consumer:generated;\nexport constexpr int generated_value = %d;\n", shared_value());
+    return fclose(output) == 0 && written > 0 ? 0 : 3;
+}
+)cpp"_str },
+    };
+    auto project = materialize("host-scan-reuse"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    const int environments[] = { 0, 1, 2 };
+    for (int environment : environments) {
+        const auto cross    = environment == 1;
+        const auto isolated = environment != 0;
+        auto       request  = build_request(project->root.as_path(),
+                                            build_root(cross      ? "cross-scan"_str
+                                                       : isolated ? "option-scan"_str
+                                                                  : "native-scan"_str)
+                                                .as_path(),
+                                            Vec<String>::make());
+        if (cross) {
+            request.configuration.toolchain.target = lito::config::ToolchainTargetSelection::Config(
+                "unknown"_Str,
+                lito::system::require_architecture("wasm32"_str).unwrap(),
+                None(),
+                None());
+            request.configuration.toolchain.wasm   = Some(lito::config::WasmToolchainSpec {});
+            request.configuration.standard_library = lito::config::StandardLibrarySelection::Libcxx;
+        }
+        if (environment == 2)
+            request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+                .arguments = strings("-DTARGET_ONLY=1"_str),
+                .source    = "environment test"_Str,
+            });
+        auto capture     = GeneratedScanOrderCapture {};
+        request.observer = Some(lito::BuildEventSink {
+            .context = rstd::addressof(capture),
+            .notify  = capture_generated_scan_order,
+        });
+        auto result      = lito::build(request);
+        if (result.is_err())
+            rstd::test::fail_current(
+                error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+        ASSERT_TRUE(result.is_ok());
+        auto scans           = usize {};
+        auto reused          = usize {};
+        auto compiled_shared = usize {};
+        auto archived_shared = usize {};
+        auto generated       = false;
+        for (const auto& event : capture.events) {
+            if (event.kind == lito::BuildEventKind::BuildToolRun ||
+                event.kind == lito::BuildEventKind::BuildToolRunReuse)
+                generated = true;
+            if (event.path.as_str().ends_with("shared/lib.cppm"_str)) {
+                if (event.kind == lito::BuildEventKind::Scan) ++scans;
+                if (event.kind == lito::BuildEventKind::ScanReuse) ++reused;
+                if (event.kind == lito::BuildEventKind::Compile) ++compiled_shared;
+            }
+            if (event.target == "shared::lib::shared"_str &&
+                event.kind == lito::BuildEventKind::Archive)
+                ++archived_shared;
+            if (event.target == "scan-consumer::lib::scan-consumer"_str &&
+                (event.kind == lito::BuildEventKind::Scan ||
+                 event.kind == lito::BuildEventKind::ScanReuse))
+                EXPECT_TRUE(generated);
+        }
+        EXPECT_EQ(scans, isolated ? usize(2) : usize(1));
+        EXPECT_EQ(reused, usize {});
+        EXPECT_EQ(compiled_shared, isolated ? usize(2) : usize(1));
+        EXPECT_EQ(archived_shared, isolated ? usize(2) : usize(1));
+        ASSERT_EQ(result->product.artifacts.len(), usize(2));
+        auto shared_artifact = false;
+        for (const auto& artifact : result->product.artifacts) {
+            if (artifact.target.package == "shared"_str) shared_artifact = true;
+            EXPECT_NE(artifact.target.package.as_str(), "generator"_str);
+        }
+        EXPECT_TRUE(shared_artifact);
+        auto host_directory =
+            result->product.build_directory.join(PathBuf::from("plugin-host"_str).as_path());
+        EXPECT_EQ(rstd::fs::exists(host_directory.as_path()).unwrap_or(false), isolated);
+        auto warm = lito::build(request);
+        ASSERT_TRUE(warm.is_ok());
+        EXPECT_EQ(warm->compiled, usize {});
+    }
 }
 
 TEST_F(BuildCommand, ToolDependencyRunsOnHostWhileGeneratingWasmSources) {
@@ -1540,7 +1681,7 @@ lito.target_add_generated_source(target, generated.outputs[1])
     EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
 }
 
-TEST_F(BuildCommand, BuildScriptScansHostGeneratedHeader) {
+TEST_F(BuildCommand, BuildScriptRejectsHostGeneratedHeaders) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-generated-header"
@@ -1610,41 +1751,35 @@ auto main() -> int {
     auto output  = build_root("generated-header-after-scan"_str);
     auto request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-generated-header"_str));
-    auto result = lito::build(request);
-    if (result.is_err())
-        rstd::test::fail_current(
-            error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
-    ASSERT_TRUE(result.is_ok());
-    auto generated = output.join(
-        PathBuf::from("generated/fixture-generated-header/include/generated.hpp"_str).as_path());
-    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
-    auto warm = lito::build(request);
-    if (warm.is_err())
-        rstd::test::fail_current(
-            error_chain_text(warm.unwrap_err()).as_str(), __FILE__, __LINE__, false);
-    ASSERT_TRUE(warm.is_ok());
-    EXPECT_EQ(warm->compiled, usize {});
-    auto tool_source = project->root.join(PathBuf::from("tool/src/main.cpp"_str).as_path());
-    auto contents    = rstd::fs::read_to_string(tool_source.as_path()).unwrap();
-    auto marker      = contents.as_str().find("GENERATED_VALUE 1"_str).unwrap();
-    contents.replace_range(marker, marker + usize(17), "GENERATED_VALUE 2"_str);
-    ASSERT_TRUE(rstd::fs::write_atomic(tool_source.as_path(), contents->as_bytes()).is_ok());
-    auto changed = lito::build(request);
-    if (changed.is_err())
-        rstd::test::fail_current(
-            error_chain_text(changed.unwrap_err()).as_str(), __FILE__, __LINE__, false);
-    ASSERT_TRUE(changed.is_ok());
-    EXPECT_TRUE(rstd::fs::read_to_string(generated.as_path())
-                    .unwrap()
-                    .as_str()
-                    .contains("GENERATED_VALUE 2"_str));
-    ASSERT_TRUE(rstd::fs::remove_file(generated.as_path()).is_ok());
-    auto restored = lito::build(request);
-    ASSERT_TRUE(restored.is_ok());
-    EXPECT_TRUE(rstd::fs::read_to_string(generated.as_path())
-                    .unwrap()
-                    .as_str()
-                    .contains("GENERATED_VALUE 2"_str));
+    auto       script   = project->root.join(PathBuf::from("app/build.lua"_str).as_path());
+    auto       original = rstd::fs::read_to_string(script.as_path()).unwrap();
+    const auto outputs  = strings("generated.hpp"_str, "generated.inc"_str, "generated"_str);
+    for (const auto& output_name : outputs) {
+        auto declaration = original.clone();
+        auto marker      = declaration.as_str().find("generated.hpp"_str).unwrap();
+        declaration.replace_range(marker, marker + usize(13), output_name.as_str());
+        ASSERT_TRUE(rstd::fs::write_atomic(script.as_path(), declaration->as_bytes()).is_ok());
+        auto result = lito::build(request);
+        ASSERT_TRUE(result.is_err());
+        EXPECT_TRUE(
+            error_chain_text(result.unwrap_err())
+                .as_str()
+                .contains("cannot be a generated header; generate a module source instead"_str));
+    }
+    const auto copied_header =
+        R"lua(local target = lito.target({kind = "bin", name = "fixture-generated-header"})
+local tool = lito.host_tool(target, "fixture-header-tool", "fixture-header-tool")
+local result = lito.run({tool = tool, cwd = ".", args = {"@OUTPUT@"},
+                        inputs = {"src/main.cpp"}, outputs = {"intermediate/data"}})
+lito.copy({input = result.outputs[1], output = "generated.hpp"})
+)lua"_str;
+    ASSERT_TRUE(rstd::fs::write_atomic(script.as_path(), copied_header.as_bytes()).is_ok());
+    auto copied = lito::build(request);
+    ASSERT_TRUE(copied.is_err());
+    EXPECT_TRUE(
+        error_chain_text(copied.unwrap_err())
+            .as_str()
+            .contains("cannot be a generated header; generate a module source instead"_str));
 }
 
 TEST_F(BuildCommand, BuildScriptScansHostGeneratedNonModuleSource) {
@@ -1793,7 +1928,7 @@ local generated = lito.run({
   inputs = { "src/lib.cppm" },
   outputs = {
     { path = "src/generated-unit", source = true },
-    { path = "src/generated.hpp", source = false },
+    { path = "src/generated.txt", source = false },
   },
 })
 lito.target_add_generated_source(target, generated.outputs[1])
@@ -1820,7 +1955,7 @@ auto main() -> int {
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
         return;
     }
-    EXPECT_EQ(result->compiled, usize(3));
+    EXPECT_EQ(result->compiled, usize(4));
 }
 
 TEST_F(BuildCommand, BuildScriptConsumesDeclaredExternalSourceObjects) {
@@ -2977,8 +3112,13 @@ module = "plugin.consumer"
 sources = ["lib.cppm", "marked.cpp"]
 [dependencies.marker_plugin]
 path = "plugin"
+[dependencies.marker-support]
+path = "support"
+[profile.base]
+exceptions = false
+rtti = false
 )toml"_str },
-        { "lib.cppm"_str, "export module plugin.consumer;\n"_str },
+        { "lib.cppm"_str, "export module plugin.consumer;\nimport marker.support;\n"_str },
         { "marked.cpp"_str, "[[marker_plugin::required]] int marked;\n"_str },
         { "plugin/lito.toml"_str, R"toml([package]
 name = "marker_plugin"
@@ -2999,11 +3139,44 @@ name = "marker-support"
 archive = "marker-support"
 module = "marker.support"
 sources = ["lib.cppm", "value.cpp"]
+[dependencies.marker-generator]
+path = "../generator"
+usage = "tool"
 )toml"_str },
         { "support/lib.cppm"_str,
-          "export module marker.support;\nexport bool marker_support_enabled();\n"_str },
+          "export module marker.support;\nexport import :generated;\nexport bool marker_support_enabled();\n"_str },
         { "support/value.cpp"_str,
-          "module marker.support;\nbool marker_support_enabled() { return true; }\n"_str },
+          "module marker.support;\nbool marker_support_enabled() { return generated_value != 0; }\n"_str },
+        { "generator/lito.toml"_str, R"toml([package]
+name = "marker-generator"
+version = "0.1.0"
+[[bin]]
+name = "marker-generator"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+)toml"_str },
+        { "generator/main.cpp"_str, R"cpp(#include <stdio.h>
+int main(int argc, char** argv) {
+    if (argc != 2) return 1;
+    auto* source = fopen(argv[1], "wb");
+    if (!source) return 2;
+    if (fputs("export module marker.support:generated;\nexport constexpr int generated_value = 1;\n", source) < 0 || fclose(source)) return 3;
+    return 0;
+}
+)cpp"_str },
+        { "support/build.lua"_str,
+          R"lua(local target = lito.target({ kind = "lib", name = "marker-support" })
+local tool = lito.host_tool(target, "marker-generator", "marker-generator")
+local result = lito.run({
+  tool = tool,
+  cwd = ".",
+  args = { "@OUTPUT:1@" },
+  inputs = { "lib.cppm" },
+  outputs = { "generated.cppm" },
+})
+lito.target_add_generated_source(target, result.outputs[1])
+)lua"_str },
         { "plugin/plugin.cpp"_str, R"cpp(
 #include <clang/AST/ASTConsumer.h>
 #include <clang/Frontend/CompilerInstance.h>
@@ -3045,9 +3218,31 @@ static clang::FrontendPluginRegistry::Add<MarkerPlugin> plugin("marker_plugin","
         rstd::test::fail_current(
             error_chain_text(cold.unwrap_err()).as_str(), __FILE__, __LINE__, false);
     ASSERT_TRUE(cold.is_ok());
+    EXPECT_FALSE(rstd::fs::exists(build_root("plugin-dependency-change"_str)
+                                      .join(PathBuf::from("plugin-host"_str).as_path())
+                                      .as_path())
+                     .unwrap_or(false));
     auto warm = lito::build(request);
     ASSERT_TRUE(warm.is_ok());
     EXPECT_EQ(warm->compiled, usize {});
+    auto tool_source = project->root.join(PathBuf::from("generator/main.cpp"_str).as_path());
+    auto contents    = rstd::fs::read_to_string(tool_source.as_path()).unwrap();
+    auto marker      = contents.as_str().find("generated_value = 1"_str).unwrap();
+    contents.replace_range(marker, marker + usize(19), "generated_value = 2"_str);
+    ASSERT_TRUE(rstd::fs::write_atomic(tool_source.as_path(), contents->as_bytes()).is_ok());
+    auto regenerated = lito::build(request);
+    if (regenerated.is_err())
+        rstd::test::fail_current(
+            error_chain_text(regenerated.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(regenerated.is_ok());
+    const auto sources = strings("generated/marker-support/generated.cppm"_str);
+    for (const auto& relative : sources) {
+        auto generated = build_root("plugin-dependency-change"_str)
+                             .join(PathBuf::from(relative.as_str()).as_path());
+        auto text      = rstd::fs::read_to_string(generated.as_path());
+        ASSERT_TRUE(text.is_ok());
+        EXPECT_TRUE(text->as_str().contains("generated_value = 2"_str));
+    }
     auto implementation = project->root.join(PathBuf::from("support/value.cpp"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(
                     implementation.as_path(),
@@ -3072,9 +3267,39 @@ module = "attribute.consumer"
 sources = ["lib.cppm", "main_attr.cpp", "header_attr.cpp", "using_attr.cpp", "plain.cpp"]
 [dependencies.marker_plugin]
 path = "plugin"
+[dependencies.marker-generator]
+path = "generator"
+usage = "tool"
 [usage]
 options = ["-Werror=unknown-attributes"]
 )toml"_str },
+        { "build.lua"_str,
+          R"lua(local target = lito.target({ kind = "lib", name = "attribute-consumer" })
+local tool = lito.host_tool(target, "marker-generator", "marker-generator")
+lito.run({ tool = tool, cwd = ".", args = { "@OUTPUT:1@" }, inputs = { "lib.cppm" }, outputs = { "generated.txt" } })
+)lua"_str },
+        { "generator/lito.toml"_str, R"toml([package]
+name = "marker-generator"
+version = "0.1.0"
+[[bin]]
+name = "marker-generator"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+[dependencies.marker_plugin]
+path = "../plugin"
+[usage]
+options = ["-Werror=unknown-attributes"]
+)toml"_str },
+        { "generator/main.cpp"_str, R"cpp(#include <stdio.h>
+[[marker_plugin::required]] int marker;
+int main(int argc, char** argv) {
+    if (argc != 2) return 1;
+    auto* output = fopen(argv[1], "wb");
+    if (!output) return 2;
+    return fputs("generated\n", output) < 0 || fclose(output) ? 3 : 0;
+}
+)cpp"_str },
         { "lib.cppm"_str, "export module attribute.consumer;\n"_str },
         { "main_attr.cpp"_str,
           "#define MARK [[marker_plugin::required]]\nMARK int main_attr;\n"_str },
@@ -3150,6 +3375,11 @@ static clang::FrontendPluginRegistry::Add<MarkerPlugin>
     };
     auto cold = build_ok();
     ASSERT_TRUE(cold.is_ok());
+    EXPECT_EQ(cold->compiler_plugins.len(), usize(1));
+    EXPECT_FALSE(rstd::fs::exists(build_root("attribute-plugin-selection"_str)
+                                      .join(PathBuf::from("plugin-host"_str).as_path())
+                                      .as_path())
+                     .unwrap());
     auto warm = build_ok();
     ASSERT_TRUE(warm.is_ok());
     EXPECT_EQ(warm->compiled, usize {});

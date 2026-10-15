@@ -429,6 +429,7 @@ struct PreparedBuildProject {
     Option<AndroidNdkLease>                    android_sdk;
     Option<Box<PreparedBuildProject>>          plugin_host;
     Vec<ProcMacroAggregateRequest>             proc_macro_aggregates;
+    Vec<lito::package::HostBuildPlacement>     host_placements;
 };
 
 struct ResolvedProjectMetadata {
@@ -440,10 +441,12 @@ struct ResolvedProjectMetadata {
 };
 
 struct ResolvedProjectSession {
-    ProjectResolution              project;
-    cpp::ParsedGlobalBuildOptions  build_arguments;
-    BuildPlatform                  platform;
-    Option<AndroidCmakeProjection> android_cmake;
+    ProjectResolution                      project;
+    cpp::ParsedGlobalBuildOptions          build_arguments;
+    BuildPlatform                          platform;
+    Option<AndroidCmakeProjection>         android_cmake;
+    Option<cpp::ProfileSpec>               prepared_profile;
+    Vec<lito::package::HostBuildPlacement> host_placements;
 };
 
 struct ResolvedPluginBuildProject {
@@ -843,6 +846,26 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
     });
 }
 
+auto prepare_project_profile(ResolvedProjectSession&                 session,
+                             const cpp::BuildConfiguration&          configuration,
+                             const lito::manifest::BuildProfileName& profile)
+    -> ProjectResult<empty> {
+    if (session.prepared_profile.is_some()) return Ok(empty {});
+    auto        effective = configuration.clone();
+    const auto& standards = session.project.selection.standards;
+    if (standards.cpp.is_some())
+        effective.language_standard =
+            String::make(lito::manifest::cpp_standard_name(*standards.cpp));
+    effective.c_standard = standards.c;
+    auto resolved        = rstd_try(cpp::make_profile_spec(effective,
+                                                           session.project.selection.graph.profile,
+                                                           profile,
+                                                           rstd::move(session.build_arguments)));
+    rstd_try(cpp::apply_build_platform(resolved, session.platform));
+    session.prepared_profile = Some(rstd::move(resolved));
+    return Ok(empty {});
+}
+
 auto resolve_project_metadata(ResolvedProjectSession                           session,
                               const cpp::BuildConfiguration&                   configuration,
                               const lito::manifest::BuildProfileName&          profile,
@@ -859,6 +882,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                               const Option<BuildSetupReportSink>& setup_reporter        = None(),
                               const Option<PathBuf>& cmake_find_install_prefix          = None())
     -> ProjectResult<ResolvedProjectMetadata> {
+    rstd_try(prepare_project_profile(session, configuration, profile));
     auto external_sources       = rstd::move(session.project.external_sources);
     auto cmake_build_overrides  = rstd::move(session.project.cmake_build_overrides);
     auto project                = rstd::move(session.project.selection);
@@ -872,12 +896,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     resolved_configuration.toolchain.cxx = PathBuf::from(toolchain.cxx_path());
     resolved_configuration.toolchain.ld  = PathBuf::from(toolchain.ld_path());
     resolved_configuration.toolchain.ar  = PathBuf::from(toolchain.ar_path());
-    auto resolved_profile = rstd_try(cpp::make_profile_spec(resolved_configuration,
-                                                            project.graph.profile,
-                                                            profile,
-                                                            rstd::move(session.build_arguments)));
-    rstd_try(cpp::apply_build_platform(resolved_profile, session.platform));
-    const auto& target = session.platform.effective_target;
+    auto        resolved_profile         = rstd::move(session.prepared_profile).unwrap();
+    const auto& target                   = session.platform.effective_target;
     rstd_try(
         validate_linker_profile(toolchain, resolved_profile, session.platform, project.standards));
     if (resolved_configuration.standard_library == lito::config::StandardLibrary::Msvc &&
@@ -1072,25 +1092,43 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const Option<BuildSetupReportSink>& setup_reporter = None(),
                                     const Option<PathBuf>& cmake_find_install_prefix   = None())
     -> ProjectResult<PreparedBuildProject> {
-    auto metadata = resolve_project_metadata(rstd::move(session),
-                                             configuration,
-                                             profile,
-                                             requested_output,
-                                             sources,
-                                             cargo,
-                                             pkg_config,
-                                             cmake,
-                                             toolchain,
-                                             tool_resolver,
-                                             environment,
-                                             jobs,
-                                             observer,
-                                             setup_reporter,
-                                             cmake_find_install_prefix);
+    auto host_placements = rstd::move(session.host_placements);
+    auto metadata        = resolve_project_metadata(rstd::move(session),
+                                                    configuration,
+                                                    profile,
+                                                    requested_output,
+                                                    sources,
+                                                    cargo,
+                                                    pkg_config,
+                                                    cmake,
+                                                    toolchain,
+                                                    tool_resolver,
+                                                    environment,
+                                                    jobs,
+                                                    observer,
+                                                    setup_reporter,
+                                                    cmake_find_install_prefix);
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
-    auto resolved           = rstd::move(metadata).unwrap();
-    auto aggregate_requests = proc_macro_aggregate_requests(resolved.metadata);
-    auto prepared_host      = Option<Box<PreparedBuildProject>> {};
+    auto resolved                    = rstd::move(metadata).unwrap();
+    auto aggregate_requests          = proc_macro_aggregate_requests(resolved.metadata);
+    auto local_aggregate_requests    = Vec<ProcMacroAggregateRequest>::make();
+    auto isolated_aggregate_requests = Vec<ProcMacroAggregateRequest>::make();
+    for (auto& aggregate : aggregate_requests) {
+        auto local = true;
+        for (const auto& provider : aggregate.providers) {
+            auto found = false;
+            for (const auto& target : resolved.metadata.targets)
+                if (target.id.package == provider.package &&
+                    target.artifact_kind == cpp::ArtifactKind::ProcMacroProvider)
+                    found = true;
+            if (! found) local = false;
+        }
+        if (local)
+            local_aggregate_requests.push(rstd::move(aggregate));
+        else
+            isolated_aggregate_requests.push(rstd::move(aggregate));
+    }
+    auto prepared_host = Option<Box<PreparedBuildProject>> {};
     if (plugin_host.is_some()) {
         auto host        = rstd::move(plugin_host).unwrap();
         auto host_output = PathBuf::from(resolved.layout.output())
@@ -1111,7 +1149,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                                           observer,
                                                           None());
         if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
-        prepared->proc_macro_aggregates = rstd::move(aggregate_requests);
+        prepared->proc_macro_aggregates = rstd::move(isolated_aggregate_requests);
         prepared_host = Some(Box<PreparedBuildProject>::make(rstd::move(prepared).unwrap()));
     }
     auto conditions = lito::package::PackageConditionEnvironment {
@@ -1121,7 +1159,10 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
             config::standard_library_name(configuration.standard_library),
             config::standard_library_runtime_name(configuration.standard_library_runtime)),
     };
-    if (prepared_host.is_some()) conditions.host = (*prepared_host)->conditions.target.clone();
+    if (prepared_host.is_some())
+        conditions.host = (*prepared_host)->conditions.target.clone();
+    else if (! host_placements.is_empty())
+        conditions.host = conditions.target.clone();
     return Ok(PreparedBuildProject {
         .conditions                 = rstd::move(conditions),
         .toolchain                  = rstd::move(toolchain),
@@ -1135,7 +1176,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
         .target_stripper            = None(),
         .android_sdk                = None(),
         .plugin_host                = rstd::move(prepared_host),
-        .proc_macro_aggregates      = Vec<ProcMacroAggregateRequest>::make(),
+        .proc_macro_aggregates      = rstd::move(local_aggregate_requests),
+        .host_placements            = rstd::move(host_placements),
     });
 }
 
@@ -1430,11 +1472,65 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
             return Err(rstd::into<ProjectError>(rstd::move(host_selection).unwrap_err()));
         }
         host_session.project.selection = rstd::move(host_selection).unwrap();
-        plugin_host = Some(Box<ResolvedPluginBuildProject>::make(ResolvedPluginBuildProject {
-            .configuration = rstd::move(host_conditions.resolved->configuration),
-            .toolchain     = rstd::move(host_conditions.resolved->toolchain),
-            .session       = rstd::move(host_session),
-        }));
+        rstd_try(prepare_project_profile(*session, prepared.configuration, profile));
+        rstd_try(prepare_project_profile(
+            host_session, host_conditions.resolved->configuration, profile));
+        auto        difference      = Option<ref<str>> {};
+        const auto& target_platform = session->platform;
+        const auto& host_platform   = host_session.platform;
+        if (target_platform.cross ||
+            target_platform.effective_target.triple != host_platform.effective_target.triple ||
+            target_platform.sdk_identity != host_platform.sdk_identity ||
+            target_platform.sysroot.is_some() != host_platform.sysroot.is_some() ||
+            (target_platform.sysroot.is_some() &&
+             target_platform.sysroot->as_path() != host_platform.sysroot->as_path()))
+            difference = Some("host and target platforms differ"_str);
+        else if (prepared.toolchain.compiler_identity().build_identity !=
+                     host_conditions.resolved->toolchain.compiler_identity().build_identity ||
+                 prepared.toolchain.linker_identity().build_identity !=
+                     host_conditions.resolved->toolchain.linker_identity().build_identity ||
+                 prepared.toolchain.cxx_path() != host_conditions.resolved->toolchain.cxx_path() ||
+                 prepared.toolchain.cc_path() != host_conditions.resolved->toolchain.cc_path() ||
+                 prepared.toolchain.ar_path() != host_conditions.resolved->toolchain.ar_path())
+            difference = Some("host and target toolchains differ"_str);
+        else if (prepared.configuration.standard_library_runtime !=
+                 host_conditions.resolved->configuration.standard_library_runtime)
+            difference = Some("host and target standard library runtimes differ"_str);
+        else {
+            auto profile_difference = cpp::check_build_environment(*session->prepared_profile,
+                                                                   *host_session.prepared_profile);
+            if (profile_difference.is_some()) {
+                switch (*profile_difference) {
+                case cpp::BuildEnvironmentDifference::COptions:
+                    difference = Some("host and target C options differ"_str);
+                    break;
+                case cpp::BuildEnvironmentDifference::CppOptions:
+                    difference = Some("host and target C++ options differ"_str);
+                    break;
+                case cpp::BuildEnvironmentDifference::Profile:
+                    difference = Some("host and target profiles differ"_str);
+                    break;
+                case cpp::BuildEnvironmentDifference::Link:
+                    difference = Some("host and target link options differ"_str);
+                    break;
+                }
+            }
+        }
+        auto placements = lito::package::merge_host_build_selection(
+            session->project.selection,
+            host_session.project.selection,
+            difference,
+            cpp::compiler_extension_environment_difference(*session->prepared_profile));
+        if (placements.is_err())
+            return Err(rstd::into<ProjectError>(rstd::move(placements).unwrap_err()));
+        session->host_placements = rstd::move(placements).unwrap();
+        if (! host_session.project.selection.selected_targets.is_empty()) {
+            plugin_host = Some(Box<ResolvedPluginBuildProject>::make(ResolvedPluginBuildProject {
+                .configuration = rstd::move(host_conditions.resolved->configuration),
+                .toolchain     = rstd::move(host_conditions.resolved->toolchain),
+                .session       = rstd::move(host_session),
+            }));
+        }
     }
     return Ok(ResolvedBuildProject {
         .configuration   = rstd::move(prepared.configuration),

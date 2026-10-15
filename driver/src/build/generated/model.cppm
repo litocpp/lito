@@ -38,7 +38,9 @@ auto inferred_generated_output_kind(ref<str> path) noexcept -> GeneratedOutputKi
     auto extension = source.as_path().extension();
     if (extension.is_none()) return GeneratedOutputKind::Other;
     auto text = extension->to_str();
-    if (text == Some("h"_str) || text == Some("hpp"_str)) return GeneratedOutputKind::Header;
+    if (text == Some("h"_str) || text == Some("hpp"_str) || text == Some("hh"_str) ||
+        text == Some("hxx"_str) || text == Some("inc"_str) || text == Some("inl"_str))
+        return GeneratedOutputKind::Header;
     if (text == Some("cpp"_str) || text == Some("cppm"_str)) return GeneratedOutputKind::Source;
     return GeneratedOutputKind::Other;
 }
@@ -58,7 +60,9 @@ struct GeneratedActionOutput {
     String                           action_identity;
     usize                            producer {};
     GeneratedOutputKind              kind { GeneratedOutputKind::Other };
-    cpp::GeneratedSourceAvailability availability { cpp::GeneratedSourceAvailability::BeforeScan };
+    cpp::GeneratedSourceAvailability availability {
+        cpp::GeneratedSourceAvailability::BeforeHostTools
+    };
 };
 
 struct ResolvedActionInput {
@@ -121,7 +125,9 @@ struct RegisteredAction {
     ActionDepfileFormat              depfile_format { ActionDepfileFormat::Make };
     Vec<PathBuf>                     depfile_roots;
     String                           content;
-    cpp::GeneratedSourceAvailability availability { cpp::GeneratedSourceAvailability::BeforeScan };
+    cpp::GeneratedSourceAvailability availability {
+        cpp::GeneratedSourceAvailability::BeforeHostTools
+    };
 };
 
 struct ToolActionOutcome {
