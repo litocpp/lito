@@ -44,8 +44,10 @@ auto external_error() -> RegistryValueError {
 auto external_text(const Value& value, usize maximum, bool empty = false) -> bool {
     auto text = value.as_str();
     if (text.is_none() || (! empty && text->is_empty()) || text->len() > maximum) return false;
-    for (auto character : text->chars())
-        if (character <= u32(31) || (character >= u32(127) && character <= u32(159))) return false;
+    for (auto character : text->chars()) {
+        auto codepoint = character.to_u32();
+        if (codepoint <= u32(31) || (codepoint >= u32(127) && codepoint <= u32(159))) return false;
+    }
     return true;
 }
 auto external_fields(const Value& value, initializer_list<ref<str>> names) -> bool {
