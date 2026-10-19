@@ -228,6 +228,9 @@ public:
 
     auto seal_ready_targets() -> Vec<String>;
 
+    // Query after registering the next frontier, including potential imports from unfinished targets.
+    auto pending_discovery_targets() const -> Vec<TargetId>;
+
     auto finish_discovery() -> Result<Vec<String>, String>;
 
     auto finalize(const Vec<PreparedUnit>& units,
@@ -539,6 +542,28 @@ auto SemanticScanGraphBuilder::complete(DiscoveryUnitId unit, const SourceScanAr
         --pending_;
     }
     return Ok(empty {});
+}
+
+auto SemanticScanGraphBuilder::pending_discovery_targets() const -> Vec<TargetId> {
+    auto pending = Vec<bool>::with_capacity(targets_.len());
+    for (const auto& target : targets_) pending.emplace_back(target.pending != usize {});
+    auto changed = true;
+    while (changed) {
+        changed = false;
+        for (TargetId target {}; target < targets_.len(); ++target) {
+            if (pending[target]) continue;
+            for (auto importer : reverse_importers_[target]) {
+                if (! pending[importer]) continue;
+                pending[target] = true;
+                changed         = true;
+                break;
+            }
+        }
+    }
+    auto result = Vec<TargetId>::make();
+    for (TargetId target {}; target < targets_.len(); ++target)
+        if (pending[target]) result.emplace_back(target);
+    return result;
 }
 
 auto SemanticScanGraphBuilder::seal_ready_targets() -> Vec<String> {

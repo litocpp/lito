@@ -40,7 +40,7 @@ TEST(Reporting, UserFacingEnumsImplementDisplay) {
 }
 
 TEST(Reporting, CacheCheckOnlyAppendsToFixedWidth) {
-    auto progress = lito::CacheCheckProgress {};
+    auto progress = lito::BuildProgressDisplay {};
     auto path     = PathBuf::from("/build/cache"_str);
     auto event = lito::BuildEvent { .kind     = lito::BuildEventKind::CacheCheck,
                                     .target   = "test"_str,
@@ -65,7 +65,7 @@ TEST(Reporting, CacheCheckOnlyAppendsToFixedWidth) {
 }
 
 TEST(Reporting, CacheCheckRedirectFailureAndNarrowTerminal) {
-    auto progress = lito::CacheCheckProgress {};
+    auto progress = lito::BuildProgressDisplay {};
     auto path     = PathBuf::from("/build/cache"_str);
     auto event = lito::BuildEvent { .kind     = lito::BuildEventKind::CacheCheck,
                                     .target   = "test"_str,
@@ -99,7 +99,7 @@ TEST(Reporting, CacheCheckRedirectFailureAndNarrowTerminal) {
 }
 
 TEST(Reporting, CacheCheckDoesNotFillBeforeSuccessfulCompletion) {
-    auto progress = lito::CacheCheckProgress {};
+    auto progress = lito::BuildProgressDisplay {};
     auto path     = PathBuf::from("/build/cache"_str);
     auto event = lito::BuildEvent { .kind     = lito::BuildEventKind::CacheCheck,
                                     .target   = "test"_str,
@@ -113,6 +113,30 @@ TEST(Reporting, CacheCheckDoesNotFillBeforeSuccessfulCompletion) {
     text.push_str(progress.update(event, true, usize(80)).as_str());
     EXPECT_EQ(text.as_str(), "[cache-check 1] [===================] failed\n"_str);
     EXPECT_TRUE(progress.interrupt().is_empty());
+}
+
+TEST(Reporting, ScanProgressUsesPackageTotalsAndAppendOnlyOutput) {
+    auto progress = lito::BuildProgressDisplay {};
+    auto path     = PathBuf::from("/build"_str);
+    auto event = lito::BuildEvent { .kind     = lito::BuildEventKind::ScanPackages,
+                                    .target   = "app"_str,
+                                    .path     = path.as_path(),
+                                    .progress = Some(lito::BuildProgress { usize {}, usize(2) }) };
+    EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "[scan 1] ["_str);
+    event.progress->current = usize(1);
+    EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "=========="_str);
+    EXPECT_TRUE(progress.update(event, true, usize(80)).is_empty());
+    event.progress->current = usize(2);
+    event.completed         = true;
+    EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "==========]\n"_str);
+    event.progress->current = usize {};
+    event.completed         = false;
+    EXPECT_EQ(progress.update(event, false, usize {}).as_str(), "[scan] app 0/2 scanning\n"_str);
+    event.progress->current = usize(1);
+    EXPECT_TRUE(progress.update(event, false, usize {}).is_empty());
+    event.failed    = true;
+    event.completed = true;
+    EXPECT_EQ(progress.update(event, false, usize {}).as_str(), "[scan] app 1/2 failed\n"_str);
 }
 
 TEST(Reporting, BuildOutputsUseProcessedFilesAndPublicRoles) {

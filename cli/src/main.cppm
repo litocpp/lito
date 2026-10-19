@@ -21,9 +21,9 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 
 struct EventContext {
-    bool                     verbose { false };
-    bool                     standard_error { false };
-    lito::CacheCheckProgress progress;
+    bool                       verbose { false };
+    bool                       standard_error { false };
+    lito::BuildProgressDisplay progress;
 
     void write_progress(String text) const {
         if (text.is_empty()) return;
@@ -55,12 +55,18 @@ auto progress_terminal(bool standard_error) -> Option<usize> {
 
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
-    if (event.kind == lito::BuildEventKind::CacheCheck) {
-        auto terminal = progress_terminal(context.standard_error);
+    if (event.kind == lito::BuildEventKind::CacheCheck ||
+        event.kind == lito::BuildEventKind::ScanPackages) {
+        if (context.verbose && event.kind == lito::BuildEventKind::ScanPackages) return;
+        auto terminal =
+            context.verbose ? Option<usize> {} : progress_terminal(context.standard_error);
         context.write_progress(context.progress.update(
             event, terminal.is_some(), terminal.is_some() ? *terminal : usize {}));
         return;
     }
+    if (! context.verbose &&
+        (event.kind == lito::BuildEventKind::Scan || event.kind == lito::BuildEventKind::ScanReuse))
+        return;
     if (event.completed) return;
     if (! context.verbose && event.kind != lito::BuildEventKind::Fetch &&
         event.kind != lito::BuildEventKind::Extract && event.kind != lito::BuildEventKind::Scan &&

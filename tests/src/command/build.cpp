@@ -21,6 +21,108 @@ protected:
                                         ref<str> logical_name = "std"_str) -> void;
 };
 
+struct ScanPackageEvents {
+    Vec<lito::BuildProgress> values;
+    usize                    finished {};
+    usize                    failed {};
+    usize                    files {};
+    usize                    late_file_at {};
+    usize                    all_packages_at {};
+    usize                    sequence {};
+};
+
+void capture_scan_packages(void* raw, const lito::BuildEvent& event) noexcept {
+    auto& capture = *static_cast<ScanPackageEvents*>(raw);
+    ++capture.sequence;
+    if (event.kind == lito::BuildEventKind::Scan || event.kind == lito::BuildEventKind::ScanReuse) {
+        ++capture.files;
+        if (event.path.to_string_lossy().as_str().ends_with("late.cppm"_str))
+            capture.late_file_at = capture.sequence;
+    }
+    if (event.kind != lito::BuildEventKind::ScanPackages || event.progress.is_none()) return;
+    capture.values.emplace_back(*event.progress);
+    if (event.progress->current == event.progress->total && capture.all_packages_at == usize {})
+        capture.all_packages_at = capture.sequence;
+    if (event.completed) ++capture.finished;
+    if (event.failed) ++capture.failed;
+}
+
+TEST_F(BuildCommand, ScanProgressCountsPackagesAcrossTargetsAndImportDiscovery) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "scan-app"
+version = "0.1.0"
+[lib]
+name = "scan-app"
+module = "progress.app"
+archive = "scan-app"
+[[bin]]
+name = "first"
+sources = ["first.cpp"]
+link-stdlib = false
+[[bin]]
+name = "second"
+sources = ["second.cpp"]
+link-stdlib = false
+[dependencies]
+scan-dep = { path = "dep", pub = true }
+)toml"_str },
+        { "src/lib.cppm"_str, "export module progress.app; export import progress.dep;\n"_str },
+        { "first.cpp"_str,
+          "import progress.app; int main() { return answer() == 42 ? 0 : 1; }\n"_str },
+        { "second.cpp"_str,
+          "import progress.app; int main() { return answer() == 42 ? 0 : 1; }\n"_str },
+        { "dep/lito.toml"_str, R"toml([package]
+name = "scan-dep"
+version = "0.1.0"
+[lib]
+name = "scan-dep"
+module = "progress.dep"
+archive = "scan-dep"
+)toml"_str },
+        { "dep/src/lib.cppm"_str, "export module progress.dep; export import :late;\n"_str },
+        { "dep/src/late.cppm"_str,
+          "export module progress.dep:late; export int answer() { return 42; }\n"_str },
+    };
+    auto project = materialize("scan-package-progress"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("scan-package-progress"_str).as_path(),
+                                 strings("scan-app"_str));
+    for (usize run {}; run < usize(2); ++run) {
+        auto capture = ScanPackageEvents {};
+        request.observer =
+            Some(lito::BuildEventSink { .context = &capture, .notify = capture_scan_packages });
+        auto built = lito::build(request);
+        if (built.is_err()) {
+            rstd::test::fail_current(
+                error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, true);
+            return;
+        }
+        ASSERT_EQ(capture.values.len(), usize(4));
+        EXPECT_EQ(capture.values[usize {}].current, usize {});
+        EXPECT_EQ(capture.values[usize(1)].current, usize(1));
+        EXPECT_EQ(capture.values[usize(2)].current, usize(2));
+        EXPECT_EQ(capture.values[usize(3)].current, usize(2));
+        for (const auto& value : capture.values) EXPECT_EQ(value.total, usize(2));
+        EXPECT_EQ(capture.finished, usize(1));
+        EXPECT_EQ(capture.failed, usize {});
+        EXPECT_EQ(capture.files, usize(5));
+        EXPECT_TRUE(capture.late_file_at > usize {});
+        EXPECT_TRUE(capture.all_packages_at > capture.late_file_at);
+        if (run != usize {}) EXPECT_EQ(built->compiled, usize {});
+    }
+    auto broken = project->root.join(PathBuf::from("dep/src/late.cppm"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(broken.as_path(), "#error scan failure\n"_str.as_bytes()).is_ok());
+    auto failure = ScanPackageEvents {};
+    request.observer =
+        Some(lito::BuildEventSink { .context = &failure, .notify = capture_scan_packages });
+    EXPECT_TRUE(lito::build(request).is_err());
+    EXPECT_EQ(failure.finished, usize(1));
+    EXPECT_EQ(failure.failed, usize(1));
+    EXPECT_EQ(failure.all_packages_at, usize {});
+}
+
 TEST_F(BuildCommand, BuildsObjectiveCppSourceWithMatchingScanLanguage) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

@@ -23,10 +23,16 @@ Both accept execution/reporting options:
 - `--no-timing` hides the stdout timing summary;
 - `-j/--jobs N` bounds scan, compile-cache check, and compile workers.
 
-Before scheduling compilation, Lito checks existing object and BMI contents. Interactive terminals
-show a single-line cache-check bar that only appends `=` characters up to a width chosen at the
-start of each batch. It never rewrites earlier output or moves the cursor backwards. Redirected
-output reports only batch start and finish. `--no-timing` does not hide this progress.
+Without `--verbose`, interactive terminals show append-only `=` bars for source scanning and
+compile-cache checks. Scan progress counts packages, not files or targets: a package advances
+only when its selected targets and any possible further import discovery have finished in the
+current batch. Shared host-tool and remaining source scans have separate batches. Cache checks
+validate existing object and BMI contents before scheduling compilation.
+
+The bar width is chosen at the start of each batch. It never rewrites earlier output or moves the
+cursor backwards. Redirected output reports only batch start and finish. `--verbose` prints
+per-file scan/scan-reuse events without progress bars; cache checks use plain start/finish lines.
+`--no-timing` does not hide this progress.
 
 Timing stages report exclusive wall time, except for the inclusive `build.total` row. Cache checks
 have their own `build.compile-cache-check` stage. Worker totals and nested action timings can

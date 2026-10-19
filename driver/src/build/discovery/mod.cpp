@@ -632,6 +632,81 @@ auto validate_source_scan(const cpp::ResolvedSource&     source,
     return validate_source_dialect(source, artifact);
 }
 
+class PackageScanProgress {
+    struct Package {
+        cpp::TargetId      representative;
+        Vec<cpp::TargetId> targets;
+        bool               complete {};
+    };
+    const cpp::PackageMetadata&   package_;
+    const Option<BuildEventSink>& observer_;
+    Vec<Package>                  packages_;
+    usize                         completed_ {};
+    bool                          finished_ {};
+    rstd::time::Instant           started_ { rstd::time::Instant::now() };
+
+    void notify(bool finished, bool failed) const {
+        if (packages_.is_empty() || observer_.is_none() || observer_->notify == nullptr) return;
+        observer_->notify(observer_->context,
+                          BuildEvent {
+                              .kind      = BuildEventKind::ScanPackages,
+                              .target    = package_.name.as_str(),
+                              .path      = package_.root.as_path(),
+                              .elapsed   = started_.elapsed(),
+                              .completed = finished,
+                              .progress  = Some(BuildProgress { completed_, packages_.len() }),
+                              .failed    = failed,
+                          });
+    }
+
+public:
+    PackageScanProgress(const cpp::PackageMetadata&   package,
+                        const Vec<cpp::TargetId>&     selected,
+                        const Option<BuildEventSink>& observer)
+        : package_(package), observer_(observer) {
+        for (auto target : selected) {
+            const auto& source = package.targets[target];
+            auto        group  = Option<usize> {};
+            for (usize index {}; index < packages_.len(); ++index) {
+                const auto& previous = package.targets[packages_[index].representative];
+                if (source.id.package == previous.id.package &&
+                    source.package_source_identity == previous.package_source_identity &&
+                    source.root.as_path() == previous.root.as_path()) {
+                    group = Some(index);
+                    break;
+                }
+            }
+            if (group.is_none()) {
+                group = Some(packages_.len());
+                packages_.push(Package { .representative = target });
+            }
+            packages_[*group].targets.emplace_back(target);
+        }
+        notify(false, false);
+    }
+    ~PackageScanProgress() {
+        if (! finished_) notify(true, true);
+    }
+    void advance(const cpp::SemanticScanGraphBuilder& graph) {
+        auto pending = graph.pending_discovery_targets();
+        for (auto& package : packages_) {
+            if (package.complete) continue;
+            auto ready = true;
+            for (auto target : package.targets)
+                for (auto waiting : pending)
+                    if (target == waiting) ready = false;
+            if (! ready) continue;
+            package.complete = true;
+            ++completed_;
+            notify(false, false);
+        }
+    }
+    void finish() {
+        finished_ = true;
+        notify(true, false);
+    }
+};
+
 template<typename Plan>
 auto discover_sources(const cpp::PackageMetadata&    package,
                       const Plan&                    plan,
@@ -643,6 +718,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                       usize                          max_in_flight,
                       bool                           finish,
                       SourceDiscoveryScope scope) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
+    auto progress         = PackageScanProgress(package, selected_targets, observer);
     auto discovered       = Vec<Vec<cpp::ResolvedSource>>::with_capacity(package.targets.len());
     auto inferred_modules = Vec<Option<String>>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
@@ -989,6 +1065,7 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                             context.scan_id.as_str(),
                                             context.id.as_str());
         }
+        progress.advance(graph);
         if (finish) {
             auto released = graph.seal_ready_targets();
             for (const auto& domain : released) {
@@ -1020,6 +1097,8 @@ auto discover_sources(const cpp::PackageMetadata&    package,
             .sources = cpp::ResolvedSourceSet { .sources = rstd::move(sorted).unwrap() },
         });
     }
+    progress.advance(graph);
+    progress.finish();
     return Ok(rstd::move(result));
 }
 

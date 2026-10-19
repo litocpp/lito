@@ -9,7 +9,7 @@ using namespace rstd::literals;
 export namespace lito
 {
 
-class CacheCheckProgress {
+class BuildProgressDisplay {
     bool   active_ {};
     usize  width_ {};
     usize  emitted_ {};
@@ -31,17 +31,20 @@ public:
         auto current = progress.current < progress.total ? progress.current : progress.total;
         if (! terminal) {
             if (! start && ! event.completed) return String::make();
-            auto status =
-                event.completed ? (event.failed ? "failed"_str : "done"_str) : "checking"_str;
+            auto status = event.completed
+                              ? (event.failed ? "failed"_str : "done"_str)
+                              : (event.kind == BuildEventKind::ScanPackages ? "scanning"_str
+                                                                            : "checking"_str);
             return rstd::format(
-                "[cache-check] {} {}/{} {}\n", event.target, current, progress.total, status);
+                "[{}] {} {}/{} {}\n", event.kind, event.target, current, progress.total, status);
         }
         auto rendered = start ? interrupt() : String::make();
         if (start || width_ == usize {}) {
             // Reserve the closing bracket and failure suffix before emitting the first cell.
             auto available = columns > usize {} ? columns - usize(1) : usize(79);
-            prefix_        = rstd::format("[cache-check {}] ", batch_);
-            if (available < prefix_.len() + usize(10)) prefix_ = "check "_Str;
+            prefix_        = rstd::format("[{} {}] ", event.kind, batch_);
+            if (available < prefix_.len() + usize(10))
+                prefix_ = event.kind == BuildEventKind::ScanPackages ? "scan "_Str : "check "_Str;
             if (available < prefix_.len() + usize(10)) prefix_ = String::make();
             auto overhead = prefix_.len() + usize(9);
             width_        = available > overhead ? available - overhead : usize(1);

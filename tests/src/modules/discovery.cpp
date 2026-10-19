@@ -3,6 +3,7 @@
 import rstd;
 import rstd.test;
 import lito.driver;
+import lito.cpp;
 import lito.core;
 import lito.test.support;
 
@@ -12,6 +13,36 @@ using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
 class ModuleDiscovery : public ProjectFixture {};
+
+TEST(ModuleScanProgress, PendingImportersKeepProvidersUnfinished) {
+    auto package = lito::cpp::PackageMetadata {};
+    auto plan    = lito::cpp::ResolvedNativeTargetPlan {};
+    for (usize target {}; target < usize(3); ++target) {
+        package.targets.emplace_back();
+        package.targets[target].id.package = rstd::format("package-{}", target);
+        package.targets[target].id.name    = "lib"_Str;
+        plan.target_order.emplace_back(target);
+        plan.visible_targets.emplace_back();
+    }
+    plan.visible_targets[usize(0)].push(usize(1));
+    plan.visible_targets[usize(1)].push(usize(2));
+    auto ownership = lito::cpp::HeaderOwnershipIndex::make({});
+    auto graph     = lito::cpp::SemanticScanGraphBuilder::make(package, plan, ownership);
+    auto unit      = graph.register_project_unit(
+        usize {}, PathBuf::from("app.cppm"_str).as_path(), "context"_str, "stdlib"_str);
+    EXPECT_EQ(graph.pending_discovery_targets().len(), usize(3));
+    auto artifact = lito::cpp::SourceScanArtifact { .context_identity = "context"_Str };
+    ASSERT_TRUE(graph.complete(unit, artifact).is_ok());
+    EXPECT_TRUE(graph.pending_discovery_targets().is_empty());
+    auto next = graph.register_project_unit(
+        usize(1), PathBuf::from("late.cppm"_str).as_path(), "context"_str, "stdlib"_str);
+    auto pending = graph.pending_discovery_targets();
+    ASSERT_EQ(pending.len(), usize(2));
+    EXPECT_EQ(pending[usize {}], usize(1));
+    EXPECT_EQ(pending[usize(1)], usize(2));
+    ASSERT_TRUE(graph.complete(next, artifact).is_ok());
+    EXPECT_TRUE(graph.pending_discovery_targets().is_empty());
+}
 
 using ModuleProjectFactory = lito::source::SourceTreeResult<lito::source::SourceTree> (*)();
 

@@ -18,6 +18,7 @@ enum class BuildEventKind
     Extract,
     Scan,
     ScanReuse,
+    ScanPackages,
     CacheCheck,
     Compile,
     Reuse,
@@ -84,6 +85,7 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::Extract: name = "extract"_str; break;
         case lito::BuildEventKind::Scan: name = "scan"_str; break;
         case lito::BuildEventKind::ScanReuse: name = "scan-reuse"_str; break;
+        case lito::BuildEventKind::ScanPackages: name = "scan"_str; break;
         case lito::BuildEventKind::CacheCheck: name = "cache-check"_str; break;
         case lito::BuildEventKind::Compile: name = "compile"_str; break;
         case lito::BuildEventKind::Reuse: name = "reuse"_str; break;
