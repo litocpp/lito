@@ -446,8 +446,10 @@ auto materialize_build_actions(const cpp::PackageSpec&               package,
                                const Vec<cpp::ScanResult>&           scans,
                                cpp::ResolvedSemanticBuildGraph       semantics,
                                slice<lito::package::PackageTargetId> selected_targets,
-                               BuildResultProjection                 projection)
+                               BuildResultProjection                 projection,
+                               const Option<BuildEventSink>&         observer)
     -> BuildResult<MaterializedBuildActions> {
+    auto started = rstd::time::Instant::now();
     auto compile = materialize_compile_plan(
         package, layout, toolchain, bmi_format, units, scans, rstd::move(semantics));
     if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
@@ -458,6 +460,16 @@ auto materialize_build_actions(const cpp::PackageSpec&               package,
             materialize_documentation_units(package, units, scans, *compile, selected_targets);
         if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
         documentation = rstd::move(materialized).unwrap();
+    }
+    if (observer.is_some()) {
+        auto dependencies = usize {};
+        for (const auto& node : compile->nodes) dependencies += node.prerequisites.len();
+        emit_build_preparation(
+            observer,
+            package.name.as_str(),
+            layout.output(),
+            started.elapsed(),
+            BuildPreparationSummary::CompilePlan(compile->nodes.len(), dependencies));
     }
     return Ok(MaterializedBuildActions {
         .compile       = rstd::move(compile).unwrap(),

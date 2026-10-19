@@ -29,11 +29,46 @@ struct ScanPackageEvents {
     usize                    late_file_at {};
     usize                    all_packages_at {};
     usize                    sequence {};
+    usize                    finalize_at {};
+    usize                    finalize_started_at {};
+    usize                    finalize_starts {};
+    usize                    plan_at {};
+    usize                    graph_at {};
+    usize                    check_at {};
+    usize                    summaries {};
+    usize                    scan_units {};
+    usize                    plan_units {};
+    usize                    dependencies {};
+    usize                    actions {};
+    usize                    artifacts {};
 };
 
 void capture_scan_packages(void* raw, const lito::BuildEvent& event) noexcept {
     auto& capture = *static_cast<ScanPackageEvents*>(raw);
     ++capture.sequence;
+    if (event.kind == lito::BuildEventKind::ScanFinalize && ! event.completed) {
+        capture.finalize_started_at = capture.sequence;
+        ++capture.finalize_starts;
+    }
+    if (event.kind == lito::BuildEventKind::Preparation && event.completed &&
+        event.preparation.is_some()) {
+        ++capture.summaries;
+        const auto& summary = *event.preparation;
+        if (summary.is_ScanFinalize()) {
+            capture.finalize_at = capture.sequence;
+            capture.scan_units  = summary.as_ScanFinalize().units;
+        } else if (summary.is_CompilePlan()) {
+            capture.plan_at      = capture.sequence;
+            capture.plan_units   = summary.as_CompilePlan().units;
+            capture.dependencies = summary.as_CompilePlan().dependencies;
+        } else {
+            capture.graph_at  = capture.sequence;
+            capture.actions   = summary.as_ExecutionGraph().actions;
+            capture.artifacts = summary.as_ExecutionGraph().artifacts;
+        }
+    }
+    if (event.kind == lito::BuildEventKind::CacheCheck && capture.check_at == usize {})
+        capture.check_at = capture.sequence;
     if (event.kind == lito::BuildEventKind::Scan || event.kind == lito::BuildEventKind::ScanReuse) {
         ++capture.files;
         if (event.path.to_string_lossy().as_str().ends_with("late.cppm"_str))
@@ -110,6 +145,18 @@ archive = "scan-dep"
         EXPECT_EQ(capture.files, usize(5));
         EXPECT_TRUE(capture.late_file_at > usize {});
         EXPECT_TRUE(capture.all_packages_at > capture.late_file_at);
+        EXPECT_EQ(capture.summaries, usize(3));
+        EXPECT_EQ(capture.finalize_starts, usize(1));
+        EXPECT_TRUE(capture.finalize_started_at > capture.all_packages_at);
+        EXPECT_TRUE(capture.finalize_at > capture.finalize_started_at);
+        EXPECT_TRUE(capture.plan_at > capture.finalize_at);
+        EXPECT_TRUE(capture.graph_at > capture.plan_at);
+        EXPECT_TRUE(capture.check_at > capture.graph_at);
+        EXPECT_EQ(capture.scan_units, usize(5));
+        EXPECT_EQ(capture.plan_units, usize(5));
+        EXPECT_EQ(capture.dependencies, usize(4));
+        EXPECT_EQ(capture.actions, usize(9));
+        EXPECT_EQ(capture.artifacts, usize(17));
         if (run != usize {}) EXPECT_EQ(built->compiled, usize {});
     }
     auto broken = project->root.join(PathBuf::from("dep/src/late.cppm"_str).as_path());
@@ -121,6 +168,8 @@ archive = "scan-dep"
     EXPECT_EQ(failure.finished, usize(1));
     EXPECT_EQ(failure.failed, usize(1));
     EXPECT_EQ(failure.all_packages_at, usize {});
+    EXPECT_EQ(failure.summaries, usize {});
+    EXPECT_EQ(failure.finalize_starts, usize {});
 }
 
 TEST_F(BuildCommand, BuildsObjectiveCppSourceWithMatchingScanLanguage) {

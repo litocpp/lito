@@ -34,6 +34,16 @@ cursor backwards. Redirected output reports only batch start and finish. `--verb
 per-file scan/scan-reuse events without progress bars; cache checks use plain start/finish lines.
 `--no-timing` does not hide this progress.
 
+Preparation work prints plain summary lines in both normal and verbose output:
+`[scan-finalize]` reports compilation units and unique headers, `[compile-plan]` reports
+compilation units and direct dependency edges, and `[execution-graph]` reports actions and
+artifacts in the current execution graph. Each line includes the elapsed preparation time;
+counts describe the current graph or plan, including retained host-tool work, not only new
+items. These summaries do not use progress bars and remain visible with `--no-timing`.
+The `[scan-finalize]` label appears as soon as finalization starts; counts and elapsed time
+are appended when it completes. If another message interrupts the line, completion prints
+a new labeled line without rewriting earlier output.
+
 Timing stages report exclusive wall time, except for the inclusive `build.total` row. Cache checks
 have their own `build.compile-cache-check` stage. Worker totals and nested action timings can
 overlap and must not be added to the stage totals. Shared host-tool and target checks are combined

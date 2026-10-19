@@ -9,6 +9,7 @@ import lito.cpp;
 import :build.action_graph;
 import :build.compile.plan;
 import :build.error;
+import :build.event;
 import :build.layout;
 
 using namespace rstd::prelude;
@@ -113,7 +114,9 @@ auto extend_native_action_graph(NativeActionGraph&            result,
                                 const Vec<Vec<cpp::UnitId>>&  target_units,
                                 const CompilePlan&            compile,
                                 slice<cpp::TargetId>          action_targets,
-                                const ExecutionDomainId&      domain) -> BuildResult<empty> {
+                                const ExecutionDomainId&      domain,
+                                const Option<BuildEventSink>& observer) -> BuildResult<empty> {
+    auto started = rstd::time::Instant::now();
     if (units.len() != compile.nodes.len() || target_units.len() != package.targets.len() ||
         result.source_artifacts.len() != result.compile_actions.len() ||
         result.compile_actions.len() != result.object_artifacts.len() ||
@@ -262,7 +265,14 @@ auto extend_native_action_graph(NativeActionGraph&            result,
             .outputs = rstd::move(outputs),
         })));
     }
-    return result.graph.validate();
+    rstd_try(result.graph.validate());
+    emit_build_preparation(observer,
+                           package.name.as_str(),
+                           layout.output(),
+                           started.elapsed(),
+                           BuildPreparationSummary::ExecutionGraph(
+                               result.graph.actions()->len(), result.graph.artifacts()->len()));
+    return Ok(empty {});
 }
 
 } // namespace lito

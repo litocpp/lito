@@ -55,6 +55,11 @@ auto progress_terminal(bool standard_error) -> Option<usize> {
 
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
+    if (event.kind == lito::BuildEventKind::Preparation ||
+        event.kind == lito::BuildEventKind::ScanFinalize) {
+        context.write_progress(context.progress.update_preparation(event));
+        return;
+    }
     if (event.kind == lito::BuildEventKind::CacheCheck ||
         event.kind == lito::BuildEventKind::ScanPackages) {
         if (context.verbose && event.kind == lito::BuildEventKind::ScanPackages) return;

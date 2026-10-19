@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.driver:build.event;
 
 import rstd;
@@ -19,6 +22,8 @@ enum class BuildEventKind
     Scan,
     ScanReuse,
     ScanPackages,
+    ScanFinalize,
+    Preparation,
     CacheCheck,
     Compile,
     Reuse,
@@ -56,14 +61,22 @@ struct BuildProgress {
     usize total {};
 };
 
+class BuildPreparationSummary {
+    RSTD_ENUM(BuildPreparationSummary,
+              (ScanFinalize, (usize units; usize headers;)),
+              (CompilePlan, (usize units; usize dependencies;)),
+              (ExecutionGraph, (usize actions; usize artifacts;)))
+};
+
 struct BuildEvent {
-    BuildEventKind        kind { BuildEventKind::Scan };
-    ref<str>              target;
-    ref<rstd::path::Path> path;
-    rstd::time::Duration  elapsed;
-    bool                  completed { false };
-    Option<BuildProgress> progress;
-    bool                  failed { false };
+    BuildEventKind                  kind { BuildEventKind::Scan };
+    ref<str>                        target;
+    ref<rstd::path::Path>           path;
+    rstd::time::Duration            elapsed;
+    bool                            completed { false };
+    Option<BuildProgress>           progress;
+    bool                            failed { false };
+    Option<BuildPreparationSummary> preparation;
 };
 
 struct BuildEventSink {
@@ -86,6 +99,8 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::Scan: name = "scan"_str; break;
         case lito::BuildEventKind::ScanReuse: name = "scan-reuse"_str; break;
         case lito::BuildEventKind::ScanPackages: name = "scan"_str; break;
+        case lito::BuildEventKind::ScanFinalize: name = "scan-finalize"_str; break;
+        case lito::BuildEventKind::Preparation: name = "prepare"_str; break;
         case lito::BuildEventKind::CacheCheck: name = "cache-check"_str; break;
         case lito::BuildEventKind::Compile: name = "compile"_str; break;
         case lito::BuildEventKind::Reuse: name = "reuse"_str; break;
@@ -127,6 +142,21 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
 
 namespace lito
 {
+
+void emit_build_preparation(const Option<BuildEventSink>& observer,
+                            ref<str>                      target,
+                            ref<rstd::path::Path>         path,
+                            rstd::time::Duration          elapsed,
+                            BuildPreparationSummary       summary) {
+    if (observer.is_none() || observer->notify == nullptr) return;
+    observer->notify(observer->context,
+                     BuildEvent { .kind        = BuildEventKind::Preparation,
+                                  .target      = target,
+                                  .path        = path,
+                                  .elapsed     = elapsed,
+                                  .completed   = true,
+                                  .preparation = Some(rstd::move(summary)) });
+}
 
 auto source_observer(const BuildEventSink& observer) noexcept -> lito::source::SourceEventSink;
 auto source_observer(const Option<BuildEventSink>& observer) noexcept

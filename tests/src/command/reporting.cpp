@@ -39,6 +39,66 @@ TEST(Reporting, UserFacingEnumsImplementDisplay) {
               "target features"_str);
 }
 
+TEST(Reporting, PreparationSummariesUsePlainCompletedLines) {
+    auto path  = PathBuf::from("/build"_str);
+    auto event = lito::BuildEvent {
+        .kind        = lito::BuildEventKind::Preparation,
+        .target      = "app"_str,
+        .path        = path.as_path(),
+        .elapsed     = rstd::time::Duration::from_micros(u64(12500)),
+        .completed   = true,
+        .preparation = Some(lito::BuildPreparationSummary::ScanFinalize(usize(5), usize(3))),
+    };
+    EXPECT_EQ(lito::render_build_preparation(event).as_str(),
+              "[scan-finalize] 5 units, 3 headers (12.500 ms)\n"_str);
+    event.preparation = Some(lito::BuildPreparationSummary::CompilePlan(usize(5), usize(4)));
+    EXPECT_EQ(lito::render_build_preparation(event).as_str(),
+              "[compile-plan] 5 units, 4 dependencies (12.500 ms)\n"_str);
+    event.preparation = Some(lito::BuildPreparationSummary::ExecutionGraph(usize(9), usize(17)));
+    EXPECT_EQ(lito::render_build_preparation(event).as_str(),
+              "[execution-graph] 9 actions, 17 artifacts (12.500 ms)\n"_str);
+    event.completed = false;
+    EXPECT_TRUE(lito::render_build_preparation(event).is_empty());
+    event.completed = true;
+    event.failed    = true;
+    EXPECT_TRUE(lito::render_build_preparation(event).is_empty());
+    event.failed      = false;
+    event.preparation = None();
+    EXPECT_TRUE(lito::render_build_preparation(event).is_empty());
+}
+
+TEST(Reporting, ScanFinalizeStartsBeforeSummaryAndOnlyAppends) {
+    auto display = lito::BuildProgressDisplay {};
+    auto path    = PathBuf::from("/build"_str);
+    auto start   = lito::BuildEvent { .kind   = lito::BuildEventKind::ScanFinalize,
+                                      .target = "app"_str,
+                                      .path   = path.as_path() };
+    auto finish  = lito::BuildEvent {
+        .kind        = lito::BuildEventKind::Preparation,
+        .target      = "app"_str,
+        .path        = path.as_path(),
+        .elapsed     = rstd::time::Duration::from_micros(u64(12500)),
+        .completed   = true,
+        .preparation = Some(lito::BuildPreparationSummary::ScanFinalize(usize(5), usize(3))),
+    };
+    EXPECT_EQ(display.update_preparation(start).as_str(), "[scan-finalize]"_str);
+    EXPECT_EQ(display.update_preparation(finish).as_str(), " 5 units, 3 headers (12.500 ms)\n"_str);
+    EXPECT_TRUE(display.interrupt().is_empty());
+    EXPECT_EQ(display.update_preparation(start).as_str(), "[scan-finalize]"_str);
+    EXPECT_EQ(display.interrupt().as_str(), "\n"_str);
+    EXPECT_TRUE(display.interrupt().is_empty());
+    EXPECT_EQ(display.update_preparation(finish).as_str(),
+              "[scan-finalize] 5 units, 3 headers (12.500 ms)\n"_str);
+    auto scan = lito::BuildEvent { .kind     = lito::BuildEventKind::ScanPackages,
+                                   .target   = "app"_str,
+                                   .path     = path.as_path(),
+                                   .progress = Some(lito::BuildProgress { usize {}, usize(1) }) };
+    EXPECT_EQ(display.update(scan, true, usize(80)).as_str(), "[scan] ["_str);
+    EXPECT_EQ(display.update_preparation(start).as_str(), "]\n[scan-finalize]"_str);
+    EXPECT_EQ(display.update(scan, false, usize {}).as_str(), "\n[scan] app 0/1 scanning\n"_str);
+    EXPECT_TRUE(display.interrupt().is_empty());
+}
+
 TEST(Reporting, CacheCheckOnlyAppendsToFixedWidth) {
     auto progress = lito::BuildProgressDisplay {};
     auto path     = PathBuf::from("/build/cache"_str);
@@ -47,7 +107,7 @@ TEST(Reporting, CacheCheckOnlyAppendsToFixedWidth) {
                                     .path     = path.as_path(),
                                     .progress = Some(lito::BuildProgress { usize {}, usize(10) }) };
     auto start = progress.update(event, true, usize(80));
-    EXPECT_EQ(start.as_str(), "[cache-check 1] ["_str);
+    EXPECT_EQ(start.as_str(), "[cache-check] ["_str);
     event.progress->current = usize(5);
     auto middle             = progress.update(event, true, usize(80));
     EXPECT_EQ(middle.as_str(), "=========="_str);
@@ -58,7 +118,7 @@ TEST(Reporting, CacheCheckOnlyAppendsToFixedWidth) {
     EXPECT_EQ(end.as_str(), "==========]\n"_str);
     start.push_str(middle.as_str());
     start.push_str(end.as_str());
-    EXPECT_EQ(start.as_str(), "[cache-check 1] [====================]\n"_str);
+    EXPECT_EQ(start.as_str(), "[cache-check] [====================]\n"_str);
     EXPECT_FALSE(start.as_str().contains("\r"_str));
     EXPECT_FALSE(start.as_str().contains("\x1b"_str));
     EXPECT_TRUE(progress.interrupt().is_empty());
@@ -111,7 +171,7 @@ TEST(Reporting, CacheCheckDoesNotFillBeforeSuccessfulCompletion) {
     event.completed = true;
     event.failed    = true;
     text.push_str(progress.update(event, true, usize(80)).as_str());
-    EXPECT_EQ(text.as_str(), "[cache-check 1] [===================] failed\n"_str);
+    EXPECT_EQ(text.as_str(), "[cache-check] [===================] failed\n"_str);
     EXPECT_TRUE(progress.interrupt().is_empty());
 }
 
@@ -122,13 +182,19 @@ TEST(Reporting, ScanProgressUsesPackageTotalsAndAppendOnlyOutput) {
                                     .target   = "app"_str,
                                     .path     = path.as_path(),
                                     .progress = Some(lito::BuildProgress { usize {}, usize(2) }) };
-    EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "[scan 1] ["_str);
+    EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "[scan] ["_str);
     event.progress->current = usize(1);
     EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "=========="_str);
     EXPECT_TRUE(progress.update(event, true, usize(80)).is_empty());
     event.progress->current = usize(2);
     event.completed         = true;
     EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "==========]\n"_str);
+    event.kind              = lito::BuildEventKind::CacheCheck;
+    event.progress->current = usize {};
+    event.completed         = false;
+    EXPECT_EQ(progress.update(event, true, usize(80)).as_str(), "[cache-check] ["_str);
+    EXPECT_EQ(progress.interrupt().as_str(), "]\n"_str);
+    event.kind              = lito::BuildEventKind::ScanPackages;
     event.progress->current = usize {};
     event.completed         = false;
     EXPECT_EQ(progress.update(event, false, usize {}).as_str(), "[scan] app 0/2 scanning\n"_str);

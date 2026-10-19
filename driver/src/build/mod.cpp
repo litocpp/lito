@@ -890,7 +890,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (existing_source_sets.is_err()) {
         return Err(rstd::move(existing_source_sets).unwrap_err());
     }
-    auto package_result = cpp::snapshot_package(
+    auto initial_finalize_started = rstd::time::Instant::now();
+    emit(request, BuildEventKind::ScanFinalize, metadata.name.as_str(), layout.output());
+    auto deferred_scan_finalize = rstd::time::Duration {};
+    auto package_result         = cpp::snapshot_package(
         metadata, rstd::move(existing_source_sets).unwrap(), project.platform.effective_target);
     if (package_result.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(package_result).unwrap_err()));
@@ -1061,6 +1064,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         if (finished_scan.is_err())
             return Err(BuildError::Message(rstd::move(finished_scan).unwrap_err()));
         scan_scope.finish();
+        emit_build_preparation(
+            request.observer,
+            package.name.as_str(),
+            layout.output(),
+            initial_finalize_started.elapsed(),
+            BuildPreparationSummary::ScanFinalize(units.len(), semantics->statistics.headers));
         auto host_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
         auto host_actions    = materialize_build_actions(package,
                                                          layout,
@@ -1070,7 +1079,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                          scans,
                                                          rstd::move(semantics).unwrap(),
                                                          host_tool_targets.as_slice(),
-                                                         BuildResultProjection {});
+                                                         BuildResultProjection {},
+                                                         request.observer);
         if (host_actions.is_err()) return Err(rstd::move(host_actions).unwrap_err());
         auto host_action_plan = rstd::move(host_actions).unwrap();
         host_plan_scope.finish();
@@ -1094,7 +1104,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                      target_units,
                                                      host_action_plan.compile,
                                                      host_selection.target_order.as_slice(),
-                                                     execution_domain);
+                                                     execution_domain,
+                                                     request.observer);
         if (host_graph.is_err()) return Err(rstd::move(host_graph).unwrap_err());
 
         auto execute_host_target =
@@ -1173,7 +1184,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
 
     if (host_selection.target_order.is_empty()) {
-        auto finished_scan = profiler.complete(scan_span);
+        deferred_scan_finalize = initial_finalize_started.elapsed();
+        auto finished_scan     = profiler.complete(scan_span);
         if (finished_scan.is_err())
             return Err(BuildError::Message(rstd::move(finished_scan).unwrap_err()));
         scan_scope.finish();
@@ -1217,6 +1229,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                  SourceDiscoveryScope::All);
     });
     if (generated_sources.is_err()) return Err(rstd::move(generated_sources).unwrap_err());
+    auto remaining_finalize_started = rstd::time::Instant::now();
+    if (! host_selection.target_order.is_empty())
+        emit(request, BuildEventKind::ScanFinalize, package.name.as_str(), layout.output());
     auto appended_sources =
         cpp::append_package_sources(package, rstd::move(generated_sources).unwrap());
     if (appended_sources.is_err()) {
@@ -1301,6 +1316,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
     auto scanned                                      = scans.len();
     remaining_scan_scope.finish();
+    emit_build_preparation(
+        request.observer,
+        package.name.as_str(),
+        layout.output(),
+        deferred_scan_finalize.saturating_add(remaining_finalize_started.elapsed()),
+        BuildPreparationSummary::ScanFinalize(units.len(), scan_graph_statistics.headers));
 
     auto initial_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
     auto proc_macro_sources = Vec<u8>::make();
@@ -1317,7 +1338,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                   scans,
                                                   rstd::move(semantic_graph),
                                                   selected_targets.as_slice(),
-                                                  request.result);
+                                                  request.result,
+                                                  request.observer);
     if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
     auto actions                = rstd::move(materialized).unwrap();
     auto documentation_units    = rstd::move(actions.documentation);
@@ -1405,6 +1427,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             return Err(BuildError::Message(rstd::move(discovery_finished).unwrap_err()));
         }
 
+        auto authoritative_finalize_started = rstd::time::Instant::now();
+        emit(request, BuildEventKind::ScanFinalize, package.name.as_str(), layout.output());
         auto authoritative_units = prepare_build_units(package, package_plan, layout, toolchain);
         if (authoritative_units.is_err()) {
             return Err(rstd::move(authoritative_units).unwrap_err());
@@ -1457,6 +1481,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         scanned += scans.len();
 
         transformed_scan_scope.finish();
+        emit_build_preparation(
+            request.observer,
+            package.name.as_str(),
+            layout.output(),
+            authoritative_finalize_started.elapsed(),
+            BuildPreparationSummary::ScanFinalize(units.len(), scan_graph_statistics.headers));
         auto transformed_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
 
         auto authoritative_actions =
@@ -1468,7 +1498,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                       scans,
                                       rstd::move(authoritative_semantics).unwrap(),
                                       selected_targets.as_slice(),
-                                      request.result);
+                                      request.result,
+                                      request.observer);
         if (authoritative_actions.is_err()) {
             return Err(rstd::move(authoritative_actions).unwrap_err());
         }
@@ -1844,7 +1875,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                target_units,
                                                actions.compile,
                                                package_plan.target_order.as_slice(),
-                                               execution_domain);
+                                               execution_domain,
+                                               request.observer);
     if (extended.is_err()) return Err(rstd::move(extended).unwrap_err());
 
     auto execute_target =
