@@ -343,7 +343,8 @@ auto execute_native_action_graph(NativeActionGraph&                   actions,
                                  CompileProgressTracker&              progress,
                                  const Vec<u8>&                       completed_targets,
                                  const Vec<cpp::TargetId>&            stop_targets,
-                                 TargetExecutor&                      execute_target)
+                                 TargetExecutor&                      execute_target,
+                                 BuildStageTimingReport&              stage_timing)
     -> BuildResult<CompileActionSessionResult> {
     auto marked_existing = true;
     while (marked_existing) {
@@ -382,9 +383,11 @@ auto execute_native_action_graph(NativeActionGraph&                   actions,
                                                        compiler,
                                                        observer,
                                                        policy,
-                                                       progress);
+                                                       progress,
+                                                       stage_timing);
     if (session_result.is_err()) return Err(rstd::move(session_result).unwrap_err());
     auto       session                = rstd::move(session_result).unwrap();
+    auto       execute_scope          = stage_timing.scope(BuildStage::CompileExecute);
     const auto stop_targets_succeeded = [&]() noexcept -> bool {
         if (stop_targets.is_empty()) return false;
         for (auto target : stop_targets) {
@@ -839,8 +842,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     rstd_try(materialize_build_script_inputs(
         metadata, native_target_plan.contexts, layout, initial_selection));
 
-    auto       scan_started = rstd::time::Instant::now();
-    auto       scan_span    = profiler.span(ScanProbe::Total);
+    auto       scan_scope = stage_timing.scope(BuildStage::Scan);
+    auto       scan_span  = profiler.span(ScanProbe::Total);
     const auto collect_header_roots =
         [&](slice<cpp::TargetId>            targets,
             const Vec<cpp::CompileContext>& contexts) -> BuildResult<Vec<cpp::ResolvedHeaderRoot>> {
@@ -933,10 +936,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         completed_targets.push(u8 {});
         library_paths.emplace_back();
     }
-    auto compiled         = usize {};
-    auto reused           = usize {};
-    auto build_timing     = BuildTimingReport {};
-    auto compile_progress = CompileProgressTracker {};
+    auto compiled           = usize {};
+    auto reused             = usize {};
+    auto build_timing       = BuildTimingReport {};
+    auto compile_progress   = CompileProgressTracker {};
+    auto compile_statistics = CompileExecutionStatistics {};
+    if (plugin_host.is_some()) compile_statistics.merge(plugin_host->compile_execution);
 
     auto compiler_plugins = Vec<BuiltCompilerPlugin>::make();
     if (plugin_host.is_some()) {
@@ -947,6 +952,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     const auto prepare_plugins =
         [&](CompilePlan& compile, const Vec<cpp::TargetId>& ready_targets) -> BuildResult<empty> {
+        auto plugin_scope   = stage_timing.scope(BuildStage::Plugin);
         auto plugin_targets = Vec<u8>::with_capacity(package.targets.len());
         for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
             plugin_targets.push(u8 {});
@@ -983,7 +989,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                              cache,
                                                              toolchain.compile_executor(),
                                                              request.observer,
-                                                             *compile_execution);
+                                                             *compile_execution,
+                                                             stage_timing);
         if (plugin_compile.is_err()) {
             return Err(rstd::move(plugin_compile).unwrap_err());
         }
@@ -991,6 +998,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         object_identities  = rstd::move(plugin_result.object_identities);
         compiled += plugin_result.compiled;
         reused += plugin_result.reused;
+        compile_statistics.merge(plugin_result.statistics);
         for (auto target : package_plan.target_order) {
             if (plugin_targets[target] == u8 {} || completed_targets[target] != u8 {}) continue;
             const auto kind = package.targets[target].artifact_kind;
@@ -1002,15 +1010,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 kind != cpp::ArtifactKind::CompilerPlugin) {
                 continue;
             }
-            auto archived = build_archive_target(request,
-                                                 layout,
-                                                 toolchain,
-                                                 archive_cache,
-                                                 package.targets[target],
-                                                 units,
-                                                 target_units[target],
-                                                 object_identities,
-                                                 build_timing);
+            auto archive_scope = stage_timing.scope(BuildStage::Archive);
+            auto archived      = build_archive_target(request,
+                                                      layout,
+                                                      toolchain,
+                                                      archive_cache,
+                                                      package.targets[target],
+                                                      units,
+                                                      target_units[target],
+                                                      object_identities,
+                                                      build_timing);
             if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
             library_paths[target]     = Some(rstd::move(archived).unwrap());
             completed_targets[target] = u8(1);
@@ -1048,17 +1057,23 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         if (semantics.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(semantics).unwrap_err()));
         }
-        auto host_actions = materialize_build_actions(package,
-                                                      layout,
-                                                      toolchain,
-                                                      bmi_format,
-                                                      units,
-                                                      scans,
-                                                      rstd::move(semantics).unwrap(),
-                                                      host_tool_targets.as_slice(),
-                                                      BuildResultProjection {});
+        auto finished_scan = profiler.complete(scan_span);
+        if (finished_scan.is_err())
+            return Err(BuildError::Message(rstd::move(finished_scan).unwrap_err()));
+        scan_scope.finish();
+        auto host_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
+        auto host_actions    = materialize_build_actions(package,
+                                                         layout,
+                                                         toolchain,
+                                                         bmi_format,
+                                                         units,
+                                                         scans,
+                                                         rstd::move(semantics).unwrap(),
+                                                         host_tool_targets.as_slice(),
+                                                         BuildResultProjection {});
         if (host_actions.is_err()) return Err(rstd::move(host_actions).unwrap_err());
         auto host_action_plan = rstd::move(host_actions).unwrap();
+        host_plan_scope.finish();
         object_identities.reserve(host_action_plan.compile.nodes.len());
         while (object_identities.len() < host_action_plan.compile.nodes.len()) {
             object_identities.emplace_back();
@@ -1084,7 +1099,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
         auto execute_host_target =
             [&](BuildActionId, cpp::TargetId target, BuildActionKind kind) -> BuildResult<empty> {
-            const auto& target_spec = package.targets[target];
+            const auto& target_spec  = package.targets[target];
+            auto        target_scope = stage_timing.scope(
+                kind == BuildActionKind::Archive ? BuildStage::Archive : BuildStage::Link);
             if (kind == BuildActionKind::Archive) {
                 auto archived = build_archive_target(request,
                                                      layout,
@@ -1143,17 +1160,25 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                           compile_progress,
                                                           completed_targets,
                                                           host_selection.target_order,
-                                                          execute_host_target);
+                                                          execute_host_target,
+                                                          stage_timing);
         if (host_execution.is_err()) return Err(rstd::move(host_execution).unwrap_err());
         compiled += host_execution->compiled;
         reused += host_execution->reused;
+        compile_statistics.merge(host_execution->statistics);
         const auto& host_compile_timing = host_execution->timing.timing(BuildOperation::Compile);
         if (host_compile_timing.count != usize {}) {
             build_timing.record(BuildOperation::Compile, host_compile_timing.total);
         }
     }
 
-    auto script_result = stage_timing.measure(BuildStage::Script, [&] {
+    if (host_selection.target_order.is_empty()) {
+        auto finished_scan = profiler.complete(scan_span);
+        if (finished_scan.is_err())
+            return Err(BuildError::Message(rstd::move(finished_scan).unwrap_err()));
+        scan_scope.finish();
+    }
+    auto script_result        = stage_timing.measure(BuildStage::Script, [&] {
         return script_declaration.execute(package_tools,
                                           package,
                                           package_plan,
@@ -1161,7 +1186,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                           execution_domain,
                                           execution->jobs);
     });
-    auto script_report = rstd_try(rstd::move(script_result));
+    auto script_report        = rstd_try(rstd::move(script_result));
+    auto remaining_scan_scope = stage_timing.scope(BuildStage::Scan);
+    auto remaining_scan_span  = profiler.span(ScanProbe::Total);
     rstd_try(materialize_build_script_inputs(metadata, package, package_plan, layout, *selected));
     auto remaining_header_roots = profiler.measure(ScanProbe::Environment, [&] {
         return collect_header_roots(remaining_targets.as_slice(), package_plan.contexts);
@@ -1221,7 +1248,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto semantic_graph        = rstd::move(resolved_semantics).unwrap();
     auto scan_graph_statistics = semantic_graph.statistics;
-    auto completed_scan        = profiler.complete(scan_span);
+    auto completed_scan        = profiler.complete(remaining_scan_span);
     if (completed_scan.is_err()) {
         return Err(BuildError::Message(rstd::move(completed_scan).unwrap_err_unchecked()));
     }
@@ -1273,10 +1300,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_fingerprint_waits  = scan_cache_statistics.fingerprint_waits;
     frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
     auto scanned                                      = scans.len();
-    stage_timing.record(BuildStage::Scan, scan_started.elapsed());
+    remaining_scan_scope.finish();
 
-    auto initial_plan_started = rstd::time::Instant::now();
-    auto proc_macro_sources   = Vec<u8>::make();
+    auto initial_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
+    auto proc_macro_sources = Vec<u8>::make();
     if (plugin_host.is_some() || ! project.proc_macro_aggregates.is_empty()) {
         auto selected = select_proc_macro_sources(package, package_plan, target_units, scans);
         if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
@@ -1295,8 +1322,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto actions                = rstd::move(materialized).unwrap();
     auto documentation_units    = rstd::move(actions.documentation);
     auto documentation_retained = documentation_retained_bytes(documentation_units);
-    auto initial_plan_elapsed   = initial_plan_started.elapsed();
-    auto compile_plan_recorded  = false;
+    initial_plan_scope.finish();
 
     auto prerequisite_selection = Vec<u8>::with_capacity(actions.compile.nodes.len());
     auto prerequisite_identities =
@@ -1313,6 +1339,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     auto rebuild_after_source_transformation =
         [&](Vec<Option<CachedArtifactIdentity>>& completed) -> BuildResult<empty> {
+        auto transformed_scan_scope        = stage_timing.scope(BuildStage::Scan);
         auto authoritative_profiler_result = ScanProfiler::create();
         if (authoritative_profiler_result.is_err()) {
             return Err(BuildError::Message(
@@ -1429,6 +1456,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         scan_profile = rstd::move(authoritative_profile).unwrap_unchecked();
         scanned += scans.len();
 
+        transformed_scan_scope.finish();
+        auto transformed_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
+
         auto authoritative_actions =
             materialize_build_actions(package,
                                       layout,
@@ -1487,14 +1517,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Ok(empty {});
     };
 
-    if (! compile_plan_recorded) {
-        stage_timing.record(BuildStage::CompilePlan, initial_plan_elapsed);
-    }
-
-    object_identities       = rstd::move(prerequisite_identities);
-    auto compile_tests      = Vec<CompileTestExecution>::make();
-    auto compile_statistics = CompileExecutionStatistics {};
-    auto plugin_targets     = Vec<u8>::with_capacity(package.targets.len());
+    object_identities   = rstd::move(prerequisite_identities);
+    auto compile_tests  = Vec<CompileTestExecution>::make();
+    auto plugin_targets = Vec<u8>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
         plugin_targets.push(u8 {});
     }
@@ -1529,7 +1554,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         if (plugin_selection[unit] != u8 {}) completed_selection[unit] = u8(1);
     }
     if (! plugin_roots.is_empty()) {
-        auto plugin_started = rstd::time::Instant::now();
+        auto plugin_scope = stage_timing.scope(BuildStage::Plugin);
         rstd_try(prepare_plugins(actions.compile, package_plan.target_order));
         if (! provider_roots.is_empty()) {
             auto provider_prerequisites =
@@ -1547,7 +1572,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                cache,
                                                toolchain.compile_executor(),
                                                request.observer,
-                                               *compile_execution);
+                                               *compile_execution,
+                                               stage_timing);
             if (provider_dependency_compile.is_err()) {
                 return Err(rstd::move(provider_dependency_compile).unwrap_err());
             }
@@ -1555,6 +1581,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             object_identities = rstd::move(provider_dependency_result.object_identities);
             compiled += provider_dependency_result.compiled;
             reused += provider_dependency_result.reused;
+            compile_statistics.merge(provider_dependency_result.statistics);
             for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
                 if (provider_prerequisites[unit] != u8 {}) completed_selection[unit] = u8(1);
             }
@@ -1585,7 +1612,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                        toolchain,
                                                        actions.compile);
         if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
-        stage_timing.record(BuildStage::Plugin, plugin_started.elapsed());
     } else if (! compiler_plugins.is_empty()) {
         auto attached = attach_target_compiler_plugins(package,
                                                        package_plan,
@@ -1615,10 +1641,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                                     cache,
                                                                     toolchain.compile_executor(),
                                                                     request.observer,
-                                                                    *compile_execution));
+                                                                    *compile_execution,
+                                                                    stage_timing));
         object_identities = rstd::move(built.object_identities);
         compiled += built.compiled;
         reused += built.reused;
+        compile_statistics.merge(built.statistics);
         auto provider_targets = Vec<u8>::with_capacity(package.targets.len());
         for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target)
             provider_targets.emplace_back(u8 {});
@@ -1631,6 +1659,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
         for (auto target : package_plan.target_order) {
             if (provider_targets[target] == u8 {} || completed_targets[target] != u8 {}) continue;
+            auto archive_scope        = stage_timing.scope(BuildStage::Archive);
             library_paths[target]     = Some(rstd_try(build_archive_target(request,
                                                                            layout,
                                                                            toolchain,
@@ -1660,8 +1689,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     for (const auto& identity : prerequisite_identities)
         prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
     if (! available_aggregates.is_empty()) {
-        auto plugin_action_started = rstd::time::Instant::now();
-        auto pending_sources       = proc_macro_sources.clone();
+        auto plugin_scope    = stage_timing.scope(BuildStage::Plugin);
+        auto pending_sources = proc_macro_sources.clone();
         while (true) {
             auto pending = false;
             auto ready   = Vec<cpp::UnitId>::make();
@@ -1701,7 +1730,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                cache,
                                                toolchain.compile_executor(),
                                                request.observer,
-                                               *compile_execution);
+                                               *compile_execution,
+                                               stage_timing);
             if (prepared_dependencies.is_err()) {
                 return Err(rstd::move(prepared_dependencies).unwrap_err());
             }
@@ -1709,6 +1739,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             prerequisite_identities = rstd::move(prepared_dependency_result.object_identities);
             compiled += prepared_dependency_result.compiled;
             reused += prepared_dependency_result.reused;
+            compile_statistics.merge(prepared_dependency_result.statistics);
             for (auto unit = cpp::UnitId {}; unit < available.len(); ++unit) {
                 if (available[unit] != u8 {}) prerequisite_selection[unit] = u8(1);
             }
@@ -1732,13 +1763,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
             if (! *transformed) continue;
 
-            if (! compile_plan_recorded) {
-                stage_timing.record(BuildStage::CompilePlan, initial_plan_elapsed);
-                compile_plan_recorded = true;
-            }
-            auto authoritative_plan_started = rstd::time::Instant::now();
+            auto authoritative_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
             rstd_try(rebuild_after_source_transformation(prerequisite_identities));
-            stage_timing.record(BuildStage::CompilePlan, authoritative_plan_started.elapsed());
+            authoritative_plan_scope.finish();
 
             auto transformed_selection = compile_plan_prerequisite_closure(actions.compile, ready);
             for (cpp::UnitId unit {}; unit < transformed_selection.len(); ++unit)
@@ -1752,7 +1779,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                cache,
                                                toolchain.compile_executor(),
                                                request.observer,
-                                               *compile_execution);
+                                               *compile_execution,
+                                               stage_timing);
             if (transformed_compile.is_err()) {
                 return Err(rstd::move(transformed_compile).unwrap_err());
             }
@@ -1763,8 +1791,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
             compiled += transformed_result.compiled;
             reused += transformed_result.reused;
+            compile_statistics.merge(transformed_result.statistics);
         }
-        stage_timing.record(BuildStage::Plugin, plugin_action_started.elapsed());
     }
 
     object_identities = rstd::move(prerequisite_identities);
@@ -1823,16 +1851,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         [&](BuildActionId, cpp::TargetId target, BuildActionKind kind) -> BuildResult<empty> {
         const auto& target_spec = package.targets[target];
         if (kind == BuildActionKind::Archive) {
-            auto archive_started = rstd::time::Instant::now();
-            auto archived        = build_archive_target(request,
-                                                        layout,
-                                                        toolchain,
-                                                        archive_cache,
-                                                        target_spec,
-                                                        units,
-                                                        target_units[target],
-                                                        object_identities,
-                                                        build_timing);
+            auto archive_scope = stage_timing.scope(BuildStage::Archive);
+            auto archived      = build_archive_target(request,
+                                                      layout,
+                                                      toolchain,
+                                                      archive_cache,
+                                                      target_spec,
+                                                      units,
+                                                      target_units[target],
+                                                      object_identities,
+                                                      build_timing);
             if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
             auto archive_path     = rstd::move(archived).unwrap();
             library_paths[target] = Some(archive_path.clone());
@@ -1849,11 +1877,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 .package_root  = target_spec.root.clone(),
                 .link_identity = String::make(),
             });
-            stage_timing.record(BuildStage::Archive, archive_started.elapsed());
             return Ok(empty {});
         }
 
-        auto                                link_started    = rstd::time::Instant::now();
+        auto                                link_scope      = stage_timing.scope(BuildStage::Link);
         const RequestedArtifactLinkVariant* install_variant = nullptr;
         if (artifact_link_variants != nullptr)
             for (const auto& requested : *artifact_link_variants) {
@@ -1890,13 +1917,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                  rstd::move(output_override));
         if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
         auto artifact = rstd::move(linked).unwrap();
-        stage_timing.record(BuildStage::Link, link_started.elapsed());
+        link_scope.finish();
         if (process_artifact) {
             emit(request,
                  BuildEventKind::ArtifactProcess,
                  target_identity.as_str(),
                  artifact.primary.path.as_path());
             auto process_started = rstd::time::Instant::now();
+            auto process_scope   = stage_timing.scope(BuildStage::ArtifactProcess);
             auto processed =
                 execute_artifact_processor(rstd::move(artifact),
                                            *configured_artifact_processor,
@@ -1910,7 +1938,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             auto process_elapsed = process_started.elapsed();
             build_timing.record(BuildOperation::ArtifactProcess, process_elapsed);
-            stage_timing.record(BuildStage::ArtifactProcess, process_elapsed);
             if (processed->reused) {
                 emit(request,
                      BuildEventKind::ArtifactProcessReuse,
@@ -1935,19 +1962,19 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                                   compile_progress,
                                                                   completed_targets,
                                                                   complete_execution_targets,
-                                                                  execute_target);
+                                                                  execute_target,
+                                                                  stage_timing);
     if (native_execution.is_err()) return Err(rstd::move(native_execution).unwrap_err());
     compiled += native_execution->compiled;
     reused += native_execution->reused;
     for (auto& test : native_execution->compile_tests) compile_tests.push(rstd::move(test));
-    compile_statistics                              = native_execution->statistics;
+    compile_statistics.merge(native_execution->statistics);
     compile_statistics.documentation_units          = documentation_units.len();
     compile_statistics.documentation_retained_bytes = documentation_retained;
     const auto& compile_timing = native_execution->timing.timing(BuildOperation::Compile);
     if (compile_timing.count != usize {}) {
         build_timing.record(BuildOperation::Compile, compile_timing.total);
     }
-    stage_timing.record(BuildStage::CompileExecute, compile_statistics.wall);
     auto projected_artifacts = Vec<BuiltArtifact>::make();
     for (auto target : selected->product_targets) {
         const auto& spec     = package.targets[target];

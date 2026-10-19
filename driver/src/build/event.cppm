@@ -18,6 +18,7 @@ enum class BuildEventKind
     Extract,
     Scan,
     ScanReuse,
+    CacheCheck,
     Compile,
     Reuse,
     Archive,
@@ -61,6 +62,7 @@ struct BuildEvent {
     rstd::time::Duration  elapsed;
     bool                  completed { false };
     Option<BuildProgress> progress;
+    bool                  failed { false };
 };
 
 struct BuildEventSink {
@@ -82,6 +84,7 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::Extract: name = "extract"_str; break;
         case lito::BuildEventKind::Scan: name = "scan"_str; break;
         case lito::BuildEventKind::ScanReuse: name = "scan-reuse"_str; break;
+        case lito::BuildEventKind::CacheCheck: name = "cache-check"_str; break;
         case lito::BuildEventKind::Compile: name = "compile"_str; break;
         case lito::BuildEventKind::Reuse: name = "reuse"_str; break;
         case lito::BuildEventKind::Archive: name = "archive"_str; break;

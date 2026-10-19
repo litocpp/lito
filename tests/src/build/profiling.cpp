@@ -142,3 +142,43 @@ auto run_profiling_test() -> int {
 TEST(Profiling, ReportAndBuildTiming) {
     EXPECT_EQ(run_profiling_test(), 0);
 }
+
+TEST(Profiling, NestedStagesAccountForExclusiveWall) {
+    auto report = lito::BuildStageTimingReport {};
+    auto outer  = report.scope(lito::BuildStage::CompileExecute);
+    auto inner  = report.scope(lito::BuildStage::Archive);
+    inner.finish(rstd::time::Duration::from_micros(u64(200)));
+    auto check = report.scope(lito::BuildStage::CompileCacheCheck);
+    check.finish(rstd::time::Duration::from_micros(u64(300)));
+    outer.finish(rstd::time::Duration::from_micros(u64(1000)));
+    report.record(lito::BuildStage::Total, rstd::time::Duration::from_micros(u64(1100)));
+    EXPECT_EQ(report.timing(lito::BuildStage::CompileExecute).total.as_micros(), u64(500));
+    EXPECT_EQ(report.attributed().as_micros(), u64(1000));
+    EXPECT_EQ(report.unattributed().as_micros(), u64(100));
+}
+
+TEST(Profiling, CompileBatchesSumWorkAndKeepPeaks) {
+    auto first         = lito::CompileExecutionStatistics {};
+    first.reused       = usize(558);
+    first.plan_nodes   = usize(558);
+    first.cache_check  = { .batches     = usize(1),
+                           .evaluations = usize(558),
+                           .hits        = usize(558),
+                           .jobs        = usize(6),
+                           .max_active  = usize(5) };
+    auto second        = lito::CompileExecutionStatistics {};
+    second.reused      = usize(350);
+    second.plan_nodes  = usize(908);
+    second.cache_check = { .batches     = usize(1),
+                           .evaluations = usize(350),
+                           .hits        = usize(350),
+                           .jobs        = usize(6),
+                           .max_active  = usize(6) };
+    first.merge(second);
+    EXPECT_EQ(first.reused, usize(908));
+    EXPECT_EQ(first.cache_evaluations, usize(908));
+    EXPECT_EQ(first.cache_check.batches, usize(2));
+    EXPECT_EQ(first.cache_check.max_active, usize(6));
+    EXPECT_EQ(first.cache_check.jobs, usize(6));
+    EXPECT_EQ(first.plan_nodes, usize(908));
+}

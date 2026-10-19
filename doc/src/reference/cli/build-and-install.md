@@ -21,7 +21,17 @@ Both accept execution/reporting options:
 - `--verbose` prints build events;
 - `--timing-file FILE` writes detailed timings;
 - `--no-timing` hides the stdout timing summary;
-- `-j/--jobs N` sets scan and compile workers.
+- `-j/--jobs N` bounds scan, compile-cache check, and compile workers.
+
+Before scheduling compilation, Lito checks existing object and BMI contents. Interactive terminals
+show a single-line cache-check bar that only appends `=` characters up to a width chosen at the
+start of each batch. It never rewrites earlier output or moves the cursor backwards. Redirected
+output reports only batch start and finish. `--no-timing` does not hide this progress.
+
+Timing stages report exclusive wall time, except for the inclusive `build.total` row. Cache checks
+have their own `build.compile-cache-check` stage. Worker totals and nested action timings can
+overlap and must not be added to the stage totals. Shared host-tool and target checks are combined
+in the cache-check statistics.
 
 The global `--use-env-flags` option appends `CFLAGS`, `CXXFLAGS`, and `LDFLAGS` to their respective
 build domains. Lito ignores those variables unless this option is present.

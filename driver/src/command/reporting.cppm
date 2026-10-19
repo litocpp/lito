@@ -78,12 +78,24 @@ inline constexpr BuildOperation BUILD_OPERATIONS[] = {
 };
 
 inline constexpr BuildStage BUILD_STAGES[] = {
-    BuildStage::Total,           BuildStage::ProductBegin,   BuildStage::Environment,
-    BuildStage::ProjectPrepare,  BuildStage::TargetPrepare,  BuildStage::Script,
-    BuildStage::RuntimeResource, BuildStage::Scan,           BuildStage::Plugin,
-    BuildStage::CompilePlan,     BuildStage::CompileExecute, BuildStage::CompileCacheFinish,
-    BuildStage::Archive,         BuildStage::Link,           BuildStage::ProductFinalize,
+    BuildStage::Total,
+    BuildStage::ProductBegin,
+    BuildStage::Environment,
+    BuildStage::ProjectPrepare,
+    BuildStage::TargetPrepare,
+    BuildStage::Script,
+    BuildStage::RuntimeResource,
+    BuildStage::Scan,
+    BuildStage::Plugin,
+    BuildStage::CompilePlan,
+    BuildStage::CompileCacheCheck,
+    BuildStage::CompileExecute,
+    BuildStage::CompileCacheFinish,
+    BuildStage::Archive,
+    BuildStage::Link,
+    BuildStage::ProductFinalize,
     BuildStage::ProductPublish,
+    BuildStage::ArtifactProcess,
 };
 
 inline constexpr ExternalPreparationOperation EXTERNAL_PREPARATION_OPERATIONS[] = {
@@ -344,6 +356,19 @@ auto detailed_report(const BuildSummary& summary) -> String {
                              "task work"_str,
                              display_duration(execution.task_work).as_str()));
 
+    append_line(output, "\ncompile cache check"_str);
+    const auto& checks = summary.compile_execution.cache_check;
+    append_metric(output, "batches"_str, checks.batches);
+    append_metric(output, "evaluations"_str, checks.evaluations);
+    append_metric(output, "hits"_str, checks.hits);
+    append_metric(output, "misses"_str, checks.misses);
+    append_metric(output, "jobs"_str, checks.jobs);
+    append_metric(output, "max in flight"_str, checks.max_in_flight);
+    append_metric(output, "max active"_str, checks.max_active);
+    append_line(output, rstd::format("  wall_us {}", checks.wall.as_micros()));
+    append_line(output, rstd::format("  task_work_us {}", checks.task_work.as_micros()));
+    append_line(output,
+                rstd::format("  coordinator_work_us {}", checks.coordinator_work.as_micros()));
     append_line(output, "\ncompile execution"_str);
     const auto& compile_execution = summary.compile_execution;
     append_metric(output, "jobs"_str, compile_execution.jobs);
@@ -540,7 +565,16 @@ void print_summary(const BuildSummary& summary) {
                       display_duration(execution.task_work).as_str());
 
     rstd::io::println("  build");
-    rstd::io::println("    stages");
+    rstd::io::println("    stages (exclusive wall; total is inclusive)");
+    const auto& checks = summary.compile_execution.cache_check;
+    rstd::io::println(
+        "    cache checks: {}; hits: {}; misses: {}; batches: {}; wall: {}; worker total: {}",
+        checks.evaluations,
+        checks.hits,
+        checks.misses,
+        checks.batches,
+        display_duration(checks.wall),
+        display_duration(checks.task_work));
     rstd::io::println(
         "      {:<30} {:>12} {:>8} {:>8}", "stage"_str, "wall"_str, "calls"_str, "share"_str);
     auto build_total = summary.stage_timing.timing(BuildStage::Total).total;

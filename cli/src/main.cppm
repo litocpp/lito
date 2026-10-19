@@ -1,3 +1,12 @@
+module;
+#if defined(_WIN32)
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/ioctl.h>
+#endif
+
 export module lito.executable;
 
 import rstd;
@@ -12,12 +21,46 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 
 struct EventContext {
-    bool verbose { false };
-    bool standard_error { false };
+    bool                     verbose { false };
+    bool                     standard_error { false };
+    lito::CacheCheckProgress progress;
+
+    void write_progress(String text) const {
+        if (text.is_empty()) return;
+        if (standard_error)
+            rstd::io::eprint("{}", text);
+        else
+            rstd::io::print("{}", text);
+    }
+    void interrupt_progress() { write_progress(progress.interrupt()); }
+    ~EventContext() { interrupt_progress(); }
 };
+
+auto progress_terminal(bool standard_error) -> Option<usize> {
+    if (rstd::env::var_os("CI"_str).is_some()) return None();
+    const auto fd = standard_error ? 2 : 1;
+#if defined(_WIN32)
+    if (! _isatty(fd)) return None();
+    CONSOLE_SCREEN_BUFFER_INFO info {};
+    auto handle = GetStdHandle(standard_error ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
+    if (GetConsoleScreenBufferInfo(handle, &info))
+        return Some(usize(static_cast<rstd::size_t>(info.srWindow.Right - info.srWindow.Left + 1)));
+#else
+    if (! isatty(fd)) return None();
+    winsize size {};
+    if (ioctl(fd, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) return Some(usize(size.ws_col));
+#endif
+    return Some(usize(80));
+}
 
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
+    if (event.kind == lito::BuildEventKind::CacheCheck) {
+        auto terminal = progress_terminal(context.standard_error);
+        context.write_progress(context.progress.update(
+            event, terminal.is_some(), terminal.is_some() ? *terminal : usize {}));
+        return;
+    }
     if (event.completed) return;
     if (! context.verbose && event.kind != lito::BuildEventKind::Fetch &&
         event.kind != lito::BuildEventKind::Extract && event.kind != lito::BuildEventKind::Scan &&
@@ -37,6 +80,7 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         event.kind != lito::BuildEventKind::Strip) {
         return;
     }
+    context.interrupt_progress();
     if (context.standard_error) {
         if (event.progress.is_some()) {
             rstd::io::eprintln("[{} {}/{}] {} {}",
@@ -194,7 +238,8 @@ auto render_build_setup(const lito::BuildSetupReport& report) -> String {
 
 void report_build_setup(void* raw_context, const lito::BuildSetupReport& report) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
-    auto  output  = render_build_setup(report);
+    context.interrupt_progress();
+    auto output = render_build_setup(report);
     if (context.standard_error)
         rstd::io::eprint("{}", output.as_str());
     else
@@ -204,6 +249,7 @@ void report_build_setup(void* raw_context, const lito::BuildSetupReport& report)
 void report_host_tool_resolution(void*                                  raw_context,
                                  const lito::tools::HostToolResolution& resolution) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
+    context.interrupt_progress();
     if (resolution.kind == lito::tools::HostToolResolution::Kind::CandidateMissing) {
         if (! context.verbose) return;
         if (context.standard_error) {
@@ -364,6 +410,7 @@ auto configure_build_output(lito::BuildRequest& request, EventContext& context) 
 void observe_test(void* raw_context, const lito::TestEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose) return;
+    context.interrupt_progress();
     rstd::io::println(
         "[run] {} {} (cwd {})", event.package, event.executable, event.working_directory);
     for (const auto& argument : event.arguments) {
@@ -374,6 +421,7 @@ void observe_test(void* raw_context, const lito::TestEvent& event) noexcept {
 void observe_bench(void* raw_context, const lito::BenchEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose) return;
+    context.interrupt_progress();
     rstd::io::println("[run] {} {} (cwd {})",
                       lito::package::package_target_id_text(event.target),
                       event.executable,
@@ -389,6 +437,7 @@ void observe_doc(void* raw_context, const lito::DocEvent& event) noexcept {
                               event.kind == lito::DocEventKind::ExtractReuse)) {
         return;
     }
+    context.interrupt_progress();
     rstd::io::println("[{}] {} {}", event.kind, event.target, event.path);
 }
 

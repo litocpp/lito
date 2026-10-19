@@ -262,11 +262,13 @@ public:
         return session;
     }
 
+    auto output_root() const -> ref<rstd::path::Path> { return owner_root_.as_path(); }
+
     auto evaluate(ref<str>                       target,
                   const cpp::PreparedUnit&       unit,
                   ref<str>                       scan_receipt,
                   const CompileInvocation&       invocation,
-                  const Vec<DependencyArtifact>& dependencies) -> CacheResult<CacheDecision> {
+                  const Vec<DependencyArtifact>& dependencies) const -> CacheResult<CacheDecision> {
         auto source   = path_string(unit.unit.source.as_path());
         auto relative = path_string(unit.unit.relative_source.as_path());
         auto object   = Option<String> {};

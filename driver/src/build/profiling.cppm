@@ -83,6 +83,7 @@ enum class BuildStage
     Scan,
     Plugin,
     CompilePlan,
+    CompileCacheCheck,
     CompileExecute,
     CompileCacheFinish,
     Archive,
@@ -149,6 +150,7 @@ auto build_stage_label(BuildStage stage) noexcept -> ref<str> {
     case BuildStage::Scan: return "build.scan"_str;
     case BuildStage::Plugin: return "build.plugin"_str;
     case BuildStage::CompilePlan: return "build.compile-plan"_str;
+    case BuildStage::CompileCacheCheck: return "build.compile-cache-check"_str;
     case BuildStage::CompileExecute: return "build.compile-execute"_str;
     case BuildStage::CompileCacheFinish: return "build.compile-cache-finish"_str;
     case BuildStage::Archive: return "build.archive"_str;
@@ -245,11 +247,55 @@ class BuildStageTimingReport {
 
     array<BuildOperationTiming, STAGE_COUNT> timings_;
 
+public:
+    class Scope;
+
+private:
+    Scope* active_ {};
+
     static auto index(BuildStage stage) noexcept -> usize {
         return usize(static_cast<rstd::size_t>(stage));
     }
 
 public:
+    class Scope {
+        BuildStageTimingReport* report_;
+        Scope*                  parent_;
+        BuildStage              stage_;
+        rstd::time::Instant     started_ { rstd::time::Instant::now() };
+        rstd::time::Duration    children_;
+
+    public:
+        Scope(BuildStageTimingReport& report, BuildStage stage)
+            : report_(&report), parent_(report.active_), stage_(stage) {
+            report.active_ = this;
+        }
+        Scope(const Scope&) = delete;
+        Scope(Scope&& other) noexcept
+            : report_(other.report_),
+              parent_(other.parent_),
+              stage_(other.stage_),
+              started_(other.started_),
+              children_(other.children_) {
+            if (report_ != nullptr) report_->active_ = this;
+            other.report_ = nullptr;
+        }
+        ~Scope() { finish(); }
+
+        void finish(rstd::time::Duration elapsed) noexcept {
+            if (report_ == nullptr) return;
+            if (report_->active_ != this || elapsed < children_)
+                rstd::panic { "build timing scopes must finish in nesting order" };
+            report_->record(stage_, elapsed.saturating_sub(children_));
+            if (parent_ != nullptr) parent_->children_ = parent_->children_.saturating_add(elapsed);
+            report_->active_ = parent_;
+            report_          = nullptr;
+        }
+        void finish() noexcept { finish(started_.elapsed()); }
+    };
+
+    auto scope(BuildStage stage) -> Scope { return Scope(*this, stage); }
+
     void record(BuildStage stage, rstd::time::Duration elapsed) noexcept {
         if (stage == BuildStage::Count) return;
         auto& timing = timings_[index(stage)];
@@ -259,9 +305,8 @@ public:
 
     template<typename F>
     auto measure(BuildStage stage, F&& function) -> decltype(function()) {
-        auto started = rstd::time::Instant::now();
-        auto result  = function();
-        record(stage, started.elapsed());
+        auto measured = scope(stage);
+        auto result   = function();
         return result;
     }
 
@@ -282,27 +327,81 @@ public:
     }
 };
 
-struct CompileExecutionStatistics {
+struct CompileCacheCheckStatistics {
+    usize                batches {};
+    usize                evaluations {};
+    usize                hits {};
+    usize                misses {};
     usize                jobs {};
     usize                max_in_flight {};
-    usize                tasks {};
-    usize                reused {};
-    usize                failed {};
-    usize                blocked {};
     usize                max_active {};
-    usize                plan_nodes {};
-    usize                plan_retained_bytes {};
-    usize                plan_invocation_bytes {};
-    usize                plan_dependency_bytes {};
-    usize                documentation_units {};
-    usize                documentation_retained_bytes {};
-    usize                cache_evaluations {};
-    usize                cache_retained_bytes_peak {};
-    rstd::time::Duration ready_wait;
-    rstd::time::Duration completion_wait;
+    rstd::time::Duration wall;
     rstd::time::Duration task_work;
     rstd::time::Duration coordinator_work;
-    rstd::time::Duration wall;
+
+    void merge(const CompileCacheCheckStatistics& other) {
+        batches += other.batches;
+        evaluations += other.evaluations;
+        hits += other.hits;
+        misses += other.misses;
+        if (other.jobs > jobs) jobs = other.jobs;
+        if (other.max_in_flight > max_in_flight) max_in_flight = other.max_in_flight;
+        if (other.max_active > max_active) max_active = other.max_active;
+        wall             = wall.saturating_add(other.wall);
+        task_work        = task_work.saturating_add(other.task_work);
+        coordinator_work = coordinator_work.saturating_add(other.coordinator_work);
+    }
+};
+
+struct CompileExecutionStatistics {
+    CompileCacheCheckStatistics cache_check;
+    usize                       jobs {};
+    usize                       max_in_flight {};
+    usize                       tasks {};
+    usize                       reused {};
+    usize                       failed {};
+    usize                       blocked {};
+    usize                       max_active {};
+    usize                       plan_nodes {};
+    usize                       plan_retained_bytes {};
+    usize                       plan_invocation_bytes {};
+    usize                       plan_dependency_bytes {};
+    usize                       documentation_units {};
+    usize                       documentation_retained_bytes {};
+    usize                       cache_evaluations {};
+    usize                       cache_retained_bytes_peak {};
+    rstd::time::Duration        ready_wait;
+    rstd::time::Duration        completion_wait;
+    rstd::time::Duration        task_work;
+    rstd::time::Duration        coordinator_work;
+    rstd::time::Duration        wall;
+
+    void merge(const CompileExecutionStatistics& other) {
+        cache_check.merge(other.cache_check);
+        tasks += other.tasks;
+        reused += other.reused;
+        failed += other.failed;
+        blocked += other.blocked;
+        cache_evaluations = cache_check.evaluations;
+        auto peak         = [](usize& value, usize candidate) {
+            if (candidate > value) value = candidate;
+        };
+        peak(jobs, other.jobs);
+        peak(max_in_flight, other.max_in_flight);
+        peak(max_active, other.max_active);
+        peak(plan_nodes, other.plan_nodes);
+        peak(plan_retained_bytes, other.plan_retained_bytes);
+        peak(plan_invocation_bytes, other.plan_invocation_bytes);
+        peak(plan_dependency_bytes, other.plan_dependency_bytes);
+        peak(documentation_units, other.documentation_units);
+        peak(documentation_retained_bytes, other.documentation_retained_bytes);
+        peak(cache_retained_bytes_peak, other.cache_retained_bytes_peak);
+        ready_wait       = ready_wait.saturating_add(other.ready_wait);
+        completion_wait  = completion_wait.saturating_add(other.completion_wait);
+        task_work        = task_work.saturating_add(other.task_work);
+        coordinator_work = coordinator_work.saturating_add(other.coordinator_work);
+        wall             = wall.saturating_add(other.wall);
+    }
 };
 
 class BuildTimingReport {

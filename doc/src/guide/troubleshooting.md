@@ -30,6 +30,16 @@ set `toolchain.stdlib` explicitly.
 host capability unnecessary. Missing tools that are unrelated to the selected action are not
 errors and are not listed in the default output.
 
+## Delay after scanning
+
+After scanning, `cache-check` validates existing object files and BMIs before compilation starts.
+It reads their complete contents, so large debug artifacts or slow storage can make even an
+unchanged build take time. Use `--timing-file FILE` to inspect cache-check wall time, worker totals,
+hits and misses. `-j N` also bounds these checks; it does not weaken their content validation.
+
+Scan timings exclude shared host-tool compilation and generator execution. The build stage table
+uses exclusive wall time; nested/parallel totals are diagnostic and are not additional elapsed time.
+
 ## Module source cannot be resolved
 
 Check all three identities together:

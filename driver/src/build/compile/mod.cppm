@@ -1,4 +1,5 @@
 export module lito.driver:build.compile;
+export import :build.compile.cache_check;
 
 import rstd;
 import lito.core;

@@ -33,6 +33,7 @@ target_sources(
          src/build/artifact/processor/mod.cppm
          src/build/artifact/processor/error.cppm
          src/build/compile/mod.cppm
+         src/build/compile/cache_check.cppm
          src/build/documentation.cppm
          src/build/discovery/mod.cppm
          src/build/error.cppm
@@ -68,6 +69,7 @@ target_sources(
          src/command/install.cppm
          src/command/lock.cppm
          src/command/reporting.cppm
+         src/command/progress.cppm
          src/command/scan.cppm
          src/command/tree.cppm
          src/command/test.cppm

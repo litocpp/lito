@@ -609,7 +609,8 @@ public:
                        ClangCompileExecutor                 compile,
                        const Option<BuildEventSink>&        observer,
                        ResolvedCompileExecution             policy,
-                       CompileProgressTracker& progress) -> BuildResult<CompileActionSession> {
+                       CompileProgressTracker&              progress,
+                       BuildStageTimingReport& stage_timing) -> BuildResult<CompileActionSession> {
         if (selection.len() != plan.nodes.len() || object_identities.len() != plan.nodes.len()) {
             return Err(
                 BuildError::Message("compile action session inputs have inconsistent lengths"_Str));
@@ -622,62 +623,95 @@ public:
         auto capacity =
             policy.max_in_flight < selected_nodes ? policy.max_in_flight : selected_nodes;
         if (capacity == usize {}) capacity = usize(1);
-        auto created = CompileExecutor::create(jobs, capacity);
-        if (created.is_err()) return Err(rstd::move(created).unwrap_err());
         auto result = CompileActionSessionResult {
             .compile_tests = Vec<CompileTestExecution>::make(),
         };
         auto retained                           = compile_plan_retained_bytes(plan);
         result.statistics.jobs                  = jobs;
         result.statistics.max_in_flight         = capacity;
-        result.statistics.plan_nodes            = selected_nodes;
+        result.statistics.plan_nodes            = plan.nodes.len();
         result.statistics.plan_retained_bytes   = retained.total;
         result.statistics.plan_invocation_bytes = retained.invocations;
         result.statistics.plan_dependency_bytes = retained.dependencies;
-        auto decisions = Vec<Option<CacheDecision>>::with_capacity(plan.nodes.len());
-        auto tests     = Vec<Option<CompileTestExecution>>::with_capacity(plan.nodes.len());
+        auto tests  = Vec<Option<CompileTestExecution>>::with_capacity(plan.nodes.len());
+        auto checks = Vec<usize>::make();
         for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
-            decisions.emplace_back();
             tests.emplace_back();
-        }
-        auto cache_retained = usize {};
-        for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
             if (selection[unit] == u8 {}) continue;
             if (plan.nodes[unit].completed) continue;
             if (plan.nodes[unit].invocation.is_none()) {
                 return Err(BuildError::Message(
                     "compile action session contains an invocation that was already consumed"_Str));
             }
-            auto started = rstd::time::Instant::now();
-            auto target  = cpp::project_target(units[unit].unit);
-            auto target_identity =
-                target.is_some()
-                    ? lito::package::package_target_id_text(package.targets[*target].id)
-                    : rstd::format(
-                          "standard-library::{}",
-                          units[unit].unit.owner.as_StandardLibrary().module.logical_name.as_str());
-            auto decision = cache.evaluate(target_identity.as_str(),
-                                           units[unit],
-                                           units[unit].source_content_identity.as_str(),
-                                           *plan.nodes[unit].invocation,
-                                           plan.nodes[unit].dependencies);
-            result.statistics.coordinator_work =
-                result.statistics.coordinator_work.saturating_add(started.elapsed());
-            if (decision.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
-            }
-            ++result.statistics.cache_evaluations;
-            cache_retained += decision->retained_bytes();
-            if (cache_retained > result.statistics.cache_retained_bytes_peak) {
-                result.statistics.cache_retained_bytes_peak = cache_retained;
-            }
+            checks.emplace_back(unit);
+        }
+        auto check_scope = stage_timing.scope(BuildStage::CompileCacheCheck);
+        auto checked     = check_compile_cache_tasks<CacheDecision>(
+            checks.as_slice(),
+            plan.nodes.len(),
+            policy.jobs,
+            policy.max_in_flight,
+            [&](usize unit) -> BuildResult<CacheDecision> {
+                auto target = cpp::project_target(units[unit].unit);
+                auto target_identity =
+                    target.is_some()
+                        ? lito::package::package_target_id_text(package.targets[*target].id)
+                        : rstd::format("standard-library::{}",
+                                       units[unit]
+                                           .unit.owner.as_StandardLibrary()
+                                           .module.logical_name.as_str());
+                auto decision = cache.evaluate(target_identity.as_str(),
+                                               units[unit],
+                                               units[unit].source_content_identity.as_str(),
+                                               *plan.nodes[unit].invocation,
+                                               plan.nodes[unit].dependencies);
+                if (decision.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
+                }
+                return Ok(rstd::move(decision).unwrap());
+            },
+            [&](usize                completed,
+                bool                 finished,
+                bool                 failed,
+                rstd::time::Duration elapsed,
+                Option<usize>        checked_unit) {
+                if (observer.is_none() || observer->notify == nullptr) return;
+                auto name = package.name.clone();
+                auto path = cache.output_root();
+                if (checked_unit.is_some()) {
+                    auto target = cpp::project_target(units[*checked_unit].unit);
+                    name = target.is_some()
+                               ? lito::package::package_target_id_text(package.targets[*target].id)
+                               : "standard-library"_Str;
+                    path = units[*checked_unit].unit.source.as_path();
+                }
+                observer->notify(observer->context,
+                                 BuildEvent {
+                                     .kind      = BuildEventKind::CacheCheck,
+                                     .target    = name.as_str(),
+                                     .path      = path,
+                                     .elapsed   = elapsed,
+                                     .completed = finished,
+                                     .progress  = Some(BuildProgress { completed, checks.len() }),
+                                     .failed    = failed,
+                                 });
+            });
+        if (checked.is_err()) return Err(rstd::move(checked).unwrap_err());
+        check_scope.finish();
+        result.statistics.cache_check       = checked->statistics;
+        result.statistics.cache_evaluations = checked->statistics.evaluations;
+        auto decisions                      = rstd::move(checked->decisions);
+        for (auto unit : checks) {
+            const auto& decision = *decisions[unit];
+            result.statistics.cache_retained_bytes_peak += decision.retained_bytes();
             const auto* test = units[unit].unit.compile_test;
-            if (! decision->current() ||
+            if (! decision.current() ||
                 (test != nullptr && test->outcome != lito::manifest::CompileTestOutcome::Success)) {
                 progress.include(unit, plan.nodes.len());
             }
-            decisions[unit] = Some(rstd::move(decision).unwrap());
         }
+        auto created = CompileExecutor::create(jobs, capacity);
+        if (created.is_err()) return Err(rstd::move(created).unwrap_err());
         return Ok(CompileActionSession(package,
                                        units,
                                        plan,
@@ -874,7 +908,8 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
                                     CompileCacheSession&                cache,
                                     ClangCompileExecutor                compile,
                                     const Option<BuildEventSink>&       observer,
-                                    ResolvedCompileExecution            policy)
+                                    ResolvedCompileExecution            policy,
+                                    BuildStageTimingReport&             stage_timing)
     -> BuildResult<CompileExecutionResult> {
     if (selection.len() != plan.nodes.len() || object_identities.len() != plan.nodes.len()) {
         return Err(BuildError::Message("compile selection inputs have inconsistent lengths"_Str));
@@ -906,9 +941,11 @@ auto execute_compile_plan_selection(const cpp::PackageSpec&             package,
                                                        compile,
                                                        observer,
                                                        policy,
-                                                       progress);
+                                                       progress,
+                                                       stage_timing);
     if (session_result.is_err()) return Err(rstd::move(session_result).unwrap_err());
-    auto session = rstd::move(session_result).unwrap();
+    auto session       = rstd::move(session_result).unwrap();
+    auto execute_scope = stage_timing.scope(BuildStage::CompileExecute);
 
     auto runtime    = Vec<CompileNodeRuntime>::with_capacity(plan.nodes.len());
     auto errors     = Vec<Option<BuildError>>::with_capacity(plan.nodes.len());
@@ -1007,15 +1044,25 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
                           CompileCacheSession&          cache,
                           ClangCompileExecutor          compile,
                           const Option<BuildEventSink>& observer,
-                          ResolvedCompileExecution policy) -> BuildResult<CompileExecutionResult> {
+                          ResolvedCompileExecution      policy,
+                          BuildStageTimingReport&       stage_timing)
+    -> BuildResult<CompileExecutionResult> {
     auto selection  = Vec<u8>::with_capacity(plan.nodes.len());
     auto identities = Vec<Option<CachedArtifactIdentity>>::with_capacity(plan.nodes.len());
     for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
         selection.push(u8(1));
         identities.emplace_back();
     }
-    return execute_compile_plan_selection(
-        package, units, plan, selection, rstd::move(identities), cache, compile, observer, policy);
+    return execute_compile_plan_selection(package,
+                                          units,
+                                          plan,
+                                          selection,
+                                          rstd::move(identities),
+                                          cache,
+                                          compile,
+                                          observer,
+                                          policy,
+                                          stage_timing);
 }
 
 } // namespace lito

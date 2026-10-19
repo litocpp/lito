@@ -628,6 +628,99 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
     EXPECT_TRUE(summary->documentation_units.is_empty());
 }
 
+TEST_F(BuildCommand, CacheChecksPreserveOutputIntegrityAndReuse) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "cache-output-check"
+version = "0.1.0"
+[[bin]]
+name = "cache-output-check"
+link-stdlib = false
+sources = ["value.cppm", "main.cpp"]
+)toml"_str },
+        { "value.cppm"_str, "export module value; export int answer() { return 42; }\n"_str },
+        { "main.cpp"_str, "import value; int main() { return answer() == 42 ? 0 : 1; }\n"_str },
+    };
+    auto project = materialize("cache-output-check"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("cache-output-check"_str);
+    auto request =
+        build_request(project->root.as_path(), output.as_path(), strings("cache-output-check"_str));
+    auto cold = lito::build(request);
+    ASSERT_TRUE(cold.is_ok());
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+    EXPECT_EQ(warm->compile_execution.cache_check.hits, warm->reused);
+    EXPECT_EQ(warm->compile_execution.cache_check.evaluations, warm->reused);
+    EXPECT_TRUE(warm->stage_timing.attributed() <=
+                warm->stage_timing.timing(lito::BuildStage::Total).total);
+    auto paths   = Vec<PathBuf>::make();
+    auto collect = [&](auto&& self, ref<rstd::path::Path> directory) -> bool {
+        auto opened = rstd::fs::read_dir(directory);
+        if (opened.is_err()) return false;
+        auto entries = rstd::move(opened).unwrap();
+        for (auto next = entries.next(); next.is_some(); next = entries.next()) {
+            auto item = rstd::move(next).unwrap();
+            if (item.is_err()) return false;
+            auto entry = rstd::move(item).unwrap();
+            auto type  = entry.file_type();
+            if (type.is_err()) return false;
+            if (type->is_dir()) {
+                if (! self(self, entry.path().as_path())) return false;
+            } else if (type->is_file())
+                paths.push(entry.path());
+        }
+        return true;
+    };
+    ASSERT_TRUE(collect(collect, output.as_path()));
+    constexpr ref<str> suffixes[] = { ".o"_str, ".pcm"_str };
+    for (auto suffix : suffixes) {
+        auto found = false;
+        for (const auto& path : paths) {
+            auto name = path.as_path().to_str();
+            if (name.is_none() || ! name->ends_with(suffix)) continue;
+            auto bytes = rstd::fs::read(path.as_path());
+            ASSERT_TRUE(bytes.is_ok());
+            ASSERT_FALSE(bytes->is_empty());
+            (*bytes)[usize {}] = (*bytes)[usize {}] ^ u8(1);
+            ASSERT_TRUE(rstd::fs::write(path.as_path(), bytes->as_slice()).is_ok());
+            auto repaired = lito::build(request);
+            ASSERT_TRUE(repaired.is_ok());
+            EXPECT_TRUE(repaired->compiled > usize {});
+            EXPECT_TRUE(repaired->compile_execution.cache_check.misses > usize {});
+            auto reused = lito::build(request);
+            ASSERT_TRUE(reused.is_ok());
+            EXPECT_EQ(reused->compiled, usize {});
+            ASSERT_TRUE(rstd::fs::remove_file(path.as_path()).is_ok());
+            auto missing = lito::build(request);
+            ASSERT_TRUE(missing.is_ok());
+            EXPECT_TRUE(missing->compiled > usize {});
+            found = true;
+            break;
+        }
+        EXPECT_TRUE(found);
+    }
+    auto layout = lito::BuildLayout::create(project->root.as_path(), output.as_path(), "debug"_str);
+    ASSERT_TRUE(layout.is_ok());
+    auto target = lito::package::PackageTargetId {
+        .package = "cache-output-check"_Str,
+        .kind    = lito::package::PackageTargetKind::Binary,
+        .name    = "cache-output-check"_Str,
+    };
+    auto receipt = layout->cache_unit(target, PathBuf::from("main.cpp"_str).as_path());
+    ASSERT_TRUE(receipt.is_ok());
+    auto receipt_exists = rstd::fs::exists(receipt->as_path());
+    ASSERT_TRUE(receipt_exists.is_ok() && *receipt_exists);
+    ASSERT_TRUE(rstd::fs::write(receipt->as_path(), "{invalid"_str.as_bytes()).is_ok());
+    auto repaired_receipt = lito::build(request);
+    ASSERT_TRUE(repaired_receipt.is_ok());
+    EXPECT_EQ(repaired_receipt->compiled, usize(1));
+    auto after_receipt = lito::build(request);
+    ASSERT_TRUE(after_receipt.is_ok());
+    EXPECT_EQ(after_receipt->compiled, usize {});
+}
+
 TEST_F(BuildCommand, InstallLinkVariantReusesObjectsAndHasAnIndependentReceipt) {
 #if RSTD_OS_WINDOWS
     GTEST_SKIP() << "ELF runpath link variants are not available for PE/COFF targets";
