@@ -1,3 +1,16 @@
+<release version="0.8.7" date="2026-10-20">
+  <description>
+    <ul>
+      <li>Share compatible host-tool build environments.</li>
+      <li>Support host-tool-generated modules.</li>
+      <li>Parallelize compile-cache checks.</li>
+      <li>Report scan progress by package.</li>
+      <li>Correct build timing.</li>
+      <li>Fix compiler plugin builds.</li>
+      <li>Update rstd to 0.1.9.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.6" date="2026-10-14">
   <description>
     <ul>

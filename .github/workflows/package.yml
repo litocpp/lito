@@ -116,24 +116,52 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install LLVM 22
+      - name: Install LLVM 23
         shell: pwsh
         env:
-          LLVM_VERSION: 22.1.8
+          LLVM_VERSION: 23.1.4
         run: |
-          $installer = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION-win64.exe"
+          $installerName = "LLVM-$env:LLVM_VERSION-win64.msi"
+          $installer = Join-Path $env:RUNNER_TEMP $installerName
           $installDir = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION"
-          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.exe"
+          $installLog = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION-install.log"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$installerName"
 
+          Write-Host "Downloading LLVM $env:LLVM_VERSION from $url"
           curl.exe --fail --location --retry 3 $url --output $installer
-          $process = Start-Process -FilePath $installer -ArgumentList "/S", "/D=$installDir" -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            throw "LLVM installer failed with exit code $($process.ExitCode)"
+          if ($LASTEXITCODE -ne 0) {
+            throw "LLVM download failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "Download complete: $installer"
+          Write-Host "Installing LLVM silently to $installDir"
+          Write-Host "MSI log: $installLog"
+          $arguments = @(
+            "/i", "`"$installer`"",
+            "/qn", "/norestart",
+            "INSTALL_ROOT=`"$installDir`"",
+            "/L*v", "`"$installLog`""
+          )
+          $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            if (Test-Path -LiteralPath $installLog) {
+              Get-Content -LiteralPath $installLog -Tail 80
+            }
+            throw "LLVM MSI installation failed with exit code $($process.ExitCode)"
+          }
+          if ($process.ExitCode -eq 3010) {
+            Write-Host "LLVM installed; Windows requested a restart, which was suppressed"
           }
 
+          Write-Host "Installation complete"
           $llvmBin = Join-Path $installDir "bin"
+          $compiler = Join-Path $llvmBin "clang++.exe"
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+            throw "LLVM installation did not create $compiler"
+          }
+          Write-Host "Adding LLVM to PATH: $llvmBin"
           $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          & (Join-Path $llvmBin "clang++.exe") --version
+          Write-Host "Checking Clang version"
+          & $compiler --version
 
       - name: Configure
         shell: pwsh

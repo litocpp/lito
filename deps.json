@@ -2,8 +2,8 @@
   "rstd": {
     "owner": "litocpp",
     "repo": "rstd",
-    "rev": "0c755371a02ccee658fa6d63728b6078cb2f9070",
-    "narHash": "sha256-JqwAOvqQYzh1v9FlA4Spuab7I6gOu/f3uiVFXiwZS0E="
+    "rev": "9cf950ecccb50b480ddeb51b7bcdf3b2141c9d89",
+    "narHash": "sha256-oNSNNcVVnniJqsmMBYMuBJ2s24jwDK6qtKoDHFVLG2Q="
   },
   "luato": {
     "owner": "litocpp",
