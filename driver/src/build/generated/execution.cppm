@@ -306,14 +306,16 @@ auto ToolActionSession::current_action_dependencies(const RegisteredAction& acti
                                             rstd::move(canonical).unwrap_err()));
         }
         auto metadata = rstd::fs::symlink_metadata(canonical->as_path());
-        if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
+        if (metadata.is_err() || metadata->is_symlink() ||
+            (! metadata->is_file() && ! metadata->is_dir())) {
             return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
-                canonical->clone(), "path is not a regular file"_Str)));
+                canonical->clone(), "path is not a regular file or directory"_Str)));
         }
+        auto kind = metadata->is_dir() ? ActionDependencyKind::Tree : ActionDependencyKind::File;
         result.push(ActionDependency {
             .path   = rstd::move(canonical).unwrap(),
-            .kind   = ActionDependencyKind::File,
-            .digest = rstd_try(action_file_digest(input.path.as_path())),
+            .kind   = kind,
+            .digest = rstd_try(action_dependency_digest(input.path.as_path(), kind)),
         });
     }
     return Ok(rstd::move(result));
@@ -530,12 +532,11 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
                                         PathBuf::from(lock_path.as_path()),
                                         rstd::move(locked).unwrap_err()));
     }
-    auto reusable = rstd_try(
-        action_receipt_matches(receipt.as_path(),
-                               action.identity.as_str(),
-                               action.outputs,
-                               ! action.inputs.is_empty() || action.depfile_output.is_some(),
-                               generated_root.as_path()));
+    auto reusable = rstd_try(action_receipt_matches(receipt.as_path(),
+                                                    action.identity.as_str(),
+                                                    action.outputs,
+                                                    ! action.inputs.is_empty(),
+                                                    generated_root.as_path()));
     if (reusable) {
         emit(BuildEventKind::BuildToolRunReuse,
              action.label.as_str(),
@@ -607,8 +608,28 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
 
     auto actual_outputs = Vec<PathBuf>::make();
     rstd_try(collect_action_outputs(staging.as_path(), staging.as_path(), actual_outputs));
-    auto       expected_outputs = action.outputs.clone();
-    const auto order            = [](const PathBuf& left, const PathBuf& right) {
+    if (action.tool.is_some() && action.tool->target.is_some())
+        for (const auto& file : actual_outputs)
+            if (inferred_generated_output_kind(file.as_path().to_string_lossy().as_str()) ==
+                GeneratedOutputKind::Header)
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+                    file.clone(), "package host-tool output cannot be a generated header"_Str)));
+    auto expected_outputs = Vec<PathBuf>::make();
+    for (const auto& output : action.outputs) {
+        auto directory = false;
+        for (const auto& tree : action.directory_outputs)
+            directory = directory || tree.as_path() == output.as_path();
+        if (directory) {
+            auto path     = staging.join(output.as_path());
+            auto metadata = rstd::fs::symlink_metadata(path.as_path());
+            if (metadata.is_err() || ! metadata->is_dir() || metadata->is_symlink())
+                return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidOutput(
+                    path.clone(), "declared directory was not produced"_Str)));
+            rstd_try(collect_action_outputs(staging.as_path(), path.as_path(), expected_outputs));
+        } else
+            expected_outputs.push(output.clone());
+    }
+    const auto order = [](const PathBuf& left, const PathBuf& right) {
         return left.as_path().to_string_lossy() < right.as_path().to_string_lossy();
     };
     rstd::slice_::sort_unstable_by(actual_outputs.as_mut_slice().as_mut_ref(), order);
@@ -648,7 +669,78 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
     auto digests = Vec<String>::make();
     for (const auto& output : action.outputs) {
         auto staged_output = staging.join(output.as_path());
-        auto bytes         = rstd::fs::read(staged_output.as_path());
+        auto directory     = false;
+        for (const auto& tree : action.directory_outputs)
+            directory = directory || tree.as_path() == output.as_path();
+        if (directory) {
+            auto digest    = rstd_try(action_output_digest(staged_output.as_path()));
+            auto final     = generated_root.join(output.as_path());
+            auto unchanged = action_output_digest(final.as_path());
+            if (unchanged.is_ok() && *unchanged == digest) {
+                digests.push(rstd::move(digest));
+                continue;
+            }
+            auto previous = action_root.join("previous"_str).join(output.as_path());
+            auto checked  = [&](auto                  result,
+                                ref<str>              operation,
+                                ref<rstd::path::Path> path) -> BuildScriptResult<empty> {
+                if (result.is_err())
+                    return Err(BuildScriptError::Io(String::make(operation),
+                                                    PathBuf::from(path),
+                                                    rstd::move(result).unwrap_err()));
+                return Ok(empty {});
+            };
+            rstd_try(checked(rstd::fs::create_dir_all(final.as_path().parent().unwrap()),
+                             "create output parent"_str,
+                             final.as_path()));
+            rstd_try(checked(rstd::fs::create_dir_all(previous.as_path().parent().unwrap()),
+                             "create previous output parent"_str,
+                             previous.as_path()));
+            auto exists = rstd::fs::exists(previous.as_path());
+            if (exists.is_err())
+                return Err(BuildScriptError::Io("inspect previous output"_Str,
+                                                previous.clone(),
+                                                rstd::move(exists).unwrap_err()));
+            if (*exists) {
+                auto current = rstd::fs::exists(final.as_path());
+                if (current.is_err())
+                    return Err(BuildScriptError::Io(
+                        "inspect output"_Str, final.clone(), rstd::move(current).unwrap_err()));
+                if (! *current)
+                    rstd_try(checked(rstd::fs::rename(previous.as_path(), final.as_path()),
+                                     "restore previous output"_str,
+                                     final.as_path()));
+                else
+                    rstd_try(checked(rstd::fs::remove_dir_all(previous.as_path()),
+                                     "clear previous output"_str,
+                                     previous.as_path()));
+            }
+            auto current = rstd::fs::exists(final.as_path());
+            if (current.is_err())
+                return Err(BuildScriptError::Io(
+                    "inspect output"_Str, final.clone(), rstd::move(current).unwrap_err()));
+            if (*current)
+                rstd_try(checked(rstd::fs::rename(final.as_path(), previous.as_path()),
+                                 "retain previous output"_str,
+                                 final.as_path()));
+            auto published = rstd::fs::rename(staged_output.as_path(), final.as_path());
+            if (published.is_err()) {
+                if (*current)
+                    rstd_try(checked(rstd::fs::rename(previous.as_path(), final.as_path()),
+                                     "restore previous output"_str,
+                                     final.as_path()));
+                return Err(BuildScriptError::Io("publish output directory"_Str,
+                                                final.clone(),
+                                                rstd::move(published).unwrap_err()));
+            }
+            if (*current)
+                rstd_try(checked(rstd::fs::remove_dir_all(previous.as_path()),
+                                 "clear previous output"_str,
+                                 previous.as_path()));
+            digests.push(rstd::move(digest));
+            continue;
+        }
+        auto bytes = rstd::fs::read(staged_output.as_path());
         if (bytes.is_err()) {
             return Err(BuildScriptError::Io("read staged build-tool output"_Str,
                                             PathBuf::from(staged_output.as_path()),
@@ -669,7 +761,7 @@ auto ToolActionSession::execute_action(const RegisteredAction& action) const
                                                   PathBuf::from(final.as_path()),
                                                   rstd::move(written).unwrap_err())));
         }
-        digests.push(licrypto::sha256_hex(bytes->as_slice()));
+        digests.push(rstd_try(action_output_digest(final.as_path())));
     }
     auto receipt_text =
         action_receipt_text(action.identity.as_str(), action.outputs, digests, dependencies);

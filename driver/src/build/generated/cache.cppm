@@ -67,20 +67,63 @@ auto action_directory_digest(ref<rstd::path::Path> path) -> BuildScriptResult<St
     return Ok(licrypto::sha256_hex(identity.as_str()));
 }
 
+auto action_output_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String> {
+    auto metadata = rstd::fs::symlink_metadata(path);
+    if (metadata.is_err())
+        return Err(BuildScriptError::Io(
+            "inspect action output"_Str, PathBuf::from(path), rstd::move(metadata).unwrap_err()));
+    if (metadata->is_symlink() || (! metadata->is_file() && ! metadata->is_dir()))
+        return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
+            PathBuf::from(path), "expected a regular file or directory"_Str)));
+    if (metadata->is_file()) {
+        auto digest = rstd_try(action_file_digest(path));
+        return Ok(licrypto::sha256_hex(rstd::format("build-tool-file-v1\n{}", digest).as_str()));
+    }
+    auto opened = rstd::fs::read_dir(path);
+    if (opened.is_err())
+        return Err(BuildScriptError::Io(
+            "enumerate action output"_Str, PathBuf::from(path), rstd::move(opened).unwrap_err()));
+    auto entries = rstd::move(opened).unwrap();
+    auto records = Vec<String>::make();
+    for (auto item : entries) {
+        if (item.is_err())
+            return Err(BuildScriptError::Io(
+                "enumerate action output"_Str, PathBuf::from(path), rstd::move(item).unwrap_err()));
+        auto entry = rstd::move(item).unwrap();
+        auto name  = entry.file_name();
+        auto text  = name.as_os_str().to_str();
+        if (text.is_none())
+            return Err(BuildScriptError::Message("generated tree path must be UTF-8"_Str));
+        auto digest = rstd_try(action_output_digest(entry.path().as_path()));
+        records.push(rstd::format("{}:{}:{}", text->len(), *text, digest));
+    }
+    rstd::slice_::sort_unstable(records.as_mut_slice().as_mut_ref());
+    auto identity = "build-tool-tree-v1\n"_Str;
+    for (const auto& record : records) {
+        identity.push_str(record.as_str());
+        identity.push_ascii('\n');
+    }
+    return Ok(licrypto::sha256_hex(identity.as_str()));
+}
+
 enum class ActionDependencyKind
 {
     File,
     Directory,
+    Tree,
 };
 
 auto action_dependency_kind_name(ActionDependencyKind kind) noexcept -> ref<str> {
-    return kind == ActionDependencyKind::File ? "file"_str : "directory"_str;
+    return kind == ActionDependencyKind::File        ? "file"_str
+           : kind == ActionDependencyKind::Directory ? "directory"_str
+                                                     : "tree"_str;
 }
 
 auto action_dependency_digest(ref<rstd::path::Path> path, ActionDependencyKind kind)
     -> BuildScriptResult<String> {
-    return kind == ActionDependencyKind::File ? action_file_digest(path)
-                                              : action_directory_digest(path);
+    return kind == ActionDependencyKind::File        ? action_file_digest(path)
+           : kind == ActionDependencyKind::Directory ? action_directory_digest(path)
+                                                     : action_output_digest(path);
 }
 
 struct ActionDependency {
@@ -222,12 +265,12 @@ auto action_receipt_matches(ref<rstd::path::Path> receipt,
             return Ok(false);
         }
         auto final  = PathBuf::from(generated_root).join(outputs[index].as_path());
-        auto actual = action_file_digest(final.as_path());
+        auto actual = action_output_digest(final.as_path());
         if (actual.is_err() || actual->as_str() != *(**digest).as_str()) return Ok(false);
     }
     auto recorded_dependencies = parsed->get("dependencies"_str);
     if (recorded_dependencies.is_none() || (**recorded_dependencies).as_array().is_none()) {
-        return Ok(! expects_dependencies);
+        return Ok(false);
     }
     const auto& dependencies = **(**recorded_dependencies).as_array();
     if (expects_dependencies && dependencies.is_empty()) return Ok(false);
@@ -242,6 +285,8 @@ auto action_receipt_matches(ref<rstd::path::Path> receipt,
         auto dependency_kind = ActionDependencyKind::File;
         if (*(**kind).as_str() == "directory"_str)
             dependency_kind = ActionDependencyKind::Directory;
+        else if (*(**kind).as_str() == "tree"_str)
+            dependency_kind = ActionDependencyKind::Tree;
         else if (*(**kind).as_str() != "file"_str)
             return Ok(false);
         auto dependency_path = PathBuf::from(String::make(*(**path).as_str()));

@@ -79,13 +79,23 @@ auto script_output(const luato::Value& value, ref<str> context, usize index)
         return script_request_failure<DeclaredActionOutput>(
             rstd::format("{}[{}] must be a string or output table", context, index + usize(1)));
     const auto& table = *value.as_Table().value;
-    rstd_try(script_fields(table, { "path"_str, "source"_str }));
+    rstd_try(script_fields(table, { "path"_str, "source"_str, "directory"_str }));
     auto path = rstd_try(script_field(table.required<String>("path"_str)));
     auto kind = inferred_generated_output_kind(path.as_str());
     if (table.contains("source"_str))
         kind = rstd_try(script_field(table.required<bool>("source"_str)))
                    ? GeneratedOutputKind::Source
                    : GeneratedOutputKind::Other;
+    if (table.contains("directory"_str) &&
+        rstd_try(script_field(table.required<bool>("directory"_str)))) {
+        if (context != "lito.run.outputs"_str)
+            return script_request_failure<DeclaredActionOutput>(
+                "directory outputs require lito.run"_Str);
+        if (table.contains("source"_str))
+            return script_request_failure<DeclaredActionOutput>(
+                "directory output cannot specify source"_Str);
+        kind = GeneratedOutputKind::Directory;
+    }
     return Ok(DeclaredActionOutput { rstd::move(path), kind });
 }
 
@@ -202,7 +212,7 @@ auto parse_run_request(const luato::Table& table, const Option<String>& fallback
     auto package        = rstd_try(script_package(table, fallback, "lito.run"_str));
     auto cwd            = rstd_try(script_field(table.required<String>("cwd"_str)));
     auto args           = rstd_try(script_array(table, "args"_str, true));
-    auto inputs         = rstd_try(script_array(table, "inputs"_str, true));
+    auto inputs         = rstd_try(script_array(table, "inputs"_str, false));
     auto outputs        = rstd_try(script_array(table, "outputs"_str, true));
     auto tools          = rstd_try(script_array(table, "tools"_str, false));
     auto roots          = rstd_try(script_array(table, "input_roots"_str, false));

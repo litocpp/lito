@@ -44,7 +44,24 @@ public:
         -> BuildScriptResult<empty> {
         auto key = String::make(package);
         key.push_ascii('\n');
-        key.push_str(relative.to_string_lossy().as_str());
+        auto components = relative.components();
+        bool first      = true;
+        for (auto component : components) {
+            if (! first) key.push_ascii('/');
+            first = false;
+            key.push_str(component.as_os_str().to_string_lossy().as_str());
+        }
+        auto child_prefix = rstd::format("{}/", key);
+        for (auto [claimed, claimed_owner] : owners_.iter()) {
+            auto parent_prefix = rstd::format("{}/", *claimed);
+            if (claimed->as_str().starts_with(child_prefix.as_str()) ||
+                key.as_str().starts_with(parent_prefix.as_str()))
+                return Err(BuildScriptError::Message(
+                    rstd::format("generated output '{}:{}' overlaps an output owned by '{}'",
+                                 package,
+                                 relative,
+                                 *claimed_owner)));
+        }
         auto existing = owners_.get(key.as_str());
         if (existing.is_some()) {
             return Err(BuildScriptError::Message(

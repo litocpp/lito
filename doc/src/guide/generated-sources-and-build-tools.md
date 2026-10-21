@@ -147,6 +147,39 @@ The alias is used by `build.lua`; the script does not discover an arbitrary exec
 download directory. Host tool downloads participate in source acquisition and offline/source-bundle
 policy.
 
+## Generated directories
+
+`lito.run` can declare a complete directory tree as one output. Pass its handle to a later
+action through `inputs`; the producer runs before the consumer, even when the directory does
+not exist during script evaluation:
+
+```lua
+local site = lito.run({
+  tool = frontend,
+  cwd = ".",
+  args = { "--output", "@OUTPUT@" },
+  inputs = { "frontend" },
+  outputs = { { path = "site", directory = true } },
+})
+local packed = lito.run({
+  tool = packer,
+  cwd = ".",
+  args = { "@INPUT@", "@OUTPUT@" },
+  inputs = { site.outputs[1] },
+  outputs = { "resources.bin" },
+})
+```
+
+Ordinary directory inputs and generated directory handles are recursively content-tracked,
+including names and empty directories. Symlinks and non-regular entries are rejected. A changed
+tree replaces the previous tree, so deleted files do not survive publication. Outputs may not
+overlap: do not also declare a file or another action's output beneath a declared directory.
+Directory handles are not C++ source files and cannot select `depfile.output` or `output_cwd`.
+Package host tools still cannot generate headers, including headers inside directory outputs.
+
+`inputs` may be omitted for an action whose dependencies are declared through external
+`input_roots` and a depfile. Tools must still declare every dependency they read.
+
 ## Tool dependency files
 
 `lito.run` accepts a Make-style dependency file through `depfile`. A compiler that emits its

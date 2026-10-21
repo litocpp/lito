@@ -754,9 +754,9 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
     }
     auto arguments        = rstd::move(request.args);
     auto declared_outputs = rstd::move(request.outputs);
-    if (arguments.is_empty() || inputs->is_empty() || declared_outputs.is_empty()) {
+    if (arguments.is_empty() || declared_outputs.is_empty()) {
         return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
-            "build-tool action requires args, inputs, and outputs"_Str)));
+            "build-tool action requires args and outputs"_Str)));
     }
     auto input_records = Vec<ResolvedActionInput>::make();
     for (usize input_index {}; input_index < inputs->len(); ++input_index) {
@@ -792,7 +792,9 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
                 "lito.run.output_cwd must identify a declared output"_Str)));
         }
         output_working_directory = Some(index - usize(1));
-        auto selected_parent     = output_paths[index - usize(1)].as_path().parent().unwrap();
+        if (output_kinds[index - usize(1)] == GeneratedOutputKind::Directory)
+            return Err(BuildScriptError::Message("lito.run.output_cwd requires a file output"_Str));
+        auto selected_parent = output_paths[index - usize(1)].as_path().parent().unwrap();
         for (const auto& candidate : output_paths) {
             if (candidate.as_path().parent().unwrap() != selected_parent) {
                 return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
@@ -828,6 +830,9 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
                     "lito.run.depfile.output must identify a declared output"_Str)));
             }
             depfile_output_index = Some(index - usize(1));
+            if (output_kinds[index - usize(1)] == GeneratedOutputKind::Directory)
+                return Err(
+                    BuildScriptError::Message("lito.run.depfile requires a file output"_Str));
         } else {
             auto index = usize(static_cast<size_t>(input->to_primitive()));
             if (*input < i64(1) || index > input_records.len() ||
@@ -936,8 +941,12 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
     }
     identity_text.push_ascii('\n');
     identity_text.push_str(environment_->child_path().to_string_lossy().as_str());
-    auto identity = licrypto::sha256_hex(identity_text.as_str());
-    auto producer = actions_.len();
+    auto identity          = licrypto::sha256_hex(identity_text.as_str());
+    auto producer          = actions_.len();
+    auto directory_outputs = Vec<PathBuf>::make();
+    for (usize i {}; i < output_kinds.len(); ++i)
+        if (output_kinds[i] == GeneratedOutputKind::Directory)
+            directory_outputs.push(output_paths[i].clone());
     actions_.push(RegisteredAction {
         .kind                     = RegisteredActionKind::Process,
         .package                  = package->clone(),
@@ -950,6 +959,7 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
         .arguments                = rstd::move(arguments),
         .inputs                   = rstd::move(input_records),
         .outputs                  = output_paths.clone(),
+        .directory_outputs        = rstd::move(directory_outputs),
         .output_working_directory = output_working_directory,
         .depfile_output           = depfile_output_index,
         .depfile_input            = depfile_input_index,
@@ -1194,11 +1204,12 @@ auto ToolActionSession::resolve_action_input(const DeclaredActionInput& input,
         });
     }
     auto metadata = rstd::fs::symlink_metadata(canonical.as_path());
-    if (metadata.is_err() || metadata->is_symlink() || ! metadata->is_file()) {
+    if (metadata.is_err() || metadata->is_symlink() ||
+        (! metadata->is_file() && ! metadata->is_dir())) {
         return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidInput(
-            canonical.clone(), "path is not a regular file"_Str)));
+            canonical.clone(), "path is not a regular file or directory"_Str)));
     }
-    digest = rstd_try(action_file_digest(canonical.as_path()));
+    digest = rstd_try(action_output_digest(canonical.as_path()));
     return Ok(ResolvedActionInput {
         .path     = rstd::move(canonical),
         .digest   = rstd::move(digest),

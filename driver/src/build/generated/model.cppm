@@ -26,6 +26,7 @@ enum class GeneratedOutputKind
     Other,
     Header,
     Source,
+    Directory,
 };
 
 struct DeclaredActionOutput {
@@ -50,6 +51,7 @@ constexpr auto generated_output_kind_name(GeneratedOutputKind kind) noexcept -> 
     case GeneratedOutputKind::Other: return "file"_str;
     case GeneratedOutputKind::Header: return "header"_str;
     case GeneratedOutputKind::Source: return "source"_str;
+    case GeneratedOutputKind::Directory: return "directory"_str;
     }
     return "file"_str;
 }
@@ -119,6 +121,7 @@ struct RegisteredAction {
     Vec<String>                      arguments;
     Vec<ResolvedActionInput>         inputs;
     Vec<PathBuf>                     outputs;
+    Vec<PathBuf>                     directory_outputs;
     Option<usize>                    output_working_directory;
     Option<usize>                    depfile_output;
     Option<usize>                    depfile_input;
