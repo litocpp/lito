@@ -4,6 +4,7 @@ module;
 export module lito.driver:sdk;
 
 import rstd;
+import licrypto;
 import lito.tools;
 import rstd.json;
 import lito.core;
@@ -18,6 +19,7 @@ export namespace lito
 
 class SdkError {
     RSTD_ENUM(SdkError,
+              (Crypto, (licrypto::Error source;)),
               (Catalog, (LlvmSdkCatalogError source;)),
               (AndroidCatalog, (AndroidNdkCatalogError source;)),
               (AndroidNdk, (AndroidNdkError source;)),
@@ -219,6 +221,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::SdkError> {
+    static auto from(licrypto::Error error) -> lito::SdkError {
+        return lito::SdkError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::parse::Error>, lito::SdkError> {
     static auto from(lito::parse::Error error) -> lito::SdkError {
         return lito::SdkError::Parse(rstd::move(error));
@@ -229,6 +238,7 @@ template<>
 struct Impl<fmt::Display, lito::SdkError> : ImplBase<lito::SdkError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Catalog()) {
             return formatter.write_raw("LLVM SDK catalog operation failed",
                                        sizeof("LLVM SDK catalog operation failed") - 1);
@@ -294,6 +304,7 @@ template<>
 struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Catalog()) return Some(dyn<error::Error>::from_ref(error.as_Catalog().source));
         if (error.is_AndroidCatalog()) {
             return Some(dyn<error::Error>::from_ref(error.as_AndroidCatalog().source));

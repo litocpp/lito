@@ -134,7 +134,7 @@ auto resolve_cargo_profile_configuration(
                                 : Option<lito::tools::cargo::ProfileStrip> {},
     };
     auto projection = lito::tools::cargo::profile_configuration_identity(result);
-    auto digest     = licrypto::sha256_hex(projection.as_str());
+    auto digest     = rstd_try(licrypto::sha256_hex(projection.as_str()));
     auto selected   = "lito-"_Str;
     selected.push_str(digest.as_str().get(usize {}, usize(16)).unwrap());
     result.selected = lito::dependency::CargoProfileName { .value = rstd::move(selected) };
@@ -201,8 +201,8 @@ auto cargo_bundle_config(const lito::source::PackageSourceConfig& source_config,
                          ref<rstd::path::Path>                    manifest,
                          ref<str> target) -> lito::dependency::DependencyResult<Option<PathBuf>> {
     for (const auto& root : source_config.source_bundles) {
-        auto candidate = lito::source::SourceBundleLayout(root.clone())
-                             .cargo_config(source.identity.as_str(), manifest, target);
+        auto candidate = rstd_try(lito::source::SourceBundleLayout(root.clone())
+                                      .cargo_config(source.identity.as_str(), manifest, target));
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
             return Err(
@@ -239,7 +239,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     };
     append(provider.identity.as_str());
     append(source.identity.as_str());
-    append(licrypto::sha256_hex(lock->as_slice()).as_str());
+    append(rstd_try(licrypto::sha256_hex(lock->as_slice())).as_str());
     append(metadata.id.as_str());
     append(declaration.recipe.manifest_path.as_path().to_string_lossy().as_str());
     append(profile.selected.as_str());
@@ -250,7 +250,7 @@ auto cargo_request_identity(const lito::tools::cargo::Provider&                 
     append(declaration.consumption.default_features ? "default-features"_str
                                                     : "no-default-features"_str);
     for (const auto& feature : declaration.consumption.features) append(feature.as_str());
-    return Ok(licrypto::sha256_hex(text.as_str()));
+    return Ok(rstd_try(licrypto::sha256_hex(text.as_str())));
 }
 
 } // namespace lito

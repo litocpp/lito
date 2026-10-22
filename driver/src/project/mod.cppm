@@ -466,7 +466,7 @@ struct ResolvedBuildProject {
 };
 
 auto proc_macro_aggregate_requests(const cpp::PackageMetadata& metadata)
-    -> Vec<ProcMacroAggregateRequest> {
+    -> ProjectResult<Vec<ProcMacroAggregateRequest>> {
     auto requests = Vec<ProcMacroAggregateRequest>::make();
     for (const auto& target : metadata.targets) {
         if (target.proc_macro_dependencies.is_empty()) continue;
@@ -477,7 +477,7 @@ auto proc_macro_aggregate_requests(const cpp::PackageMetadata& metadata)
                 .package = dependency.package.clone(),
             });
         }
-        auto digest  = proc_macro_aggregate_identity(target.proc_macro_dependencies);
+        auto digest  = rstd_try(proc_macro_aggregate_identity(target.proc_macro_dependencies));
         auto present = false;
         for (const auto& existing : requests) {
             if (existing.identity == digest.as_str()) {
@@ -492,7 +492,7 @@ auto proc_macro_aggregate_requests(const cpp::PackageMetadata& metadata)
             });
         }
     }
-    return requests;
+    return Ok(rstd::move(requests));
 }
 
 struct ConfiguredToolchainSelection {
@@ -979,16 +979,16 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         resolved_profile.cpp.abi.resolved_standard_library =
             Some(rstd::move(standard_library).unwrap());
     }
-    emit_build_setup_report(setup_reporter,
-                            configuration.toolchain,
-                            toolchain,
-                            configuration.global_options,
-                            project.standards,
-                            resolved_configuration.standard_library_runtime,
-                            resolved_profile,
-                            session.platform,
-                            project.graph,
-                            project.selected_package_names);
+    rstd_try(emit_build_setup_report(setup_reporter,
+                                     configuration.toolchain,
+                                     toolchain,
+                                     configuration.global_options,
+                                     project.standards,
+                                     resolved_configuration.standard_library_runtime,
+                                     resolved_profile,
+                                     session.platform,
+                                     project.graph,
+                                     project.selected_package_names));
     for (auto& package : project.graph.packages) {
         auto selected = false;
         for (const auto& name : project.selected_package_names) {
@@ -1110,7 +1110,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                                     cmake_find_install_prefix);
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved                    = rstd::move(metadata).unwrap();
-    auto aggregate_requests          = proc_macro_aggregate_requests(resolved.metadata);
+    auto aggregate_requests          = rstd_try(proc_macro_aggregate_requests(resolved.metadata));
     auto local_aggregate_requests    = Vec<ProcMacroAggregateRequest>::make();
     auto isolated_aggregate_requests = Vec<ProcMacroAggregateRequest>::make();
     for (auto& aggregate : aggregate_requests) {

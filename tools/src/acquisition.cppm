@@ -23,6 +23,7 @@ export namespace lito::tools::acquisition
 
 class AcquisitionError {
     RSTD_ENUM(AcquisitionError,
+              (Crypto, (licrypto::Error source;)),
               (System, (String operation; SystemError source;)),
               (Tools, (String operation; lito::tools::ToolError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
@@ -132,6 +133,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::tools::acquisition::AcquisitionError> {
+    static auto from(licrypto::Error error) -> lito::tools::acquisition::AcquisitionError {
+        return lito::tools::acquisition::AcquisitionError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::tools::acquisition::AcquisitionError> {
     static auto from(lito::system::SystemError error)
         -> lito::tools::acquisition::AcquisitionError {
@@ -145,6 +153,7 @@ struct Impl<fmt::Display, lito::tools::acquisition::AcquisitionError>
     : ImplBase<lito::tools::acquisition::AcquisitionError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_System()) return formatter.write_str(error.as_System().operation.as_str());
         if (error.is_Tools()) return formatter.write_str(error.as_Tools().operation.as_str());
         if (error.is_Io()) {
@@ -169,6 +178,7 @@ struct Impl<error::Error, lito::tools::acquisition::AcquisitionError>
     : ImplBase<lito::tools::acquisition::AcquisitionError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_System()) {
             return Some(dyn<error::Error>::from_ref(error.as_System().source));
         }
@@ -201,9 +211,9 @@ auto archive_identity(const lito::parse::FetchUrl& url, const licrypto::Sha256Di
 }
 
 auto archive_fetch_key(const lito::parse::FetchUrl& url, const licrypto::Sha256Digest& sha256)
-    -> String {
+    -> AcquisitionResult<String> {
     auto identity = rstd::format("lito-fetch-v1\narchive\n{}\n{}", url, sha256);
-    return licrypto::sha256_hex(identity.as_str());
+    return Ok(rstd_try(licrypto::sha256_hex(identity.as_str())));
 }
 
 auto ordinary_file_metadata(ref<rstd::path::Path> path)
@@ -232,7 +242,7 @@ auto file_digest_matches(ref<rstd::path::Path> path, const licrypto::Sha256Diges
             "open acquisition file"_Str, PathBuf::from(path), rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
-    auto state  = licrypto::Sha256::make();
+    auto state  = rstd_try(licrypto::Sha256::make());
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
@@ -241,9 +251,9 @@ auto file_digest_matches(ref<rstd::path::Path> path, const licrypto::Sha256Diges
                 "read acquisition file"_Str, PathBuf::from(path), rstd::move(read).unwrap_err()));
         }
         if (*read == usize {}) break;
-        state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
+        rstd_try(state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read)));
     }
-    return Ok(rstd::move(state).finalize_digest() == expected);
+    return Ok(rstd_try(rstd::move(state).finalize_digest()) == expected);
 }
 
 auto verified_file(ref<rstd::path::Path> path, const VerifiedArchiveRequest& request)
@@ -285,7 +295,7 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
                          const ResolvedProcessEnvironment& environment,
                          AcquisitionEventSink observer) -> AcquisitionResult<VerifiedFile> {
     (void)session;
-    auto key     = archive_fetch_key(request.url, request.sha256);
+    auto key     = rstd_try(archive_fetch_key(request.url, request.sha256));
     auto bucket  = layout.bucket(key.as_str());
     auto created = rstd::fs::create_dir_all(bucket.as_path());
     if (created.is_err()) {
@@ -487,7 +497,7 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
         }
         auto downloads = Vec<usize>::make();
         for (const auto index : pending) {
-            auto key = archive_fetch_key(requests[index].url, requests[index].sha256);
+            auto key = rstd_try(archive_fetch_key(requests[index].url, requests[index].sha256));
             auto cached =
                 rstd_try(verified_file(layout->source(key.as_str()).as_path(), requests[index]));
             if (cached.is_some()) {

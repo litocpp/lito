@@ -225,7 +225,7 @@ auto project_flatpak_sources(const LockedProject&           project,
         auto  architectures = flatpak_architectures(candidate);
         if (candidate.identity.is_Git()) {
             const auto& source      = candidate.identity.as_Git();
-            auto        destination = layout.git(candidate.identity);
+            auto        destination = rstd_try(layout.git(candidate.identity));
             result.push(rstd::format("Lito lock {}", owners.as_str()),
                         lito::flatpak::Source::Git(source.url.clone(),
                                                    source.commit.clone(),
@@ -234,7 +234,7 @@ auto project_flatpak_sources(const LockedProject&           project,
             continue;
         }
         const auto& source      = candidate.identity.as_Archive();
-        auto        destination = layout.archive(candidate.identity);
+        auto        destination = rstd_try(layout.archive(candidate.identity));
         result.push(
             rstd::format("Lito lock {}", owners.as_str()),
             lito::flatpak::Source::File(String::make(source.url.as_str()),

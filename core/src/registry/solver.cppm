@@ -6,6 +6,7 @@ export module lito.core:registry.solver;
 
 import rstd;
 import :registry.digest;
+import :source.error;
 import :registry.error;
 import :registry.identity;
 import :registry.metadata;
@@ -32,9 +33,10 @@ enum class RegistryIndexErrorKind
 };
 
 struct RegistryIndexError {
-    RegistryIndexErrorKind kind { RegistryIndexErrorKind::Network };
-    RegistryPackageId      package;
-    String                 message;
+    RegistryIndexErrorKind                             kind { RegistryIndexErrorKind::Network };
+    RegistryPackageId                                  package;
+    String                                             message;
+    Option<rstd::sync::Arc<lito::source::SourceError>> source;
 };
 
 using RegistryIndexLoadResult = Result<RegistryPackageIndex, RegistryIndexError>;

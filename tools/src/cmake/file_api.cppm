@@ -616,7 +616,7 @@ auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirem
             .name       = expected.name.clone(),
             .target     = expected.target.clone(),
             .executable = rstd::move(canonical).unwrap(),
-            .digest     = licrypto::sha256_hex(bytes->as_slice()),
+            .digest     = rstd_try(licrypto::sha256_hex(bytes->as_slice())),
         });
     }
     if (result.len() != requirement.host_tools.len()) {

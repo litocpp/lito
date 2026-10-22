@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.toolchain.clang:preprocessor_provider;
 
 import rstd;
@@ -290,7 +293,11 @@ private:
             .path         = rstd::move(canonical_path),
             .search_index = search_index,
             .size         = metadata->size(),
-            .digest       = licrypto::sha256_hex(contents->as_slice()),
+            .digest       = rstd_try(
+                licrypto::sha256_hex(contents->as_slice()).map_err([](licrypto::Error error) {
+                    return preprocessor::Error::make(
+                        rstd::format("cannot hash embed contents: {}", error));
+                })),
         }));
     }
 

@@ -1,4 +1,5 @@
 module;
+#include <rstd/macro.hpp>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -288,11 +289,15 @@ auto operating_system_choices() -> String {
 }
 
 class PlatformError {
-    String message_;
+    String                  message_;
+    Option<licrypto::Error> crypto_;
 
 public:
     explicit PlatformError(String message): message_(rstd::move(message)) {}
 
+    explicit PlatformError(licrypto::Error error)
+        : message_(rstd::format("target identity: {}", error)), crypto_(Some(rstd::move(error))) {}
+    auto crypto() const noexcept -> const Option<licrypto::Error>& { return crypto_; }
     auto message() const noexcept -> ref<str> { return message_.as_str(); }
 };
 
@@ -468,6 +473,12 @@ struct TargetPredicate {
 
 export namespace rstd
 {
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::system::PlatformError> {
+    static auto from(licrypto::Error error) -> lito::system::PlatformError {
+        return lito::system::PlatformError(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<fmt::Display, lito::system::PlatformError> : ImplBase<lito::system::PlatformError> {
@@ -485,7 +496,13 @@ struct Impl<fmt::Debug, lito::system::PlatformError> : ImplBase<lito::system::Pl
 
 template<>
 struct Impl<error::Error, lito::system::PlatformError>
-    : DefaultInImpl<error::Error, lito::system::PlatformError> {};
+    : DefaultInImpl<error::Error, lito::system::PlatformError> {
+    auto source() const noexcept -> Option<error::ErrorRef> {
+        const auto& value = this->self().crypto();
+        if (value) return Some(dyn<error::Error>::from_ref(*value));
+        return None();
+    }
+};
 
 } // namespace rstd
 
@@ -773,7 +790,7 @@ auto resolve_build_platform(const HostInfo&   host,
     auto output_key = String::make();
     if (intent == BuildTargetIntent::ExplicitTarget) {
         output_key = "target-"_Str;
-        output_key.push_str(licrypto::sha256_hex(effective.triple.as_str()).as_str());
+        output_key.push_str(rstd_try(licrypto::sha256_hex(effective.triple.as_str())).as_str());
     }
     return Ok(BuildPlatform {
         .host             = host.clone(),

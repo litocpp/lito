@@ -1,4 +1,5 @@
 module;
+#include <rstd/macro.hpp>
 #include <rstd/enum.hpp>
 
 export module lito.core:source.fetch;
@@ -52,9 +53,9 @@ auto fetch_identity_text(const FetchIdentity& identity) -> String {
                         pin.checksum.text());
 }
 
-auto fetch_identity_stable_key(const FetchIdentity& identity) -> String {
+auto fetch_identity_stable_key(const FetchIdentity& identity) -> licrypto::CryptoResult<String> {
     auto serialized = fetch_identity_text(identity);
-    return licrypto::sha256_hex(serialized.as_str());
+    return Ok(rstd_try(licrypto::sha256_hex(serialized.as_str())));
 }
 
 } // namespace lito::source

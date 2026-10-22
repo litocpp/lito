@@ -879,14 +879,14 @@ public:
         } else if (target.is_msvc()) {
             thread_backend = "win32"_Str;
         }
-        auto family = lito::config::standard_library_name(*detected_family);
-        auto headers_identity =
-            rstd::format("clang-stdlib-headers-v3\nfamily={}\ntarget={}\nenvironment={}\n"
-                         "runtime=dynamic\nmacros-sha256={}",
-                         family,
-                         target.triple.as_str(),
-                         target.environment_name(),
-                         licrypto::sha256_hex(queried->standard_output.as_str()).as_str());
+        auto family           = lito::config::standard_library_name(*detected_family);
+        auto headers_identity = rstd::format(
+            "clang-stdlib-headers-v3\nfamily={}\ntarget={}\nenvironment={}\n"
+            "runtime=dynamic\nmacros-sha256={}",
+            family,
+            target.triple.as_str(),
+            target.environment_name(),
+            rstd_try(licrypto::sha256_hex(queried->standard_output.as_str())).as_str());
         auto identity      = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
                                           headers_identity.as_str(),
                                           binary_identity.as_str(),
@@ -1011,7 +1011,7 @@ public:
                             compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
                                                             : toolchain::PreprocessorLanguage::Cpp);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-        auto       projection = cpp::preprocessor_projection(compile_context);
+        auto       projection = rstd_try(cpp::preprocessor_projection(compile_context));
         const auto contains   = [&](ref<str> value) {
             return projection.user_include_directories.iter()
                 .chain(projection.system_include_directories.iter())
@@ -1030,19 +1030,19 @@ public:
             else
                 projection.user_include_directories.push(rstd::move(directory));
         }
-        auto package =
-            toolchain::PackageMacroCatalog::make(compile_metadata).preprocessor_projection();
+        auto package = rstd_try(
+            toolchain::PackageMacroCatalog::make(compile_metadata).preprocessor_projection());
         for (auto& definition : package.definitions)
             projection.definitions.push(rstd::move(definition));
         for (auto& undefinition : package.undefinitions)
             projection.undefinitions.push(rstd::move(undefinition));
-        projection.identity =
+        projection.identity = rstd_try(
             licrypto::sha256_hex(rstd::format("lito-build-tool-preprocessor-projection-"
                                               "v3\nprojection={}\nenvironment={}\npackage={}",
                                               projection.identity.as_str(),
                                               (*environment)->identity.as_str(),
                                               package.identity.as_str())
-                                     .as_str());
+                                     .as_str()));
         return Ok(rstd::move(projection));
     }
 
@@ -1055,7 +1055,7 @@ public:
                             compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
                                                             : toolchain::PreprocessorLanguage::Cpp);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-        auto       projection    = cpp::preprocessor_projection(compile_context);
+        auto       projection    = rstd_try(cpp::preprocessor_projection(compile_context));
         const auto is_configured = [&](ref<rstd::path::Path> directory) {
             const auto contains = [&](const Vec<String>& values) {
                 for (const auto& value : values) {
@@ -1881,10 +1881,10 @@ public:
             linker_identity_.build_identity.as_str(),
             request.archive.path.as_path(),
             archive_metadata->size(),
-            licrypto::sha256_hex(archive_contents->as_slice()).as_str(),
+            rstd_try(licrypto::sha256_hex(archive_contents->as_slice())).as_str(),
             request.archive.mode == LinkArchiveMode::Whole ? "whole"_str : "normal"_str,
             request.soname.as_str(),
-            licrypto::sha256_hex(version_script->as_slice()).as_str());
+            rstd_try(licrypto::sha256_hex(version_script->as_slice())).as_str());
         return Ok(ElfSharedLibraryArtifact {
             .file          = request.output.clone(),
             .soname        = request.soname.clone(),

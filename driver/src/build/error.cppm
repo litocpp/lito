@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.error;
 
 import rstd;
+import licrypto;
 import lito.tools;
 import lito.core;
 import :project.error;
@@ -25,6 +26,7 @@ export namespace lito
 
 class BuildError {
     RSTD_ENUM(BuildError,
+              (Crypto, (licrypto::Error source;)),
               (Project, (ProjectError source;)),
               (Package, (lito::package::PackageError source;)),
               (Toolchain, (ToolchainError source;)),
@@ -48,6 +50,13 @@ using BuildResult = Result<T, BuildError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::BuildError> {
+    static auto from(licrypto::Error error) -> lito::BuildError {
+        return lito::BuildError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::ProjectError>, lito::BuildError> {
@@ -144,6 +153,7 @@ template<>
 struct Impl<fmt::Display, lito::BuildError> : ImplBase<lito::BuildError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Project()) {
             return formatter.write_raw("build project preparation failed",
                                        sizeof("build project preparation failed") - 1);
@@ -212,6 +222,7 @@ template<>
 struct Impl<error::Error, lito::BuildError> : ImplBase<lito::BuildError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Project()) {
             return Some(dyn<error::Error>::from_ref(error.as_Project().source));
         }

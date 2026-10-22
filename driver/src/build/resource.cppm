@@ -66,16 +66,16 @@ auto collect_resource_files(ref<rstd::path::Path> root,
 
 auto resource_identity(ref<rstd::path::Path> root, const Vec<PathBuf>& files)
     -> BuildScriptResult<String> {
-    auto state = licrypto::Sha256::make();
+    auto state = rstd_try(licrypto::Sha256::make());
     for (const auto& relative : files) {
         auto text = relative.as_path().to_str();
         if (text.is_none()) {
             return Err(BuildScriptError::Message(
                 rstd::format("runtime resource path '{}' is not valid UTF-8", relative.as_path())));
         }
-        state.update(text->as_bytes());
+        rstd_try(state.update(text->as_bytes()));
         const auto separator = array<u8, 1> { u8 {} };
-        state.update(separator.as_slice());
+        rstd_try(state.update(separator.as_slice()));
         auto path = PathBuf::from(root).join(relative.as_path());
         auto data = rstd::fs::read(path.as_path());
         if (data.is_err()) {
@@ -83,10 +83,10 @@ auto resource_identity(ref<rstd::path::Path> root, const Vec<PathBuf>& files)
                                             PathBuf::from(path.as_path()),
                                             rstd::move(data).unwrap_err()));
         }
-        state.update(data->as_slice());
-        state.update(separator.as_slice());
+        rstd_try(state.update(data->as_slice()));
+        rstd_try(state.update(separator.as_slice()));
     }
-    return Ok(licrypto::sha256_hex(rstd::move(state).finalize()));
+    return Ok(licrypto::sha256_hex(rstd_try(rstd::move(state).finalize())));
 }
 
 auto selected_resource_target(const Vec<lito::package::PackageTargetId>& selected,

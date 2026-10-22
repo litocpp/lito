@@ -4,6 +4,7 @@ module;
 export module lito.core:source.error;
 
 import rstd;
+import licrypto;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -17,6 +18,7 @@ export namespace lito::source
 
 class SourceError {
     RSTD_ENUM(SourceError,
+              (Crypto, (licrypto::Error source;)),
               (Operation, (String operation; ErrorBox source;)),
               (System, (String operation; SystemError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
@@ -32,6 +34,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::source::SourceError> {
+    static auto from(licrypto::Error error) -> lito::source::SourceError {
+        return lito::source::SourceError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::source::SourceError> {
     static auto from(lito::system::SystemError error) -> lito::source::SourceError {
         return lito::source::SourceError::System("source operation"_Str, rstd::move(error));
@@ -42,6 +51,7 @@ template<>
 struct Impl<fmt::Display, lito::source::SourceError> : ImplBase<lito::source::SourceError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Operation()) {
             return formatter.write_str(error.as_Operation().operation.as_str());
         }
@@ -66,6 +76,7 @@ template<>
 struct Impl<error::Error, lito::source::SourceError> : ImplBase<lito::source::SourceError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Operation()) {
             return Some(error.as_Operation().source.as_ref());
         }

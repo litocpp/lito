@@ -7,29 +7,32 @@ import lito.core;
 using namespace rstd::literals;
 
 TEST(Crypto, Sha256MatchesPublishedVectors) {
-    EXPECT_EQ(licrypto::sha256_hex(""_str).as_str(),
+    EXPECT_EQ(licrypto::sha256_hex(""_str).unwrap().as_str(),
               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"_str);
-    EXPECT_EQ(licrypto::sha256_hex("abc"_str).as_str(),
+    EXPECT_EQ(licrypto::sha256_hex("abc"_str).unwrap().as_str(),
               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"_str);
     EXPECT_EQ(licrypto::sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"_str)
+                  .unwrap()
                   .as_str(),
               "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"_str);
 }
 
 TEST(Crypto, Sha256IncrementalMatchesOneShot) {
     constexpr auto input    = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"_str;
-    auto           expected = licrypto::sha256_hex(input);
+    auto           expected = licrypto::sha256_hex(input).unwrap();
 
     rstd::usize chunk_sizes[] { rstd::usize(1), rstd::usize(7), rstd::usize(64) };
     for (auto chunk_size : chunk_sizes) {
-        auto state = licrypto::Sha256::make();
+        auto state = licrypto::Sha256::make().unwrap();
         for (rstd::usize offset {}; offset < input.len(); offset += chunk_size) {
             auto remaining = input.len() - offset;
             auto count     = remaining < chunk_size ? remaining : chunk_size;
-            state.update(rstd::slice<rstd::u8>::from_raw_parts(
-                input.as_bytes().as_raw_ptr() + offset.to_primitive(), count));
+            state
+                .update(rstd::slice<rstd::u8>::from_raw_parts(
+                    input.as_bytes().as_raw_ptr() + offset.to_primitive(), count))
+                .unwrap();
         }
-        EXPECT_EQ(licrypto::sha256_hex(rstd::move(state).finalize()), expected);
+        EXPECT_EQ(licrypto::sha256_hex(rstd::move(state).finalize().unwrap()), expected);
     }
 }
 
@@ -41,13 +44,15 @@ TEST(Crypto, Sha256IncrementalCoversPaddingBoundaries) {
         for (rstd::usize index {}; index < length; ++index) {
             input.push(rstd::u8(index.to_primitive() & 0xffu));
         }
-        auto state = licrypto::Sha256::make();
+        auto state = licrypto::Sha256::make().unwrap();
         auto split = length / rstd::usize(2);
-        state.update(rstd::slice<rstd::u8>::from_raw_parts(input.as_ptr(), split));
-        state.update(rstd::slice<rstd::u8>::from_raw_parts(input.as_ptr() + split.to_primitive(),
-                                                           length - split));
-        EXPECT_EQ(licrypto::sha256_hex(rstd::move(state).finalize()),
-                  licrypto::sha256_hex(input.as_slice()));
+        state.update(rstd::slice<rstd::u8>::from_raw_parts(input.as_ptr(), split)).unwrap();
+        state
+            .update(rstd::slice<rstd::u8>::from_raw_parts(input.as_ptr() + split.to_primitive(),
+                                                          length - split))
+            .unwrap();
+        EXPECT_EQ(licrypto::sha256_hex(rstd::move(state).finalize().unwrap()),
+                  licrypto::sha256_hex(input.as_slice()).unwrap());
     }
 }
 
@@ -72,11 +77,11 @@ TEST(Crypto, Sha256DigestParsesAndFormatsCanonicalHex) {
 }
 
 TEST(Crypto, Sha256DigestSupportsOneShotAndIncrementalHashing) {
-    auto one_shot = licrypto::sha256_digest("abc"_str);
-    auto state    = licrypto::Sha256::make();
-    state.update("a"_str.as_bytes());
-    state.update("bc"_str.as_bytes());
-    auto incremental = rstd::move(state).finalize_digest();
+    auto one_shot = licrypto::sha256_digest("abc"_str).unwrap();
+    auto state    = licrypto::Sha256::make().unwrap();
+    state.update("a"_str.as_bytes()).unwrap();
+    state.update("bc"_str.as_bytes()).unwrap();
+    auto incremental = rstd::move(state).finalize_digest().unwrap();
 
     EXPECT_EQ(one_shot, incremental);
     EXPECT_EQ(one_shot.to_hex(),

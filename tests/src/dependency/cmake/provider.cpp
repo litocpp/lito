@@ -119,7 +119,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         return;
     }
     ASSERT_EQ(resolved->len(), usize(1));
-    auto source_key = licrypto::sha256_hex("lito-test-cmake-fixture-v5"_str);
+    auto source_key = licrypto::sha256_hex("lito-test-cmake-fixture-v5"_str).unwrap();
     source_key.truncate(usize(20));
     auto state_directory = rstd::format("LitoFixture-{}", source_key);
     auto state_path      = build_root("cmake-fixture-work"_str)

@@ -39,15 +39,15 @@ auto executable_digest(ref<rstd::path::Path> path) -> HostBuildToolResult<String
                                                               PathBuf::from(path),
                                                               rstd::move(data).unwrap_err())));
     }
-    return Ok(licrypto::sha256_hex(data->as_slice()));
+    return Ok(rstd_try(licrypto::sha256_hex(data->as_slice())));
 }
 
 auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         owned,
                                 const lito::manifest::BuildToolArchiveManifest& archive,
                                 const HostInfo&                                 host,
                                 ref<str>                                        source_identity,
-                                ref<str>                                        digest) -> String {
-    return licrypto::sha256_hex(
+                                ref<str> digest) -> HostBuildToolResult<String> {
+    return Ok(rstd_try(licrypto::sha256_hex(
         rstd::format("host-build-tool-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                      owned.package.as_str(),
                      owned.requirement.alias.as_str(),
@@ -59,7 +59,7 @@ auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         
                      owned.requirement.source.as_Archive().recipe.executable.as_path(),
                      source_identity,
                      digest)
-            .as_str());
+            .as_str())));
 }
 
 auto host_tool_receipt_matches(ref<rstd::path::Path>                           receipt,
@@ -323,7 +323,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                                                   rstd::move(canonical).unwrap_err())));
             }
             auto digest   = rstd_try(executable_digest(canonical->as_path()));
-            auto identity = licrypto::sha256_hex(
+            auto identity = rstd_try(licrypto::sha256_hex(
                 rstd::format("host-build-tool-path-v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                              owned.package.as_str(),
                              owned.requirement.alias.as_str(),
@@ -333,7 +333,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                              resolved.executable.as_path(),
                              canonical->as_path(),
                              digest.as_str())
-                    .as_str());
+                    .as_str()));
             emit_host_tool(observer,
                            BuildEventKind::BuildToolResolve,
                            owned.requirement.alias.as_str(),
@@ -389,7 +389,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                                                              rstd::move(canonical).unwrap()));
         }
         const auto& archive = *selected[index];
-        auto        key     = licrypto::sha256_hex(
+        auto        key     = rstd_try(licrypto::sha256_hex(
             rstd::format("host-build-tool-store-v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                          owned.package.as_str(),
                          requirement.alias.as_str(),
@@ -400,9 +400,9 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                          archive.sha256,
                          requirement.source.as_Archive().recipe.executable.as_path(),
                          acquired[index].identity.as_str())
-                .as_str());
-        auto area    = layout.host_build_tool_root().join(PathBuf::from(key).as_path());
-        auto created = rstd::fs::create_dir_all(area.as_path());
+                .as_str()));
+        auto        area    = layout.host_build_tool_root().join(PathBuf::from(key).as_path());
+        auto        created = rstd::fs::create_dir_all(area.as_path());
         if (created.is_err()) {
             return Err(HostBuildToolError::System(
                 lito::system::SystemError::Io("create host build-tool store"_Str,
@@ -427,9 +427,9 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                                               rstd::move(locked).unwrap_err())));
         }
         auto digest           = rstd_try(executable_digest(canonical->as_path()));
-        auto receipt_identity = host_tool_receipt_identity(
-            owned, archive, host, acquired[index].identity.as_str(), digest.as_str());
-        auto receipt  = area.join(PathBuf::from("receipt.json"_str).as_path());
+        auto receipt_identity = rstd_try(host_tool_receipt_identity(
+            owned, archive, host, acquired[index].identity.as_str(), digest.as_str()));
+        auto receipt          = area.join(PathBuf::from("receipt.json"_str).as_path());
         auto reusable = rstd_try(host_tool_receipt_matches(receipt.as_path(),
                                                            owned,
                                                            archive,

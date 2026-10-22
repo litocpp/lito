@@ -124,6 +124,7 @@ auto Impl<error::Error, lito::StandardLibraryModuleError>::source() const noexce
 
 auto Impl<fmt::Display, lito::ToolchainError>::fmt(fmt::Formatter& formatter) const -> bool {
     const auto& error = this->self();
+    if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
     if (error.is_System()) {
         return formatter.write_raw("toolchain process operation failed",
                                    sizeof("toolchain process operation failed") - 1);
@@ -170,6 +171,7 @@ auto Impl<fmt::Debug, lito::ToolchainError>::fmt(fmt::Formatter& formatter) cons
 
 auto Impl<error::Error, lito::ToolchainError>::source() const noexcept -> Option<error::ErrorRef> {
     const auto& error = this->self();
+    if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
     if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));
     if (error.is_Tools()) return Some(dyn<error::Error>::from_ref(error.as_Tools().source));
     if (error.is_Frontend()) {

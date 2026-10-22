@@ -160,7 +160,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     ASSERT_TRUE(cached_graph.is_ok());
 
     auto identity = lito::source::git_fetch_identity(*url, commit->as_str());
-    auto bundled  = lito::source::SourceBundleLayout(bundle.clone()).git(identity);
+    auto bundled  = lito::source::SourceBundleLayout(bundle.clone()).git(identity).unwrap();
     ASSERT_TRUE(rstd::fs::create_dir_all(bundled.as_path().parent().unwrap()).is_ok());
     ASSERT_TRUE(git_succeeds(directory.as_path(),
                              "clone"_str,

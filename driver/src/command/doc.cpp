@@ -176,7 +176,7 @@ auto write_extraction_request(ref<rstd::path::Path> path, ref<str> contents) -> 
 
 auto request_identity(const DocumentationBuildUnit&       unit,
                       const cpp::SelectedPackageMetadata& package,
-                      const ResolvedDocTool&              tool) -> String {
+                      const ResolvedDocTool&              tool) -> DocResult<String> {
     auto invocation_identity = unit.invocation.identity();
     auto value = rstd::format("lito-doc-extract-v3\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                               package.source_identity.as_str(),
@@ -193,7 +193,7 @@ auto request_identity(const DocumentationBuildUnit&       unit,
                                     dependency.artifact_identity.as_str())
                            .as_str());
     }
-    return licrypto::sha256_hex(value.as_str());
+    return Ok(rstd_try(licrypto::sha256_hex(value.as_str())));
 }
 
 struct ExtractionTask {
@@ -394,7 +394,7 @@ auto site_manifest_json(const BuildSummary&     summary,
             }
             package.responses.push(PackageResponses::Response {
                 .path   = plan.response.clone(),
-                .digest = licrypto::sha256_hex(contents->as_str()),
+                .digest = rstd_try(licrypto::sha256_hex(contents->as_str())),
             });
             if (unit.root_module.is_some()) {
                 if (package.root_module.is_empty()) {
@@ -516,7 +516,7 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
                 rstd::format("documentation unit '{}' has no selected package metadata",
                              unit.source.as_path())));
         }
-        auto request_id    = request_identity(unit, **package, *tool);
+        auto request_id    = rstd_try(request_identity(unit, **package, *tool));
         auto directory     = cache_root.join(PathBuf::from(request_id.as_str()).as_path());
         auto request_path  = directory.join(PathBuf::from("request.json"_str).as_path());
         auto response_path = directory.join(PathBuf::from("response.json"_str).as_path());

@@ -68,8 +68,16 @@ auto source_tree_file(const lito::source::SourceTree& tree, ref<str> path) -> Op
     return None();
 }
 
-auto module_identity(ref<str> owner, ref<str> path, slice<u8> bytes) -> String {
-    return rstd::format("lua:{}:{}:{}", owner, path, licrypto::sha256_hex(bytes).as_str());
+auto module_identity(ref<str> owner, ref<str> path, slice<u8> bytes) -> luato::Result<String> {
+    return Ok(rstd::format("lua:{}:{}:{}",
+                           owner,
+                           path,
+                           rstd_try(licrypto::sha256_hex(bytes).map_err([&](licrypto::Error error) {
+                               return luato::Error::make(
+                                   luato::ErrorKind::Module,
+                                   String::make(owner),
+                                   rstd::format("cannot hash Lua module '{}': {}", path, error));
+                           })).as_str()));
 }
 
 auto ScriptModuleCatalog::make(ref<rstd::path::Path>            root,
@@ -169,8 +177,9 @@ auto ScriptModuleCatalog::load(usize owner, ref<str> path, ref<str> logical_name
         bytes   = Vec<u8>::from(*found);
         display = rstd::format("{}/{}", source_owner.identity.as_str(), path);
     }
-    auto identity = module_identity(source_owner.identity.as_str(), path, bytes.as_slice());
-    auto known    = false;
+    auto identity =
+        rstd_try(module_identity(source_owner.identity.as_str(), path, bytes.as_slice()));
+    auto known = false;
     for (const auto& loaded : loaded_sources_) {
         if (loaded.identity == identity) {
             known = true;

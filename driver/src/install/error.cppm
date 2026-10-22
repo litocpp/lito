@@ -4,6 +4,7 @@ module;
 export module lito.driver:install.error;
 
 import rstd;
+import licrypto;
 import rstd.json;
 import lito.core;
 import :build.error;
@@ -28,6 +29,7 @@ using InstallSourceResult = Result<T, InstallSourceError>;
 
 class InstallStoreCause {
     RSTD_ENUM(InstallStoreCause,
+              (Crypto, (licrypto::Error source;)),
               (Source, (InstallSourceError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
@@ -127,6 +129,7 @@ template<>
 struct Impl<fmt::Display, lito::InstallStoreCause> : ImplBase<lito::InstallStoreCause> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Source()) {
             return as<fmt::Display>(error.as_Source().source).fmt(formatter);
         }
@@ -164,6 +167,7 @@ template<>
 struct Impl<error::Error, lito::InstallStoreCause> : ImplBase<lito::InstallStoreCause> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Source()) {
             return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         }
@@ -324,4 +328,14 @@ struct Impl<error::Error, lito::InstallError> : ImplBase<lito::InstallError> {
     }
 };
 
+} // namespace rstd
+
+export namespace rstd
+{
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::InstallStoreError> {
+    static auto from(licrypto::Error error) -> lito::InstallStoreError {
+        return lito::InstallStoreError::Cause(lito::InstallStoreCause::Crypto(rstd::move(error)));
+    }
+};
 } // namespace rstd

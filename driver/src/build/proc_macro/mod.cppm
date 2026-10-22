@@ -56,7 +56,7 @@ auto file_digest(ref<rstd::path::Path> path, ref<str> operation) -> BuildResult<
         return Err(BuildError::System(lito::system::SystemError::Io(
             operation.into(), PathBuf::from(path), rstd::move(data).unwrap_err())));
     }
-    return Ok(licrypto::sha256_hex(data->as_slice()));
+    return Ok(rstd_try(licrypto::sha256_hex(data->as_slice())));
 }
 
 auto module_dependencies(const Vec<cpp::PreparedUnit>& units, Option<cpp::UnitId> excluded = None())
@@ -239,7 +239,7 @@ auto proc_macro_transform_identity(ref<str>                       selection_iden
                                    const BuiltProcMacroAggregate& aggregate,
                                    const ClangToolchain&          toolchain,
                                    const cpp::CompileContext&     context,
-                                   ref<str>                       original_digest) -> String {
+                                   ref<str> original_digest) -> BuildResult<String> {
     auto producer = "lito-proc-macro-transform-v5\n"_Str;
     producer.push_str(
         "contract:cpp2\nspelling:attr-derive-v1\ntrace:kind-v1\nrecursion-limit:16\n"_str);
@@ -254,7 +254,7 @@ auto proc_macro_transform_identity(ref<str>                       selection_iden
     producer.push_str(context.scan_id.as_str());
     producer.push_ascii('\n');
     producer.push_str(original_digest);
-    return licrypto::sha256_hex(producer.as_str());
+    return Ok(rstd_try(licrypto::sha256_hex(producer.as_str())));
 }
 
 } // namespace lito
@@ -302,7 +302,7 @@ auto transform_proc_macro_provider_sources(const BuildLayout&              layou
                                                   source.path.clone(),
                                                   rstd::move(original).unwrap_err())));
             }
-            auto original_digest = licrypto::sha256_hex(original->as_str());
+            auto original_digest = rstd_try(licrypto::sha256_hex(original->as_str()));
             auto identity        = "lito-pmacro-provider-transform-v1\n"_Str;
             identity.push_str(support->identity.as_str());
             identity.push_ascii('\n');
@@ -315,7 +315,7 @@ auto transform_proc_macro_provider_sources(const BuildLayout&              layou
             identity.push_str(plan.contexts[provider].scan_id.as_str());
             identity.push_ascii('\n');
             identity.push_str(original_digest.as_str());
-            auto producer_identity = licrypto::sha256_hex(identity.as_str());
+            auto producer_identity = rstd_try(licrypto::sha256_hex(identity.as_str()));
             auto output =
                 layout.proc_macro_transformed_source(target.id, source.relative_path.as_path());
             if (output.is_err()) {
@@ -417,7 +417,8 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                 rstd::format("C target '{}' cannot use proc-macro dependencies",
                              lito::package::package_target_id_text(target_spec.id).as_str())));
         }
-        auto identity = proc_macro_aggregate_identity(target_spec.proc_macro_dependencies);
+        auto identity =
+            rstd_try(proc_macro_aggregate_identity(target_spec.proc_macro_dependencies));
         const BuiltProcMacroAggregate* aggregate = nullptr;
         for (const auto& candidate : aggregates) {
             if (candidate.selection_identity == identity.as_str()) {
@@ -446,12 +447,13 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                                                   source.path.clone(),
                                                   rstd::move(original).unwrap_err())));
             }
-            auto original_digest   = licrypto::sha256_hex(original->as_str());
-            auto producer_identity = proc_macro_transform_identity(identity.as_str(),
-                                                                   *aggregate,
-                                                                   toolchain,
-                                                                   plan.contexts[target],
-                                                                   original_digest.as_str());
+            auto original_digest = rstd_try(licrypto::sha256_hex(original->as_str()));
+            auto producer_identity =
+                rstd_try(proc_macro_transform_identity(identity.as_str(),
+                                                       *aggregate,
+                                                       toolchain,
+                                                       plan.contexts[target],
+                                                       original_digest.as_str()));
             if (source.transformed.is_some() &&
                 source.transformed->original_source_identity == original_digest.as_str() &&
                 source.transformed->producer_identity == producer_identity.as_str())
@@ -703,7 +705,8 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
             aggregate_identity_source.push_str(
                 rstd::format("{}:{}\n", option.size(), option.as_str()).as_str());
         }
-        auto aggregate_identity = licrypto::sha256_hex(aggregate_identity_source.as_str());
+        auto aggregate_identity =
+            rstd_try(licrypto::sha256_hex(aggregate_identity_source.as_str()));
         auto aggregate_name =
             lito::system::plugin_filename("pmacro"_str, platform.effective_target);
         auto plugin =

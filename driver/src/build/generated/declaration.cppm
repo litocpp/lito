@@ -377,11 +377,12 @@ auto ToolActionSession::write(WriteScriptRequest request) -> BuildScriptResult<T
         rstd_try(normal_relative_path(rstd::move(output.path), "lito.write.output"_str));
     rstd_try(
         output_registry_->claim(package->as_str(), relative.as_path(), script_owner_.as_str()));
-    auto identity_text = rstd::format("lito-write-action-v1\n{}\n{}\n{}\n{}",
-                                      package->as_str(),
-                                      profile_.as_str(),
-                                      relative.as_path(),
-                                      licrypto::sha256_hex(rendered.as_str().as_bytes()).as_str());
+    auto identity_text =
+        rstd::format("lito-write-action-v1\n{}\n{}\n{}\n{}",
+                     package->as_str(),
+                     profile_.as_str(),
+                     relative.as_path(),
+                     rstd_try(licrypto::sha256_hex(rendered.as_str().as_bytes())).as_str());
     identity_text.push_str("\noutput-kind:"_str);
     identity_text.push_str(generated_output_kind_name(output.kind));
     for (const auto& input : input_records) {
@@ -402,7 +403,7 @@ auto ToolActionSession::write(WriteScriptRequest request) -> BuildScriptResult<T
     outputs.push(rstd::move(relative));
     auto output_kinds = Vec<GeneratedOutputKind>::make();
     output_kinds.emplace_back(output.kind);
-    auto identity = licrypto::sha256_hex(identity_text.as_str());
+    auto identity = rstd_try(licrypto::sha256_hex(identity_text.as_str()));
     auto producer = actions_.len();
     actions_.push(RegisteredAction {
         .kind              = RegisteredActionKind::Write,
@@ -438,7 +439,7 @@ auto ToolActionSession::copy(CopyScriptRequest request) -> BuildScriptResult<Too
     auto relative = rstd_try(normal_relative_path(rstd::move(output.path), "lito.copy.output"_str));
     rstd_try(
         output_registry_->claim(package->as_str(), relative.as_path(), script_owner_.as_str()));
-    auto identity =
+    auto identity = rstd_try(
         licrypto::sha256_hex(rstd::format("lito-copy-action-v1\n{}\n{}\n{}:{}\n{}\noutput-kind:{}",
                                           package->as_str(),
                                           profile_.as_str(),
@@ -446,7 +447,7 @@ auto ToolActionSession::copy(CopyScriptRequest request) -> BuildScriptResult<Too
                                           resolved.digest.as_str(),
                                           relative.as_path(),
                                           generated_output_kind_name(output.kind))
-                                 .as_str());
+                                 .as_str()));
     auto inputs = Vec<ResolvedActionInput>::make();
     inputs.push(rstd::move(resolved));
     auto outputs = Vec<PathBuf>::make();
@@ -523,7 +524,7 @@ auto ToolActionSession::transform(TransformScriptRequest request)
         .digest   = source->action_identity.clone(),
         .producer = Some(usize(source->producer.to_primitive())),
     });
-    auto identity = licrypto::sha256_hex(identity_text.as_str());
+    auto identity = rstd_try(licrypto::sha256_hex(identity_text.as_str()));
     auto producer = actions_.len();
     actions_.push(RegisteredAction {
         .kind              = RegisteredActionKind::CppLeadingPreamble,
@@ -941,7 +942,7 @@ auto ToolActionSession::run(RunScriptRequest request) -> BuildScriptResult<ToolA
     }
     identity_text.push_ascii('\n');
     identity_text.push_str(environment_->child_path().to_string_lossy().as_str());
-    auto identity          = licrypto::sha256_hex(identity_text.as_str());
+    auto identity          = rstd_try(licrypto::sha256_hex(identity_text.as_str()));
     auto producer          = actions_.len();
     auto directory_outputs = Vec<PathBuf>::make();
     for (usize i {}; i < output_kinds.len(); ++i)
@@ -1004,8 +1005,8 @@ auto ToolActionSession::refresh_action_identities(
         auto& action = actions_[index];
         previous.push(action.identity.clone());
         if (availability.is_some() && action_availability(index) != *availability) continue;
-        action.identity = licrypto::sha256_hex(
-            rstd::format("{}\n{}", action.identity.as_str(), closure).as_str());
+        action.identity = rstd_try(licrypto::sha256_hex(
+            rstd::format("{}\n{}", action.identity.as_str(), closure).as_str()));
     }
     for (auto& action : actions_) {
         for (auto& input : action.inputs) {

@@ -7,6 +7,7 @@ import rstd;
 import rstd.serde;
 import rstd.toml;
 import :parse.error;
+import :source.error;
 
 using namespace rstd::prelude;
 
@@ -15,6 +16,7 @@ export namespace lito::lock
 
 class LockError {
     RSTD_ENUM(LockError,
+              (Source, (lito::source::SourceError source;)),
               (Schema, (String message;)),
               (Parse, (lito::parse::Error source;)),
               (Data, (rstd::serde::Error source;)),
@@ -41,6 +43,7 @@ template<>
 struct Impl<fmt::Display, lito::lock::LockError> : ImplBase<lito::lock::LockError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Source()) return as<fmt::Display>(error.as_Source().source).fmt(formatter);
         if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
         if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
         if (error.is_Data()) {
@@ -67,6 +70,7 @@ template<>
 struct Impl<error::Error, lito::lock::LockError> : ImplBase<lito::lock::LockError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Source()) return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
         if (error.is_Data()) return Some(dyn<error::Error>::from_ref(error.as_Data().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
@@ -75,4 +79,14 @@ struct Impl<error::Error, lito::lock::LockError> : ImplBase<lito::lock::LockErro
     }
 };
 
+} // namespace rstd
+
+export namespace rstd
+{
+template<>
+struct Impl<convert::From<lito::source::SourceError>, lito::lock::LockError> {
+    static auto from(lito::source::SourceError error) -> lito::lock::LockError {
+        return lito::lock::LockError::Source(rstd::move(error));
+    }
+};
 } // namespace rstd

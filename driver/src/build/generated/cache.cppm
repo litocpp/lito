@@ -25,7 +25,7 @@ auto action_file_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String>
         return Err(BuildScriptError::Io(
             "read build-tool action file"_Str, PathBuf::from(path), rstd::move(data).unwrap_err()));
     }
-    return Ok(licrypto::sha256_hex(data->as_slice()));
+    return Ok(rstd_try(licrypto::sha256_hex(data->as_slice())));
 }
 
 auto action_directory_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String> {
@@ -64,7 +64,7 @@ auto action_directory_digest(ref<rstd::path::Path> path) -> BuildScriptResult<St
         identity.push_ascii('\n');
         identity.push_str(record.as_str());
     }
-    return Ok(licrypto::sha256_hex(identity.as_str()));
+    return Ok(rstd_try(licrypto::sha256_hex(identity.as_str())));
 }
 
 auto action_output_digest(ref<rstd::path::Path> path) -> BuildScriptResult<String> {
@@ -77,7 +77,8 @@ auto action_output_digest(ref<rstd::path::Path> path) -> BuildScriptResult<Strin
             PathBuf::from(path), "expected a regular file or directory"_Str)));
     if (metadata->is_file()) {
         auto digest = rstd_try(action_file_digest(path));
-        return Ok(licrypto::sha256_hex(rstd::format("build-tool-file-v1\n{}", digest).as_str()));
+        return Ok(rstd_try(
+            licrypto::sha256_hex(rstd::format("build-tool-file-v1\n{}", digest).as_str())));
     }
     auto opened = rstd::fs::read_dir(path);
     if (opened.is_err())
@@ -103,7 +104,7 @@ auto action_output_digest(ref<rstd::path::Path> path) -> BuildScriptResult<Strin
         identity.push_str(record.as_str());
         identity.push_ascii('\n');
     }
-    return Ok(licrypto::sha256_hex(identity.as_str()));
+    return Ok(rstd_try(licrypto::sha256_hex(identity.as_str())));
 }
 
 enum class ActionDependencyKind

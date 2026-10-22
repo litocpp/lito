@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.driver:build.layout;
 
 import rstd;
@@ -260,9 +263,9 @@ public:
         return join(output_.as_path(), "sources"_str);
     }
 
-    auto archive_materialization(ref<str> identity) const -> PathBuf {
+    auto archive_materialization(ref<str> identity) const -> BuildLayoutResult<PathBuf> {
         auto archives = join(source_materialization_root().as_path(), "archives"_str);
-        return join(archives.as_path(), licrypto::sha256_hex(identity).as_str());
+        return Ok(join(archives.as_path(), rstd_try(licrypto::sha256_hex(identity)).as_str()));
     }
 
     auto dependency_work_root() const -> PathBuf {
@@ -350,12 +353,14 @@ public:
             join(output_.as_path(), "obj"_str).as_path(), target, relative_source, ".o"_str);
     }
 
-    auto standard_module_object(ref<str> context_identity, ref<str> logical_name) const -> PathBuf {
-        auto root     = join(join(output_.as_path(), "obj"_str).as_path(), "standard-library"_str);
-        auto context  = join(root.as_path(), licrypto::sha256_hex(context_identity).as_str());
+    auto standard_module_object(ref<str> context_identity, ref<str> logical_name) const
+        -> BuildLayoutResult<PathBuf> {
+        auto root = join(join(output_.as_path(), "obj"_str).as_path(), "standard-library"_str);
+        auto context =
+            join(root.as_path(), rstd_try(licrypto::sha256_hex(context_identity)).as_str());
         auto filename = module_filename(logical_name);
         filename.push_str(".o"_str);
-        return context.join(PathBuf::from(rstd::move(filename)).as_path());
+        return Ok(context.join(PathBuf::from(rstd::move(filename)).as_path()));
     }
 
     auto compile_cache_directory() const -> PathBuf {
@@ -391,26 +396,28 @@ public:
         return join(directory.as_path(), "archive.json"_str);
     }
 
-    auto standard_module_cache_directory(ref<str> context_identity) const -> PathBuf {
+    auto standard_module_cache_directory(ref<str> context_identity) const
+        -> BuildLayoutResult<PathBuf> {
         auto root = join(compile_cache_directory().as_path(), "standard-library"_str);
-        return join(root.as_path(), licrypto::sha256_hex(context_identity).as_str());
+        return Ok(join(root.as_path(), rstd_try(licrypto::sha256_hex(context_identity)).as_str()));
     }
 
     auto cache_standard_module_unit(ref<str> context_identity, ref<str> logical_name) const
-        -> PathBuf {
-        auto directory = standard_module_cache_directory(context_identity);
+        -> BuildLayoutResult<PathBuf> {
+        auto directory = rstd_try(standard_module_cache_directory(context_identity));
         auto filename  = module_filename(logical_name);
         filename.push_str(".json"_str);
-        return directory.join(PathBuf::from(rstd::move(filename)).as_path());
+        return Ok(directory.join(PathBuf::from(rstd::move(filename)).as_path()));
     }
 
     auto cache_standard_module_scan(ref<str> context_identity, ref<str> logical_name) const
-        -> PathBuf {
-        auto root      = join(scan_cache_directory().as_path(), "standard-library"_str);
-        auto directory = join(root.as_path(), licrypto::sha256_hex(context_identity).as_str());
-        auto filename  = module_filename(logical_name);
+        -> BuildLayoutResult<PathBuf> {
+        auto root = join(scan_cache_directory().as_path(), "standard-library"_str);
+        auto directory =
+            join(root.as_path(), rstd_try(licrypto::sha256_hex(context_identity)).as_str());
+        auto filename = module_filename(logical_name);
         filename.push_str(".json"_str);
-        return directory.join(PathBuf::from(rstd::move(filename)).as_path());
+        return Ok(directory.join(PathBuf::from(rstd::move(filename)).as_path()));
     }
 
     auto cache_compile_test(const lito::package::PackageTargetId& target,
@@ -461,11 +468,12 @@ public:
 
     auto install_executable(const lito::package::PackageTargetId& target,
                             ref<str>                              artifact_name,
-                            ref<str> variant_identity) const -> PathBuf {
+                            ref<str> variant_identity) const -> BuildLayoutResult<PathBuf> {
         auto install_root = join(output_.as_path(), "install-artifacts"_str);
         auto package      = join(install_root.as_path(), target.package.as_str());
-        auto variant = join(package.as_path(), licrypto::sha256_hex(variant_identity).as_str());
-        return variant.join(PathBuf::from(artifact_name).as_path());
+        auto variant =
+            join(package.as_path(), rstd_try(licrypto::sha256_hex(variant_identity)).as_str());
+        return Ok(variant.join(PathBuf::from(artifact_name).as_path()));
     }
 
     auto test(const lito::package::PackageTargetId& target, ref<str> artifact_name) const

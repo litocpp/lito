@@ -4,6 +4,7 @@ module;
 export module lito.core:dependency.error;
 
 import rstd;
+import licrypto;
 import rstd.json;
 import :source.error;
 import lito.system;
@@ -18,6 +19,7 @@ export namespace lito::dependency
 
 class DependencyError {
     RSTD_ENUM(DependencyError,
+              (Crypto, (licrypto::Error source;)),
               (Source, (lito::source::SourceError source;)),
               (System, (SystemError source;)),
               (Operation, (String operation; SystemError source;)),
@@ -41,6 +43,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::dependency::DependencyError> {
+    static auto from(licrypto::Error error) -> lito::dependency::DependencyError {
+        return lito::dependency::DependencyError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::source::SourceError>, lito::dependency::DependencyError> {
     static auto from(lito::source::SourceError error) -> lito::dependency::DependencyError {
         return lito::dependency::DependencyError::Source(rstd::move(error));
@@ -59,6 +68,7 @@ struct Impl<fmt::Display, lito::dependency::DependencyError>
     : ImplBase<lito::dependency::DependencyError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Source()) return as<fmt::Display>(error.as_Source().source).fmt(formatter);
         if (error.is_System()) {
             return formatter.write_raw("dependency system operation failed",
@@ -116,6 +126,7 @@ struct Impl<error::Error, lito::dependency::DependencyError>
     : ImplBase<lito::dependency::DependencyError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Source()) {
             return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         }

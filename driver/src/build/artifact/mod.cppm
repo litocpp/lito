@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.driver:build.artifact;
 
 import rstd;
@@ -198,14 +201,14 @@ struct BuiltProcMacroProducts {
 };
 
 auto proc_macro_aggregate_identity(const Vec<cpp::ProcMacroDependencySpec>& dependencies)
-    -> String {
+    -> licrypto::CryptoResult<String> {
     auto identity = "lito-proc-macro-aggregate-v4\ncontract:cpp2\n"_Str;
     for (const auto& dependency : dependencies) {
         identity.push_str(
             rstd::format("{}:{}\n", dependency.package.size(), dependency.package.as_str())
                 .as_str());
     }
-    return licrypto::sha256_hex(identity.as_str());
+    return Ok(rstd_try(licrypto::sha256_hex(identity.as_str())));
 }
 
 struct BuiltRuntimeResource {

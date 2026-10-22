@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.core:registry.cache;
 
 import rstd;
@@ -15,8 +18,8 @@ export namespace lito::registry
 inline constexpr auto REGISTRY_CHECKSUM_PREFIX_LENGTH    = usize(16);
 inline constexpr auto REGISTRY_CACHE_COMPONENT_MAX_BYTES = usize(240);
 
-auto registry_key(const RegistryId& registry) -> String {
-    return licrypto::sha256_hex(registry.as_str());
+auto registry_key(const RegistryId& registry) -> licrypto::CryptoResult<String> {
+    return Ok(rstd_try(licrypto::sha256_hex(registry.as_str())));
 }
 
 auto registry_archive_stem(const RegistryReleasePin& pin) -> String {
@@ -47,18 +50,20 @@ class RegistryCacheLayout {
 public:
     explicit RegistryCacheLayout(PathBuf root): root_(rstd::move(root)) {}
 
-    auto index(const RegistryPackageId& package) const -> PathBuf {
-        return registry_root()
-            .join(PathBuf::from("index"_str).as_path())
-            .join(PathBuf::from(registry_key(package.registry)).as_path())
-            .join(PathBuf::from(rstd::format("{}.json", package.name.as_str())).as_path());
+    auto index(const RegistryPackageId& package) const -> licrypto::CryptoResult<PathBuf> {
+        return Ok(
+            registry_root()
+                .join(PathBuf::from("index"_str).as_path())
+                .join(PathBuf::from(rstd_try(registry_key(package.registry))).as_path())
+                .join(PathBuf::from(rstd::format("{}.json", package.name.as_str())).as_path()));
     }
 
-    auto index_lock(const RegistryPackageId& package) const -> PathBuf {
-        return registry_root()
-            .join(PathBuf::from("index"_str).as_path())
-            .join(PathBuf::from(registry_key(package.registry)).as_path())
-            .join(PathBuf::from(rstd::format("{}.lock", package.name.as_str())).as_path());
+    auto index_lock(const RegistryPackageId& package) const -> licrypto::CryptoResult<PathBuf> {
+        return Ok(
+            registry_root()
+                .join(PathBuf::from("index"_str).as_path())
+                .join(PathBuf::from(rstd_try(registry_key(package.registry))).as_path())
+                .join(PathBuf::from(rstd::format("{}.lock", package.name.as_str())).as_path()));
     }
 
     auto archive(const RegistryReleasePin& pin) const -> PathBuf {

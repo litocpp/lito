@@ -281,6 +281,7 @@ class ScanCacheSession {
     explicit ScanCacheSession(rstd::sync::Arc<State> state): state_(rstd::move(state)) {}
 
     static auto clone_error(const SharedFingerprintError& error) -> CacheError {
+        if (error->is_Crypto()) return CacheError::Crypto(error->as_Crypto().source.clone());
         if (error->is_Record()) return CacheError::Record(error->as_Record().message.clone());
         const auto& value = error->as_SharedIo();
         return CacheError::SharedIo(
@@ -362,7 +363,9 @@ class ScanCacheSession {
                                              rstd::move(opened).unwrap_err()))));
             }
             auto file   = rstd::move(opened).unwrap_unchecked();
-            auto digest = licrypto::Sha256::make();
+            auto digest = rstd_try(licrypto::Sha256::make().map_err([](licrypto::Error error) {
+                return rstd::sync::Arc<CacheError>::make(CacheError::Crypto(rstd::move(error)));
+            }));
             auto buffer = array<u8, 65536> {};
             while (true) {
                 auto read = file.read(buffer.as_mut_slice());
@@ -374,12 +377,20 @@ class ScanCacheSession {
                                                  rstd::move(read).unwrap_err()))));
                 }
                 if (*read == usize {}) break;
-                digest.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
+                rstd_try(digest.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read))
+                             .map_err([](licrypto::Error error) {
+                                 return rstd::sync::Arc<CacheError>::make(
+                                     CacheError::Crypto(rstd::move(error)));
+                             }));
             }
             return Ok(FileFingerprint {
                 .path        = PathBuf::from(path),
                 .size        = metadata->size(),
-                .fingerprint = licrypto::sha256_hex(rstd::move(digest).finalize()),
+                .fingerprint = licrypto::sha256_hex(
+                    rstd_try(rstd::move(digest).finalize().map_err([](licrypto::Error error) {
+                        return rstd::sync::Arc<CacheError>::make(
+                            CacheError::Crypto(rstd::move(error)));
+                    }))),
             });
         });
         {

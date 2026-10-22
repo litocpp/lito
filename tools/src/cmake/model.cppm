@@ -252,7 +252,7 @@ auto cmake_package_path_component(ref<str> package) -> lito::tools::ToolResult<S
     }
     if (result.as_str().ends_with("."_str)) result.push_ascii('_');
     if (result.len() > usize(80)) {
-        auto digest = licrypto::sha256_hex(package);
+        auto digest = rstd_try(licrypto::sha256_hex(package));
         digest.truncate(usize(16));
         result.truncate(usize(63));
         result.push_ascii('-');
@@ -321,7 +321,7 @@ auto work_area(const Request&                requirement,
     if (requirement.source.is_Find()) {
         directory.push_str("installed"_str);
     } else {
-        auto source_key = licrypto::sha256_hex(source_id.as_str());
+        auto source_key = rstd_try(licrypto::sha256_hex(source_id.as_str()));
         source_key.truncate(usize(20));
         directory.push_str(source_key.as_str());
     }

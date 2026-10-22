@@ -371,7 +371,7 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
             return Ok(None());
         auto executable = PathBuf::from(*path);
         auto bytes      = rstd::fs::read(executable.as_path());
-        if (bytes.is_err() || licrypto::sha256_hex(bytes->as_slice()) != *digest) {
+        if (bytes.is_err() || rstd_try(licrypto::sha256_hex(bytes->as_slice())) != *digest) {
             return Ok(None());
         }
         host_tools.push(CMakeHostToolSnapshot {

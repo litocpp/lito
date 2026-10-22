@@ -152,7 +152,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_TRUE(status->success());
     auto archive_bytes = rstd::fs::read(archive.as_path());
     ASSERT_TRUE(archive_bytes.is_ok());
-    auto digest   = licrypto::sha256_digest(archive_bytes->as_slice());
+    auto digest   = licrypto::sha256_digest(archive_bytes->as_slice()).unwrap();
     auto url_text = "file://"_Str;
     for (const auto byte : archive.as_path().as_os_str().as_encoded_bytes()) {
         if (byte == u8(' ')) {
@@ -254,7 +254,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         release_layout->scan_cache_directory().as_path().starts_with(release_layout->output()));
 
     auto fetch_identity = lito::source::archive_fetch_identity(url.clone(), digest.clone());
-    auto file_key       = lito::source::fetch_identity_stable_key(fetch_identity);
+    auto file_key       = lito::source::fetch_identity_stable_key(fetch_identity).unwrap();
     auto file_bucket    = data_home.join(PathBuf::from("lito/files"_str).as_path())
                               .join(PathBuf::from(file_key).as_path());
     EXPECT_TRUE(rstd::fs::exists(file_bucket.join(PathBuf::from("source"_str).as_path()).as_path())
@@ -275,6 +275,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_EQ(entry_count, usize(1));
     auto archive_identity = lito::source::archive_source_identity(url, digest);
     auto debug_receipt    = debug_layout->archive_materialization(archive_identity.as_str())
+                                .unwrap()
                                 .join(PathBuf::from("source-v2"_str).as_path());
     auto receipt          = rstd::fs::read_to_string(debug_receipt.as_path());
     ASSERT_TRUE(receipt.is_ok());

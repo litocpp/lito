@@ -575,14 +575,14 @@ auto materialize_cmake_usage_impl(const CMakePackagePlan&                       
     }
     auto host_tools = Vec<cpp::ExternalHostToolUsage>::make();
     for (const auto& snapshot : snapshots.host_tools) {
-        auto tool_identity =
+        auto tool_identity = rstd_try(
             licrypto::sha256_hex(rstd::format("lito-cmake-host-tool-v1\n{}\n{}\n{}\n{}\n{}",
                                               identity->as_str(),
                                               snapshot.name.as_str(),
                                               snapshot.target.as_str(),
                                               snapshot.executable.as_path(),
                                               snapshot.digest.as_str())
-                                     .as_str());
+                                     .as_str()));
         host_tools.push(cpp::ExternalHostToolUsage {
             .name       = snapshot.name.clone(),
             .target     = snapshot.target.clone(),

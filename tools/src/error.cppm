@@ -4,6 +4,7 @@ module;
 export module lito.tools:error;
 
 import rstd;
+import licrypto;
 import rstd.json;
 import lito.system;
 
@@ -15,6 +16,7 @@ export namespace lito::tools
 
 class ToolError {
     RSTD_ENUM(ToolError,
+              (Crypto, (licrypto::Error source;)),
               (System, (lito::system::SystemError source;)),
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)),
               (Json, (String context; rstd::path::PathBuf path; rstd::json::Error source;)),
@@ -33,6 +35,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::tools::ToolError> {
+    static auto from(licrypto::Error error) -> lito::tools::ToolError {
+        return lito::tools::ToolError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::tools::ToolError> {
     static auto from(lito::system::SystemError error) -> lito::tools::ToolError {
         return lito::tools::ToolError::System(rstd::move(error));
@@ -43,6 +52,7 @@ template<>
 struct Impl<fmt::Display, lito::tools::ToolError> : ImplBase<lito::tools::ToolError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_System()) return formatter.write_str("host tool process operation failed"_str);
         if (error.is_Io()) {
             const auto& value = error.as_Io();
@@ -78,6 +88,7 @@ template<>
 struct Impl<error::Error, lito::tools::ToolError> : ImplBase<lito::tools::ToolError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));

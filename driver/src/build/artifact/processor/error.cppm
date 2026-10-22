@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.artifact.processor.error;
 
 import rstd;
+import licrypto;
 import rstd.json;
 import lito.core;
 import lito.system;
@@ -15,6 +16,7 @@ export namespace lito
 
 class ArtifactProcessorError {
     RSTD_ENUM(ArtifactProcessorError,
+              (Crypto, (licrypto::Error source;)),
               (System, (lito::system::SystemError source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
               (Invalid, (String message;)),
@@ -30,6 +32,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::ArtifactProcessorError> {
+    static auto from(licrypto::Error error) -> lito::ArtifactProcessorError {
+        return lito::ArtifactProcessorError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::ArtifactProcessorError> {
     static auto from(lito::system::SystemError error) -> lito::ArtifactProcessorError {
         return lito::ArtifactProcessorError::System(rstd::move(error));
@@ -40,6 +49,7 @@ template<>
 struct Impl<fmt::Display, lito::ArtifactProcessorError> : ImplBase<lito::ArtifactProcessorError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_System()) {
             return formatter.write_raw("artifact processor system operation failed",
                                        sizeof("artifact processor system operation failed") - 1);
@@ -67,6 +77,7 @@ template<>
 struct Impl<error::Error, lito::ArtifactProcessorError> : ImplBase<lito::ArtifactProcessorError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_System()) {
             return Some(dyn<error::Error>::from_ref(error.as_System().source));
         }

@@ -65,7 +65,7 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     EXPECT_EQ(lito::source::fetch_identity_text(identity).as_str(),
               "lito-fetch-v1\ngit\nhttps://example.invalid/shared.git\n"
               "0123456789abcdef0123456789abcdef01234567"_str);
-    EXPECT_EQ(lito::source::fetch_identity_stable_key(identity).len(), usize(64));
+    EXPECT_EQ(lito::source::fetch_identity_stable_key(identity).unwrap().len(), usize(64));
 
     auto project = lito::lock::LockedProject {};
     project.packages.push(lito::lock::LockedPackage {

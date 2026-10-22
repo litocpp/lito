@@ -4,6 +4,7 @@ module;
 export module lito.toolchain.common:error;
 
 import rstd;
+import licrypto;
 import lito.core;
 import lito.tools;
 import lito.system;
@@ -48,6 +49,7 @@ class StandardLibraryModuleError {
 
 class ToolchainError {
     RSTD_ENUM(ToolchainError,
+              (Crypto, (licrypto::Error source;)),
               (System, (SystemError source;)),
               (Tools, (lito::tools::ToolError source;)),
               (Frontend, (frontend::lexical::Error source;)),
@@ -126,4 +128,14 @@ struct Impl<error::Error, lito::ToolchainError> : ImplBase<lito::ToolchainError>
     auto source() const noexcept -> Option<error::ErrorRef>;
 };
 
+} // namespace rstd
+
+export namespace rstd
+{
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::ToolchainError> {
+    static auto from(licrypto::Error error) -> lito::ToolchainError {
+        return lito::ToolchainError::Crypto(rstd::move(error));
+    }
+};
 } // namespace rstd

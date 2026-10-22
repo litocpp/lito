@@ -1,6 +1,7 @@
 export module lito.core:registry.artifact;
 
 import rstd;
+import licrypto;
 import :registry.identity;
 
 using namespace rstd::prelude;
@@ -32,6 +33,7 @@ struct RegistryArtifactError {
     RegistryArtifactFailureCode code { RegistryArtifactFailureCode::PackageInvalid };
     RegistryPackageId           package;
     String                      message;
+    Option<licrypto::Error>     crypto;
 };
 
 template<typename T>

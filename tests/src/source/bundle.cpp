@@ -21,7 +21,7 @@ TEST_F(SourceBundle, LayoutOwnsVersionedReadOnlyLookup) {
     auto directory = cache_root("source-bundle-layout"_str);
     auto identity  = lito::source::git_fetch_identity(
         "https://example.invalid/source.git"_str, "0123456789abcdef0123456789abcdef01234567"_str);
-    auto payload = lito::source::SourceBundleLayout(directory.clone()).git(identity);
+    auto payload = lito::source::SourceBundleLayout(directory.clone()).git(identity).unwrap();
     ASSERT_TRUE(rstd::fs::create_dir_all(payload.as_path()).is_ok());
 
     auto roots = Vec<PathBuf>::make();
@@ -41,12 +41,16 @@ TEST_F(SourceBundle, LayoutOwnsVersionedReadOnlyLookup) {
 
     auto layout   = lito::source::SourceBundleLayout(directory.clone());
     auto manifest = PathBuf::from("rust/Cargo.toml"_str);
-    auto cargo    = layout.cargo(
-        "external-source-identity"_str, manifest.as_path(), "x86_64-unknown-linux-gnu"_str);
+    auto cargo    = layout
+                        .cargo("external-source-identity"_str,
+                               manifest.as_path(),
+                               "x86_64-unknown-linux-gnu"_str)
+                        .unwrap();
     EXPECT_EQ(layout
                   .cargo_config("external-source-identity"_str,
                                 manifest.as_path(),
                                 "x86_64-unknown-linux-gnu"_str)
+                  .unwrap()
                   .as_path(),
               cargo.join(PathBuf::from("config.toml"_str).as_path()).as_path());
 
@@ -54,8 +58,8 @@ TEST_F(SourceBundle, LayoutOwnsVersionedReadOnlyLookup) {
         .registry = lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
         .name     = lito::registry::RegistryPackageName::parse("sample"_str).unwrap(),
     };
-    auto registry_key = lito::registry::registry_key(registry.registry);
-    EXPECT_EQ(layout.registry_index(registry).as_path(),
+    auto registry_key = lito::registry::registry_key(registry.registry).unwrap();
+    EXPECT_EQ(layout.registry_index(registry).unwrap().as_path(),
               directory.join(PathBuf::from("v1/registry/index"_str).as_path())
                   .join(PathBuf::from(registry_key.as_str()).as_path())
                   .join(PathBuf::from("sample.json"_str).as_path())
@@ -93,9 +97,9 @@ TEST_F(SourceBundle, OfflineArchiveAcquisitionUsesVerifiedBundleWithoutDownloadT
     auto contents  = "source bundle archive bytes"_str;
     auto url       = lito::parse::FetchUrl::parse("https://example.invalid/source.tar.gz"_str);
     ASSERT_TRUE(url.is_ok());
-    auto digest   = licrypto::sha256_digest(contents);
+    auto digest   = licrypto::sha256_digest(contents).unwrap();
     auto identity = lito::source::archive_fetch_identity(url->clone(), digest.clone());
-    auto payload  = lito::source::SourceBundleLayout(directory.clone()).archive(identity);
+    auto payload  = lito::source::SourceBundleLayout(directory.clone()).archive(identity).unwrap();
     ASSERT_TRUE(rstd::fs::create_dir_all(payload.as_path().parent().unwrap()).is_ok());
     ASSERT_TRUE(rstd::fs::write_atomic(payload.as_path(), contents.as_bytes()).is_ok());
 
@@ -146,7 +150,7 @@ TEST_F(SourceBundle, OfflineGitResolutionUsesLockedAndExactCommitBundleWithoutFe
     ASSERT_TRUE(commit.is_some());
     auto url      = "https://example.invalid/bundle-only.git"_str;
     auto identity = lito::source::git_fetch_identity(url, commit->as_str());
-    auto checkout = lito::source::SourceBundleLayout(directory.clone()).git(identity);
+    auto checkout = lito::source::SourceBundleLayout(directory.clone()).git(identity).unwrap();
     ASSERT_TRUE(rstd::fs::create_dir_all(checkout.as_path().parent().unwrap()).is_ok());
     ASSERT_TRUE(git_succeeds(directory.as_path(),
                              "clone"_str,

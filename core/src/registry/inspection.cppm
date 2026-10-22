@@ -302,8 +302,14 @@ auto inspect_readme(const lito::manifest::PackageManifest& manifest,
     return Ok(Some(RegistryReadmeMetadata {
         .path     = String::make(readme->path().as_str()),
         .contents = rstd::move(contents).unwrap(),
-        .checksum = licrypto::sha256_digest(readme->contents()),
-        .size     = size,
+        .checksum = rstd_try(
+            licrypto::sha256_digest(readme->contents()).map_err([&](licrypto::Error error) {
+                return RegistryArtifactError { .kind    = RegistryArtifactErrorKind::Digest,
+                                               .package = package.clone(),
+                                               .message = rstd::format("SHA-256 failed: {}", error),
+                                               .crypto  = Some(rstd::move(error)) };
+            })),
+        .size = size,
     }));
 }
 

@@ -4,6 +4,7 @@ module;
 export module lito.core:package.error;
 
 import rstd;
+import licrypto;
 import :source.error;
 import :dependency.error;
 import :manifest.error;
@@ -38,6 +39,7 @@ struct PackageDependencyCycleError {
 
 class PackageError {
     RSTD_ENUM(PackageError,
+              (Crypto, (licrypto::Error source;)),
               (Source, (lito::source::SourceError source;)),
               (Dependency, (lito::dependency::DependencyError source;)),
               (Manifest, (lito::manifest::ManifestError source;)),
@@ -55,6 +57,13 @@ using PackageResult = Result<T, PackageError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::package::PackageError> {
+    static auto from(licrypto::Error error) -> lito::package::PackageError {
+        return lito::package::PackageError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::source::SourceError>, lito::package::PackageError> {
@@ -95,6 +104,7 @@ template<>
 struct Impl<fmt::Display, lito::package::PackageError> : ImplBase<lito::package::PackageError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Source()) {
             return formatter.write_raw("package source resolution failed",
                                        sizeof("package source resolution failed") - 1);
@@ -143,6 +153,7 @@ template<>
 struct Impl<error::Error, lito::package::PackageError> : ImplBase<lito::package::PackageError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Source()) {
             return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         }

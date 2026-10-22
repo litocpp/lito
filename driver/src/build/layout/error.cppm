@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.layout.error;
 
 import rstd;
+import licrypto;
 import lito.core;
 
 using namespace rstd::prelude;
@@ -13,6 +14,7 @@ export namespace lito
 
 class BuildLayoutError {
     RSTD_ENUM(BuildLayoutError,
+              (Crypto, (licrypto::Error source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Message, (String message;)))
 };
@@ -26,9 +28,17 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::BuildLayoutError> {
+    static auto from(licrypto::Error error) -> lito::BuildLayoutError {
+        return lito::BuildLayoutError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::BuildLayoutError> : ImplBase<lito::BuildLayoutError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Io()) {
             const auto& value = error.as_Io();
             return formatter.write_str(
@@ -50,6 +60,7 @@ template<>
 struct Impl<error::Error, lito::BuildLayoutError> : ImplBase<lito::BuildLayoutError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         return None();
     }

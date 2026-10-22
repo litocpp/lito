@@ -342,19 +342,19 @@ TEST(RegistryCacheLayout, UsesStableFlatReleasePaths) {
     auto pin    = registry_pin(package, version, checksum);
     auto layout = lito::registry::RegistryCacheLayout(root.clone());
 
-    EXPECT_EQ(lito::registry::registry_key(package.registry).as_str(),
+    EXPECT_EQ(lito::registry::registry_key(package.registry).unwrap().as_str(),
               "d318d75386e2bf8d0394a1d3126aabbc96d550ef8d4049c90cadb92b2f32b625"_str);
     EXPECT_EQ(lito::registry::registry_archive_filename(pin).as_str(),
               "sample-1.2.3-rc.1-1111111111111111.tar.zst"_str);
     EXPECT_EQ(
-        layout.index(package).as_path(),
+        layout.index(package).unwrap().as_path(),
         root.join(PathBuf::from("registry/index/"
                                 "d318d75386e2bf8d0394a1d3126aabbc96d550ef8d4049c90cadb92b2f32b625/"
                                 "sample.json"_str)
                       .as_path())
             .as_path());
     EXPECT_EQ(
-        layout.index_lock(package).as_path(),
+        layout.index_lock(package).unwrap().as_path(),
         root.join(PathBuf::from("registry/index/"
                                 "d318d75386e2bf8d0394a1d3126aabbc96d550ef8d4049c90cadb92b2f32b625/"
                                 "sample.lock"_str)
@@ -856,9 +856,11 @@ TEST(RegistryIndexCache, RefreshRevalidatesWhileReuseStaysLocal) {
     ASSERT_TRUE(first.is_ok());
     EXPECT_EQ(fixture.calls, usize(1));
     auto layout = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()));
-    EXPECT_TRUE(rstd::fs::exists(layout.index(registry_package("sample"_str)).as_path()).unwrap());
     EXPECT_TRUE(
-        rstd::fs::exists(layout.index_lock(registry_package("sample"_str)).as_path()).unwrap());
+        rstd::fs::exists(layout.index(registry_package("sample"_str)).unwrap().as_path()).unwrap());
+    EXPECT_TRUE(
+        rstd::fs::exists(layout.index_lock(registry_package("sample"_str)).unwrap().as_path())
+            .unwrap());
     EXPECT_FALSE(fixture.saw_condition);
 
     fixture.not_modified = true;
@@ -919,7 +921,7 @@ TEST(RegistryIndexCache, SourceBundleRecordSupportsOfflineResolution) {
 
     auto bundle_root = PathBuf::from(owner.path()).join(PathBuf::from("bundle"_str).as_path());
     auto bundle_record =
-        lito::source::SourceBundleLayout(bundle_root.clone()).registry_index(package);
+        lito::source::SourceBundleLayout(bundle_root.clone()).registry_index(package).unwrap();
     ASSERT_TRUE(rstd::fs::create_dir_all(bundle_record.as_path().parent().unwrap()).is_ok());
     ASSERT_TRUE(
         rstd::fs::write_atomic(bundle_record.as_path(), record->as_str().as_bytes()).is_ok());
@@ -1124,7 +1126,8 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
     EXPECT_EQ(changed.unwrap_err().kind, lito::registry::RegistryIndexErrorKind::Integrity);
 
     auto record = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()))
-                      .index(registry_package("sample"_str));
+                      .index(registry_package("sample"_str))
+                      .unwrap();
     ASSERT_TRUE(rstd::fs::write_atomic(record.as_path(), "broken"_str.as_bytes()).is_ok());
     auto offline =
         lito::registry::RegistryIndexClient(PathBuf::from(owner.path()),
@@ -1140,10 +1143,10 @@ TEST(RegistryIndexCache, RejectsChangedChecksumAndCorruptCache) {
 TEST(RegistryBlobCache, VerifiesNewBytesAndSharesCompletedContent) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
-    auto owner = rstd::move(temporary).unwrap();
-    auto bytes = "fixture tar zstd bytes"_Str;
-    auto checksum =
-        lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes()));
+    auto owner    = rstd::move(temporary).unwrap();
+    auto bytes    = "fixture tar zstd bytes"_Str;
+    auto checksum = lito::registry::PackageChecksum(
+        licrypto::sha256_digest(bytes.as_str().as_bytes()).unwrap());
     auto fixture = BlobTransportFixture { .bytes = bytes.clone() };
     auto primary = lito::registry::RegistryBlobCache(
         PathBuf::from(owner.path()),
@@ -1205,12 +1208,12 @@ TEST(RegistryBlobCache, RejectsDownloadedBytesWithTheWrongChecksum) {
 TEST(RegistryBlobCache, RehashesCachedBytesAndRefetchesCorruption) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());
-    auto owner = rstd::move(temporary).unwrap();
-    auto bytes = "verified bytes"_Str;
-    auto pin   = registry_pin(
-        registry_package("sample"_str),
-        registry_version("1.2.3"_str),
-        lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes())));
+    auto owner  = rstd::move(temporary).unwrap();
+    auto bytes  = "verified bytes"_Str;
+    auto pin    = registry_pin(registry_package("sample"_str),
+                               registry_version("1.2.3"_str),
+                               lito::registry::PackageChecksum(
+                                   licrypto::sha256_digest(bytes.as_str().as_bytes()).unwrap()));
     auto layout = lito::registry::RegistryCacheLayout(PathBuf::from(owner.path()));
     ASSERT_TRUE(rstd::fs::create_dir_all(layout.archive(pin).as_path().parent().unwrap()).is_ok());
     ASSERT_TRUE(rstd::fs::write(layout.archive(pin).as_path(), "corrupt"_str.as_bytes()).is_ok());
@@ -1301,10 +1304,10 @@ TEST(RegistryBlobCache, ImportsVerifiedSourceBundleBytesIntoTheGlobalCache) {
     ASSERT_TRUE(temporary.is_ok());
     auto owner = rstd::move(temporary).unwrap();
     auto bytes = "source bundle bytes"_Str;
-    auto pin   = registry_pin(
-        registry_package("sample"_str),
-        registry_version("1.2.3"_str),
-        lito::registry::PackageChecksum(licrypto::sha256_digest(bytes.as_str().as_bytes())));
+    auto pin   = registry_pin(registry_package("sample"_str),
+                              registry_version("1.2.3"_str),
+                              lito::registry::PackageChecksum(
+                                  licrypto::sha256_digest(bytes.as_str().as_bytes()).unwrap()));
     auto bundle_root = PathBuf::from(owner.path()).join(PathBuf::from("bundle"_str).as_path());
     auto bundled     = lito::source::SourceBundleLayout(bundle_root.clone()).registry_package(pin);
     ASSERT_TRUE(rstd::fs::create_dir_all(bundled.as_path().parent().unwrap()).is_ok());

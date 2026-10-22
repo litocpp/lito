@@ -1,6 +1,10 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.core:source.bundle;
 
 import rstd;
+import licrypto;
 import :source.fetch;
 import :source.error;
 import :registry.cache;
@@ -29,19 +33,19 @@ public:
 
     auto root() const noexcept -> ref<rstd::path::Path> { return root_.as_path(); }
 
-    auto git(const FetchIdentity& identity) const -> PathBuf {
-        auto key = fetch_identity_stable_key(identity);
-        return version_root()
-            .join(PathBuf::from("git"_str).as_path())
-            .join(PathBuf::from(key.as_str()).as_path());
+    auto git(const FetchIdentity& identity) const -> SourceResult<PathBuf> {
+        auto key = rstd_try(fetch_identity_stable_key(identity));
+        return Ok(version_root()
+                      .join(PathBuf::from("git"_str).as_path())
+                      .join(PathBuf::from(key.as_str()).as_path()));
     }
 
-    auto archive(const FetchIdentity& identity) const -> PathBuf {
-        auto key = fetch_identity_stable_key(identity);
-        return version_root()
-            .join(PathBuf::from("archives"_str).as_path())
-            .join(PathBuf::from(key.as_str()).as_path())
-            .join(PathBuf::from("source.archive"_str).as_path());
+    auto archive(const FetchIdentity& identity) const -> SourceResult<PathBuf> {
+        auto key = rstd_try(fetch_identity_stable_key(identity));
+        return Ok(version_root()
+                      .join(PathBuf::from("archives"_str).as_path())
+                      .join(PathBuf::from(key.as_str()).as_path())
+                      .join(PathBuf::from("source.archive"_str).as_path()));
     }
 
     auto registry_package(const lito::registry::RegistryReleasePin& pin) const -> PathBuf {
@@ -51,35 +55,38 @@ public:
             .join(PathBuf::from(lito::registry::registry_archive_filename(pin)).as_path());
     }
 
-    auto registry_index(const lito::registry::RegistryPackageId& package) const -> PathBuf {
-        return version_root()
-            .join(PathBuf::from("registry"_str).as_path())
-            .join(PathBuf::from("index"_str).as_path())
-            .join(PathBuf::from(lito::registry::registry_key(package.registry)).as_path())
-            .join(PathBuf::from(rstd::format("{}.json", package.name.as_str())).as_path());
+    auto registry_index(const lito::registry::RegistryPackageId& package) const
+        -> SourceResult<PathBuf> {
+        return Ok(
+            version_root()
+                .join(PathBuf::from("registry"_str).as_path())
+                .join(PathBuf::from("index"_str).as_path())
+                .join(PathBuf::from(rstd_try(lito::registry::registry_key(package.registry)))
+                          .as_path())
+                .join(PathBuf::from(rstd::format("{}.json", package.name.as_str())).as_path()));
     }
 
     auto cargo(ref<str> source_identity, ref<rstd::path::Path> manifest, ref<str> target) const
-        -> PathBuf {
+        -> SourceResult<PathBuf> {
         auto identity = rstd::format(
             "lito-source-bundle-cargo-v1\n{}\n{}\n{}", source_identity, manifest, target);
-        auto key = licrypto::sha256_hex(identity.as_str());
-        return version_root()
-            .join(PathBuf::from("cargo"_str).as_path())
-            .join(PathBuf::from(key.as_str()).as_path());
+        auto key = rstd_try(licrypto::sha256_hex(identity.as_str()));
+        return Ok(version_root()
+                      .join(PathBuf::from("cargo"_str).as_path())
+                      .join(PathBuf::from(key.as_str()).as_path()));
     }
 
     auto cargo_config(ref<str>              source_identity,
                       ref<rstd::path::Path> manifest,
-                      ref<str>              target) const -> PathBuf {
-        return cargo(source_identity, manifest, target)
-            .join(PathBuf::from("config.toml"_str).as_path());
+                      ref<str>              target) const -> SourceResult<PathBuf> {
+        return Ok(rstd_try(cargo(source_identity, manifest, target))
+                      .join(PathBuf::from("config.toml"_str).as_path()));
     }
 
-    auto fetch(const FetchIdentity& identity) const -> PathBuf {
+    auto fetch(const FetchIdentity& identity) const -> SourceResult<PathBuf> {
         if (identity.is_Git()) return git(identity);
         if (identity.is_Archive()) return archive(identity);
-        return registry_package(identity.as_RegistryPackage().pin);
+        return Ok(registry_package(identity.as_RegistryPackage().pin));
     }
 };
 
@@ -94,7 +101,7 @@ export namespace lito::source
 auto locate_source_bundle(const Vec<PathBuf>& roots, const FetchIdentity& identity)
     -> SourceResult<Option<PathBuf>> {
     for (const auto& root : roots) {
-        auto path   = SourceBundleLayout(root.clone()).fetch(identity);
+        auto path   = rstd_try(SourceBundleLayout(root.clone()).fetch(identity));
         auto exists = rstd::fs::exists(path.as_path());
         if (exists.is_err()) {
             return Err(SourceError::Io("inspect source bundle entry"_Str,

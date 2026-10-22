@@ -244,7 +244,7 @@ auto read_standard_library_module_catalog(const cpp::ResolvedStandardLibrary& li
     auto result = cpp::StandardLibraryModuleCatalog {
         .family            = library.family,
         .manifest          = manifest.clone(),
-        .manifest_identity = licrypto::sha256_hex(contents->as_str()),
+        .manifest_identity = rstd_try(licrypto::sha256_hex(contents->as_str())),
         .version           = *version,
         .revision          = *revision,
     };
@@ -303,7 +303,7 @@ auto read_standard_library_module_catalog(const cpp::ResolvedStandardLibrary& li
         auto entry = cpp::StandardLibraryModuleEntry {
             .logical_name    = String::make(logical_name),
             .source          = rstd::move(source),
-            .source_identity = licrypto::sha256_hex(source_contents->as_str()),
+            .source_identity = rstd_try(licrypto::sha256_hex(source_contents->as_str())),
         };
         auto local = value.get("local-arguments"_str);
         if (local.is_some()) {

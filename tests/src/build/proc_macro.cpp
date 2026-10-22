@@ -16,12 +16,12 @@ TEST(ProcMacroBuild, AggregateSelectionIdentityIncludesProviders) {
     });
     auto same = Vec<lito::cpp::ProcMacroDependencySpec>::make();
     same.push(dependencies[usize {}].clone());
-    EXPECT_EQ(lito::proc_macro_aggregate_identity(dependencies).as_str(),
-              lito::proc_macro_aggregate_identity(same).as_str());
+    EXPECT_EQ(lito::proc_macro_aggregate_identity(dependencies).unwrap().as_str(),
+              lito::proc_macro_aggregate_identity(same).unwrap().as_str());
 
     same[usize {}].package = "other-macros"_Str;
-    EXPECT_NE(lito::proc_macro_aggregate_identity(dependencies).as_str(),
-              lito::proc_macro_aggregate_identity(same).as_str());
+    EXPECT_NE(lito::proc_macro_aggregate_identity(dependencies).unwrap().as_str(),
+              lito::proc_macro_aggregate_identity(same).unwrap().as_str());
 }
 
 TEST(ProcMacroBuild, ScopedIdentityPreservesProvider) {

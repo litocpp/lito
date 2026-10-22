@@ -27,7 +27,7 @@ auto plugin_file_digest(ref<rstd::path::Path> path, ref<str> operation) -> Build
         return Err(BuildError::System(lito::system::SystemError::Io(
             operation.into(), PathBuf::from(path), rstd::move(data).unwrap_err())));
     }
-    return Ok(licrypto::sha256_hex(data->as_slice()));
+    return Ok(rstd_try(licrypto::sha256_hex(data->as_slice())));
 }
 
 auto append_plugin_link_input(Vec<ResolvedLinkInput>& inputs,
@@ -185,7 +185,7 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
             .target           = spec.id.clone(),
             .support_archive  = libraries[target]->clone(),
             .plugin           = rstd::move(output),
-            .identity         = licrypto::sha256_hex(identity_source.as_str()),
+            .identity         = rstd_try(licrypto::sha256_hex(identity_source.as_str())),
             .content_identity = rstd::move(content_identity),
         });
     }

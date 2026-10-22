@@ -98,7 +98,12 @@ auto checksum(ref<rstd::path::Path> path, const RegistryPackageId& package)
                                                               rstd::move(opened).unwrap_err()));
     }
     auto file   = rstd::move(opened).unwrap();
-    auto state  = licrypto::Sha256::make();
+    auto state  = rstd_try(licrypto::Sha256::make().map_err([&](licrypto::Error error) {
+        return RegistryArtifactError { .kind    = RegistryArtifactErrorKind::Digest,
+                                       .package = package.clone(),
+                                       .message = rstd::format("SHA-256 failed: {}", error),
+                                       .crypto  = Some(rstd::move(error)) };
+    }));
     auto buffer = array<u8, 65536> {};
     while (true) {
         auto read = file.read(buffer.as_mut_slice());
@@ -110,9 +115,22 @@ auto checksum(ref<rstd::path::Path> path, const RegistryPackageId& package)
                     "cannot read Registry blob '{}': {}", path, rstd::move(read).unwrap_err()));
         }
         if (*read == usize {}) break;
-        state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
+        rstd_try(state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read))
+                     .map_err([&](licrypto::Error error) {
+                         return RegistryArtifactError { .kind = RegistryArtifactErrorKind::Digest,
+                                                        .package = package.clone(),
+                                                        .message = rstd::format(
+                                                            "SHA-256 failed: {}", error),
+                                                        .crypto = Some(rstd::move(error)) };
+                     }));
     }
-    return Ok(PackageChecksum(rstd::move(state).finalize_digest()));
+    return Ok(PackageChecksum(
+        rstd_try(rstd::move(state).finalize_digest().map_err([&](licrypto::Error error) {
+            return RegistryArtifactError { .kind    = RegistryArtifactErrorKind::Digest,
+                                           .package = package.clone(),
+                                           .message = rstd::format("SHA-256 failed: {}", error),
+                                           .crypto  = Some(rstd::move(error)) };
+        }))));
 }
 
 } // namespace

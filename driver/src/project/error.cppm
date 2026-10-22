@@ -4,6 +4,7 @@ module;
 export module lito.driver:project.error;
 
 import rstd;
+import licrypto;
 import lito.core;
 import lito.system;
 import lito.toolchain;
@@ -19,6 +20,7 @@ export namespace lito
 
 class ProjectError {
     RSTD_ENUM(ProjectError,
+              (Crypto, (licrypto::Error source;)),
               (Workspace, (lito::package::PackageSelectionError source;)),
               (Package, (lito::package::PackageError source;)),
               (Dependency, (lito::dependency::DependencyError source;)),
@@ -39,6 +41,13 @@ using ProjectResult = Result<T, ProjectError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::ProjectError> {
+    static auto from(licrypto::Error error) -> lito::ProjectError {
+        return lito::ProjectError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::package::PackageSelectionError>, lito::ProjectError> {
@@ -114,6 +123,7 @@ template<>
 struct Impl<fmt::Display, lito::ProjectError> : ImplBase<lito::ProjectError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Workspace()) {
             return formatter.write_raw("project workspace resolution failed",
                                        sizeof("project workspace resolution failed") - 1);
@@ -169,6 +179,7 @@ template<>
 struct Impl<error::Error, lito::ProjectError> : ImplBase<lito::ProjectError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Workspace()) {
             return Some(dyn<error::Error>::from_ref(error.as_Workspace().source));
         }

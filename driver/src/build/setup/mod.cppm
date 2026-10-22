@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.driver:build.setup;
 
 import rstd;
@@ -7,6 +10,7 @@ import lito.cpp;
 import lito.tools.cargo;
 import lito.toolchain;
 import :dependency.cargo;
+import :project.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -109,8 +113,8 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                              const lito::cpp::ProfileSpec&              profile,
                              const BuildPlatform&                       platform,
                              const lito::package::ResolvedPackageGraph& graph,
-                             const Vec<String>&                         selected_packages) -> void {
-    if (reporter.is_none() || reporter->notify == nullptr) return;
+                             const Vec<String>& selected_packages) -> ProjectResult<empty> {
+    if (reporter.is_none() || reporter->notify == nullptr) return Ok(empty {});
     auto report = BuildSetupReport {
         .toolchain =
             BuildToolchainReport {
@@ -167,14 +171,14 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                 for (const auto& entry : provider->embedded_source->entries()) {
                     if (entry.path().as_str() == "lib.lua"_str &&
                         entry.kind() == lito::source::SourceEntryKind::File) {
-                        digest = licrypto::sha256_hex(entry.contents());
+                        digest = rstd_try(licrypto::sha256_hex(entry.contents()));
                         break;
                     }
                 }
             } else {
                 auto contents = rstd::fs::read(
                     provider->manifest.root.join(PathBuf::from("lib.lua"_str).as_path()).as_path());
-                if (contents.is_ok()) digest = licrypto::sha256_hex(contents->as_slice());
+                if (contents.is_ok()) digest = rstd_try(licrypto::sha256_hex(contents->as_slice()));
             }
             auto supports = String::make();
             for (auto host : script.supports) {
@@ -340,6 +344,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
     append(BuildOptionReportDomain::C, options.c);
     append(BuildOptionReportDomain::Link, options.linker);
     reporter->notify(reporter->context, report);
+    return Ok(empty {});
 }
 
 } // namespace lito

@@ -4,6 +4,7 @@ module;
 export module lito.driver:command.doc_error;
 
 import rstd;
+import licrypto;
 import rstd.json;
 import lito.core;
 import :build.error;
@@ -19,6 +20,7 @@ export namespace lito
 
 class DocError {
     RSTD_ENUM(DocError,
+              (Crypto, (licrypto::Error source;)),
               (Source, (lito::source::SourceError source;)),
               (Build, (BuildError source;)),
               (System, (SystemError source;)),
@@ -39,6 +41,13 @@ using DocResult = Result<T, DocError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::DocError> {
+    static auto from(licrypto::Error error) -> lito::DocError {
+        return lito::DocError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::source::SourceError>, lito::DocError> {
@@ -72,6 +81,7 @@ template<>
 struct Impl<fmt::Display, lito::DocError> : ImplBase<lito::DocError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Source())
             return formatter.write_str("documentation tool source acquisition failed"_str);
         if (error.is_Build()) return formatter.write_str("documentation build failed"_str);
@@ -116,6 +126,7 @@ template<>
 struct Impl<error::Error, lito::DocError> : ImplBase<lito::DocError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
+        if (value.is_Crypto()) return Some(dyn<error::Error>::from_ref(value.as_Crypto().source));
         if (value.is_Source()) return Some(dyn<error::Error>::from_ref(value.as_Source().source));
         if (value.is_Build()) return Some(dyn<error::Error>::from_ref(value.as_Build().source));
         if (value.is_System()) return Some(dyn<error::Error>::from_ref(value.as_System().source));

@@ -23,7 +23,8 @@ inline constexpr auto REGISTRY_INSPECTION_FAILURE_SCHEMA =
 inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v6"_str;
 
 struct RegistryInspectionProtocolError {
-    String message;
+    String                  message;
+    Option<licrypto::Error> crypto;
 };
 
 template<typename T>
@@ -399,7 +400,11 @@ auto parse_candidate_metadata(const Json& value)
             PackageChecksum::parse(rstd_try(
                 string_member(**readme_value, "sha256"_str, "candidate.metadata.readme"_str))),
             "candidate.metadata.readme.sha256"_str));
-        auto actual   = licrypto::sha256_digest(contents);
+        auto actual = rstd_try(licrypto::sha256_digest(contents).map_err([](licrypto::Error error) {
+            return RegistryInspectionProtocolError { .message =
+                                                         rstd::format("SHA-256 failed: {}", error),
+                                                     .crypto = Some(rstd::move(error)) };
+        }));
         if (! (checksum.digest() == actual)) {
             return Err(RegistryInspectionProtocolError {
                 .message = "candidate.metadata.readme.checksum does not match contents"_Str });

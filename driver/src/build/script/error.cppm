@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.script.error;
 
 import rstd;
+import licrypto;
 import rstd.json;
 import luato;
 import lito.core;
@@ -19,6 +20,7 @@ export namespace lito
 
 class BuildScriptError {
     RSTD_ENUM(BuildScriptError,
+              (Crypto, (licrypto::Error source;)),
               (Layout, (BuildLayoutError source;)),
               (Template, (TemplateError source;)),
               (HostTool, (HostBuildToolError source;)),
@@ -38,6 +40,13 @@ using BuildScriptResult = Result<T, BuildScriptError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::BuildScriptError> {
+    static auto from(licrypto::Error error) -> lito::BuildScriptError {
+        return lito::BuildScriptError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<fmt::Display, luato::Error> : ImplBase<luato::Error> {
@@ -105,6 +114,7 @@ template<>
 struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Layout()) {
             return formatter.write_raw("build script layout operation failed",
                                        sizeof("build script layout operation failed") - 1);
@@ -160,6 +170,7 @@ template<>
 struct Impl<error::Error, lito::BuildScriptError> : ImplBase<lito::BuildScriptError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Layout()) {
             return Some(dyn<error::Error>::from_ref(error.as_Layout().source));
         }

@@ -166,18 +166,21 @@ auto clone_archive_request(const lito::source::ArchiveSourceFetchRequest& reques
 }
 
 auto append_git_bundle_entry(Vec<GitBundleEntry>&                       entries,
-                             const lito::source::ResolvedPackageSource& source) -> void {
-    if (source.kind != lito::source::PackageSourceKind::Git) return;
+                             const lito::source::ResolvedPackageSource& source)
+    -> CommandResult<empty> {
+    if (source.kind != lito::source::PackageSourceKind::Git) return Ok(empty {});
     auto identity = lito::source::git_fetch_identity(source.git.as_str(), source.commit.as_str());
-    auto key      = lito::source::fetch_identity_stable_key(identity);
+    auto key      = rstd_try(lito::source::fetch_identity_stable_key(identity));
     for (const auto& entry : entries) {
-        if (lito::source::fetch_identity_stable_key(entry.identity) == key.as_str()) return;
+        if (rstd_try(lito::source::fetch_identity_stable_key(entry.identity)) == key.as_str())
+            return Ok(empty {});
     }
     entries.push(GitBundleEntry {
         .identity = rstd::move(identity),
         .source   = source.root_directory.clone(),
         .commit   = source.commit.clone(),
     });
+    return Ok(empty {});
 }
 
 auto builtin_package_source(const lito::package::ResolvedPackageGraph& graph,
@@ -192,29 +195,32 @@ auto fetch_entry_count(const lito::package::ResolvedPackageGraph&          graph
                        const PreparedExternalDependencySources&            externals,
                        const Vec<lito::source::ArchiveSourceFetchRequest>& archive_requests,
                        usize cargo_entries) -> CommandResult<usize> {
-    auto       entries               = rstd::collections::BTreeMap<String, empty>::make();
-    auto       bundle                = lito::source::SourceBundleLayout(PathBuf::make());
-    const auto append_package_source = [&entries, &bundle, &graph](
-                                           const lito::source::ResolvedPackageSource& source) {
+    auto       entries = rstd::collections::BTreeMap<String, empty>::make();
+    auto       bundle  = lito::source::SourceBundleLayout(PathBuf::make());
+    const auto append_package_source =
+        [&entries, &bundle, &graph](
+            const lito::source::ResolvedPackageSource& source) -> CommandResult<empty> {
         if (source.kind == lito::source::PackageSourceKind::Git) {
             auto identity =
                 lito::source::git_fetch_identity(source.git.as_str(), source.commit.as_str());
             entries.insert(
-                rstd::format("git:{}", lito::source::fetch_identity_stable_key(identity)),
+                rstd::format("git:{}", rstd_try(lito::source::fetch_identity_stable_key(identity))),
                 empty {});
-            return;
+            return Ok(empty {});
         }
-        if (builtin_package_source(graph, source)) return;
+        if (builtin_package_source(graph, source)) return Ok(empty {});
         if (source.kind != lito::source::PackageSourceKind::Registry || source.registry.is_none())
-            return;
+            return Ok(empty {});
         entries.insert(bundle.registry_package(*source.registry).as_path().to_string_lossy(),
                        empty {});
-        entries.insert(
-            bundle.registry_index(source.registry->release.package).as_path().to_string_lossy(),
-            empty {});
+        entries.insert(rstd_try(bundle.registry_index(source.registry->release.package))
+                           .as_path()
+                           .to_string_lossy(),
+                       empty {});
+        return Ok(empty {});
     };
-    for (const auto& source : graph.sources) append_package_source(source);
-    for (const auto& package : graph.packages) append_package_source(package.source);
+    for (const auto& source : graph.sources) rstd_try(append_package_source(source));
+    for (const auto& package : graph.packages) rstd_try(append_package_source(package.source));
     for (const auto& external : externals.sources) {
         if (external.acquired.is_none() || ! external.source.is_Git()) continue;
         auto identity = lito::source::acquired_git_fetch_identity(
@@ -226,14 +232,15 @@ auto fetch_entry_count(const lito::package::ResolvedPackageGraph&          graph
                                                    rstd::move(identity).unwrap_err())));
         }
         if (identity->is_none()) continue;
-        entries.insert(rstd::format("git:{}", lito::source::fetch_identity_stable_key(**identity)),
-                       empty {});
+        entries.insert(
+            rstd::format("git:{}", rstd_try(lito::source::fetch_identity_stable_key(**identity))),
+            empty {});
     }
     for (const auto& archive : archive_requests) {
         auto identity =
             lito::source::archive_fetch_identity(archive.url.clone(), archive.sha256.clone());
         entries.insert(
-            rstd::format("archive:{}", lito::source::fetch_identity_stable_key(identity)),
+            rstd::format("archive:{}", rstd_try(lito::source::fetch_identity_stable_key(identity))),
             empty {});
     }
     return Ok(entries.len() + cargo_entries);
@@ -342,22 +349,23 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
                          lito::tools::ToolResolver&                          resolver,
                          const ResolvedProcessEnvironment&                   environment,
                          const Option<BuildEventSink>& observer) -> CommandResult<usize> {
-    auto       staging = rstd_try(staging_directory(destination));
-    const auto cleanup = [&]() {
-        (void)rstd::fs::remove_dir_all(staging.as_path());
-    };
+    auto staging = rstd_try(staging_directory(destination));
+    struct StagingCleanup {
+        PathBuf path;
+        ~StagingCleanup() { (void)rstd::fs::remove_dir_all(path.as_path()); }
+    } cleanup { staging.clone() };
     auto layout  = lito::source::SourceBundleLayout(staging.clone());
     auto entries = usize {};
 
     auto git_entries = Vec<GitBundleEntry>::make();
-    for (const auto& source : graph.sources) append_git_bundle_entry(git_entries, source);
-    for (const auto& package : graph.packages) append_git_bundle_entry(git_entries, package.source);
+    for (const auto& source : graph.sources) rstd_try(append_git_bundle_entry(git_entries, source));
+    for (const auto& package : graph.packages)
+        rstd_try(append_git_bundle_entry(git_entries, package.source));
     for (const auto& external : externals.sources) {
         if (external.acquired.is_none() || ! external.source.is_Git()) continue;
         auto identity = lito::source::acquired_git_fetch_identity(
             *external.acquired, external.source.as_Git().url.as_str());
         if (identity.is_err()) {
-            cleanup();
             return Err(
                 CommandError::Message(rstd::format("cannot export external Git source '{}': {}",
                                                    external.name.as_str(),
@@ -365,9 +373,9 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
         }
         if (identity->is_none()) continue;
         auto duplicate = false;
-        auto key       = lito::source::fetch_identity_stable_key(**identity);
+        auto key       = rstd_try(lito::source::fetch_identity_stable_key(**identity));
         for (const auto& entry : git_entries) {
-            if (lito::source::fetch_identity_stable_key(entry.identity) == key.as_str()) {
+            if (rstd_try(lito::source::fetch_identity_stable_key(entry.identity)) == key.as_str()) {
                 duplicate = true;
                 break;
             }
@@ -388,23 +396,20 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             lito::tools::command_tool_requirement(lito::tools::HostToolCapability::GitCheckout,
                                                   "source bundle export"_str));
         if (resolved.is_err()) {
-            cleanup();
             return Err(rstd::into<CommandError>(rstd::move(resolved).unwrap_err()));
         }
         auto git = lito::tools::GitClient(resolved->executable.clone(), environment);
         for (const auto& entry : git_entries) {
-            auto output  = layout.git(entry.identity);
+            auto output  = rstd_try(layout.git(entry.identity));
             auto parent  = output.as_path().parent().unwrap();
             auto created = rstd::fs::create_dir_all(parent);
             if (created.is_err()) {
-                cleanup();
                 return Err(CommandError::Message(rstd::format(
                     "cannot create Git bundle directory '{}': {}", parent, created.unwrap_err())));
             }
             auto exported = git.export_checkout(
                 entry.source.as_path(), output.as_path(), entry.commit.as_str());
             if (exported.is_err()) {
-                cleanup();
                 return Err(rstd::into<CommandError>(rstd::move(exported).unwrap_err()));
             }
             ++entries;
@@ -415,12 +420,11 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
     for (usize index {}; index < archive_files.len(); ++index) {
         auto identity = lito::source::archive_fetch_identity(
             archive_requests[index].url.clone(), archive_requests[index].sha256.clone());
-        auto key = lito::source::fetch_identity_stable_key(identity);
+        auto key = rstd_try(lito::source::fetch_identity_stable_key(identity));
         if (archived.contains_key(key.as_str())) continue;
         auto copied = copy_bundle_file(archive_files[index].path.as_path(),
-                                       layout.archive(identity).as_path());
+                                       rstd_try(layout.archive(identity)).as_path());
         if (copied.is_err()) {
-            cleanup();
             return Err(rstd::move(copied).unwrap_err());
         }
         archived.insert(rstd::move(key), empty {});
@@ -428,12 +432,11 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
     }
 
     if (! cargo.entries.is_empty() && cargo.provider.is_none()) {
-        cleanup();
         return Err(CommandError::Message("Cargo source bundle provider is unavailable"_Str));
     }
     for (const auto& entry : cargo.entries) {
-        auto area = layout.cargo(
-            entry.source_identity.as_str(), entry.manifest_path.as_path(), entry.target.as_str());
+        auto area = rstd_try(layout.cargo(
+            entry.source_identity.as_str(), entry.manifest_path.as_path(), entry.target.as_str()));
         auto vendored =
             lito::tools::cargo::vendor_dependencies(*cargo.provider,
                                                     lito::tools::cargo::VendorRequest {
@@ -447,12 +450,10 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
                                                     environment,
                                                     cargo_observer(observer));
         if (vendored.is_err()) {
-            cleanup();
             return Err(rstd::into<CommandError>(rstd::move(vendored).unwrap_err()));
         }
         auto validated = lito::tools::cargo::validate_vendor_config(vendored->config.as_path());
         if (validated.is_err()) {
-            cleanup();
             return Err(rstd::into<CommandError>(rstd::move(validated).unwrap_err()));
         }
         ++entries;
@@ -465,26 +466,23 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
         if (source.kind != lito::source::PackageSourceKind::Registry) continue;
         if (builtin_package_source(graph, source)) continue;
         if (registries.is_none() || source.registry.is_none()) {
-            cleanup();
             return Err(CommandError::Message("Registry source bundle metadata is incomplete"_Str));
         }
         const auto& pin        = *source.registry;
         auto        configured = registry_configuration(*registries, pin.release.package.registry);
         if (configured.is_none()) {
-            cleanup();
             return Err(CommandError::Message(rstd::format("Registry '{}' is not configured",
                                                           pin.release.package.registry.as_str())));
         }
         if (registry_cache.is_none()) {
             auto data = lito::system::LitoDataRoot::resolve();
             if (data.is_err()) {
-                cleanup();
                 return Err(rstd::into<CommandError>(rstd::move(data).unwrap_err()));
             }
             registry_cache = Some(PathBuf::from(data->root()));
         }
 
-        auto index_destination = layout.registry_index(pin.release.package);
+        auto index_destination = rstd_try(layout.registry_index(pin.release.package));
         auto index_key         = index_destination.as_path().to_string_lossy();
         if (! registry_indices.contains_key(index_key.as_str())) {
             auto indices = lito::registry::RegistryIndexClient(
@@ -495,13 +493,11 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
                 {});
             auto record = indices.source_bundle_record(pin);
             if (record.is_err()) {
-                cleanup();
                 return Err(CommandError::Message(rstd::format(
                     "cannot read Registry package index: {}", record.unwrap_err().message)));
             }
             auto written = write_bundle_file(index_destination.as_path(), record->as_str());
             if (written.is_err()) {
-                cleanup();
                 return Err(rstd::move(written).unwrap_err());
             }
             registry_indices.insert(rstd::move(index_key), empty {});
@@ -518,13 +514,11 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
             {});
         auto blob = blobs.acquire(pin);
         if (blob.is_err()) {
-            cleanup();
             return Err(CommandError::Message(rstd::format(
                 "cannot read verified Registry package archive: {}", blob.unwrap_err().message)));
         }
         auto copied = copy_bundle_file(blob->path.as_path(), destination.as_path());
         if (copied.is_err()) {
-            cleanup();
             return Err(rstd::move(copied).unwrap_err());
         }
         registry_packages.insert(rstd::move(key), empty {});
@@ -533,7 +527,6 @@ auto write_source_bundle(ref<rstd::path::Path>                               des
 
     auto published = rstd::fs::rename(staging.as_path(), destination);
     if (published.is_err()) {
-        cleanup();
         return Err(CommandError::Message(rstd::format(
             "cannot publish source bundle '{}': {}", destination, published.unwrap_err())));
     }

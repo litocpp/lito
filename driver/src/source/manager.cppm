@@ -424,7 +424,7 @@ class SourceManager {
         auto cache   = session.open_git_cache();
         if (cache.is_err()) return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
         auto layout         = rstd::move(cache).unwrap();
-        auto repository_key = repository_directory_key(url);
+        auto repository_key = rstd_try(repository_directory_key(url));
         return reusable_git_checkout(layout, repository_key.as_str(), url, commit);
     }
 
@@ -523,7 +523,7 @@ class SourceManager {
         return Some(cache_session_->clone());
     }
 
-    auto repository_directory_key(ref<str> url) const -> String {
+    auto repository_directory_key(ref<str> url) const -> SourceResult<String> {
         auto source = url;
         auto end    = source.len();
         auto query  = source.find("?"_str);
@@ -563,8 +563,8 @@ class SourceManager {
             prefix = "repository"_Str;
         }
         prefix.push('-');
-        prefix.push_str(licrypto::sha256_hex(url).as_str());
-        return prefix;
+        prefix.push_str(rstd_try(licrypto::sha256_hex(url)).as_str());
+        return Ok(rstd::move(prefix));
     }
 
     auto repository(const GitCacheLayout& layout, ref<str> repository_key, ref<str> url)
@@ -612,7 +612,7 @@ class SourceManager {
     auto fetch(ref<rstd::path::Path> repository, ref<str> url, ref<str> revision)
         -> SourceResult<String> {
         auto local_reference =
-            rstd::format("refs/lito/fetch/{}", licrypto::sha256_hex(revision).as_str());
+            rstd::format("refs/lito/fetch/{}", rstd_try(licrypto::sha256_hex(revision)).as_str());
         auto source = rstd::format("{}#{}", url, revision);
         auto git    = rstd_try(git_client(url));
         emit_fetch(source.as_str(), repository);
@@ -809,7 +809,7 @@ class SourceManager {
             return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
         }
         auto layout          = rstd::move(cache).unwrap();
-        auto repository_key  = repository_directory_key(url);
+        auto repository_key  = rstd_try(repository_directory_key(url));
         auto repository_path = rstd_try(repository(layout, repository_key.as_str(), url));
         if (exact_commit.is_some()) {
             auto present = rstd_try(object_exists(repository_path.as_path(), *exact_commit));
@@ -920,7 +920,7 @@ class SourceManager {
                 return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
             }
             auto layout          = rstd::move(cache).unwrap();
-            auto repository_key  = repository_directory_key(url);
+            auto repository_key  = rstd_try(repository_directory_key(url));
             auto repository_path = rstd_try(repository(layout, repository_key.as_str(), url));
             if (exact_commit.is_some()) {
                 auto present = rstd_try(object_exists(repository_path.as_path(), *exact_commit));

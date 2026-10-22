@@ -200,9 +200,10 @@ auto build_link_target(const BuildRequest&                 request,
         lito::link::replace_runtime_search_paths(link_requirements,
                                                  install_variant->policy.runtime_search,
                                                  "install artifact policy"_str);
-        executable_path = layout.install_executable(target_spec.id,
-                                                    target_spec.artifact_name.as_str(),
-                                                    install_variant->policy.identity.as_str());
+        executable_path =
+            rstd_try(layout.install_executable(target_spec.id,
+                                               target_spec.artifact_name.as_str(),
+                                               install_variant->policy.identity.as_str()));
     } else if (target_spec.artifact_kind == cpp::ArtifactKind::TestExecutable) {
         executable_path = layout.test(target_spec.id, target_spec.artifact_name.as_str());
     } else if (target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {

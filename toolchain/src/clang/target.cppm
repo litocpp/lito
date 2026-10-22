@@ -70,7 +70,8 @@ public:
             return Err(ToolchainError::Message(
                 "clang++ --print-targets returned no registered targets"_Str));
         }
-        return Ok(ClangSupportedTargets(rstd::move(backends), licrypto::sha256_hex(output)));
+        return Ok(
+            ClangSupportedTargets(rstd::move(backends), rstd_try(licrypto::sha256_hex(output))));
     }
 
     auto validate(const lito::system::Architecture& architecture, ref<str> triple) const

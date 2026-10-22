@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.host_tool.error;
 
 import rstd;
+import licrypto;
 import lito.core;
 import lito.system;
 import lito.tools;
@@ -18,6 +19,7 @@ export namespace lito
 
 class HostBuildToolError {
     RSTD_ENUM(HostBuildToolError,
+              (Crypto, (licrypto::Error source;)),
               (Source, (lito::source::SourceError source;)),
               (System, (SystemError source;)),
               (Tool, (lito::tools::ToolError source;)),
@@ -34,6 +36,13 @@ using HostBuildToolResult = Result<T, HostBuildToolError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::HostBuildToolError> {
+    static auto from(licrypto::Error error) -> lito::HostBuildToolError {
+        return lito::HostBuildToolError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::tools::ToolError>, lito::HostBuildToolError> {
@@ -60,6 +69,7 @@ template<>
 struct Impl<fmt::Display, lito::HostBuildToolError> : ImplBase<lito::HostBuildToolError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Tool()) return formatter.write_str("host build-tool resolution failed"_str);
         if (error.is_Source())
             return formatter.write_str("host build-tool source acquisition failed"_str);
@@ -108,6 +118,7 @@ template<>
 struct Impl<error::Error, lito::HostBuildToolError> : ImplBase<lito::HostBuildToolError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Tool()) return Some(dyn<error::Error>::from_ref(error.as_Tool().source));
         if (error.is_Source()) return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));

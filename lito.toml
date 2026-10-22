@@ -16,7 +16,7 @@ lito-tools = { path = "tools" }
 lito-toolchain = { path = "toolchain" }
 lito-driver = { path = "driver" }
 lito-zstd = { path = "third-party/zstd" }
-licrypto = "0.1.0"
+licrypto = "0.2.0"
 rstd-std = "0.1.9"
 rstd-nostd = "0.1.9"
 rstd-json = "0.1.9"

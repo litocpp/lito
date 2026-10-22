@@ -18,6 +18,7 @@ export namespace lito
 
 class AndroidNdkError {
     RSTD_ENUM(AndroidNdkError,
+              (Crypto, (licrypto::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Platform, (lito::system::PlatformError source;)),
@@ -255,9 +256,17 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<licrypto::Error>, lito::AndroidNdkError> {
+    static auto from(licrypto::Error error) -> lito::AndroidNdkError {
+        return lito::AndroidNdkError::Crypto(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::AndroidNdkError> : ImplBase<lito::AndroidNdkError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Json()) {
             return formatter.write_fmt(fmt::Arguments::make(
                 "cannot parse Android NDK metadata '{}'", error.as_Json().path.as_path()));
@@ -282,6 +291,7 @@ template<>
 struct Impl<error::Error, lito::AndroidNdkError> : ImplBase<lito::AndroidNdkError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Platform()) {
@@ -614,9 +624,9 @@ auto open_android_ndk(ref<rstd::path::Path> root, const lito::system::HostInfo& 
     auto cmake_text =
         rstd_try(read_text(paths.cmake_toolchain.as_path(), "Android CMake toolchain"_str));
     identity_document.push_str("cmake="_str);
-    identity_document.push_str(licrypto::sha256_hex(cmake_text.as_str()).as_str());
+    identity_document.push_str(rstd_try(licrypto::sha256_hex(cmake_text.as_str())).as_str());
     identity_document.push_ascii('\n');
-    auto identity = licrypto::sha256_hex(identity_document.as_str());
+    auto identity = rstd_try(licrypto::sha256_hex(identity_document.as_str()));
     return Ok(AndroidNdkDistribution(rstd::move(canonical).unwrap(),
                                      rstd::move(revision),
                                      rstd::move(release_name).unwrap(),
@@ -705,7 +715,7 @@ auto resolve_android_toolchain(AndroidNdkDistribution                    distrib
         shared_runtime = Some(AndroidRuntimeArtifact {
             .name     = "libc++_shared.so"_Str,
             .path     = rstd::move(runtime_path),
-            .identity = licrypto::sha256_hex(runtime_identity.as_str()),
+            .identity = rstd_try(licrypto::sha256_hex(runtime_identity.as_str())),
         });
     }
     auto tools = distribution.toolchain_spec();

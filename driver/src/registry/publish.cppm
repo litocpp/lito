@@ -64,6 +64,7 @@ enum class RegistryPublishErrorKind
 };
 
 struct RegistryPublishError {
+    Option<licrypto::Error>  crypto;
     RegistryPublishErrorKind kind { RegistryPublishErrorKind::Protocol };
     RegistryPackageId        package;
     String                   message;
@@ -695,8 +696,14 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
             "Registry publish requires a bearer token"_str);
     }
     auto body        = request_body(request);
-    auto idempotency = rstd::format("lito-{}", licrypto::sha256_hex(body.as_str()));
-    auto headers     = authorization_headers(*request.token);
+    auto idempotency = rstd::format(
+        "lito-{}", rstd_try(licrypto::sha256_hex(body.as_str()).map_err([&](licrypto::Error error) {
+            return RegistryPublishError { .crypto  = Some(error.clone()),
+                                          .kind    = RegistryPublishErrorKind::Infrastructure,
+                                          .package = request.package.clone(),
+                                          .message = rstd::format("publish identity: {}", error) };
+        })));
+    auto headers = authorization_headers(*request.token);
     headers.push(RegistryPublishHeader {
         .name  = "Content-Type"_Str,
         .value = "application/json"_Str,

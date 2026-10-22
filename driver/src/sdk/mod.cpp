@@ -87,7 +87,7 @@ auto libxml2_recipe() -> lito::SdkResult<EmbeddedSdkRecipe> {
     return Ok(EmbeddedSdkRecipe {
         .id              = String::make(recipe_id),
         .version         = "2.13.8"_Str,
-        .digest          = licrypto::sha256_hex(identity.as_str()),
+        .digest          = rstd_try(licrypto::sha256_hex(identity.as_str())),
         .package         = "lito-llvm-sdk-libxml2"_Str,
         .external_source = "libxml2"_Str,
         .target          = "libxml2-bootstrap"_Str,
@@ -635,7 +635,7 @@ auto load_descriptor(ref<rstd::path::Path> prefix)
         return Err(lito::SdkError::Json(rstd::move(path), rstd::move(parsed).unwrap_err()));
     }
     auto descriptor     = rstd_try(parse_descriptor(*parsed));
-    descriptor.identity = licrypto::sha256_hex(contents->as_str());
+    descriptor.identity = rstd_try(licrypto::sha256_hex(contents->as_str()));
     return Ok(Some(rstd::move(descriptor)));
 }
 
@@ -1314,7 +1314,7 @@ auto installed_file_record(ref<rstd::path::Path> root, ref<rstd::path::Path> rel
     return Ok(InstalledFileRecord {
         .path   = PathBuf::from(relative),
         .size   = metadata->size(),
-        .sha256 = licrypto::sha256_digest(contents->as_slice()),
+        .sha256 = rstd_try(licrypto::sha256_digest(contents->as_slice())),
     });
 }
 
@@ -1486,7 +1486,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
         .working_directory = component_root.clone(),
     });
     if (linked.is_err()) return Err(lito::SdkError::Toolchain(rstd::move(linked).unwrap_err()));
-    auto link_identity = licrypto::sha256_hex(linked->link_identity.as_str());
+    auto link_identity = rstd_try(licrypto::sha256_hex(linked->link_identity.as_str()));
     auto stripped      = toolchain->strip_artifact(linked_file.as_path(),
                                                    strip_tool->executable.as_path(),
                                                    lito::artifact::StripMode::Symbols,
@@ -2402,7 +2402,7 @@ auto parse_android_descriptor(const Json& value) -> lito::SdkResult<AndroidInsta
             rstd_try(sdk_required_string(value, "identity"_str, context)).as_str(),
             "Android NDK descriptor identity"_str)),
     };
-    auto expected = licrypto::sha256_hex(android_descriptor_payload(result).as_str());
+    auto expected = rstd_try(licrypto::sha256_hex(android_descriptor_payload(result).as_str()));
     if (result.identity != expected.as_str()) {
         return Err(lito::SdkError::Message(
             "Android NDK descriptor identity does not match its contents"_Str));
@@ -3065,7 +3065,8 @@ auto install_android_ndk(AndroidNdkInstallRequest request) -> SdkResult<SdkInsta
         .distribution_identity = String::make(distribution->identity()),
         .certification         = rstd::move(certification).unwrap(),
     };
-    descriptor.identity  = licrypto::sha256_hex(android_descriptor_payload(descriptor).as_str());
+    descriptor.identity =
+        rstd_try(licrypto::sha256_hex(android_descriptor_payload(descriptor).as_str()));
     auto descriptor_path = staging.join(PathBuf::from("sdk.json"_str).as_path());
     auto descriptor_text = serialize_android_descriptor(descriptor);
     auto written =

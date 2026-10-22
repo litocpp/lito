@@ -467,7 +467,8 @@ auto refresh_compile_context_identity(CompileContext& context) -> void {
     context.scan_id = scan_context_id(context);
 }
 
-auto preprocessor_projection(const CompileContext& context) -> PreprocessorProjection {
+auto preprocessor_projection(const CompileContext& context)
+    -> licrypto::CryptoResult<PreprocessorProjection> {
     auto       result         = PreprocessorProjection {};
     const auto append_include = [&](const auto& include) {
         auto text = include.path.as_path().to_string_lossy();
@@ -504,8 +505,8 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
         identity.push_str(rstd::format("define:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.undefinitions)
         identity.push_str(rstd::format("undefine:{}:{}\n", value.len(), value.as_str()).as_str());
-    result.identity = licrypto::sha256_hex(identity.as_str());
-    return result;
+    result.identity = rstd_try(licrypto::sha256_hex(identity.as_str()));
+    return Ok(rstd::move(result));
 }
 
 auto resolve_header_ownership(const PackageMetadata&  package,

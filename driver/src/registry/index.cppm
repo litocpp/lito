@@ -129,12 +129,31 @@ auto index_failure(RegistryIndexErrorKind kind, const RegistryPackageId& package
     return index_failure<T>(kind, package, String::make(message));
 }
 
-auto cache_record_path(ref<rstd::path::Path> root, const RegistryPackageId& package) -> PathBuf {
-    return RegistryCacheLayout(PathBuf::from(root)).index(package);
+auto index_source_error(const RegistryPackageId& package, lito::source::SourceError error)
+    -> RegistryIndexError {
+    return RegistryIndexError { .kind    = RegistryIndexErrorKind::Integrity,
+                                .package = package.clone(),
+                                .message = rstd::format("Registry cache identity: {}", error),
+                                .source  = Some(rstd::sync::Arc<lito::source::SourceError>::make(
+                                    rstd::move(error))) };
 }
-
-auto cache_lock_path(ref<rstd::path::Path> root, const RegistryPackageId& package) -> PathBuf {
-    return RegistryCacheLayout(PathBuf::from(root)).index_lock(package);
+auto cache_record_path(ref<rstd::path::Path> root, const RegistryPackageId& package)
+    -> Result<PathBuf, RegistryIndexError> {
+    return RegistryCacheLayout(PathBuf::from(root))
+        .index(package)
+        .map_err([&](licrypto::Error error) {
+            return index_source_error(package,
+                                      lito::source::SourceError::Crypto(rstd::move(error)));
+        });
+}
+auto cache_lock_path(ref<rstd::path::Path> root, const RegistryPackageId& package)
+    -> Result<PathBuf, RegistryIndexError> {
+    return RegistryCacheLayout(PathBuf::from(root))
+        .index_lock(package)
+        .map_err([&](licrypto::Error error) {
+            return index_source_error(package,
+                                      lito::source::SourceError::Crypto(rstd::move(error)));
+        });
 }
 
 auto valid_etag(ref<str> value) -> bool {
@@ -239,7 +258,11 @@ auto read_source_bundle_index(const Vec<PathBuf>* roots, const RegistryPackageId
     -> Result<Option<CachedPackageIndex>, RegistryIndexError> {
     if (roots == nullptr) return Ok(Option<CachedPackageIndex> {});
     for (const auto& root : *roots) {
-        auto record   = lito::source::SourceBundleLayout(root.clone()).registry_index(package);
+        auto record   = rstd_try(lito::source::SourceBundleLayout(root.clone())
+                                     .registry_index(package)
+                                     .map_err([&](lito::source::SourceError error) {
+                                       return index_source_error(package, rstd::move(error));
+                                     }));
         auto metadata = rstd::fs::symlink_metadata(record.as_path());
         if (metadata.is_err()) {
             auto error = rstd::move(metadata).unwrap_err();
@@ -311,7 +334,7 @@ auto write_cached_index(ref<rstd::path::Path>    record,
 
 auto acquire_cache_lock(ref<rstd::path::Path> root, const RegistryPackageId& package)
     -> Result<rstd::fs::FileLock, RegistryIndexError> {
-    auto lock    = cache_lock_path(root, package);
+    auto lock    = rstd_try(cache_lock_path(root, package));
     auto parent  = lock.as_path().parent().unwrap();
     auto created = rstd::fs::create_dir_all(parent);
     if (created.is_err()) {
@@ -404,8 +427,10 @@ auto lito::registry::RegistryIndexClient::load(const RegistryPackageId&     pack
     -> RegistryIndexLoadResult {
     for (const auto& error : failures_) {
         if (error.package == package)
-            return Err(RegistryIndexError {
-                .kind = error.kind, .package = package.clone(), .message = error.message.clone() });
+            return Err(RegistryIndexError { .kind    = error.kind,
+                                            .package = package.clone(),
+                                            .message = error.message.clone(),
+                                            .source  = error.source.clone() });
     }
     for (auto& index : indices_) {
         if (! (index.package() == package)) continue;
@@ -437,8 +462,10 @@ auto lito::registry::RegistryIndexClient::load_index(const RegistryPackageId&   
                                          registry_package_id_text(package),
                                          (**required).text(),
                                          error.message);
-        failures_.push(RegistryIndexError {
-            .kind = error.kind, .package = package.clone(), .message = error.message.clone() });
+        failures_.push(RegistryIndexError { .kind    = error.kind,
+                                            .package = package.clone(),
+                                            .message = error.message.clone(),
+                                            .source  = error.source.clone() });
         return Err(rstd::move(error));
     }
     return loaded;
@@ -453,7 +480,7 @@ auto lito::registry::RegistryIndexClient::read_index(const RegistryPackageId&   
             package,
             "Registry index client cannot serve another registry identity"_str);
     }
-    auto record = cache_record_path(cache_root_.as_path(), package);
+    auto record = rstd_try(cache_record_path(cache_root_.as_path(), package));
     auto cached = read_cached_index(record.as_path(), package);
     if (update_ == RegistryIndexUpdatePolicy::Reuse && cached.is_ok() && cached->is_some() &&
         (required.is_none() || cached->as_ref().unwrap().index.contains(**required))) {
@@ -573,7 +600,7 @@ auto lito::registry::RegistryIndexClient::source_bundle_record(const RegistryRel
                                                   package.name.as_str(),
                                                   version.text().as_str()));
     }
-    auto record   = cache_record_path(cache_root_.as_path(), package);
+    auto record   = rstd_try(cache_record_path(cache_root_.as_path(), package));
     auto contents = rstd::fs::read_to_string(record.as_path());
     if (contents.is_err()) {
         return index_failure<String>(

@@ -4,6 +4,7 @@ module;
 export module lito.driver:command.error;
 
 import rstd;
+import licrypto;
 import lito.core;
 import :project.error;
 import :build.error;
@@ -23,6 +24,7 @@ export namespace lito
 
 class CommandError {
     RSTD_ENUM(CommandError,
+              (Crypto, (licrypto::Error source;)),
               (Project, (ProjectError source;)),
               (Lock, (lito::lock::LockError source;)),
               (Flatpak, (lito::flatpak::Error source;)),
@@ -45,6 +47,13 @@ using CommandResult = Result<T, CommandError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<licrypto::Error>, lito::CommandError> {
+    static auto from(licrypto::Error error) -> lito::CommandError {
+        return lito::CommandError::Crypto(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<convert::From<lito::lock::LockError>, lito::CommandError> {
@@ -134,6 +143,7 @@ template<>
 struct Impl<fmt::Display, lito::CommandError> : ImplBase<lito::CommandError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_Crypto()) return as<fmt::Display>(error.as_Crypto().source).fmt(formatter);
         if (error.is_Project()) {
             return formatter.write_raw("project preparation failed",
                                        sizeof("project preparation failed") - 1);
@@ -195,6 +205,7 @@ template<>
 struct Impl<error::Error, lito::CommandError> : ImplBase<lito::CommandError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_Crypto()) return Some(dyn<error::Error>::from_ref(error.as_Crypto().source));
         if (error.is_Project()) {
             return Some(dyn<error::Error>::from_ref(error.as_Project().source));
         }

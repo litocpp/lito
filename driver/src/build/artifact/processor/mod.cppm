@@ -28,7 +28,7 @@ auto processor_file_digest(ref<rstd::path::Path> path) -> ArtifactProcessorResul
                                           PathBuf::from(path),
                                           rstd::move(bytes).unwrap_err())));
     }
-    return Ok(licrypto::sha256_hex(bytes->as_slice()));
+    return Ok(rstd_try(licrypto::sha256_hex(bytes->as_slice())));
 }
 
 struct ArtifactProcessorFileDeclaration {
@@ -191,7 +191,7 @@ auto parse_processor_response(ref<rstd::path::Path> root, ref<rstd::path::Path> 
     }
     return Ok(ArtifactProcessorFiles {
         .declarations = rstd::move(declarations),
-        .identity     = licrypto::sha256_hex(identity.as_str()),
+        .identity     = rstd_try(licrypto::sha256_hex(identity.as_str())),
     });
 }
 
@@ -265,7 +265,7 @@ auto artifact_processor_identity(const BuiltArtifact&                   raw,
                                  ref<str>                               profile,
                                  ref<str>                               target,
                                  ref<str>                               raw_digest,
-                                 ref<str> processor_digest) -> String {
+                                 ref<str> processor_digest) -> ArtifactProcessorResult<String> {
     auto data = "lito-artifact-processor-v1\n"_Str;
     data.push_str(lito::package::package_target_id_text(raw.target).as_str());
     data.push_ascii('\n');
@@ -284,7 +284,7 @@ auto artifact_processor_identity(const BuiltArtifact&                   raw,
     data.push_ascii('\n');
     data.push_str(processor_digest);
     data.push_ascii('\n');
-    return licrypto::sha256_hex(data.as_str());
+    return Ok(rstd_try(licrypto::sha256_hex(data.as_str())));
 }
 
 } // namespace lito
@@ -307,10 +307,10 @@ auto execute_artifact_processor(BuiltArtifact                                   
     -> ArtifactProcessorResult<ArtifactProcessorOutcome> {
     auto raw_digest       = rstd_try(processor_file_digest(raw.primary.path.as_path()));
     auto processor_digest = rstd_try(processor_file_digest(processor.primary.path.as_path()));
-    auto identity         = artifact_processor_identity(
-        raw, processor, options, profile, target, raw_digest.as_str(), processor_digest.as_str());
-    auto final  = layout.artifact_processor_result(raw.target, identity.as_str());
-    auto cached = rstd_try(cached_processor_files(final.as_path(), identity.as_str()));
+    auto identity         = rstd_try(artifact_processor_identity(
+        raw, processor, options, profile, target, raw_digest.as_str(), processor_digest.as_str()));
+    auto final            = layout.artifact_processor_result(raw.target, identity.as_str());
+    auto cached           = rstd_try(cached_processor_files(final.as_path(), identity.as_str()));
     if (cached.is_some()) {
         return Ok(ArtifactProcessorOutcome {
             .artifact = materialize_processor_artifact(

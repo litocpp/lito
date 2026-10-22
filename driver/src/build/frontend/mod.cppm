@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 module lito.driver:build.frontend;
 
 import rstd;
@@ -275,8 +278,8 @@ public:
                                  const cpp::CompileContext& context,
                                  ref<rstd::path::Path>      working_directory)
         -> BuildResult<frontend::FrontendAnalysis> {
-        auto record =
-            layout_.cache_standard_module_scan(standard_library_context_identity, logical_name);
+        auto record = rstd_try(
+            layout_.cache_standard_module_scan(standard_library_context_identity, logical_name));
         auto target = rstd::format(
             "standard-library::{}::{}",
             cpp::standard_library_name(context.language.as_Cpp().options.abi.standard_library),

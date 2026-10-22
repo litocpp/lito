@@ -165,10 +165,10 @@ auto prepare_standard_library_modules(PreparedBuildUnits&      prepared,
                 rstd::format("standard library module manifest '{}' has no parent",
                              catalog.manifest.as_path())));
         }
-        auto object        = layout.standard_module_object(request.context_identity.as_str(),
-                                                           request.logical_name.as_str());
-        auto cache_record  = layout.cache_standard_module_unit(request.context_identity.as_str(),
-                                                               request.logical_name.as_str());
+        auto object = rstd_try(layout.standard_module_object(request.context_identity.as_str(),
+                                                             request.logical_name.as_str()));
+        auto cache_record  = rstd_try(layout.cache_standard_module_unit(
+            request.context_identity.as_str(), request.logical_name.as_str()));
         auto source_origin = rstd::format("standard-library-module-v1\nmanifest={}\nsource={}",
                                           catalog.manifest_identity.as_str(),
                                           (*entry)->source_identity.as_str());

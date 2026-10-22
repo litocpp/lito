@@ -131,16 +131,16 @@ struct ArchiveMaterializationLayout {
 };
 
 auto archive_materialization_layout(ref<rstd::path::Path> materialization_root, ref<str> identity)
-    -> ArchiveMaterializationLayout {
+    -> SourceResult<ArchiveMaterializationLayout> {
     auto archives =
         PathBuf::from(materialization_root).join(PathBuf::from("archives"_str).as_path());
-    auto area = archives.join(PathBuf::from(licrypto::sha256_hex(identity)).as_path());
-    return ArchiveMaterializationLayout {
+    auto area = archives.join(PathBuf::from(rstd_try(licrypto::sha256_hex(identity))).as_path());
+    return Ok(ArchiveMaterializationLayout {
         .area      = area.clone(),
         .lock      = area.join(PathBuf::from("lock"_str).as_path()),
         .extracted = area.join(PathBuf::from("extracted"_str).as_path()),
         .receipt   = area.join(PathBuf::from("source-v2"_str).as_path()),
-    };
+    });
 }
 
 auto reusable_archive_materialization(const ArchiveMaterializationLayout& layout, ref<str> identity)
@@ -206,7 +206,7 @@ auto reusable_archive_materialization(const ArchiveMaterializationLayout& layout
 
 auto inspect_archive_materialization(ref<rstd::path::Path> materialization_root, ref<str> identity)
     -> SourceResult<Option<AcquiredSource>> {
-    auto layout  = archive_materialization_layout(materialization_root, identity);
+    auto layout  = rstd_try(archive_materialization_layout(materialization_root, identity));
     auto created = rstd::fs::create_dir_all(layout.area.as_path());
     if (created.is_err()) {
         return Err(SourceError::Io("create archive materialization area"_Str,
@@ -236,7 +236,8 @@ auto materialize_archive(lito::tools::acquisition::VerifiedFile            file,
                          const ResolvedProcessEnvironment&                 environment,
                          lito::tools::acquisition::AcquisitionEventSink    observer)
     -> SourceResult<AcquiredSource> {
-    auto layout  = archive_materialization_layout(materialization_root, file.identity.as_str());
+    auto layout =
+        rstd_try(archive_materialization_layout(materialization_root, file.identity.as_str()));
     auto created = rstd::fs::create_dir_all(layout.area.as_path());
     if (created.is_err()) {
         return Err(SourceError::Io("create archive materialization area"_Str,
