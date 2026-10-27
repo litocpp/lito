@@ -342,6 +342,11 @@ struct FrontendHeaderClassifier {
     }
 };
 
+struct ResolvedSource {
+    rstd::path::PathBuf logical;
+    rstd::path::PathBuf physical;
+};
+
 class FrontendSourceStore {
     using SharedLoadError = rstd::sync::Arc<lexical::Error>;
     using LoadResult      = Result<lexical::SharedScanFileStorage, SharedLoadError>;
@@ -456,6 +461,34 @@ public:
         auto fields = state_->lock().unwrap_unchecked();
         auto found  = fields->overlays.get(*logical_text);
         return found.is_some() ? Some((**found).clone()) : Option<rstd::path::PathBuf> {};
+    }
+
+    auto resolve(ref<rstd::path::Path> path) const -> lexical::Result<ResolvedSource> {
+        if (path.to_str().is_none()) {
+            return Err(
+                lexical::Error::make(rstd::format("source path '{}' is not valid UTF-8", path)));
+        }
+        auto canonical = rstd::fs::canonicalize(path);
+        if (canonical.is_err()) {
+            return Err(lexical::Error::make(rstd::format(
+                "cannot resolve source '{}': {}", path, rstd::move(canonical).unwrap_err())));
+        }
+        auto logical  = rstd::move(canonical).unwrap();
+        auto selected = overlay(logical.as_path());
+        if (selected.is_none()) selected = overlay(path);
+        auto physical = logical.clone();
+        if (selected.is_some()) {
+            auto resolved = rstd::fs::canonicalize(selected->as_path());
+            if (resolved.is_err()) {
+                return Err(
+                    lexical::Error::make(rstd::format("cannot resolve source contents for '{}': {}",
+                                                      logical.as_path(),
+                                                      rstd::move(resolved).unwrap_err())));
+            }
+            physical = rstd::move(resolved).unwrap();
+        }
+        return Ok(
+            ResolvedSource { .logical = rstd::move(logical), .physical = rstd::move(physical) });
     }
 
     auto release_domain(ref<str> domain) const -> void {
@@ -763,31 +796,11 @@ public:
     auto load(ref<rstd::path::Path> path, preprocessor::SourceLoadRole role)
         -> lexical::Result<lexical::SharedScanFileStorage> {
         ++statistics_.source_requests;
-        if (path.to_str().is_none()) {
-            return Err(
-                lexical::Error::make(rstd::format("source path '{}' is not valid UTF-8", path)));
-        }
-
         auto source_activity = observe(FrontendActivity::SourceResolve);
-        auto canonical       = rstd::fs::canonicalize(path);
-        if (canonical.is_err()) {
-            return Err(lexical::Error::make(rstd::format(
-                "cannot resolve source '{}': {}", path, rstd::move(canonical).unwrap_err())));
-        }
-        auto canonical_path = rstd::move(canonical).unwrap();
-        auto physical_path  = store_.overlay(canonical_path.as_path());
-        if (physical_path.is_none()) physical_path = store_.overlay(path);
-        auto physical = canonical_path.clone();
-        if (physical_path.is_some()) {
-            auto resolved_physical = rstd::fs::canonicalize(physical_path->as_path());
-            if (resolved_physical.is_err()) {
-                return Err(
-                    lexical::Error::make(rstd::format("cannot resolve source contents for '{}': {}",
-                                                      canonical_path.as_path(),
-                                                      rstd::move(resolved_physical).unwrap_err())));
-            }
-            physical = rstd::move(resolved_physical).unwrap();
-        }
+        auto resolved        = store_.resolve(path);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        auto canonical_path = rstd::move(resolved->logical);
+        auto physical       = rstd::move(resolved->physical);
         if (role == preprocessor::SourceLoadRole::Primary) {
             auto loaded = read_source(physical.as_path(), canonical_path.as_path());
             return lexical_result(loaded);

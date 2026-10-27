@@ -240,7 +240,7 @@ auto proc_macro_transform_identity(ref<str>                       selection_iden
                                    const ClangToolchain&          toolchain,
                                    const cpp::CompileContext&     context,
                                    ref<str> original_digest) -> BuildResult<String> {
-    auto producer = "lito-proc-macro-transform-v5\n"_Str;
+    auto producer = "lito-proc-macro-transform-v6\n"_Str;
     producer.push_str(
         "contract:cpp2\nspelling:attr-derive-v1\ntrace:kind-v1\nrecursion-limit:16\n"_str);
     producer.push_str(selection_identity);
@@ -395,6 +395,12 @@ auto select_proc_macro_sources(const cpp::PackageSpec&      package,
     return Ok(rstd::move(selected));
 }
 
+struct ProcMacroExpansionProgress {
+    usize       rounds {};
+    bool        pending {};
+    Vec<String> expansions;
+};
+
 auto transform_proc_macro_sources(const BuildLayout&                  layout,
                                   const ClangToolchain&               toolchain,
                                   cpp::PackageSpec&                   package,
@@ -402,9 +408,10 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                                   const Vec<cpp::PreparedUnit>&       units,
                                   const Vec<Vec<cpp::UnitId>>&        target_units,
                                   const Vec<u8>&                      source_selection,
+                                  Vec<ProcMacroExpansionProgress>&    progress,
                                   const Vec<BuiltProcMacroAggregate>& aggregates)
     -> BuildResult<bool> {
-    if (source_selection.len() != units.len()) {
+    if (source_selection.len() != units.len() || progress.len() != units.len()) {
         return Err(
             BuildError::Message("proc-macro source selection does not match prepared units"_Str));
     }
@@ -440,7 +447,8 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
             auto&      source = target_spec.sources[source_index];
             const auto unit   = target_units[target][source_index];
             if (source_selection[unit] == u8 {}) continue;
-            auto original = rstd::fs::read_to_string(source.path.as_path());
+            auto& round    = progress[unit];
+            auto  original = rstd::fs::read_to_string(source.path.as_path());
             if (original.is_err()) {
                 return Err(BuildError::System(
                     lito::system::SystemError::Io("read proc-macro input source"_Str,
@@ -454,11 +462,15 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                                                        toolchain,
                                                        plan.contexts[target],
                                                        original_digest.as_str()));
-            if (source.transformed.is_some() &&
+            if (! round.pending && source.transformed.is_some() &&
                 source.transformed->original_source_identity == original_digest.as_str() &&
                 source.transformed->producer_identity == producer_identity.as_str())
                 continue;
-            source.transformed = None();
+            if (! round.pending) {
+                source.transformed = None();
+                round.rounds       = usize {};
+                round.expansions.clear();
+            }
             auto output = layout.proc_macro_transformed_source(target_spec.id,
                                                                source.relative_path.as_path());
             if (output.is_err()) {
@@ -480,75 +492,74 @@ auto transform_proc_macro_sources(const BuildLayout&                  layout,
                 return Err(rstd::into<BuildError>(rstd::move(status).unwrap_err()));
             }
             rstd_try(create_parent(output->as_path()));
-            auto previous        = rstd::move(original).unwrap();
-            auto dependencies    = module_dependencies(units, Some(cpp::UnitId(unit)));
-            auto source_overlay  = Option<PathBuf> {};
-            auto expansion_stack = Vec<String>::make();
-            auto stable          = false;
-            for (auto iteration = usize {}; iteration < usize(16); ++iteration) {
-                auto arguments = Vec<String>::make();
-                arguments.push("mode=expand"_Str);
-                arguments.push(rstd::format("output={}", output->as_path()));
-                arguments.push(rstd::format("trace={}", trace->as_path()));
-                arguments.push(rstd::format("status={}", status->as_path()));
-                auto invocation =
-                    toolchain.prepare_frontend_plugin(plan.contexts[target],
-                                                      source.path.as_path(),
-                                                      target_spec.root.as_path(),
-                                                      dependencies,
-                                                      aggregate->plugin.as_path(),
-                                                      "pmacro"_str,
-                                                      arguments,
-                                                      "proc-macro source expansion"_str,
-                                                      source_overlay);
-                if (invocation.is_err()) {
-                    return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
-                }
-                auto expanded = toolchain.execute_frontend_plugin(*invocation);
-                if (expanded.is_err()) {
-                    return Err(rstd::into<BuildError>(rstd::move(expanded).unwrap_err()));
-                }
-                auto expansion_trace = rstd::fs::read_to_string(trace->as_path());
-                if (expansion_trace.is_err()) {
+            auto source_overlay = Option<PathBuf> {};
+            if (round.pending && source.transformed.is_some()) {
+                source_overlay = Some(source.transformed->overlay.clone());
+                original = rstd::fs::read_to_string(source.transformed->physical_path.as_path());
+                if (original.is_err()) {
                     return Err(BuildError::System(
-                        lito::system::SystemError::Io("read proc-macro expansion trace"_Str,
-                                                      trace->clone(),
-                                                      rstd::move(expansion_trace).unwrap_err())));
+                        lito::system::SystemError::Io("read pending proc-macro source"_Str,
+                                                      source.transformed->physical_path.clone(),
+                                                      rstd::move(original).unwrap_err())));
                 }
-                const auto had_expansions = ! expansion_trace->as_str().trim_ascii().is_empty();
-                append_expansion_trace(expansion_stack, expansion_trace->as_str());
-                auto expansion_status = rstd::fs::read_to_string(status->as_path());
-                if (expansion_status.is_err()) {
-                    return Err(BuildError::System(
-                        lito::system::SystemError::Io("read proc-macro expansion status"_Str,
-                                                      status->clone(),
-                                                      rstd::move(expansion_status).unwrap_err())));
-                }
-                const auto pending = expansion_status->as_str().trim_ascii();
-                if (pending != "pending"_str && pending != "complete"_str) {
-                    return Err(
-                        BuildError::Message("proc-macro expansion returned an invalid status"_Str));
-                }
-                auto current = rstd::fs::read_to_string(output->as_path());
-                if (current.is_err()) {
-                    return Err(BuildError::System(
-                        lito::system::SystemError::Io("read proc-macro transformed source"_Str,
-                                                      output->clone(),
-                                                      rstd::move(current).unwrap_err())));
-                }
-                if (pending == "complete"_str ||
-                    (! had_expansions && current->as_str() == previous.as_str())) {
-                    stable = true;
-                    break;
-                }
-                previous = rstd::move(current).unwrap();
-                rstd_try(
-                    write_overlay(overlay->as_path(), source.path.as_path(), output->as_path()));
-                source_overlay = Some(overlay->clone());
             }
-            if (! stable) {
+            auto previous     = rstd::move(original).unwrap();
+            auto dependencies = module_dependencies(units, Some(cpp::UnitId(unit)));
+            ++round.rounds;
+            auto arguments = Vec<String>::make();
+            arguments.push("mode=expand"_Str);
+            arguments.push(rstd::format("output={}", output->as_path()));
+            arguments.push(rstd::format("trace={}", trace->as_path()));
+            arguments.push(rstd::format("status={}", status->as_path()));
+            auto invocation = toolchain.prepare_frontend_plugin(plan.contexts[target],
+                                                                source.path.as_path(),
+                                                                target_spec.root.as_path(),
+                                                                dependencies,
+                                                                aggregate->plugin.as_path(),
+                                                                "pmacro"_str,
+                                                                arguments,
+                                                                "proc-macro source expansion"_str,
+                                                                source_overlay);
+            if (invocation.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
+            }
+            auto expanded = toolchain.execute_frontend_plugin(*invocation);
+            if (expanded.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(expanded).unwrap_err()));
+            }
+            auto expansion_trace = rstd::fs::read_to_string(trace->as_path());
+            if (expansion_trace.is_err()) {
+                return Err(BuildError::System(
+                    lito::system::SystemError::Io("read proc-macro expansion trace"_Str,
+                                                  trace->clone(),
+                                                  rstd::move(expansion_trace).unwrap_err())));
+            }
+            const auto had_expansions = ! expansion_trace->as_str().trim_ascii().is_empty();
+            append_expansion_trace(round.expansions, expansion_trace->as_str());
+            auto expansion_status = rstd::fs::read_to_string(status->as_path());
+            if (expansion_status.is_err()) {
+                return Err(BuildError::System(
+                    lito::system::SystemError::Io("read proc-macro expansion status"_Str,
+                                                  status->clone(),
+                                                  rstd::move(expansion_status).unwrap_err())));
+            }
+            const auto pending = expansion_status->as_str().trim_ascii();
+            if (pending != "pending"_str && pending != "complete"_str) {
                 return Err(
-                    BuildError::Message(recursion_failure(source.path.as_path(), expansion_stack)));
+                    BuildError::Message("proc-macro expansion returned an invalid status"_Str));
+            }
+            auto current = rstd::fs::read_to_string(output->as_path());
+            if (current.is_err()) {
+                return Err(BuildError::System(
+                    lito::system::SystemError::Io("read proc-macro transformed source"_Str,
+                                                  output->clone(),
+                                                  rstd::move(current).unwrap_err())));
+            }
+            round.pending = pending == "pending"_str &&
+                            (had_expansions || current->as_str() != previous.as_str());
+            if (round.pending && round.rounds >= usize(16)) {
+                return Err(BuildError::Message(
+                    recursion_failure(source.path.as_path(), round.expansions)));
             }
             rstd_try(write_overlay(overlay->as_path(), source.path.as_path(), output->as_path()));
             source.origin_identity = producer_identity.clone();

@@ -92,6 +92,32 @@ TEST(FrontendSourceStore, RetainsLexedSourcesForTheScanSession) {
     EXPECT_GE(store.statistics().cache_hits, usize(2));
 }
 
+TEST(FrontendSourceStore, ResolvesOverlayContentsWithTheLogicalSourcePath) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner   = rstd::move(temporary).unwrap();
+    auto source  = source_fixture(owner.path());
+    auto overlay = PathBuf::from(owner.path()).join(PathBuf::from("overlay.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(overlay.as_path(), "double value = 2;\n"_str.as_bytes()).is_ok());
+    auto store = FrontendSourceStore::make();
+    auto plain = store.resolve(source.as_path());
+    ASSERT_TRUE(plain.is_ok());
+    EXPECT_EQ(plain->logical.as_path(), plain->physical.as_path());
+    ASSERT_TRUE(store.add_overlay(source.as_path(), overlay.as_path()));
+    auto alias    = PathBuf::from(owner.path()).join(PathBuf::from("./source.cpp"_str).as_path());
+    auto resolved = store.resolve(alias.as_path());
+    ASSERT_TRUE(resolved.is_ok());
+    EXPECT_EQ(resolved->logical.as_path(), plain->logical.as_path());
+    auto expected = rstd::fs::canonicalize(overlay.as_path());
+    ASSERT_TRUE(expected.is_ok());
+    EXPECT_EQ(resolved->physical.as_path(), expected->as_path());
+    auto service = FrontendService::with_store(store);
+    auto loaded  = service.load(alias.as_path(), SourceLoadRole::Primary);
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ((**loaded).snapshot->path.as_path(), resolved->logical.as_path());
+    EXPECT_EQ((**loaded).token(usize(1), usize {}).text(), "double"_str);
+}
+
 TEST(FrontendSourceStore, PreservesNonUtf8SourceAndReleasesItsStorage) {
     auto temporary = rstd::test::TempDir::make();
     ASSERT_TRUE(temporary.is_ok());

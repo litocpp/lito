@@ -4,6 +4,7 @@ module;
 #include <clang/AST/Attr.h>
 #include <clang/AST/Decl.h>
 #include <clang/AST/DeclTemplate.h>
+#include <clang/AST/Expr.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Frontend/FrontendPluginRegistry.h>
@@ -20,6 +21,8 @@ module;
 module pmacro;
 
 import std;
+
+#include "declarations.hpp"
 
 namespace pmacro::clang_bridge
 {
@@ -42,6 +45,7 @@ auto report(clang::DiagnosticsEngine&       diagnostics,
 struct ParsedStringArguments {
     std::vector<std::string> values;
     clang::SourceRange       range;
+    clang::CharSourceRange   tail;
 };
 
 auto parse_string_arguments(clang::Sema&             sema,
@@ -61,6 +65,19 @@ auto parse_string_arguments(clang::Sema&             sema,
             if (literal == nullptr || literal->getString().empty()) return std::nullopt;
             result.values.push_back(literal->getString().str());
         }
+        if (first_only) {
+            auto begin = attribute.getRange().getEnd();
+            auto end   = begin;
+            if (attribute.getNumArgs() > 1) {
+                begin = attribute.getArgAsExpr(1)->getBeginLoc();
+                end   = clang::Lexer::getLocForEndOfToken(
+                    attribute.getArgAsExpr(attribute.getNumArgs() - 1)->getEndLoc(),
+                    0,
+                    sema.getSourceManager(),
+                    sema.getLangOpts());
+            }
+            result.tail = clang::CharSourceRange::getCharRange(begin, end);
+        }
         return result;
     }
 
@@ -74,8 +91,9 @@ auto parse_string_arguments(clang::Sema&             sema,
         if (allow_empty) return result;
         return std::nullopt;
     }
-    location         = clang::Lexer::getLocForEndOfToken(token.getLocation(), 0, manager, language);
-    auto       depth = 0u;
+    location = clang::Lexer::getLocForEndOfToken(token.getLocation(), 0, manager, language);
+    auto       tail_begin       = clang::SourceLocation {};
+    auto       depth            = 0u;
     auto       argument_tokens  = 0u;
     auto       validating       = true;
     auto       argument_literal = std::optional<std::string> {};
@@ -98,10 +116,16 @@ auto parse_string_arguments(clang::Sema&             sema,
                 ! finish_argument())
                 return std::nullopt;
             result.range.setEnd(token.getLocation());
+            if (first_only)
+                result.tail = clang::CharSourceRange::getCharRange(
+                    tail_begin.isValid() ? tail_begin : token.getLocation(), token.getLocation());
             break;
         }
         if (token.is(clang::tok::comma) && depth == 0) {
             if (! finish_argument()) return std::nullopt;
+            if (first_only && tail_begin.isInvalid())
+                tail_begin =
+                    clang::Lexer::getLocForEndOfToken(token.getLocation(), 0, manager, language);
             location = clang::Lexer::getLocForEndOfToken(token.getLocation(), 0, manager, language);
             continue;
         }
@@ -382,8 +406,18 @@ public:
         }
         auto annotation = std::string(helper_annotation);
         annotation.append(parsed->values.front());
+        clang::Expr* locations[] = {
+            clang::IntegerLiteral::Create(sema.Context,
+                                          llvm::APInt(32, parsed->tail.getBegin().getRawEncoding()),
+                                          sema.Context.UnsignedIntTy,
+                                          {}),
+            clang::IntegerLiteral::Create(sema.Context,
+                                          llvm::APInt(32, parsed->tail.getEnd().getRawEncoding()),
+                                          sema.Context.UnsignedIntTy,
+                                          {})
+        };
         declaration->addAttr(
-            clang::AnnotateAttr::Create(sema.Context, annotation, nullptr, 0, parsed->range));
+            clang::AnnotateAttr::Create(sema.Context, annotation, locations, 2, parsed->range));
         return AttributeApplied;
     }
 };
@@ -416,11 +450,11 @@ auto contains_proc_macro_invocation(clang::CompilerInstance& compiler, llvm::Str
         } else if (state == 1u) {
             state = token.is(clang::tok::l_square) ? 2u : 0u;
         } else if (state == 2u) {
-            state = token.is(clang::tok::identifier) && spelling == "pmacro" ? 3u : 0u;
+            state = token.isAnyIdentifier() && spelling == "pmacro" ? 3u : 0u;
         } else if (state == 3u) {
             state = token.is(clang::tok::coloncolon) ? 4u : 0u;
         } else {
-            if (token.is(clang::tok::identifier) && (spelling == "attr" || spelling == "derive"))
+            if (token.isAnyIdentifier() && (spelling == "attr" || spelling == "derive"))
                 return true;
             state = 0u;
         }
@@ -458,11 +492,20 @@ struct MacroLookup {
 
 class ExpansionState final : public pmacro::host::Runtime {
 public:
-    explicit ExpansionState(clang::CompilerInstance& compiler): compiler_(compiler) {
+    explicit ExpansionState(clang::CompilerInstance& compiler)
+        : compiler_(compiler), sources_(compiler), declarations_(compiler, sources_) {
         target_triple_ = compiler_.getTarget().getTriple().str();
     }
 
-    auto make_stream(llvm::StringRef source, pmacro::Span span) -> pmacro::host::StreamHandle {
+    auto sources() -> SourceRegistry& { return sources_; }
+    auto helpers(const clang::Decl& declaration) -> const std::vector<PreparedHelper>& {
+        return declarations_.helpers(declaration);
+    }
+
+    auto make_stream(llvm::StringRef source,
+                     pmacro::Span    span,
+                     bool            exact_spans     = true,
+                     bool            validate_groups = false) -> pmacro::host::StreamHandle {
         const auto root = create_stored_stream();
         if (source.empty()) return root;
 
@@ -486,11 +529,13 @@ public:
             lexer.LexFromRawLexer(token);
             if (token.is(clang::tok::eof)) break;
             if (token.is(clang::tok::comment)) continue;
-            const auto* end        = lexer.getBufferLocation();
-            const auto* begin      = end - token.getLength();
-            const auto  offset     = static_cast<std::uint32_t>(begin - input.begin());
-            auto        token_span = pmacro::Span(
-                span.source(), span.begin() + offset, span.begin() + offset + token.getLength());
+            const auto* end    = lexer.getBufferLocation();
+            const auto* begin  = end - token.getLength();
+            const auto  offset = static_cast<std::uint32_t>(begin - input.begin());
+            auto token_span = exact_spans ? pmacro::Span(span.source(),
+                                                         span.begin() + offset,
+                                                         span.begin() + offset + token.getLength())
+                                          : span;
 
             const auto closing = matching_close(token.getKind());
             if (closing != clang::tok::unknown) {
@@ -521,6 +566,9 @@ public:
                 continue;
             }
 
+            if (validate_groups &&
+                token.isOneOf(clang::tok::r_paren, clang::tok::r_square, clang::tok::r_brace))
+                return 0;
             auto kind = pmacro::TokenKind::Punct;
             if (token.isAnyIdentifier())
                 kind = pmacro::TokenKind::Ident;
@@ -539,6 +587,7 @@ public:
                 .leading_space = token.hasLeadingSpace(),
             });
         }
+        if (validate_groups && ! frames.empty()) return 0;
         return root;
     }
 
@@ -616,21 +665,24 @@ public:
         return false;
     }
 
-    auto enter_invocation(llvm::StringRef package,
-                          llvm::StringRef name,
-                          llvm::StringRef provider,
-                          pmacro::Span    call_site) -> void {
+    auto enter_invocation(llvm::StringRef    package,
+                          llvm::StringRef    name,
+                          llvm::StringRef    provider,
+                          pmacro::Span       call_site,
+                          const clang::Decl& declaration) -> void {
         macro_identity_.assign(package.data(), package.size());
         macro_identity_.append("::");
         macro_identity_.append(name.data(), name.size());
         provider_identity_.assign(provider.data(), provider.size());
-        call_site_ = call_site;
+        call_site_   = call_site;
+        declaration_ = &declaration;
     }
 
     auto leave_invocation() -> void {
         macro_identity_.clear();
         provider_identity_.clear();
-        call_site_ = {};
+        call_site_   = {};
+        declaration_ = nullptr;
     }
 
 private:
@@ -754,11 +806,23 @@ private:
         return {};
     }
 
-    auto valid_span(pmacro::Span span) const -> bool {
-        if (span.source() != 1 || span.begin() > span.end()) return false;
-        const auto file = compiler_.getSourceManager().getMainFileID();
-        return span.end() <= compiler_.getSourceManager().getBufferData(file).size();
+    auto current_declaration() noexcept
+        -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> override {
+        if (! declaration_) return std::unexpected(DeclarationError::NotInInvocation);
+        return declarations_.get(*declaration_);
     }
+
+    auto fragment_stream(const CodeFragment& fragment) noexcept
+        -> std::expected<pmacro::host::StreamHandle, FragmentError> override {
+        if (! declaration_) return std::unexpected(FragmentError::NotInInvocation);
+        auto source = sources_.fragment_source(fragment, call_site_);
+        if (! source) return std::unexpected(source.error());
+        auto handle = make_stream(fragment.text, source->span, source->exact, true);
+        if (! handle) return std::unexpected(FragmentError::InvalidFragment);
+        return handle;
+    }
+
+    auto valid_span(pmacro::Span span) const -> bool { return sources_.valid(span); }
 
     auto call_site_span() const noexcept -> std::expected<pmacro::Span, pmacro::Error> override {
         if (! valid_span(call_site_)) return std::unexpected(pmacro::Error::InvalidArgument);
@@ -790,10 +854,7 @@ private:
             diagnostic_level = clang::DiagnosticsEngine::Warning;
         else if (level == pmacro::DiagnosticLevel::Error)
             diagnostic_level = clang::DiagnosticsEngine::Error;
-        const auto location =
-            compiler_.getSourceManager()
-                .getLocForStartOfFile(compiler_.getSourceManager().getMainFileID())
-                .getLocWithOffset(span.begin());
+        const auto location = sources_.location(span);
         report(compiler_.getDiagnostics(), location, diagnostic_level, llvm::StringRef(message));
         return true;
     }
@@ -805,6 +866,9 @@ private:
     auto target_triple() const noexcept -> std::string_view override { return target_triple_; }
 
     clang::CompilerInstance&  compiler_;
+    SourceRegistry            sources_;
+    DeclarationStore          declarations_;
+    const clang::Decl*        declaration_ {};
     std::vector<StoredStream> streams_;
     std::string               macro_identity_;
     std::string               provider_identity_;
@@ -820,51 +884,8 @@ struct MacroDefinition {
     pmacro::Span            attribute_span;
 };
 
-auto source_span(clang::CompilerInstance& compiler, clang::SourceRange range)
-    -> std::optional<pmacro::Span> {
-    auto&      manager   = compiler.getSourceManager();
-    const auto begin     = manager.getSpellingLoc(range.getBegin());
-    const auto end_token = manager.getSpellingLoc(range.getEnd());
-    if (begin.isInvalid() || end_token.isInvalid() || ! manager.isWrittenInMainFile(begin) ||
-        ! manager.isWrittenInMainFile(end_token))
-        return std::nullopt;
-    const auto end =
-        clang::Lexer::getLocForEndOfToken(end_token, 0, manager, compiler.getLangOpts());
-    if (end.isInvalid()) return std::nullopt;
-    return pmacro::Span(1, manager.getFileOffset(begin), manager.getFileOffset(end));
-}
-
-auto attribute_span(clang::CompilerInstance& compiler, const clang::AnnotateAttr& attribute)
-    -> std::optional<pmacro::Span> {
-    auto span = source_span(compiler, attribute.getRange());
-    if (! span.has_value()) return std::nullopt;
-    const auto file    = compiler.getSourceManager().getMainFileID();
-    const auto source  = compiler.getSourceManager().getBufferData(file);
-    const auto opening = source.take_front(span->begin()).rfind("[[");
-    const auto closing = source.find("]]", span->end());
-    if (opening == llvm::StringRef::npos || closing == llvm::StringRef::npos) return span;
-    const auto before = source.slice(opening + 2, span->begin());
-    const auto after  = source.slice(span->end(), closing);
-    if (before.trim().empty() && after.trim().empty()) {
-        return pmacro::Span(span->source(),
-                            static_cast<std::uint32_t>(opening),
-                            static_cast<std::uint32_t>(closing + 2));
-    }
-    const auto next_comma = after.find(',');
-    if (next_comma != llvm::StringRef::npos &&
-        (before.trim().empty() || after.take_front(next_comma).trim().empty())) {
-        auto end = next_comma + 1;
-        while (end < after.size() && llvm::isSpace(after[end])) ++end;
-        return pmacro::Span(
-            span->source(), span->begin(), span->end() + static_cast<std::uint32_t>(end));
-    }
-    const auto previous_comma = before.rfind(',');
-    if (previous_comma != llvm::StringRef::npos &&
-        before.drop_front(previous_comma + 1).trim().empty()) {
-        return pmacro::Span(
-            span->source(), static_cast<std::uint32_t>(opening + 2 + previous_comma), span->end());
-    }
-    return span;
+auto source_span(SourceRegistry& sources, clang::SourceRange range) -> std::optional<pmacro::Span> {
+    return sources.rewrite_span(range);
 }
 
 auto mask_span(std::string& source, pmacro::Span span) -> bool {
@@ -906,7 +927,7 @@ auto is_token_stream_expected(clang::QualType type) -> bool {
 class DefinitionTransformer final {
 public:
     DefinitionTransformer(clang::CompilerInstance& compiler, const ExpansionOptions& options)
-        : compiler_(compiler), options_(options) {}
+        : compiler_(compiler), options_(options), sources_(compiler) {}
 
     auto traverse(clang::DeclContext& context) -> void {
         for (auto* declaration : context.decls()) traverse(declaration);
@@ -1068,7 +1089,7 @@ private:
                 return;
             }
         }
-        auto definition_attribute_span = attribute_span(compiler_, attribute);
+        auto definition_attribute_span = sources_.attribute_span(attribute);
         if (! definition_attribute_span.has_value()) {
             reject("cannot resolve the source range for 'pmacro::define'");
             return;
@@ -1084,6 +1105,7 @@ private:
 
     clang::CompilerInstance&     compiler_;
     const ExpansionOptions&      options_;
+    SourceRegistry               sources_;
     std::vector<MacroDefinition> definitions_;
     bool                         failed_ {};
 };
@@ -1105,6 +1127,10 @@ public:
 private:
     auto traverse(clang::Decl* declaration) -> void {
         if (declaration == nullptr) return;
+        if (auto* templated = llvm::dyn_cast<clang::ClassTemplateDecl>(declaration)) {
+            traverse(templated->getTemplatedDecl());
+            return;
+        }
         const clang::AnnotateAttr* invocation = nullptr;
         auto                       derives    = std::vector<const clang::AnnotateAttr*> {};
         auto                       arguments  = llvm::StringRef {};
@@ -1161,15 +1187,15 @@ private:
         if (auto* nested = llvm::dyn_cast<clang::DeclContext>(declaration)) traverse(*nested);
     }
 
-    auto source_span(clang::SourceRange range) const -> std::optional<pmacro::Span> {
-        return clang_bridge::source_span(compiler_, range);
+    auto source_span(clang::SourceRange range) -> std::optional<pmacro::Span> {
+        return clang_bridge::source_span(state_.sources(), range);
     }
 
-    auto attribute_span(const clang::AnnotateAttr& attribute) const -> std::optional<pmacro::Span> {
-        return clang_bridge::attribute_span(compiler_, attribute);
+    auto attribute_span(const clang::AnnotateAttr& attribute) -> std::optional<pmacro::Span> {
+        return state_.sources().attribute_span(attribute);
     }
 
-    auto item_span(clang::Decl& declaration, const clang::AnnotateAttr& attribute) const
+    auto item_span(clang::Decl& declaration, const clang::AnnotateAttr& attribute)
         -> std::optional<pmacro::Span> {
         auto declaration_span = source_span(declaration.getSourceRange());
         auto invocation_span  = attribute_span(attribute);
@@ -1199,14 +1225,13 @@ private:
                             std::max(declaration_span->end(), invocation_span->end()));
     }
 
-    auto source_text(pmacro::Span span) const -> std::optional<std::string> {
-        const auto source = compiler_.getSourceManager().getBufferData(
-            compiler_.getSourceManager().getMainFileID());
-        if (span.begin() > span.end() || span.end() > source.size()) return std::nullopt;
-        return source.slice(span.begin(), span.end()).str();
+    auto source_text(pmacro::Span span) -> std::optional<std::string> {
+        if (! state_.sources().is_main(span)) return {};
+        return state_.sources().text(span);
     }
 
     auto replace_text(pmacro::Span span, llvm::StringRef replacement) -> bool {
+        if (! state_.sources().is_main(span)) return false;
         auto& manager = compiler_.getSourceManager();
         auto  begin   = manager.getLocForStartOfFile(manager.getMainFileID());
         if (begin.isInvalid()) return false;
@@ -1296,7 +1321,7 @@ private:
             failed_ = true;
             return;
         }
-        const auto arguments   = state_.make_stream(arguments_source, *attribute_span);
+        const auto arguments   = state_.make_stream(arguments_source, *attribute_span, false);
         const auto item_stream = state_.make_stream(std::move(item), *item_span);
         auto       input       = pmacro::AttributeInput {
             .arguments      = state_.token_stream(arguments),
@@ -1305,7 +1330,7 @@ private:
             .item_span      = *item_span,
         };
         auto context = state_.context();
-        state_.enter_invocation(package, name, lookup.provider, *attribute_span);
+        state_.enter_invocation(package, name, lookup.provider, *attribute_span, declaration);
         auto result = std::get<pmacro::host::AttributeCallback>(lookup.macro->callback)
                           .function(std::move(input), context);
         state_.leave_invocation();
@@ -1343,37 +1368,6 @@ private:
                    "cannot replace the declaration source for 'pmacro::attr'");
             failed_ = true;
         }
-    }
-
-    auto append_helpers(clang::Decl& declaration, std::vector<const clang::AnnotateAttr*>& helpers)
-        -> void {
-        for (const auto* attribute : declaration.specific_attrs<clang::AnnotateAttr>()) {
-            if (attribute->getAnnotation().starts_with(helper_annotation))
-                helpers.push_back(attribute);
-        }
-    }
-
-    auto collect_helpers(clang::Decl& declaration, std::vector<const clang::AnnotateAttr*>& helpers)
-        -> void {
-        append_helpers(declaration, helpers);
-        if (auto* nested = llvm::dyn_cast<clang::DeclContext>(&declaration)) {
-            for (auto* child : nested->decls()) {
-                if (child == nullptr) continue;
-                append_helpers(*child, helpers);
-                if (const auto* function = llvm::dyn_cast<clang::FunctionDecl>(child)) {
-                    for (auto* parameter : function->parameters()) {
-                        if (parameter != nullptr) append_helpers(*parameter, helpers);
-                    }
-                }
-            }
-        }
-    }
-
-    auto remove_attribute(std::string&               item,
-                          pmacro::Span               item_span,
-                          const clang::AnnotateAttr& attribute) -> bool {
-        auto span = attribute_span(attribute);
-        return span.has_value() && remove_span(item, item_span, *span);
     }
 
     auto expand_derive(clang::Decl&                                   declaration,
@@ -1423,12 +1417,11 @@ private:
             failed_ = true;
             return;
         }
-        auto retained = *source;
-        auto helpers  = std::vector<const clang::AnnotateAttr*> {};
-        collect_helpers(declaration, helpers);
-        for (const auto* helper : helpers) {
-            const auto owner = helper->getAnnotation().drop_front(helper_annotation.size());
-            auto       found = false;
+        auto        retained = *source;
+        const auto& helpers  = state_.helpers(declaration);
+        for (const auto& helper : helpers) {
+            const auto& owner = helper.value.owner;
+            auto        found = false;
             for (const auto* invocation : invocations) {
                 if (invocation->getAnnotation().drop_front(derive_annotation.size()) == owner) {
                     found = true;
@@ -1437,25 +1430,46 @@ private:
             }
             if (! found) {
                 report(diagnostics,
-                       helper->getLocation(),
+                       helper.attribute->getLocation(),
                        clang::DiagnosticsEngine::Error,
                        "'pmacro::helper' owner is not present in the enclosing derive group");
                 failed_ = true;
                 return;
             }
         }
-        auto removals = helpers;
-        removals.push_back(invocations.front());
-        std::sort(removals.begin(), removals.end(), [&](const auto* left, const auto* right) {
-            const auto left_span  = attribute_span(*left);
-            const auto right_span = attribute_span(*right);
-            return left_span.has_value() && right_span.has_value() &&
-                   left_span->begin() > right_span->begin();
+        auto removals        = std::vector<pmacro::Span> {};
+        auto prepare_removal = [&](const clang::AnnotateAttr& attribute) -> bool {
+            const auto span = attribute_span(attribute);
+            if (span) removals.push_back(*span);
+            return span.has_value();
+        };
+        auto ready = prepare_removal(*invocations.front());
+        for (const auto& helper : helpers) ready = prepare_removal(*helper.attribute) && ready;
+        if (! ready) {
+            report(diagnostics,
+                   invocations.front()->getLocation(),
+                   clang::DiagnosticsEngine::Error,
+                   "cannot locate a consumed pmacro attribute in the retained item");
+            failed_ = true;
+            return;
+        }
+        std::sort(removals.begin(), removals.end(), [](auto left, auto right) {
+            return left.begin() < right.begin();
         });
-        for (const auto* removal : removals) {
-            if (! remove_attribute(retained, *item_span, *removal)) {
+        auto merged = std::vector<pmacro::Span> {};
+        for (auto span : removals) {
+            if (! merged.empty() && merged.back().source() == span.source() &&
+                span.begin() <= merged.back().end()) {
+                merged.back() = pmacro::Span(span.source(),
+                                             merged.back().begin(),
+                                             std::max(merged.back().end(), span.end()));
+            } else
+                merged.push_back(span);
+        }
+        for (auto removal = merged.rbegin(); removal != merged.rend(); ++removal) {
+            if (! remove_span(retained, *item_span, *removal)) {
                 report(diagnostics,
-                       removal->getLocation(),
+                       invocations.front()->getLocation(),
                        clang::DiagnosticsEngine::Error,
                        "cannot remove a consumed pmacro attribute from the retained item");
                 failed_ = true;
@@ -1523,7 +1537,7 @@ private:
                 .item_span      = *item_span,
             };
             auto context = state_.context();
-            state_.enter_invocation(package, name, lookup.provider, *invocation_span);
+            state_.enter_invocation(package, name, lookup.provider, *invocation_span, declaration);
             auto result = std::get<pmacro::host::DeriveCallback>(lookup.macro->callback)
                               .function(std::move(input), context);
             state_.leave_invocation();
@@ -1550,6 +1564,7 @@ private:
             generated.append(*rendered);
             expansions_.push_back("derive " + annotation.str());
         }
+        pending_ = pending_ || contains_proc_macro_invocation(compiler_, retained);
         retained.append(generated);
         if (! replace_text(*item_span, retained)) {
             report(diagnostics,

@@ -266,12 +266,14 @@ class ScanCacheSession {
     struct State {
         String                                 environment;
         bool                                   force_refresh { false };
+        frontend::FrontendSourceStore          sources;
         rstd::sync::Mutex<FingerprintFields>   fingerprints;
         rstd::sync::Mutex<ScanCacheStatistics> statistics;
 
-        State(String environment, bool force_refresh)
+        State(String environment, bool force_refresh, frontend::FrontendSourceStore sources)
             : environment(rstd::move(environment)),
               force_refresh(force_refresh),
+              sources(rstd::move(sources)),
               fingerprints(FingerprintFields {}),
               statistics(ScanCacheStatistics {}) {}
     };
@@ -324,7 +326,12 @@ class ScanCacheSession {
     auto file_fingerprint(ref<rstd::path::Path> path) -> CacheResult<FileFingerprint> {
         auto text = path_string(path);
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
-        auto key = rstd::move(text).unwrap();
+        auto resolved = state_->sources.resolve(path);
+        if (resolved.is_err()) {
+            return Err(CacheError::Record(rstd::move(resolved).unwrap_err().message));
+        }
+        auto content = resolved->physical.as_path();
+        auto key     = rstd::format("{}:{}{}", text->len(), text->as_str(), content);
         struct Entry {
             SharedFingerprintCell cell;
             bool                  existing {};
@@ -342,7 +349,7 @@ class ScanCacheSession {
         auto initialized = false;
         auto stored      = entry.cell->get_or_init([&]() -> FingerprintResult {
             initialized   = true;
-            auto metadata = rstd::fs::metadata(path);
+            auto metadata = rstd::fs::metadata(content);
             if (metadata.is_err()) {
                 return Err(rstd::sync::Arc<CacheError>::make(
                     CacheError::SharedIo("inspect scan cache input"_Str,
@@ -354,7 +361,7 @@ class ScanCacheSession {
                 return Err(rstd::sync::Arc<CacheError>::make(
                     CacheError::Record(rstd::format("scan cache input '{}' is not a file", path))));
             }
-            auto opened = rstd::fs::File::open(path);
+            auto opened = rstd::fs::File::open(content);
             if (opened.is_err()) {
                 return Err(rstd::sync::Arc<CacheError>::make(
                     CacheError::SharedIo("hash scan cache input"_Str,
@@ -493,9 +500,10 @@ class ScanCacheSession {
     }
 
 public:
-    static auto create(const CacheEnvironment& environment) -> ScanCacheSession {
-        return ScanCacheSession { rstd::sync::Arc<State>::make(environment.scan_key_.clone(),
-                                                               environment.force_refresh_) };
+    static auto create(const CacheEnvironment&              environment,
+                       const frontend::FrontendSourceStore& sources) -> ScanCacheSession {
+        return ScanCacheSession { rstd::sync::Arc<State>::make(
+            environment.scan_key_.clone(), environment.force_refresh_, sources.clone()) };
     }
 
     auto clone() const -> ScanCacheSession { return ScanCacheSession { state_.clone() }; }

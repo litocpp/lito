@@ -769,8 +769,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(created_environment).unwrap_err()));
     }
     auto cache_environment = rstd::move(created_environment).unwrap();
-    auto scan_cache        = ScanCacheSession::create(cache_environment);
-    auto execution_domain  = ExecutionDomainId {
+    auto scan_cache = ScanCacheSession::create(cache_environment, frontend_service.source_store());
+    auto execution_domain = ExecutionDomainId {
         .value = rstd::format(
             "{}\n{}\n{}\n{}\n{}",
             cache_environment.key(),
@@ -1384,7 +1384,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 }
             }
         }
-        auto authoritative_cache    = ScanCacheSession::create(cache_environment);
+        auto authoritative_cache =
+            ScanCacheSession::create(cache_environment, authoritative_frontend.source_store());
         auto authoritative_analysis = FrontendAnalysisService::make(layout,
                                                                     toolchain,
                                                                     header_ownership,
@@ -1721,8 +1722,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     for (const auto& identity : prerequisite_identities)
         prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
     if (! available_aggregates.is_empty()) {
-        auto plugin_scope    = stage_timing.scope(BuildStage::Plugin);
-        auto pending_sources = proc_macro_sources.clone();
+        auto plugin_scope       = stage_timing.scope(BuildStage::Plugin);
+        auto pending_sources    = proc_macro_sources.clone();
+        auto expansion_progress = Vec<ProcMacroExpansionProgress>::with_capacity(units.len());
+        for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit)
+            expansion_progress.push(
+                ProcMacroExpansionProgress { .expansions = Vec<String>::make() });
         while (true) {
             auto pending = false;
             auto ready   = Vec<cpp::UnitId>::make();
@@ -1791,15 +1796,19 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                             units,
                                                             target_units,
                                                             selected_sources,
+                                                            expansion_progress,
                                                             available_aggregates);
             if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
             if (! *transformed) continue;
+            for (auto unit : ready)
+                if (expansion_progress[unit].pending) pending_sources[unit] = u8(1);
 
             auto authoritative_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
             rstd_try(rebuild_after_source_transformation(prerequisite_identities));
             authoritative_plan_scope.finish();
 
-            auto transformed_selection = compile_plan_prerequisite_closure(actions.compile, ready);
+            auto transformed_selection =
+                compile_plan_available_prerequisites(actions.compile, ready);
             for (cpp::UnitId unit {}; unit < transformed_selection.len(); ++unit)
                 if (prerequisite_identities[unit].is_some()) transformed_selection[unit] = u8 {};
             auto transformed_compile =

@@ -56,6 +56,149 @@ private:
     std::uint32_t end_ {};
 };
 
+enum class RecordKind
+{
+    Struct,
+    Class,
+    Union
+};
+enum class Access
+{
+    Public,
+    Protected,
+    Private
+};
+enum class FieldKind
+{
+    Named,
+    UnnamedBitField,
+    AnonymousRecord
+};
+enum class CodeOrigin
+{
+    Spelled,
+    Rendered
+};
+
+enum class SourceError
+{
+    Unavailable,
+    NonContiguous
+};
+enum class SourceContextId : std::uint64_t
+{
+};
+enum class RepresentationError
+{
+    Unavailable,
+    Unnameable,
+    RequiresTemplateContext
+};
+
+struct SourceInfo {
+    SourceContextId                  context {};
+    std::expected<Span, SourceError> spelling  = std::unexpected(SourceError::Unavailable);
+    std::expected<Span, SourceError> expansion = std::unexpected(SourceError::Unavailable);
+    std::optional<Span>              diagnostic;
+    bool                             from_macro = false;
+};
+
+struct CodeFragment {
+    std::string text;
+    CodeOrigin  origin = CodeOrigin::Rendered;
+    SourceInfo  source;
+};
+
+struct TypeInfo {
+    std::string                                      display;
+    std::expected<CodeFragment, RepresentationError> type_id =
+        std::unexpected(RepresentationError::Unavailable);
+    SourceInfo source;
+    bool       dependent = false;
+};
+
+struct ExpressionInfo {
+    std::expected<CodeFragment, RepresentationError> code =
+        std::unexpected(RepresentationError::Unavailable);
+    SourceInfo source;
+    bool       dependent = false;
+};
+
+struct AttributeInfo {
+    std::string                                      name;
+    std::expected<CodeFragment, RepresentationError> syntax =
+        std::unexpected(RepresentationError::Unavailable);
+    SourceInfo source;
+    bool       implicit = false;
+};
+
+struct HelperInfo {
+    std::string                                      owner;
+    std::expected<CodeFragment, RepresentationError> arguments =
+        std::unexpected(RepresentationError::Unavailable);
+    SourceInfo source;
+};
+
+struct FieldInfo {
+    std::optional<std::string>    name;
+    FieldKind                     kind   = FieldKind::Named;
+    Access                        access = Access::Public;
+    TypeInfo                      type;
+    bool                          mutable_ = false;
+    std::optional<ExpressionInfo> bit_width;
+    std::optional<ExpressionInfo> initializer;
+    std::vector<AttributeInfo>    attributes;
+    std::vector<HelperInfo>       helpers;
+    SourceInfo                    source;
+};
+
+struct EnumeratorInfo {
+    std::string                   name;
+    std::optional<ExpressionInfo> initializer;
+    std::vector<AttributeInfo>    attributes;
+    std::vector<HelperInfo>       helpers;
+    SourceInfo                    source;
+};
+
+struct RecordInfo {
+    RecordKind             kind      = RecordKind::Struct;
+    bool                   has_bases = false;
+    bool                   dependent = false;
+    std::vector<FieldInfo> fields;
+};
+
+struct EnumInfo {
+    bool                        scoped                   = false;
+    bool                        fixed_underlying_type    = false;
+    bool                        explicit_underlying_type = false;
+    TypeInfo                    underlying_type;
+    std::vector<EnumeratorInfo> enumerators;
+};
+
+struct Declaration {
+    std::optional<std::string>         name;
+    std::optional<std::string>         qualified_name;
+    std::vector<AttributeInfo>         attributes;
+    std::vector<HelperInfo>            helpers;
+    SourceInfo                         source;
+    std::variant<RecordInfo, EnumInfo> data;
+};
+
+enum class DeclarationError
+{
+    NotInInvocation,
+    UnsupportedDeclaration,
+    IncompleteDefinition,
+    InvalidDeclaration
+};
+
+enum class FragmentError
+{
+    NotInInvocation,
+    ForeignSource,
+    InvalidFragment
+};
+
 class TokenStream;
 class TokenTree;
 class Context;
@@ -150,6 +293,10 @@ private:
 
 class Context {
 public:
+    auto declaration() const noexcept
+        -> std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
+    auto tokens(const CodeFragment& fragment) const noexcept
+        -> std::expected<TokenStream, FragmentError>;
     auto stream() const noexcept -> std::expected<TokenStream, Error>;
     auto parse(std::string_view source) const noexcept -> std::expected<TokenStream, Error>;
     auto diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept
@@ -188,6 +335,10 @@ namespace host
 
 class Runtime {
 public:
+    virtual auto current_declaration() noexcept
+        -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> = 0;
+    virtual auto fragment_stream(const CodeFragment& fragment) noexcept
+        -> std::expected<StreamHandle, FragmentError>                           = 0;
     virtual auto create_stream() noexcept -> std::expected<StreamHandle, Error> = 0;
     virtual auto parse_stream(std::string_view source) noexcept
         -> std::expected<StreamHandle, Error> = 0;
@@ -331,6 +482,20 @@ auto TokenStream::end() const noexcept -> Iterator {
 
 auto TokenTree::children() const noexcept -> TokenStream {
     return runtime_ == nullptr ? TokenStream {} : TokenStream(runtime_, value_.children);
+}
+
+auto Context::declaration() const noexcept
+    -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> {
+    if (runtime_ == nullptr) return std::unexpected(DeclarationError::NotInInvocation);
+    return runtime_->current_declaration();
+}
+
+auto Context::tokens(const CodeFragment& fragment) const noexcept
+    -> std::expected<TokenStream, FragmentError> {
+    if (runtime_ == nullptr) return std::unexpected(FragmentError::NotInInvocation);
+    auto handle = runtime_->fragment_stream(fragment);
+    if (! handle) return std::unexpected(handle.error());
+    return runtime_->make_token_stream(*handle);
 }
 
 auto Context::stream() const noexcept -> std::expected<TokenStream, Error> {
