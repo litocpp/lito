@@ -35,7 +35,7 @@ main = work / "src/main.cpp"
 main.write_text('''import lito.test.pmacro.consumer;
 static_assert(scoped_identity_valid && scoped_derive_valid && equal_has_marker);
 static_assert(prefix_value == 7 && Equal{7} == Equal{7} && !(Equal{7} == Equal{8}));
-static_assert(sizeof(Replaced) == sizeof(int) && sizeof(Recursive) == sizeof(int));
+static_assert(sizeof(ReplaceSeed) == sizeof(int) && sizeof(RecursiveSeed) == sizeof(int));
 int main() { return Value{7}.value == 7 && TokenModel{}.value == 42 && Arguments{9}.value == 9 ? 0 : 1; }
 ''')
 report = work / "outputs.json"
@@ -58,3 +58,14 @@ result = subprocess.run(command, cwd=work, stdout=subprocess.PIPE, stderr=subpro
 if result.returncode == 0 or "recursion limit" not in result.stdout:
     raise RuntimeError(f"missing recursion failure; see {work / 'recursive.log'}")
 print("existing provider: attr, derive, helper, import, diagnostic, recursion passed")
+for name, source, diagnostic in [
+    ("rename", 'struct [[pmacro::attr("pmacro-basic-provider::replace")]] Other {};', "must retain the same declaration head"),
+    ("remove", 'struct [[pmacro::attr("pmacro-basic-provider::remove")]] RemoveSeed {};', "must retain the same declaration"),
+    ("import", 'struct [[pmacro::attr("pmacro-basic-provider::emit_import")]] ImportSeed {};', "must not change module dependencies"),
+]:
+    main.write_text("import lito.test.pmacro.consumer;\n" + source + "\nint main() {}\n")
+    result = subprocess.run(command, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    (work / f"{name}.log").write_text(result.stdout)
+    if result.returncode == 0 or diagnostic not in result.stdout:
+        raise RuntimeError(f"{name}: missing failure; see {work / (name + '.log')}")
+    print(f"{name}: expected failure")

@@ -27,6 +27,17 @@ SourceRegistry::SourceRegistry(clang::CompilerInstance& compiler)
     : compiler_(compiler), context_(static_cast<SourceContextId>(next_source_identity())) {
 }
 
+SourceRegistry::SourceRegistry(clang::CompilerInstance& compiler,
+                               SourceRegistry&          parent,
+                               std::uint32_t            input_offset,
+                               Span                     input)
+    : compiler_(compiler),
+      context_(parent.context()),
+      parent_(&parent),
+      input_offset_(input_offset),
+      input_(input) {
+}
+
 auto SourceRegistry::context() const -> SourceContextId {
     return context_;
 }
@@ -67,6 +78,14 @@ auto SourceRegistry::file_span(clang::CharSourceRange range) const
     if (invalid || buffer.size() > std::numeric_limits<std::uint32_t>::max() ||
         begin_offset > end_offset || end_offset > buffer.size())
         return std::unexpected(SourceError::Unavailable);
+    if (parent_) {
+        if (file != manager.getMainFileID() || begin_offset < input_offset_ ||
+            end_offset - input_offset_ > input_.end() - input_.begin())
+            return std::unexpected(SourceError::Unavailable);
+        return Span(input_.source(),
+                    input_.begin() + begin_offset - input_offset_,
+                    input_.begin() + end_offset - input_offset_);
+    }
     return Span(identify(file), begin_offset, end_offset);
 }
 
@@ -115,10 +134,11 @@ auto SourceRegistry::attribute_span(const clang::AnnotateAttr& attribute) const
     auto calculate = [&]() -> std::optional<Span> {
         auto span = rewrite_span(attribute.getRange());
         if (! span.has_value()) return std::nullopt;
-        const auto file    = compiler_.getSourceManager().getMainFileID();
-        const auto source  = compiler_.getSourceManager().getBufferData(file);
-        const auto opening = source.take_front(span->begin()).rfind("[[");
-        const auto closing = source.find("]]", span->end());
+        const auto& registry = parent_ ? *parent_ : *this;
+        const auto  id       = registry.file(*span);
+        const auto  source   = registry.compiler_.getSourceManager().getBufferData(id);
+        const auto  opening  = source.take_front(span->begin()).rfind("[[");
+        const auto  closing  = source.find("]]", span->end());
         if (opening == llvm::StringRef::npos || closing == llvm::StringRef::npos) return span;
         const auto before = source.slice(opening + 2, span->begin());
         const auto after  = source.slice(span->end(), closing);
@@ -152,7 +172,7 @@ auto SourceRegistry::attribute_span(const clang::AnnotateAttr& attribute) const
 auto SourceRegistry::rewrite_span(clang::SourceRange range) const -> std::optional<Span> {
     if (range.getBegin().isMacroID() || range.getEnd().isMacroID()) return {};
     auto span = spelling(clang::CharSourceRange::getTokenRange(range));
-    if (! span || ! is_main(*span)) return {};
+    if (! span) return {};
     return *span;
 }
 
@@ -161,6 +181,7 @@ auto SourceRegistry::main_span(std::uint32_t begin, std::uint32_t end) const -> 
 }
 
 auto SourceRegistry::valid(Span span) const -> bool {
+    if (parent_) return parent_->valid(span);
     const auto id = file(span);
     if (id.isInvalid() || span.begin() > span.end()) return false;
     bool       invalid = false;
@@ -169,10 +190,12 @@ auto SourceRegistry::valid(Span span) const -> bool {
 }
 
 auto SourceRegistry::is_main(Span span) const -> bool {
+    if (parent_) return parent_->is_main(span);
     return valid(span) && file(span) == compiler_.getSourceManager().getMainFileID();
 }
 
 auto SourceRegistry::location(Span span) const -> clang::SourceLocation {
+    if (parent_) return parent_->location(span);
     if (! valid(span)) return {};
     return compiler_.getSourceManager()
         .getLocForStartOfFile(file(span))
@@ -180,6 +203,7 @@ auto SourceRegistry::location(Span span) const -> clang::SourceLocation {
 }
 
 auto SourceRegistry::text(Span span) const -> std::optional<std::string> {
+    if (parent_) return parent_->text(span);
     if (! valid(span)) return {};
     const auto buffer = compiler_.getSourceManager().getBufferData(file(span));
     return buffer.slice(span.begin(), span.end()).str();

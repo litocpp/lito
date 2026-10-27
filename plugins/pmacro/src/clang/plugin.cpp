@@ -5,17 +5,20 @@ module;
 #include <clang/AST/Decl.h>
 #include <clang/AST/DeclTemplate.h>
 #include <clang/AST/Expr.h>
+#include <clang/AST/DeclCXX.h>
+#include <clang/Lex/Preprocessor.h>
+#include <clang/Parse/Parser.h>
+#include <clang/Sema/SemaConsumer.h>
+#include <llvm/Support/MemoryBuffer.h>
 #include <clang/Basic/Diagnostic.h>
+#include <clang/Basic/DiagnosticFrontend.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Frontend/FrontendPluginRegistry.h>
 #include <clang/Lex/Lexer.h>
 #include <clang/Lex/LiteralSupport.h>
-#include <clang/Rewrite/Core/Rewriter.h>
 #include <clang/Sema/ParsedAttr.h>
 #include <clang/Sema/Sema.h>
 #include <llvm/ADT/StringExtras.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/ToolOutputFile.h>
 #include <llvm/Support/raw_ostream.h>
 
 module pmacro;
@@ -26,6 +29,8 @@ import std;
 
 namespace pmacro::clang_bridge
 {
+
+auto prepare_invocation(clang::Sema&, clang::Decl&) -> void;
 
 constexpr llvm::StringLiteral define_annotation         = "pmacro.define";
 constexpr llvm::StringLiteral define_scope_annotation   = "pmacro.define:";
@@ -38,7 +43,10 @@ auto report(clang::DiagnosticsEngine&       diagnostics,
             clang::SourceLocation           location,
             clang::DiagnosticsEngine::Level level,
             llvm::StringRef                 message) -> void {
-    const auto id = diagnostics.getCustomDiagID(level, "%0");
+    // Custom warning IDs do not survive PCM diagnostic mapping serialization.
+    const auto id = level == clang::DiagnosticsEngine::Warning ? clang::diag::warn_fe_backend_plugin
+                    : level == clang::DiagnosticsEngine::Note  ? clang::diag::note_fe_backend_plugin
+                                                               : clang::diag::err_fe_backend_plugin;
     diagnostics.Report(location, id) << message;
 }
 
@@ -337,6 +345,7 @@ public:
         arguments.append(arguments_text);
         declaration->addAttr(
             clang::AnnotateAttr::Create(sema.Context, arguments, nullptr, 0, semantic_range));
+        prepare_invocation(sema, *declaration);
         return AttributeApplied;
     }
 };
@@ -379,6 +388,7 @@ public:
             declaration->addAttr(
                 clang::AnnotateAttr::Create(sema.Context, annotation, nullptr, 0, parsed->range));
         }
+        prepare_invocation(sema, *declaration);
         return AttributeApplied;
     }
 };
@@ -423,43 +433,8 @@ public:
 };
 
 struct ExpansionOptions {
-    std::string mode;
-    std::string output;
-    std::string trace;
-    std::string status;
     std::string provider;
 };
-
-auto contains_proc_macro_invocation(clang::CompilerInstance& compiler, llvm::StringRef source)
-    -> bool {
-    auto lexer = clang::Lexer(clang::SourceLocation {},
-                              compiler.getLangOpts(),
-                              source.begin(),
-                              source.begin(),
-                              source.end());
-    auto state = 0u;
-    for (;;) {
-        auto token = clang::Token {};
-        lexer.LexFromRawLexer(token);
-        if (token.is(clang::tok::eof)) return false;
-        if (token.is(clang::tok::comment)) continue;
-        const auto* end      = lexer.getBufferLocation();
-        const auto  spelling = llvm::StringRef(end - token.getLength(), token.getLength());
-        if (state == 0u) {
-            state = token.is(clang::tok::l_square) ? 1u : 0u;
-        } else if (state == 1u) {
-            state = token.is(clang::tok::l_square) ? 2u : 0u;
-        } else if (state == 2u) {
-            state = token.isAnyIdentifier() && spelling == "pmacro" ? 3u : 0u;
-        } else if (state == 3u) {
-            state = token.is(clang::tok::coloncolon) ? 4u : 0u;
-        } else {
-            if (token.isAnyIdentifier() && (spelling == "attr" || spelling == "derive"))
-                return true;
-            state = 0u;
-        }
-    }
-}
 
 struct StoredToken {
     pmacro::TokenKind          kind { pmacro::TokenKind::Literal };
@@ -498,6 +473,25 @@ public:
     }
 
     auto sources() -> SourceRegistry& { return sources_; }
+    using Snapshot = std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
+    std::function<Snapshot(const clang::Decl&)> declaration_query;
+    auto declaration(const clang::Decl& value) -> Snapshot { return declarations_.get(value); }
+    auto take_outputs() -> std::vector<std::pair<OutputLocation, TokenStream>> {
+        return std::exchange(outputs_, {});
+    }
+    auto allow_namespace_output(bool allowed) -> void { namespace_output_ = allowed; }
+    auto accept_output(std::string_view text, clang::SourceLocation location) -> bool {
+        constexpr std::size_t limit = 16 * 1024 * 1024;
+        if (text.size() > limit - output_bytes_) {
+            report(compiler_.getDiagnostics(),
+                   location,
+                   clang::DiagnosticsEngine::Error,
+                   "proc-macro generated output budget exceeded (16 MiB)");
+            return false;
+        }
+        output_bytes_ += text.size();
+        return true;
+    }
     auto helpers(const clang::Decl& declaration) -> const std::vector<PreparedHelper>& {
         return declarations_.helpers(declaration);
     }
@@ -636,19 +630,22 @@ public:
                                                 .status   = MacroLookupStatus::Found };
     }
 
-    auto contains_module_declaration(const pmacro::TokenStream& output) const -> bool {
+    auto contains_module_declaration(const pmacro::TokenStream& output) -> bool {
         const auto  handle = token_stream_handle(output);
         const auto* stream = get_stream(handle);
         if (stream == nullptr) return false;
         auto declaration_start = true;
         auto exported          = false;
         for (const auto& token : stream->tokens) {
+            if (token.kind == TokenKind::Group && token.delimiter == Delimiter::Brace &&
+                contains_module_declaration(make_token_stream(token.children)))
+                return true;
             if (declaration_start && token.kind == pmacro::TokenKind::Ident) {
                 if (! exported && token.spelling == "export") {
                     exported = true;
                     continue;
                 }
-                if (token.spelling == "module") return true;
+                if (token.spelling == "module" || token.spelling == "import") return true;
                 declaration_start = false;
                 exported          = false;
             } else if (declaration_start && token.kind != pmacro::TokenKind::Punct) {
@@ -676,6 +673,7 @@ public:
         provider_identity_.assign(provider.data(), provider.size());
         call_site_   = call_site;
         declaration_ = &declaration;
+        outputs_.clear();
     }
 
     auto leave_invocation() -> void {
@@ -736,6 +734,26 @@ private:
     auto get_stream(pmacro::host::StreamHandle handle) const -> const StoredStream* {
         if (handle == 0 || handle > streams_.size()) return nullptr;
         return &streams_[handle - 1];
+    }
+
+    auto emit_stream(OutputLocation location, pmacro::host::StreamHandle output) noexcept
+        -> std::expected<void, Error> override {
+        if (! declaration_ || ! get_stream(output) ||
+            (location != OutputLocation::AfterItem && location != OutputLocation::NamespaceEnd) ||
+            (location == OutputLocation::NamespaceEnd && ! namespace_output_))
+            return std::unexpected(Error::InvalidArgument);
+        if (contains_module_declaration(make_token_stream(output))) {
+            report(compiler_.getDiagnostics(),
+                   sources_.location(call_site_),
+                   clang::DiagnosticsEngine::Error,
+                   "pmacro output must not change module dependencies");
+            return std::unexpected(Error::InvalidArgument);
+        }
+        auto text = render(make_token_stream(output));
+        if (! text || ! accept_output(*text, sources_.location(call_site_)))
+            return std::unexpected(Error::Failure);
+        outputs_.emplace_back(location, make_token_stream(output));
+        return {};
     }
 
     auto create_stream() noexcept
@@ -809,7 +827,8 @@ private:
     auto current_declaration() noexcept
         -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> override {
         if (! declaration_) return std::unexpected(DeclarationError::NotInInvocation);
-        return declarations_.get(*declaration_);
+        return declaration_query ? declaration_query(*declaration_)
+                                 : declarations_.get(*declaration_);
     }
 
     auto fragment_stream(const CodeFragment& fragment) noexcept
@@ -865,38 +884,28 @@ private:
     }
     auto target_triple() const noexcept -> std::string_view override { return target_triple_; }
 
-    clang::CompilerInstance&  compiler_;
-    SourceRegistry            sources_;
-    DeclarationStore          declarations_;
-    const clang::Decl*        declaration_ {};
-    std::vector<StoredStream> streams_;
-    std::string               macro_identity_;
-    std::string               provider_identity_;
-    std::string               target_triple_;
-    pmacro::Span              call_site_ {};
+    clang::CompilerInstance&                            compiler_;
+    SourceRegistry                                      sources_;
+    DeclarationStore                                    declarations_;
+    const clang::Decl*                                  declaration_ {};
+    std::vector<StoredStream>                           streams_;
+    std::string                                         macro_identity_;
+    std::string                                         provider_identity_;
+    std::string                                         target_triple_;
+    pmacro::Span                                        call_site_ {};
+    std::vector<std::pair<OutputLocation, TokenStream>> outputs_;
+    bool                                                namespace_output_ {};
+    std::size_t                                         output_bytes_ {};
 };
 
 struct MacroDefinition {
-    std::string             name;
-    std::string             scope;
-    std::string             qualified_name;
-    pmacro::host::MacroKind kind { pmacro::host::MacroKind::Attr };
-    pmacro::Span            attribute_span;
+    const clang::FunctionDecl* declaration {};
+    std::string                name;
+    std::string                scope;
+    std::string                qualified_name;
+    pmacro::host::MacroKind    kind { pmacro::host::MacroKind::Attr };
+    pmacro::Span               attribute_span;
 };
-
-auto source_span(SourceRegistry& sources, clang::SourceRange range) -> std::optional<pmacro::Span> {
-    return sources.rewrite_span(range);
-}
-
-auto mask_span(std::string& source, pmacro::Span span) -> bool {
-    if (span.begin() > span.end() || span.end() > source.size()) return false;
-    for (auto index = static_cast<std::size_t>(span.begin());
-         index < static_cast<std::size_t>(span.end());
-         ++index) {
-        if (source[index] != '\n' && source[index] != '\r') source[index] = ' ';
-    }
-    return true;
-}
 
 auto record_name(clang::QualType type) -> std::string {
     const auto* record = type.getCanonicalType()->getAs<clang::RecordType>();
@@ -924,77 +933,59 @@ auto is_token_stream_expected(clang::QualType type) -> bool {
            enum_name(specialization->getTemplateArgs()[1].getAsType()) == "pmacro::Error";
 }
 
-class DefinitionTransformer final {
+class DefinitionRegistry final {
 public:
-    DefinitionTransformer(clang::CompilerInstance& compiler, const ExpansionOptions& options)
+    DefinitionRegistry(clang::CompilerInstance& compiler, const ExpansionOptions& options)
         : compiler_(compiler), options_(options), sources_(compiler) {}
 
     auto traverse(clang::DeclContext& context) -> void {
         for (auto* declaration : context.decls()) traverse(declaration);
     }
 
-    auto write() -> bool {
-        if (failed_) return false;
-        if (options_.provider.empty() || options_.output.empty()) {
-            report(compiler_.getDiagnostics(),
-                   {},
-                   clang::DiagnosticsEngine::Error,
-                   "pmacro define transformation requires provider and output arguments");
-            return false;
-        }
-        auto escaped = [](llvm::StringRef value) {
-            auto result = std::string {};
-            auto stream = llvm::raw_string_ostream(result);
-            stream << '"';
-            llvm::printEscapedString(value, stream);
-            stream << '"';
-            stream.flush();
-            return result;
-        };
-        std::error_code error;
-        auto output = llvm::ToolOutputFile(options_.output, error, llvm::sys::fs::OF_Text);
-        if (error) {
-            report(compiler_.getDiagnostics(),
-                   {},
-                   clang::DiagnosticsEngine::Error,
-                   "cannot open transformed proc-macro provider source");
-            return false;
-        }
-        auto source = compiler_.getSourceManager()
-                          .getBufferData(compiler_.getSourceManager().getMainFileID())
-                          .str();
+    auto observe(clang::Decl* declaration) -> void { traverse(declaration); }
+    auto validate() -> void {
         for (const auto& definition : definitions_) {
-            if (! mask_span(source, definition.attribute_span)) {
-                report(compiler_.getDiagnostics(),
-                       {},
-                       clang::DiagnosticsEngine::Error,
-                       "cannot remove 'pmacro::define' from provider source");
-                return false;
+            const auto& function = *definition.declaration;
+            for (const auto* candidate :
+                 function.getDeclContext()->lookup(function.getDeclName())) {
+                const auto* overload = llvm::dyn_cast<clang::FunctionDecl>(candidate);
+                if (overload &&
+                    overload->getTopLevelOwningNamedModule() ==
+                        function.getTopLevelOwningNamedModule() &&
+                    overload->getCanonicalDecl() != function.getCanonicalDecl()) {
+                    report(compiler_.getDiagnostics(),
+                           function.getLocation(),
+                           clang::DiagnosticsEngine::Error,
+                           "'pmacro::define' function must not be overloaded");
+                    break;
+                }
             }
         }
-        auto& stream = output.os();
-        stream << source << "\nnamespace {\n";
-        for (std::size_t index = 0; index < definitions_.size(); ++index) {
-            const auto& definition = definitions_[index];
-            stream << "static const pmacro::host::MacroRegistration "
-                   << "pmacro_generated_registration_" << index << " {\n"
-                   << "    " << escaped(options_.provider) << ",\n"
-                   << "    pmacro::host::MacroDescriptor { " << escaped(definition.name)
-                   << ", pmacro::host::"
-                   << (definition.kind == pmacro::host::MacroKind::Attr ? "AttributeCallback"
-                                                                        : "DeriveCallback")
-                   << " { &" << definition.qualified_name << " }, " << escaped(definition.scope)
-                   << " },\n"
-                   << "};\n";
+    }
+    auto registrations() -> std::string {
+        auto                     text = std::string {};
+        llvm::raw_string_ostream out(text);
+        for (; emitted_ < definitions_.size(); ++emitted_) {
+            const auto& definition = definitions_[emitted_];
+            out << "namespace { const pmacro::host::MacroRegistration pmacro_registration_"
+                << emitted_ << " { \"";
+            llvm::printEscapedString(options_.provider, out);
+            out << "\", pmacro::host::MacroDescriptor { \"";
+            llvm::printEscapedString(definition.name, out);
+            out << "\", pmacro::host::"
+                << (definition.kind == host::MacroKind::Attr ? "AttributeCallback"
+                                                             : "DeriveCallback")
+                << " { &::" << definition.qualified_name << " }, \"";
+            llvm::printEscapedString(definition.scope, out);
+            out << "\" } }; }\n";
         }
-        stream << "}\n";
-        output.keep();
-        return true;
+        out.flush();
+        return text;
     }
 
 private:
     auto traverse(clang::Decl* declaration) -> void {
-        if (declaration == nullptr) return;
+        if (declaration == nullptr || declaration->isFromASTFile()) return;
         auto* function = llvm::dyn_cast<clang::FunctionDecl>(declaration);
         if (function != nullptr && function->hasAttr<clang::AnnotateAttr>()) {
             for (const auto* attribute : function->specific_attrs<clang::AnnotateAttr>()) {
@@ -1007,6 +998,8 @@ private:
     }
 
     auto collect(clang::FunctionDecl& function, const clang::AnnotateAttr& attribute) -> void {
+        for (const auto& definition : definitions_)
+            if (definition.declaration == &function) return;
         auto reject = [&](llvm::StringRef message) {
             report(compiler_.getDiagnostics(),
                    attribute.getLocation(),
@@ -1095,6 +1088,7 @@ private:
             return;
         }
         definitions_.push_back(MacroDefinition {
+            .declaration    = &function,
             .name           = name,
             .scope          = scope,
             .qualified_name = function.getQualifiedNameAsString(),
@@ -1107,582 +1101,22 @@ private:
     const ExpansionOptions&      options_;
     SourceRegistry               sources_;
     std::vector<MacroDefinition> definitions_;
+    std::size_t                  emitted_ {};
     bool                         failed_ {};
 };
 
-class ExpansionVisitor final {
-public:
-    ExpansionVisitor(clang::CompilerInstance& compiler, clang::Rewriter& rewriter)
-        : compiler_(compiler), rewriter_(rewriter), state_(compiler) {}
-
-    auto traverse(clang::DeclContext& context) -> void {
-        for (auto* declaration : context.decls()) traverse(declaration);
-    }
-
-    auto failed() const noexcept -> bool { return failed_; }
-
-    auto expansions() const noexcept -> const std::vector<std::string>& { return expansions_; }
-    auto pending() const noexcept -> bool { return pending_; }
-
-private:
-    auto traverse(clang::Decl* declaration) -> void {
-        if (declaration == nullptr) return;
-        if (auto* templated = llvm::dyn_cast<clang::ClassTemplateDecl>(declaration)) {
-            traverse(templated->getTemplatedDecl());
-            return;
-        }
-        const clang::AnnotateAttr* invocation = nullptr;
-        auto                       derives    = std::vector<const clang::AnnotateAttr*> {};
-        auto                       arguments  = llvm::StringRef {};
-        const clang::AnnotateAttr* helper     = nullptr;
-        for (const auto* attribute : declaration->specific_attrs<clang::AnnotateAttr>()) {
-            auto annotation = attribute->getAnnotation();
-            if (annotation.starts_with(attr_arguments_annotation)) {
-                arguments = annotation.drop_front(attr_arguments_annotation.size());
-                continue;
-            }
-            if (annotation.starts_with(derive_annotation)) {
-                derives.push_back(attribute);
-                continue;
-            }
-            if (annotation.starts_with(helper_annotation)) {
-                helper = attribute;
-                continue;
-            }
-            if (! annotation.starts_with(attr_annotation)) continue;
-            if (invocation != nullptr) {
-                report(compiler_.getDiagnostics(),
-                       attribute->getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "a declaration may have only one 'pmacro::attr' attribute");
-                failed_ = true;
-                continue;
-            }
-            invocation = attribute;
-        }
-        if (invocation != nullptr && ! derives.empty()) {
-            report(compiler_.getDiagnostics(),
-                   invocation->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "a declaration cannot combine 'pmacro::attr' and 'pmacro::derive'");
-            failed_ = true;
-            return;
-        }
-        if (invocation != nullptr) {
-            expand_attr(*declaration, *invocation, arguments);
-            return;
-        }
-        if (! derives.empty()) {
-            expand_derive(*declaration, derives);
-            return;
-        }
-        if (helper != nullptr) {
-            report(compiler_.getDiagnostics(),
-                   helper->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "'pmacro::helper' is not owned by an active derive invocation");
-            failed_ = true;
-            return;
-        }
-        if (auto* nested = llvm::dyn_cast<clang::DeclContext>(declaration)) traverse(*nested);
-    }
-
-    auto source_span(clang::SourceRange range) -> std::optional<pmacro::Span> {
-        return clang_bridge::source_span(state_.sources(), range);
-    }
-
-    auto attribute_span(const clang::AnnotateAttr& attribute) -> std::optional<pmacro::Span> {
-        return state_.sources().attribute_span(attribute);
-    }
-
-    auto item_span(clang::Decl& declaration, const clang::AnnotateAttr& attribute)
-        -> std::optional<pmacro::Span> {
-        auto declaration_span = source_span(declaration.getSourceRange());
-        auto invocation_span  = attribute_span(attribute);
-        if (! declaration_span.has_value() || ! invocation_span.has_value()) return std::nullopt;
-        if (llvm::isa<clang::TagDecl>(declaration)) {
-            auto& manager = compiler_.getSourceManager();
-            auto  start   = manager.getLocForStartOfFile(manager.getMainFileID());
-            auto  token   = clang::Token {};
-            if (start.isValid() &&
-                ! clang::Lexer::getRawToken(start.getLocWithOffset(declaration_span->end()),
-                                            token,
-                                            manager,
-                                            compiler_.getLangOpts(),
-                                            true) &&
-                token.is(clang::tok::semi)) {
-                const auto end = clang::Lexer::getLocForEndOfToken(
-                    token.getLocation(), 0, manager, compiler_.getLangOpts());
-                if (end.isValid()) {
-                    declaration_span = pmacro::Span(declaration_span->source(),
-                                                    declaration_span->begin(),
-                                                    manager.getFileOffset(end));
-                }
-            }
-        }
-        return pmacro::Span(declaration_span->source(),
-                            std::min(declaration_span->begin(), invocation_span->begin()),
-                            std::max(declaration_span->end(), invocation_span->end()));
-    }
-
-    auto source_text(pmacro::Span span) -> std::optional<std::string> {
-        if (! state_.sources().is_main(span)) return {};
-        return state_.sources().text(span);
-    }
-
-    auto replace_text(pmacro::Span span, llvm::StringRef replacement) -> bool {
-        if (! state_.sources().is_main(span)) return false;
-        auto& manager = compiler_.getSourceManager();
-        auto  begin   = manager.getLocForStartOfFile(manager.getMainFileID());
-        if (begin.isInvalid()) return false;
-        return ! rewriter_.ReplaceText(
-            begin.getLocWithOffset(span.begin()), span.end() - span.begin(), replacement);
-    }
-
-    auto remove_span(std::string& item, pmacro::Span item_range, pmacro::Span removal) -> bool {
-        if (removal.begin() < item_range.begin() || removal.end() > item_range.end() ||
-            removal.begin() > removal.end())
-            return false;
-        item.erase(static_cast<std::size_t>(removal.begin() - item_range.begin()),
-                   static_cast<std::size_t>(removal.end() - removal.begin()));
-        return true;
-    }
-
-    auto mask_span(std::string& item, pmacro::Span item_range, pmacro::Span removal) -> bool {
-        if (removal.begin() < item_range.begin() || removal.end() > item_range.end() ||
-            removal.begin() > removal.end())
-            return false;
-        for (auto index = static_cast<std::size_t>(removal.begin() - item_range.begin());
-             index < static_cast<std::size_t>(removal.end() - item_range.begin());
-             ++index) {
-            if (item[index] != '\n' && item[index] != '\r') item[index] = ' ';
-        }
-        return true;
-    }
-
-    auto expand_attr(clang::Decl&               declaration,
-                     const clang::AnnotateAttr& attribute,
-                     llvm::StringRef            arguments_source) -> void {
-        auto&      diagnostics = compiler_.getDiagnostics();
-        const auto annotation  = attribute.getAnnotation().drop_front(attr_annotation.size());
-        const auto separator   = annotation.find("::");
-        if (separator == llvm::StringRef::npos || separator == 0 ||
-            separator + 2 >= annotation.size() ||
-            annotation.drop_front(separator + 2).contains("::")) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "pmacro identity must be 'scope::macro-name'");
-            failed_ = true;
-            return;
-        }
-        const auto package = annotation.take_front(separator);
-        const auto name    = annotation.drop_front(separator + 2);
-        const auto lookup  = state_.find(package, name, pmacro::host::MacroKind::Attr);
-        if (lookup.status != MacroLookupStatus::Found) {
-            auto message =
-                llvm::StringRef("pmacro identity is not provided by the aggregate plugin");
-            if (lookup.status == MacroLookupStatus::Duplicate)
-                message = "pmacro identity is duplicated by its provider";
-            else if (lookup.status == MacroLookupStatus::InvalidRegistration)
-                message = "pmacro aggregate contains an invalid provider registration";
-            else if (lookup.status == MacroLookupStatus::KindMismatch)
-                message = "pmacro identity is registered as a derive macro";
-            report(diagnostics, attribute.getLocation(), clang::DiagnosticsEngine::Error, message);
-            failed_ = true;
-            return;
-        }
-        expansions_.push_back("attr " + annotation.str());
-        const auto item_span      = this->item_span(declaration, attribute);
-        const auto attribute_span = this->attribute_span(attribute);
-        if (item_span == std::nullopt || attribute_span == std::nullopt) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "'pmacro::attr' is only supported in the main source file");
-            failed_ = true;
-            return;
-        }
-        auto source = source_text(*item_span);
-        if (! source.has_value()) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "cannot read the declaration source for 'pmacro::attr'");
-            failed_ = true;
-            return;
-        }
-        auto item = std::move(*source);
-        if (! mask_span(item, *item_span, *attribute_span)) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "'pmacro::attr' source range is outside its declaration");
-            failed_ = true;
-            return;
-        }
-        const auto arguments   = state_.make_stream(arguments_source, *attribute_span, false);
-        const auto item_stream = state_.make_stream(std::move(item), *item_span);
-        auto       input       = pmacro::AttributeInput {
-            .arguments      = state_.token_stream(arguments),
-            .item           = state_.token_stream(item_stream),
-            .attribute_span = *attribute_span,
-            .item_span      = *item_span,
-        };
-        auto context = state_.context();
-        state_.enter_invocation(package, name, lookup.provider, *attribute_span, declaration);
-        auto result = std::get<pmacro::host::AttributeCallback>(lookup.macro->callback)
-                          .function(std::move(input), context);
-        state_.leave_invocation();
-        if (! result) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "pmacro provider returned an expansion error");
-            failed_ = true;
-            return;
-        }
-        auto output   = std::move(*result);
-        auto rendered = state_.render(output);
-        if (rendered == std::nullopt) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "pmacro provider returned an invalid TokenStream");
-            failed_ = true;
-            return;
-        }
-        if (state_.contains_module_declaration(output)) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "pmacro output must not contain a module declaration");
-            failed_ = true;
-            return;
-        }
-        pending_ = pending_ || contains_proc_macro_invocation(compiler_, *rendered);
-        if (! replace_text(*item_span, *rendered)) {
-            report(diagnostics,
-                   attribute.getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "cannot replace the declaration source for 'pmacro::attr'");
-            failed_ = true;
-        }
-    }
-
-    auto expand_derive(clang::Decl&                                   declaration,
-                       const std::vector<const clang::AnnotateAttr*>& invocations) -> void {
-        auto&      diagnostics          = compiler_.getDiagnostics();
-        const auto first_attribute_span = this->attribute_span(*invocations.front());
-        for (std::size_t index = 1; index < invocations.size(); ++index) {
-            const auto span = this->attribute_span(*invocations[index]);
-            if (! first_attribute_span.has_value() || ! span.has_value() ||
-                span->begin() != first_attribute_span->begin() ||
-                span->end() != first_attribute_span->end()) {
-                report(diagnostics,
-                       invocations[index]->getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "derive identities must use one 'pmacro::derive' attribute");
-                failed_ = true;
-                return;
-            }
-        }
-        const auto* record      = llvm::dyn_cast<clang::RecordDecl>(&declaration);
-        const auto* enumeration = llvm::dyn_cast<clang::EnumDecl>(&declaration);
-        if ((record == nullptr || ! record->isCompleteDefinition()) &&
-            (enumeration == nullptr || ! enumeration->isCompleteDefinition())) {
-            report(diagnostics,
-                   invocations.front()->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "'pmacro::derive' requires a complete record, union, or enum definition");
-            failed_ = true;
-            return;
-        }
-        const auto item_span       = this->item_span(declaration, *invocations.front());
-        const auto invocation_span = this->attribute_span(*invocations.front());
-        if (! item_span.has_value() || ! invocation_span.has_value()) {
-            report(diagnostics,
-                   invocations.front()->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "'pmacro::derive' is only supported in the main source file");
-            failed_ = true;
-            return;
-        }
-        auto source = source_text(*item_span);
-        if (! source.has_value()) {
-            report(diagnostics,
-                   invocations.front()->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "cannot read the declaration source for 'pmacro::derive'");
-            failed_ = true;
-            return;
-        }
-        auto        retained = *source;
-        const auto& helpers  = state_.helpers(declaration);
-        for (const auto& helper : helpers) {
-            const auto& owner = helper.value.owner;
-            auto        found = false;
-            for (const auto* invocation : invocations) {
-                if (invocation->getAnnotation().drop_front(derive_annotation.size()) == owner) {
-                    found = true;
-                    break;
-                }
-            }
-            if (! found) {
-                report(diagnostics,
-                       helper.attribute->getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "'pmacro::helper' owner is not present in the enclosing derive group");
-                failed_ = true;
-                return;
-            }
-        }
-        auto removals        = std::vector<pmacro::Span> {};
-        auto prepare_removal = [&](const clang::AnnotateAttr& attribute) -> bool {
-            const auto span = attribute_span(attribute);
-            if (span) removals.push_back(*span);
-            return span.has_value();
-        };
-        auto ready = prepare_removal(*invocations.front());
-        for (const auto& helper : helpers) ready = prepare_removal(*helper.attribute) && ready;
-        if (! ready) {
-            report(diagnostics,
-                   invocations.front()->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "cannot locate a consumed pmacro attribute in the retained item");
-            failed_ = true;
-            return;
-        }
-        std::sort(removals.begin(), removals.end(), [](auto left, auto right) {
-            return left.begin() < right.begin();
-        });
-        auto merged = std::vector<pmacro::Span> {};
-        for (auto span : removals) {
-            if (! merged.empty() && merged.back().source() == span.source() &&
-                span.begin() <= merged.back().end()) {
-                merged.back() = pmacro::Span(span.source(),
-                                             merged.back().begin(),
-                                             std::max(merged.back().end(), span.end()));
-            } else
-                merged.push_back(span);
-        }
-        for (auto removal = merged.rbegin(); removal != merged.rend(); ++removal) {
-            if (! remove_span(retained, *item_span, *removal)) {
-                report(diagnostics,
-                       invocations.front()->getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "cannot remove a consumed pmacro attribute from the retained item");
-                failed_ = true;
-                return;
-            }
-        }
-
-        auto provider_item = *source;
-        if (! first_attribute_span.has_value() ||
-            ! mask_span(provider_item, *item_span, *first_attribute_span)) {
-            report(diagnostics,
-                   invocations.front()->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "cannot remove the active derive attribute from provider input");
-            failed_ = true;
-            return;
-        }
-        const auto item_stream = state_.make_stream(provider_item, *item_span);
-        auto       generated   = std::string {};
-        for (std::size_t index = 0; index < invocations.size(); ++index) {
-            const auto& attribute  = *invocations[index];
-            const auto  annotation = attribute.getAnnotation().drop_front(derive_annotation.size());
-            for (std::size_t prior = 0; prior < index; ++prior) {
-                if (invocations[prior]->getAnnotation().drop_front(derive_annotation.size()) ==
-                    annotation) {
-                    report(diagnostics,
-                           attribute.getLocation(),
-                           clang::DiagnosticsEngine::Error,
-                           "a derive macro identity may appear only once on an item");
-                    failed_ = true;
-                    return;
-                }
-            }
-            const auto separator = annotation.find("::");
-            if (separator == llvm::StringRef::npos || separator == 0 ||
-                separator + 2 >= annotation.size() ||
-                annotation.drop_front(separator + 2).contains("::")) {
-                report(diagnostics,
-                       attribute.getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "pmacro identity must be 'scope::macro-name'");
-                failed_ = true;
-                return;
-            }
-            const auto package = annotation.take_front(separator);
-            const auto name    = annotation.drop_front(separator + 2);
-            const auto lookup  = state_.find(package, name, pmacro::host::MacroKind::Derive);
-            if (lookup.status != MacroLookupStatus::Found) {
-                auto message = llvm::StringRef(
-                    "pmacro derive identity is not provided by the aggregate plugin");
-                if (lookup.status == MacroLookupStatus::Duplicate)
-                    message = "pmacro derive identity is duplicated by its provider";
-                else if (lookup.status == MacroLookupStatus::InvalidRegistration)
-                    message = "pmacro aggregate contains an invalid provider registration";
-                else if (lookup.status == MacroLookupStatus::KindMismatch)
-                    message = "pmacro identity is registered as an attribute macro";
-                report(
-                    diagnostics, attribute.getLocation(), clang::DiagnosticsEngine::Error, message);
-                failed_ = true;
-                return;
-            }
-            auto input = pmacro::DeriveInput {
-                .item           = state_.token_stream(item_stream),
-                .attribute_span = *invocation_span,
-                .item_span      = *item_span,
-            };
-            auto context = state_.context();
-            state_.enter_invocation(package, name, lookup.provider, *invocation_span, declaration);
-            auto result = std::get<pmacro::host::DeriveCallback>(lookup.macro->callback)
-                              .function(std::move(input), context);
-            state_.leave_invocation();
-            if (! result) {
-                report(diagnostics,
-                       attribute.getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "pmacro derive provider returned an expansion error");
-                failed_ = true;
-                return;
-            }
-            auto output   = std::move(*result);
-            auto rendered = state_.render(output);
-            if (! rendered.has_value() || state_.contains_module_declaration(output)) {
-                report(diagnostics,
-                       attribute.getLocation(),
-                       clang::DiagnosticsEngine::Error,
-                       "pmacro derive provider returned an invalid TokenStream");
-                failed_ = true;
-                return;
-            }
-            pending_ = pending_ || contains_proc_macro_invocation(compiler_, *rendered);
-            generated.append("\n");
-            generated.append(*rendered);
-            expansions_.push_back("derive " + annotation.str());
-        }
-        pending_ = pending_ || contains_proc_macro_invocation(compiler_, retained);
-        retained.append(generated);
-        if (! replace_text(*item_span, retained)) {
-            report(diagnostics,
-                   invocations.front()->getLocation(),
-                   clang::DiagnosticsEngine::Error,
-                   "cannot replace the declaration source for 'pmacro::derive'");
-            failed_ = true;
-        }
-    }
-
-    clang::CompilerInstance& compiler_;
-    clang::Rewriter&         rewriter_;
-    ExpansionState           state_;
-    std::vector<std::string> expansions_;
-    bool                     failed_ {};
-    bool                     pending_ {};
-};
-
-class ExpansionConsumer final : public clang::ASTConsumer {
-public:
-    ExpansionConsumer(clang::CompilerInstance& compiler, ExpansionOptions options)
-        : compiler_(compiler), options_(std::move(options)) {
-        rewriter_.setSourceMgr(compiler.getSourceManager(), compiler.getLangOpts());
-    }
-
-    auto HandleTranslationUnit(clang::ASTContext& context) -> void override {
-        if (options_.mode == "define") {
-            auto transformer = DefinitionTransformer(compiler_, options_);
-            transformer.traverse(*context.getTranslationUnitDecl());
-            transformer.write();
-            return;
-        }
-        if (options_.mode != "expand") return;
-        auto visitor = ExpansionVisitor(compiler_, rewriter_);
-        visitor.traverse(*context.getTranslationUnitDecl());
-        if (visitor.failed() || compiler_.getDiagnostics().hasErrorOccurred()) return;
-        if (options_.output.empty() || options_.status.empty()) {
-            report(compiler_.getDiagnostics(),
-                   {},
-                   clang::DiagnosticsEngine::Error,
-                   "pmacro expansion requires output=<path> and status=<path>");
-            return;
-        }
-
-        std::error_code error;
-        auto output = llvm::ToolOutputFile(options_.output, error, llvm::sys::fs::OF_Text);
-        if (error) {
-            report(compiler_.getDiagnostics(),
-                   {},
-                   clang::DiagnosticsEngine::Error,
-                   "cannot open pmacro expansion output");
-            return;
-        }
-        auto trace = std::optional<llvm::ToolOutputFile> {};
-        if (! options_.trace.empty()) {
-            trace.emplace(options_.trace, error, llvm::sys::fs::OF_Text);
-            if (error) {
-                report(compiler_.getDiagnostics(),
-                       {},
-                       clang::DiagnosticsEngine::Error,
-                       "cannot open pmacro expansion trace");
-                return;
-            }
-            for (const auto& identity : visitor.expansions()) trace->os() << identity << '\n';
-        }
-        auto status = llvm::ToolOutputFile(options_.status, error, llvm::sys::fs::OF_Text);
-        if (error) {
-            report(compiler_.getDiagnostics(),
-                   {},
-                   clang::DiagnosticsEngine::Error,
-                   "cannot open pmacro expansion status");
-            return;
-        }
-        status.os() << (visitor.pending() ? "pending\n" : "complete\n");
-        auto&      stream = output.os();
-        const auto file   = compiler_.getSourceManager().getMainFileID();
-        if (const auto* buffer = rewriter_.getRewriteBufferFor(file)) {
-            buffer->write(stream);
-        } else {
-            stream << compiler_.getSourceManager().getBufferData(file);
-        }
-        if (trace.has_value()) trace->keep();
-        status.keep();
-        output.keep();
-    }
-
-private:
-    clang::CompilerInstance& compiler_;
-    ExpansionOptions         options_;
-    clang::Rewriter          rewriter_;
-};
+#include "compilation.hpp"
 
 class Plugin final : public clang::PluginASTAction {
 public:
     auto CreateASTConsumer(clang::CompilerInstance& compiler, llvm::StringRef)
         -> std::unique_ptr<clang::ASTConsumer> override {
-        return std::make_unique<ExpansionConsumer>(compiler, options_);
+        return std::make_unique<Compilation>(compiler, options_);
     }
 
     auto ParseArgs(const clang::CompilerInstance&  compiler,
                    const std::vector<std::string>& arguments) -> bool override {
         for (const auto& argument : arguments) {
-            if (llvm::StringRef(argument).starts_with("mode=")) {
-                options_.mode = llvm::StringRef(argument).drop_front(5).str();
-                continue;
-            }
-            if (llvm::StringRef(argument).starts_with("output=")) {
-                options_.output = llvm::StringRef(argument).drop_front(7).str();
-                continue;
-            }
-            if (llvm::StringRef(argument).starts_with("trace=")) {
-                options_.trace = llvm::StringRef(argument).drop_front(6).str();
-                continue;
-            }
-            if (llvm::StringRef(argument).starts_with("status=")) {
-                options_.status = llvm::StringRef(argument).drop_front(7).str();
-                continue;
-            }
             if (llvm::StringRef(argument).starts_with("provider=")) {
                 options_.provider = llvm::StringRef(argument).drop_front(9).str();
                 continue;
@@ -1696,7 +1130,7 @@ public:
         return true;
     }
 
-    auto getActionType() -> ActionType override { return AddAfterMainAction; }
+    auto getActionType() -> ActionType override { return AddBeforeMainAction; }
 
 private:
     ExpansionOptions options_;

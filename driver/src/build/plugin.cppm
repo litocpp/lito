@@ -271,8 +271,9 @@ auto attach_target_compiler_plugins(const cpp::PackageSpec&         package,
     for (auto target : plan.target_order) {
         const auto& spec = package.targets[target];
         if (target_units[target].is_empty()) continue;
-        if (spec.artifact_kind == cpp::ArtifactKind::ProcMacroProvider) continue;
         for (const auto& dependency : spec.plugin_dependencies) {
+            if (dependency.package == "pmacro"_str && ! spec.proc_macro_dependencies.is_empty())
+                continue;
             const BuiltCompilerPlugin* product = nullptr;
             for (const auto& candidate : products) {
                 if (candidate.target.package != dependency.package.as_str()) continue;
@@ -300,12 +301,17 @@ auto attach_target_compiler_plugins(const cpp::PackageSpec&         package,
                     return Err(BuildError::Message(
                         "compiler plugin target invocation is unavailable"_Str));
                 }
+                auto arguments = Vec<String>::make();
+                if (spec.artifact_kind == cpp::ArtifactKind::ProcMacroProvider &&
+                    dependency.package == "pmacro"_str) {
+                    arguments.push(rstd::format("provider={}", spec.id.package.as_str()));
+                }
                 auto attached =
                     toolchain.attach_compile_plugin(*invocation,
                                                     ResolvedCompilerPluginUsage {
                                                         .plugin = product->plugin.clone(),
                                                         .name   = product->target.package.clone(),
-                                                        .arguments = Vec<String>::make(),
+                                                        .arguments = rstd::move(arguments),
                                                         .identity  = product->identity.clone(),
                                                     });
                 if (attached.is_err()) {

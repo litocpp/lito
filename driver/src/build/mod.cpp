@@ -1325,22 +1325,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         BuildPreparationSummary::ScanFinalize(units.len(), scan_graph_statistics.headers));
 
     auto initial_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
-    auto proc_macro_sources = Vec<u8>::make();
-    if (plugin_host.is_some() || ! project.proc_macro_aggregates.is_empty()) {
-        auto selected = select_proc_macro_sources(package, package_plan, target_units, scans);
-        if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
-        proc_macro_sources = rstd::move(selected).unwrap();
-    }
-    auto materialized = materialize_build_actions(package,
-                                                  layout,
-                                                  toolchain,
-                                                  bmi_format,
-                                                  units,
-                                                  scans,
-                                                  rstd::move(semantic_graph),
-                                                  selected_targets.as_slice(),
-                                                  request.result,
-                                                  request.observer);
+    auto materialized       = materialize_build_actions(package,
+                                                        layout,
+                                                        toolchain,
+                                                        bmi_format,
+                                                        units,
+                                                        scans,
+                                                        rstd::move(semantic_graph),
+                                                        selected_targets.as_slice(),
+                                                        request.result,
+                                                        request.observer);
     if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
     auto actions                = rstd::move(materialized).unwrap();
     auto documentation_units    = rstd::move(actions.documentation);
@@ -1359,196 +1353,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             prerequisite_identities.emplace_back();
         }
     }
-
-    auto rebuild_after_source_transformation =
-        [&](Vec<Option<CachedArtifactIdentity>>& completed) -> BuildResult<empty> {
-        auto transformed_scan_scope        = stage_timing.scope(BuildStage::Scan);
-        auto authoritative_profiler_result = ScanProfiler::create();
-        if (authoritative_profiler_result.is_err()) {
-            return Err(BuildError::Message(
-                rstd::move(authoritative_profiler_result).unwrap_err_unchecked()));
-        }
-        auto authoritative_profiler = rstd::move(authoritative_profiler_result).unwrap_unchecked();
-        auto authoritative_observer = FrontendProfileObserver::make(authoritative_profiler);
-        auto authoritative_frontend =
-            frontend::FrontendService::make(Some(authoritative_observer.observer()));
-        for (const auto& target : package.targets) {
-            for (const auto& source : target.sources) {
-                if (source.transformed.is_none()) continue;
-                if (! authoritative_frontend.add_source_overlay(
-                        source.transformed->logical_path.as_path(),
-                        source.transformed->physical_path.as_path())) {
-                    return Err(BuildError::Message(
-                        rstd::format("cannot register transformed source overlay for '{}'",
-                                     source.transformed->logical_path.as_path())));
-                }
-            }
-        }
-        auto authoritative_cache =
-            ScanCacheSession::create(cache_environment, authoritative_frontend.source_store());
-        auto authoritative_analysis = FrontendAnalysisService::make(layout,
-                                                                    toolchain,
-                                                                    header_ownership,
-                                                                    authoritative_frontend,
-                                                                    authoritative_cache,
-                                                                    authoritative_profiler);
-        auto authoritative_graph =
-            cpp::SemanticScanGraphBuilder::make(package, package_plan, header_ownership);
-        auto authoritative_span = authoritative_profiler.span(ScanProbe::Total);
-        for (auto target : package_plan.target_order) {
-            auto& target_spec = package.targets[target];
-            for (auto& source : target_spec.sources) {
-                auto graph_unit = authoritative_graph.register_project_unit(
-                    target,
-                    source.path.as_path(),
-                    package_plan.contexts[target].scan_id.as_str(),
-                    package_plan.contexts[target].id.as_str());
-                auto analyzed = authoritative_analysis.analyze(target_spec.id,
-                                                               source.relative_path.as_path(),
-                                                               source.origin_identity.as_str(),
-                                                               source.path.as_path(),
-                                                               package_plan.contexts[target],
-                                                               target_spec.compile_metadata,
-                                                               source.cpp_dialect,
-                                                               target_spec.root.as_path());
-                if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
-                auto projected = authoritative_analysis.project(rstd::move(analyzed).unwrap(),
-                                                                target_spec.language);
-                if (projected.is_err()) {
-                    return Err(BuildError::Message(rstd::move(projected).unwrap_err()));
-                }
-                source.scan_artifact = Some(rstd::move(projected).unwrap());
-                auto completed = authoritative_graph.complete(graph_unit, *source.scan_artifact);
-                if (completed.is_err()) {
-                    return Err(BuildError::Message(rstd::move(completed).unwrap_err()));
-                }
-            }
-        }
-        auto discovery_finished = authoritative_graph.finish_discovery();
-        if (discovery_finished.is_err()) {
-            return Err(BuildError::Message(rstd::move(discovery_finished).unwrap_err()));
-        }
-
-        auto authoritative_finalize_started = rstd::time::Instant::now();
-        emit(request, BuildEventKind::ScanFinalize, package.name.as_str(), layout.output());
-        auto authoritative_units = prepare_build_units(package, package_plan, layout, toolchain);
-        if (authoritative_units.is_err()) {
-            return Err(rstd::move(authoritative_units).unwrap_err());
-        }
-        auto previous_build         = rstd::move(prepared_build);
-        auto previous_prerequisites = Vec<Vec<cpp::UnitId>>::make();
-        auto previous_completed     = Vec<bool>::make();
-        for (const auto& node : actions.compile.nodes) {
-            previous_prerequisites.push(node.prerequisites.clone());
-            previous_completed.emplace_back(node.completed);
-        }
-        prepared_build                      = rstd::move(authoritative_units).unwrap();
-        auto authoritative_standard_modules = prepare_standard_library_modules(
-            prepared_build, scans, authoritative_analysis, layout, toolchain);
-        if (authoritative_standard_modules.is_err()) {
-            return Err(rstd::move(authoritative_standard_modules).unwrap_err());
-        }
-        rstd_try(align_build_units(prepared_build, previous_build));
-        auto authoritative_incremental = rstd::move(authoritative_graph).finalize(units, scans);
-        if (authoritative_incremental.is_err()) {
-            return Err(BuildError::Message(rstd::move(authoritative_incremental).unwrap_err()));
-        }
-        auto authoritative_conventions = cpp::validate_module_conventions(package, units, scans);
-        if (authoritative_conventions.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(authoritative_conventions).unwrap_err()));
-        }
-        auto authoritative_semantics = cpp::resolve_semantic_build(
-            package_plan, units, scans, rstd::move(authoritative_incremental).unwrap(), bmi_format);
-        if (authoritative_semantics.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(authoritative_semantics).unwrap_err()));
-        }
-        scan_graph_statistics            = authoritative_semantics->statistics;
-        auto authoritative_span_finished = authoritative_profiler.complete(authoritative_span);
-        if (authoritative_span_finished.is_err()) {
-            return Err(BuildError::Message(
-                rstd::move(authoritative_span_finished).unwrap_err_unchecked()));
-        }
-        auto authoritative_release = authoritative_analysis.release_source_cache();
-        if (authoritative_release.is_err()) {
-            return Err(BuildError::Message("cannot release authoritative source cache"_Str));
-        }
-        authoritative_analysis.record_source_release(rstd::move(authoritative_release).unwrap());
-        frontend_statistics.add(authoritative_analysis.statistics());
-        auto authoritative_profile = authoritative_profiler.finish();
-        if (authoritative_profile.is_err()) {
-            return Err(
-                BuildError::Message(rstd::move(authoritative_profile).unwrap_err_unchecked()));
-        }
-        scan_profile = rstd::move(authoritative_profile).unwrap_unchecked();
-        scanned += scans.len();
-
-        transformed_scan_scope.finish();
-        emit_build_preparation(
-            request.observer,
-            package.name.as_str(),
-            layout.output(),
-            authoritative_finalize_started.elapsed(),
-            BuildPreparationSummary::ScanFinalize(units.len(), scan_graph_statistics.headers));
-        auto transformed_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
-
-        auto authoritative_actions =
-            materialize_build_actions(package,
-                                      layout,
-                                      toolchain,
-                                      bmi_format,
-                                      units,
-                                      scans,
-                                      rstd::move(authoritative_semantics).unwrap(),
-                                      selected_targets.as_slice(),
-                                      request.result,
-                                      request.observer);
-        if (authoritative_actions.is_err()) {
-            return Err(rstd::move(authoritative_actions).unwrap_err());
-        }
-        actions                = rstd::move(authoritative_actions).unwrap();
-        documentation_units    = rstd::move(actions.documentation);
-        documentation_retained = documentation_retained_bytes(documentation_units);
-        auto retained          = Vec<bool>::with_capacity(units.len());
-        for (cpp::UnitId unit {}; unit < units.len(); ++unit) {
-            auto same = unit < previous_build.units.len() && unit < completed.len() &&
-                        (completed[unit].is_some() || previous_completed[unit]);
-            if (same) {
-                const auto& previous = previous_build.units[unit];
-                same = previous.source_content_identity == units[unit].source_content_identity &&
-                       previous.unit.context->id == units[unit].unit.context->id &&
-                       previous_prerequisites[unit] == actions.compile.nodes[unit].prerequisites;
-            }
-            retained.emplace_back(same);
-        }
-        auto changed = true;
-        while (changed) {
-            changed = false;
-            for (cpp::UnitId unit {}; unit < units.len(); ++unit) {
-                if (! retained[unit]) continue;
-                for (auto dependency : actions.compile.nodes[unit].prerequisites)
-                    if (! retained[dependency]) {
-                        retained[unit] = false;
-                        changed        = true;
-                        break;
-                    }
-            }
-        }
-        auto identities = Vec<Option<CachedArtifactIdentity>>::with_capacity(units.len());
-        prerequisite_selection.clear();
-        for (cpp::UnitId unit {}; unit < units.len(); ++unit) {
-            actions.compile.nodes[unit].completed = retained[unit];
-            prerequisite_selection.push(retained[unit] ? u8(1) : u8 {});
-            if (retained[unit])
-                identities.push(rstd::move(completed[unit]));
-            else
-                identities.emplace_back();
-        }
-        completed = rstd::move(identities);
-        for (auto target : package_plan.target_order)
-            for (auto unit : target_units[target])
-                if (! retained[unit]) completed_targets[target] = u8 {};
-        return Ok(empty {});
-    };
 
     object_identities   = rstd::move(prerequisite_identities);
     auto compile_tests  = Vec<CompileTestExecution>::make();
@@ -1589,54 +1393,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (! plugin_roots.is_empty()) {
         auto plugin_scope = stage_timing.scope(BuildStage::Plugin);
         rstd_try(prepare_plugins(actions.compile, package_plan.target_order));
-        if (! provider_roots.is_empty()) {
-            auto provider_prerequisites =
-                compile_plan_prerequisite_closure(actions.compile, provider_roots);
-            for (auto root : provider_roots) provider_prerequisites[root] = u8 {};
-            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
-                if (completed_selection[unit] != u8 {}) provider_prerequisites[unit] = u8 {};
-            }
-            auto provider_dependency_compile =
-                execute_compile_plan_selection(package,
-                                               units,
-                                               actions.compile,
-                                               provider_prerequisites,
-                                               rstd::move(object_identities),
-                                               cache,
-                                               toolchain.compile_executor(),
-                                               request.observer,
-                                               *compile_execution,
-                                               stage_timing);
-            if (provider_dependency_compile.is_err()) {
-                return Err(rstd::move(provider_dependency_compile).unwrap_err());
-            }
-            auto provider_dependency_result = rstd::move(provider_dependency_compile).unwrap();
-            object_identities = rstd::move(provider_dependency_result.object_identities);
-            compiled += provider_dependency_result.compiled;
-            reused += provider_dependency_result.reused;
-            compile_statistics.merge(provider_dependency_result.statistics);
-            for (auto unit = cpp::UnitId {}; unit < provider_prerequisites.len(); ++unit) {
-                if (provider_prerequisites[unit] != u8 {}) completed_selection[unit] = u8(1);
-            }
-            auto provider_transformed = transform_proc_macro_provider_sources(
-                layout, toolchain, package, package_plan, units, target_units, compiler_plugins);
-            if (provider_transformed.is_err()) {
-                return Err(rstd::move(provider_transformed).unwrap_err());
-            }
-            if (*provider_transformed) {
-                auto expected_units = actions.compile.nodes.len();
-                rstd_try(rebuild_after_source_transformation(object_identities));
-                if (actions.compile.nodes.len() != expected_units ||
-                    object_identities.len() != actions.compile.nodes.len()) {
-                    return Err(BuildError::Message(
-                        "proc-macro provider transformation changed compile unit alignment"_Str));
-                }
-                completed_selection.clear();
-                for (const auto& identity : object_identities) {
-                    completed_selection.push(identity.is_some() ? u8(1) : u8 {});
-                }
-            }
-        }
         auto attached = attach_target_compiler_plugins(package,
                                                        package_plan,
                                                        target_units,
@@ -1721,130 +1477,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     prerequisite_selection.clear();
     for (const auto& identity : prerequisite_identities)
         prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
-    if (! available_aggregates.is_empty()) {
-        auto plugin_scope       = stage_timing.scope(BuildStage::Plugin);
-        auto pending_sources    = proc_macro_sources.clone();
-        auto expansion_progress = Vec<ProcMacroExpansionProgress>::with_capacity(units.len());
-        for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit)
-            expansion_progress.push(
-                ProcMacroExpansionProgress { .expansions = Vec<String>::make() });
-        while (true) {
-            auto pending = false;
-            auto ready   = Vec<cpp::UnitId>::make();
-            for (auto unit = cpp::UnitId {}; unit < pending_sources.len(); ++unit) {
-                if (pending_sources[unit] == u8 {}) continue;
-                pending          = true;
-                auto single_root = Vec<cpp::UnitId>::make();
-                single_root.emplace_back(unit);
-                auto closure = compile_plan_prerequisite_closure(actions.compile, single_root);
-                auto waits_for_source = false;
-                for (auto dependency = cpp::UnitId {}; dependency < pending_sources.len();
-                     ++dependency) {
-                    if (dependency != unit && pending_sources[dependency] != u8 {} &&
-                        closure[dependency] != u8 {}) {
-                        waits_for_source = true;
-                        break;
-                    }
-                }
-                if (! waits_for_source) ready.emplace_back(unit);
-            }
-            if (! pending) break;
-            if (ready.is_empty()) {
-                return Err(BuildError::Message(
-                    "proc-macro sources have cyclic expansion dependencies"_Str));
-            }
-
-            auto available = compile_plan_available_prerequisites(actions.compile, ready);
-            for (auto unit = cpp::UnitId {}; unit < available.len(); ++unit) {
-                if (prerequisite_selection[unit] != u8 {}) available[unit] = u8 {};
-            }
-            auto prepared_dependencies =
-                execute_compile_plan_selection(package,
-                                               units,
-                                               actions.compile,
-                                               available,
-                                               rstd::move(prerequisite_identities),
-                                               cache,
-                                               toolchain.compile_executor(),
-                                               request.observer,
-                                               *compile_execution,
-                                               stage_timing);
-            if (prepared_dependencies.is_err()) {
-                return Err(rstd::move(prepared_dependencies).unwrap_err());
-            }
-            auto prepared_dependency_result = rstd::move(prepared_dependencies).unwrap();
-            prerequisite_identities = rstd::move(prepared_dependency_result.object_identities);
-            compiled += prepared_dependency_result.compiled;
-            reused += prepared_dependency_result.reused;
-            compile_statistics.merge(prepared_dependency_result.statistics);
-            for (auto unit = cpp::UnitId {}; unit < available.len(); ++unit) {
-                if (available[unit] != u8 {}) prerequisite_selection[unit] = u8(1);
-            }
-
-            auto selected_sources = Vec<u8>::with_capacity(pending_sources.len());
-            for (auto unit = cpp::UnitId {}; unit < pending_sources.len(); ++unit) {
-                selected_sources.push(u8 {});
-            }
-            for (auto unit : ready) {
-                selected_sources[unit] = u8(1);
-                pending_sources[unit]  = u8 {};
-            }
-            auto transformed = transform_proc_macro_sources(layout,
-                                                            toolchain,
-                                                            package,
-                                                            package_plan,
-                                                            units,
-                                                            target_units,
-                                                            selected_sources,
-                                                            expansion_progress,
-                                                            available_aggregates);
-            if (transformed.is_err()) return Err(rstd::move(transformed).unwrap_err());
-            if (! *transformed) continue;
-            for (auto unit : ready)
-                if (expansion_progress[unit].pending) pending_sources[unit] = u8(1);
-
-            auto authoritative_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
-            rstd_try(rebuild_after_source_transformation(prerequisite_identities));
-            authoritative_plan_scope.finish();
-
-            auto transformed_selection =
-                compile_plan_available_prerequisites(actions.compile, ready);
-            for (cpp::UnitId unit {}; unit < transformed_selection.len(); ++unit)
-                if (prerequisite_identities[unit].is_some()) transformed_selection[unit] = u8 {};
-            auto transformed_compile =
-                execute_compile_plan_selection(package,
-                                               units,
-                                               actions.compile,
-                                               transformed_selection,
-                                               rstd::move(prerequisite_identities),
-                                               cache,
-                                               toolchain.compile_executor(),
-                                               request.observer,
-                                               *compile_execution,
-                                               stage_timing);
-            if (transformed_compile.is_err()) {
-                return Err(rstd::move(transformed_compile).unwrap_err());
-            }
-            auto transformed_result = rstd::move(transformed_compile).unwrap();
-            prerequisite_identities = rstd::move(transformed_result.object_identities);
-            prerequisite_selection.clear();
-            for (const auto& identity : prerequisite_identities)
-                prerequisite_selection.push(identity.is_some() ? u8(1) : u8 {});
-            compiled += transformed_result.compiled;
-            reused += transformed_result.reused;
-            compile_statistics.merge(transformed_result.statistics);
-        }
-    }
-
     object_identities = rstd::move(prerequisite_identities);
     if (! available_aggregates.is_empty())
-        rstd_try(attach_target_compiler_plugins(package,
-                                                package_plan,
-                                                target_units,
-                                                scans,
-                                                compiler_plugins,
-                                                toolchain,
-                                                actions.compile));
+        rstd_try(attach_proc_macro_plugins(
+            package, package_plan, target_units, available_aggregates, toolchain, actions.compile));
     const BuiltArtifact* configured_artifact_processor = nullptr;
     if (project.configuration.toolchain.wasm.is_some() &&
         project.configuration.toolchain.wasm->processor.is_some()) {

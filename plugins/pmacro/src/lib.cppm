@@ -291,6 +291,12 @@ private:
     std::size_t        index_ {};
 };
 
+enum class OutputLocation
+{
+    AfterItem,
+    NamespaceEnd,
+};
+
 class Context {
 public:
     auto declaration() const noexcept
@@ -299,6 +305,8 @@ public:
         -> std::expected<TokenStream, FragmentError>;
     auto stream() const noexcept -> std::expected<TokenStream, Error>;
     auto parse(std::string_view source) const noexcept -> std::expected<TokenStream, Error>;
+    auto emit(OutputLocation location, const TokenStream& output) const noexcept
+        -> std::expected<void, Error>;
     auto diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept
         -> bool;
     auto call_site() const noexcept -> std::expected<Span, Error>;
@@ -335,6 +343,8 @@ namespace host
 
 class Runtime {
 public:
+    virtual auto emit_stream(OutputLocation location, StreamHandle output) noexcept
+        -> std::expected<void, Error> = 0;
     virtual auto current_declaration() noexcept
         -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> = 0;
     virtual auto fragment_stream(const CodeFragment& fragment) noexcept
@@ -515,6 +525,14 @@ auto Context::parse(std::string_view source) const noexcept -> std::expected<Tok
 auto Context::diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept
     -> bool {
     return runtime_ != nullptr && runtime_->emit_diagnostic(level, span, message);
+}
+
+auto Context::emit(OutputLocation location, const TokenStream& output) const noexcept
+    -> std::expected<void, Error> {
+    if (runtime_ == nullptr) return std::unexpected(Error::InvalidArgument);
+    const auto handle = runtime_->token_stream_handle(output);
+    if (! handle) return std::unexpected(Error::InvalidArgument);
+    return runtime_->emit_stream(location, handle);
 }
 
 auto Context::call_site() const noexcept -> std::expected<Span, Error> {

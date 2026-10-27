@@ -3,6 +3,13 @@
 namespace pmacro::clang_bridge
 {
 
+auto analyze_declaration(clang::CompilerInstance& host,
+                         class SourceRegistry&    sources,
+                         const clang::Decl&       declaration,
+                         std::string_view         input,
+                         Span                     span)
+    -> std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
+
 struct FragmentSource {
     Span span;
     bool exact;
@@ -11,6 +18,10 @@ struct FragmentSource {
 class SourceRegistry {
 public:
     explicit SourceRegistry(clang::CompilerInstance& compiler);
+    SourceRegistry(clang::CompilerInstance& compiler,
+                   SourceRegistry&          parent,
+                   std::uint32_t            input_offset,
+                   Span                     input);
 
     auto context() const -> SourceContextId;
     auto spelling(clang::CharSourceRange range) const -> std::expected<Span, SourceError>;
@@ -34,6 +45,9 @@ private:
 
     clang::CompilerInstance&                                                    compiler_;
     SourceContextId                                                             context_;
+    SourceRegistry*                                                             parent_ {};
+    std::uint32_t                                                               input_offset_ {};
+    Span                                                                        input_;
     mutable std::vector<std::pair<std::uint64_t, clang::FileID>>                files_;
     mutable std::unordered_map<const clang::AnnotateAttr*, std::optional<Span>> attribute_spans_;
 };

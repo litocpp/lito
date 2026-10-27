@@ -1,10 +1,10 @@
 [package]
 name = "pmacro"
-version = "0.4.0"
+version = "0.5.0"
 license = "MIT OR Apache-2.0"
 standard = "c++23"
 
 [plugin]
 module = "pmacro"
-sources = ["src/lib.cppm", "src/clang/plugin.cpp", "src/clang/declarations.cpp"]
+sources = ["src/lib.cppm", "src/clang/plugin.cpp", "src/clang/declarations.cpp", "src/clang/fragment.cpp"]
 attribute-only = true

@@ -1,10 +1,6 @@
-module;
-
-#include <expected>
-#include <string_view>
-
 export module pmacro.basic_provider;
 
+import std;
 import pmacro;
 
 auto contains_token(pmacro::TokenStream stream, std::string_view spelling) noexcept -> bool {
@@ -104,7 +100,7 @@ auto derive_marker(pmacro::DeriveInput, pmacro::Context& context) noexcept
 [[pmacro::define]]
 auto replace(pmacro::AttributeInput, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
-    return context.parse("struct Replaced { int replacement; };");
+    return context.parse("struct ReplaceSeed { int replacement; };");
 }
 
 [[pmacro::define]]
@@ -117,14 +113,14 @@ auto remove(pmacro::AttributeInput, pmacro::Context& context) noexcept
 auto emit_import(pmacro::AttributeInput, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
     return context.parse("import lito.test.pmacro.generated;\n"
-                         "struct ImportConsumer { Generated value; };");
+                         "struct ImportSeed { Generated value; };");
 }
 
 [[pmacro::define]]
 auto recursive(pmacro::AttributeInput, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
     return context.parse("struct [[pmacro::attr(\"pmacro-basic-provider::identity\")]] "
-                         "Recursive { int value; };");
+                         "RecursiveSeed { int value; };");
 }
 
 [[pmacro::define]]

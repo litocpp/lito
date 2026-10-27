@@ -3,7 +3,11 @@ module;
 
 export module lito.test.pmacro.consumer;
 
-struct [[pmacro::attr("pmacro-basic-provider::emit_import")]] ImportSeed {};
+import lito.test.pmacro.generated;
+
+struct ImportSeed {
+    Generated value;
+};
 
 static_assert(PMACRO_LOCAL_VALUE == 7);
 constexpr auto pmacro_logical_source = __FILE__;
@@ -47,8 +51,6 @@ export {
     };
 
     struct [[pmacro::attr("pmacro-basic-provider::replace")]] ReplaceSeed {};
-
-    struct [[pmacro::attr("pmacro-basic-provider::remove")]] RemoveSeed {};
 
     struct [[pmacro::attr("pmacro-basic-provider::recursive")]] RecursiveSeed {};
 
