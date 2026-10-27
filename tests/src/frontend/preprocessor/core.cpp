@@ -780,6 +780,39 @@ TEST(Preprocessor, RescansMacroReplacementsWithFollowingTokens) {
     }
 }
 
+TEST(Preprocessor, MacroDefinitionsPreserveCommentContinuations) {
+    const ref<str> endings[] = { "\n"_str, "\r\n"_str, "\r"_str };
+    for (auto ending : endings) {
+        auto           source  = String::make();
+        const ref<str> lines[] = {
+            "#define INNER(KIND, CODE) void KIND() CODE"_str,
+            "#define OUTER(KIND) \\"_str,
+            "  INNER(KIND, { \\"_str,
+            "    /* first line \\"_str,
+            "       second line */ \\"_str,
+            "  })"_str,
+            "OUTER(example)"_str,
+            "#define VALUE 1 // comment \\"_str,
+            " + 2"_str,
+            "VALUE"_str,
+        };
+        for (auto line : lines) {
+            source.push_str(line);
+            source.push_str(ending);
+        }
+        auto result = preprocess_macro_source(source.as_str());
+        ASSERT_TRUE(result.is_ok()) << source;
+        auto actual = String::make();
+        for (const auto& token : result->tokens) {
+            if (token.kind == TokenKind::Newline) continue;
+            if (! actual.is_empty()) actual.push_ascii(' ');
+            actual.push_str(token.text.utf8().unwrap());
+        }
+        EXPECT_EQ(actual.as_str(), "void example ( ) { } 1"_str);
+    }
+    EXPECT_TRUE(preprocess_macro_source("#define F(X) X\nF(\n"_str).is_err());
+}
+
 TEST(Preprocessor, RejectsMalformedAliasedBuiltinInvocations) {
     const ref<str> sources[] = {
         "#define QUERY __has_attribute\nQUERY\n"_str,

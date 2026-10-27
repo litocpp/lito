@@ -497,3 +497,56 @@ TEST(Lexical, FullAndCompactSinksAgreeOnPhysicalLocations) {
         EXPECT_EQ(comment.end.column, end.column);
     }
 }
+
+TEST(Lexical, CommentContinuationsPreservePhysicalLocationsAndLogicalLines) {
+    const ref<str> endings[] = { "\n"_str, "\r\n"_str, "\r"_str };
+    for (auto ending : endings) {
+        auto block = rstd::format("/* first\\{} second */", ending);
+        auto line  = rstd::format("// first\\{} second\\path", ending);
+        auto text =
+            rstd::format("before {} after{}{}{}next{}", block, ending, line, ending, ending);
+        auto source  = fixture_source(text.as_str());
+        auto full    = lex_with_comments(source, true);
+        auto compact = lex_scan_file(source);
+        ASSERT_TRUE(full.is_ok() && compact.is_ok());
+        ASSERT_EQ(full->tokens.len(), usize(6));
+        ASSERT_EQ(full->comments.len(), usize(2));
+        ASSERT_EQ(compact->tokens.len(), full->tokens.len());
+        ASSERT_EQ(compact->comments.len(), full->comments.len());
+        EXPECT_EQ(full->tokens[usize(0)].text.utf8().unwrap(), "before"_str);
+        EXPECT_EQ(full->tokens[usize(1)].text.utf8().unwrap(), "after"_str);
+        EXPECT_EQ(full->tokens[usize(1)].spelling.line, usize(2));
+        EXPECT_FALSE(full->tokens[usize(1)].start_of_line);
+        EXPECT_TRUE(full->tokens[usize(1)].leading_space);
+        EXPECT_EQ(full->tokens[usize(4)].text.utf8().unwrap(), "next"_str);
+        EXPECT_EQ(full->tokens[usize(4)].spelling.line, usize(5));
+        EXPECT_TRUE(full->tokens[usize(4)].start_of_line);
+        EXPECT_EQ(full->comments[usize(0)].text.utf8().unwrap(), block.as_str());
+        EXPECT_EQ(full->comments[usize(1)].text.utf8().unwrap(), line.as_str());
+        SourcePositionIndex positions(source.contents());
+        for (auto i = usize(); i < full->tokens.len(); ++i) {
+            const auto& token    = full->tokens[i];
+            auto        stored   = compact->token(source.id, i);
+            auto        location = positions.location(
+                source.id, static_cast<uint32_t>(token.spelling.offset.to_primitive()));
+            EXPECT_EQ(token.kind, stored.kind());
+            EXPECT_TRUE(token.text.same_bytes(stored.text()));
+            EXPECT_EQ(token.spelling.offset, stored.offset());
+            EXPECT_EQ(token.spelling.line, location.line);
+            EXPECT_EQ(token.spelling.column, location.column);
+            EXPECT_EQ(token.spelling.line, stored.location().line);
+            EXPECT_EQ(token.spelling.column, stored.location().column);
+            EXPECT_EQ(token.start_of_line, stored.start_of_line());
+            EXPECT_EQ(token.leading_space, stored.leading_space());
+        }
+        for (auto i = usize(); i < full->comments.len(); ++i) {
+            const auto& comment = full->comments[i];
+            auto        stored  = compact->comment(source.id, i);
+            auto end = positions.location(source.id,
+                                          static_cast<uint32_t>(comment.end.offset.to_primitive()));
+            EXPECT_TRUE(comment.text.same_bytes(stored.text));
+            EXPECT_EQ(comment.end.line, end.line);
+            EXPECT_EQ(comment.end.column, end.column);
+        }
+    }
+}

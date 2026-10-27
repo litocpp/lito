@@ -326,6 +326,15 @@ private:
     ScanFileStorageBuilder builder_;
 };
 
+auto escaped_newline_length(slice<u8> bytes, usize position) -> usize {
+    if (position + usize(1) >= bytes.len() || bytes[position] != u8('\\')) return usize {};
+    auto next = bytes[position + usize(1)];
+    if (next == u8('\n')) return usize(2);
+    if (next != u8('\r')) return usize {};
+    return position + usize(2) < bytes.len() && bytes[position + usize(2)] == u8('\n') ? usize(3)
+                                                                                       : usize(2);
+}
+
 template<typename Sink>
 auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
     auto bytes         = source.contents();
@@ -335,16 +344,8 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
 
     while (cursor.position() < bytes.len()) {
         auto value = bytes[cursor.position()];
-        if (value == u8('\\') && cursor.position() + usize(1) < bytes.len() &&
-            (bytes[cursor.position() + usize(1)] == u8('\n') ||
-             bytes[cursor.position() + usize(1)] == u8('\r'))) {
-            (void)cursor.advance(usize(2));
-            if (cursor.position() < bytes.len() &&
-                bytes[cursor.position() - usize(1)] == u8('\r') &&
-                bytes[cursor.position()] == u8('\n')) {
-                (void)cursor.advance(usize(1));
-            }
-
+        if (auto length = escaped_newline_length(bytes, cursor.position()); length != usize {}) {
+            (void)cursor.advance(length);
             continue;
         }
         if (value == u8('\r') || value == u8('\n')) {
@@ -377,11 +378,23 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
             auto comment_line_start = line_start;
             pending_space           = true;
             (void)cursor.advance_single_line_unchecked(usize(2));
-            auto body = rstd::parse::TextCursor(rstd::parse::Input<u8>(cursor.remaining_input()));
-            auto span = rstd::parse::consume_until(body, [](u8 value) {
-                return value == u8('\n') || value == u8('\r');
-            });
-            (void)cursor.advance_single_line_unchecked(span.len());
+            while (cursor.position() < bytes.len()) {
+                auto body =
+                    rstd::parse::TextCursor(rstd::parse::Input<u8>(cursor.remaining_input()));
+                auto span = rstd::parse::consume_until(body, [](u8 value) {
+                    return value == u8('\\') || value == u8('\n') || value == u8('\r');
+                });
+                (void)cursor.advance_single_line_unchecked(span.len());
+                auto length = escaped_newline_length(bytes, cursor.position());
+                if (length != usize {}) {
+                    (void)cursor.advance(length);
+                } else if (cursor.position() < bytes.len() &&
+                           bytes[cursor.position()] == u8('\\')) {
+                    (void)cursor.advance_single_line_unchecked(usize(1));
+                } else {
+                    break;
+                }
+            }
             auto kind = CommentKind::Ordinary;
             if (start.offset + usize(2) < bytes.len() &&
                 bytes[start.offset + usize(2)] == u8('!')) {
@@ -416,6 +429,12 @@ auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {
             (void)cursor.advance_single_line_unchecked(usize(2));
             auto closed = false;
             while (cursor.position() < bytes.len()) {
+                // Spliced physical newlines must not terminate a macro's logical line.
+                if (auto length = escaped_newline_length(bytes, cursor.position());
+                    length != usize {}) {
+                    (void)cursor.advance(length);
+                    continue;
+                }
                 if (bytes[cursor.position()] == u8('*') &&
                     cursor.position() + usize(1) < bytes.len() &&
                     bytes[cursor.position() + usize(1)] == u8('/')) {
