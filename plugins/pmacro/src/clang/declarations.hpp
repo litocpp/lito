@@ -69,7 +69,7 @@ public:
 
     auto attributes(const clang::Decl& declaration) -> const PreparedAttributes&;
     auto helpers(const clang::Decl& declaration) -> const std::vector<PreparedHelper>&;
-    auto get(const clang::Decl& declaration)
+    auto get(const clang::Decl& declaration, FunctionForm form = FunctionForm::Unavailable)
         -> std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
 
 private:
@@ -79,7 +79,7 @@ private:
         std::optional<std::expected<std::shared_ptr<const Declaration>, DeclarationError>> snapshot;
     };
 
-    auto build(const clang::Decl& declaration)
+    auto build(const clang::Decl& declaration, FunctionForm form)
         -> std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
     auto type(clang::QualType type, SourceInfo source) const -> TypeInfo;
     auto expression(const clang::Expr* expression) const -> ExpressionInfo;

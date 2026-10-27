@@ -127,7 +127,7 @@ change the execution domain of an ordinary dependency.
 ## Pmacro dependencies
 
 A normal dependency that resolves to a package containing `[pmacro]` is a compiler-host input. Its
-dependency key is the provider package name and is the left side of an invocation identity:
+dependency key is the provider package name, which is also the default invocation scope:
 
 ```toml
 [dependencies.model-macros]
@@ -145,6 +145,10 @@ Source, feature, and workspace fields match other dependencies. A pmacro depende
 accept `pub` or `usage` and never enters target compile or link usage. A `[pmacro]` provider may
 depend on host C/C++ libraries through ordinary dependencies, but cannot recursively depend on
 another `[pmacro]` provider.
+
+A provider can select a public scope with `pmacro::define("scope")`. The invocation then uses that
+scope, while dependency resolution and aggregate selection still use the actual package name.
+See [pmacro targets](targets-and-sources.md#pmacro) for compilation and macro interfaces.
 
 ## `[runtime-dependencies.NAME]`
 

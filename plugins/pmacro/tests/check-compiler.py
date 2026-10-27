@@ -82,6 +82,10 @@ run("independent-importer", flags + [str(importer), str(build / "generated.o"), 
 run("independent-run", [str(build / "importer")])
 
 cases = {
+    "deleted-function": ('[[pmacro::attr("compiler-test::function")]] void deleted() = delete;',
+                         "requires an unconsumed declaration or body"),
+    "deleted-followed-by-semicolon": ('[[pmacro::attr("compiler-test::function")]] void deleted() = delete; ;',
+                                     "requires an unconsumed declaration or body"),
     "rename": ('struct [[pmacro::attr("compiler-test::rewrite", "struct Other {};")]] Original {};',
                "must retain the same declaration head"),
     "remove": ('struct [[pmacro::attr("compiler-test::rewrite", "")]] Original {};',

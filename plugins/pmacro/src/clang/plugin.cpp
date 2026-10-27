@@ -475,7 +475,10 @@ public:
     auto sources() -> SourceRegistry& { return sources_; }
     using Snapshot = std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
     std::function<Snapshot(const clang::Decl&)> declaration_query;
-    auto declaration(const clang::Decl& value) -> Snapshot { return declarations_.get(value); }
+    auto declaration(const clang::Decl& value, FunctionForm form = FunctionForm::Unavailable)
+        -> Snapshot {
+        return declarations_.get(value, form);
+    }
     auto take_outputs() -> std::vector<std::pair<OutputLocation, TokenStream>> {
         return std::exchange(outputs_, {});
     }

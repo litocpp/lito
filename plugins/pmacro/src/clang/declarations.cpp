@@ -357,6 +357,10 @@ auto DeclarationStore::type(clang::QualType value, SourceInfo source) const -> T
     policy.SuppressUnwrittenScope = true;
     result.display                = value.getAsString(policy);
     result.dependent              = value->isDependentType();
+    if (value->isUndeducedType()) {
+        result.type_id = std::unexpected(RepresentationError::UndeducedType);
+        return result;
+    }
     if (result.dependent) {
         result.type_id = std::unexpected(RepresentationError::RequiresTemplateContext);
         return result;
@@ -389,11 +393,14 @@ auto DeclarationStore::expression(const clang::Expr* expression) const -> Expres
     return result;
 }
 
-auto DeclarationStore::build(const clang::Decl& declaration)
+auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
     -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> {
     const auto* record      = llvm::dyn_cast<clang::RecordDecl>(&declaration);
     const auto* enumeration = llvm::dyn_cast<clang::EnumDecl>(&declaration);
-    if (! record && ! enumeration) return std::unexpected(DeclarationError::UnsupportedDeclaration);
+    const auto* function    = llvm::dyn_cast<clang::FunctionDecl>(&declaration);
+    if ((! record && ! enumeration && ! function) ||
+        (function && (llvm::isa<clang::CXXMethodDecl>(function) || ! function->getIdentifier())))
+        return std::unexpected(DeclarationError::UnsupportedDeclaration);
     if (declaration.isInvalidDecl()) return std::unexpected(DeclarationError::InvalidDeclaration);
     if ((record && ! record->isCompleteDefinition()) ||
         (enumeration && ! enumeration->isCompleteDefinition()))
@@ -437,7 +444,7 @@ auto DeclarationStore::build(const clang::Decl& declaration)
             info.fields.push_back(std::move(value));
         }
         result->data = std::move(info);
-    } else {
+    } else if (enumeration) {
         EnumInfo info;
         info.scoped                   = enumeration->isScoped();
         info.fixed_underlying_type    = enumeration->isFixed();
@@ -455,14 +462,80 @@ auto DeclarationStore::build(const clang::Decl& declaration)
             info.enumerators.push_back(std::move(value));
         }
         result->data = std::move(info);
+    } else {
+        FunctionInfo info;
+        info.form = form;
+        if (form == FunctionForm::Unavailable) {
+            info.form = function->isDeletedAsWritten()             ? FunctionForm::Deleted
+                        : function->isDefaulted()                  ? FunctionForm::Defaulted
+                        : function->isThisDeclarationADefinition() ? FunctionForm::Definition
+                                                                   : FunctionForm::Declaration;
+        }
+        info.return_type =
+            type(function->getReturnType(),
+                 sources_.info(function->getReturnTypeSourceRange(), function->getLocation()));
+        info.language_linkage = function->getLanguageLinkage() == clang::CLanguageLinkage
+                                    ? LanguageLinkage::C
+                                    : LanguageLinkage::Cxx;
+        info.variadic         = function->isVariadic();
+        info.dependent  = function->isDependentContext() || function->getType()->isDependentType();
+        info.template_  = function->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate;
+        info.static_    = function->getStorageClass() == clang::SC_Static;
+        info.inline_    = function->isInlineSpecified();
+        info.constexpr_ = function->isConstexpr();
+        info.consteval_ = function->isConsteval();
+        if (const auto* prototype = function->getType()->getAs<clang::FunctionProtoType>()) {
+            info.default_calling_convention = prototype->getCallConv() == clang::CC_C;
+            info.exception.source =
+                sources_.info(function->getExceptionSpecSourceRange(), function->getLocation());
+            switch (prototype->getExceptionSpecType()) {
+            case clang::EST_DependentNoexcept:
+                info.exception.state = ExceptionState::Dependent;
+                break;
+            case clang::EST_Unevaluated:
+            case clang::EST_Uninstantiated:
+            case clang::EST_Unparsed: break;
+            default:
+                info.exception.state = prototype->isNothrow() ? ExceptionState::NonThrowing
+                                                              : ExceptionState::PotentiallyThrowing;
+                break;
+            }
+            if (const auto* condition = prototype->getNoexceptExpr())
+                info.exception.condition = expression(condition);
+        }
+        for (const auto* parameter : function->parameters()) {
+            ParameterInfo value;
+            if (parameter->getIdentifier()) value.name = parameter->getNameAsString();
+            value.source = sources_.info(parameter->getSourceRange(), parameter->getLocation());
+            value.declared_type  = type(parameter->getOriginalType(), value.source);
+            value.type           = type(parameter->getType(), value.source);
+            value.parameter_pack = parameter->isParameterPack();
+            value.attributes     = attributes(*parameter).attributes;
+            auto& argument       = value.default_argument;
+            argument.inherited   = parameter->hasInheritedDefaultArg();
+            if (parameter->hasDefaultArg()) {
+                argument.state = DefaultArgumentState::Deferred;
+                if (! parameter->hasUnparsedDefaultArg()) {
+                    const auto* expr = parameter->hasUninstantiatedDefaultArg()
+                                           ? parameter->getUninstantiatedDefaultArg()
+                                           : parameter->getDefaultArg();
+                    if (expr) {
+                        argument.state      = DefaultArgumentState::Available;
+                        argument.expression = expression(expr);
+                    }
+                }
+            }
+            info.parameters.push_back(std::move(value));
+        }
+        result->data = std::move(info);
     }
     return result;
 }
 
-auto DeclarationStore::get(const clang::Decl& declaration)
+auto DeclarationStore::get(const clang::Decl& declaration, FunctionForm form)
     -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> {
     auto& prepared = declarations_[&declaration];
-    if (! prepared.snapshot) prepared.snapshot = build(declaration);
+    if (! prepared.snapshot) prepared.snapshot = build(declaration, form);
     return *prepared.snapshot;
 }
 

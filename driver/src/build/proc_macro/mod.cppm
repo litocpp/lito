@@ -183,7 +183,7 @@ auto attach_proc_macro_plugins(const cpp::PackageSpec&             package,
                 rstd::format("target '{}' has no matching host proc-macro aggregate",
                              lito::package::package_target_id_text(spec.id).as_str())));
         auto identity =
-            rstd_try(licrypto::sha256_hex(rstd::format("lito-pmacro-compile-v1\n{}\n{}\n",
+            rstd_try(licrypto::sha256_hex(rstd::format("lito-pmacro-compile-v2\n{}\n{}\n",
                                                        aggregate->identity.as_str(),
                                                        aggregate->content_identity.as_str())
                                               .as_str()));

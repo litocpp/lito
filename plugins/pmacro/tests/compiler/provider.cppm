@@ -174,3 +174,82 @@ auto import_at_end(pmacro::DeriveInput, pmacro::Context& context) noexcept
         return std::unexpected(pmacro::Error::Failure);
     return context.stream();
 }
+
+[[pmacro::define("compiler-test")]]
+auto function(pmacro::AttributeInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto first  = context.declaration();
+    auto second = context.declaration();
+    auto fail   = [&]() -> std::expected<pmacro::TokenStream, pmacro::Error> {
+        context.diagnostic(
+            pmacro::DiagnosticLevel::Error, input.item_span, "function model mismatch");
+        return std::unexpected(pmacro::Error::Failure);
+    };
+    if (! first || ! second || *first != *second) return fail();
+    const auto* f = std::get_if<pmacro::FunctionInfo>(&(*first)->data);
+    if (! f || ! (*first)->name || ! f->default_calling_convention) return fail();
+    const auto& name = *(*first)->name;
+    if (name == "defaults") {
+        if (f->parameters.size() != 2 || f->parameters[0].name ||
+            f->parameters[0].default_argument.state != pmacro::DefaultArgumentState::Available ||
+            f->parameters[0].default_argument.expression->code->text != "2" ||
+            f->exception.state != pmacro::ExceptionState::NonThrowing ||
+            f->form != pmacro::FunctionForm::Declaration)
+            return fail();
+    } else if (name == "defined") {
+        if (f->form != pmacro::FunctionForm::Definition || f->parameters[0].name != "value" ||
+            f->return_type.type_id->text != "int" || ! f->inline_ || ! f->static_ ||
+            f->exception.state != pmacro::ExceptionState::PotentiallyThrowing)
+            return fail();
+    } else if (name == "deduced") {
+        if (f->return_type.type_id ||
+            f->return_type.type_id.error() != pmacro::RepresentationError::UndeducedType)
+            return fail();
+    } else if (name == "adjusted") {
+        if (f->parameters.size() != 2 || f->parameters[0].type.type_id->text != "int *" ||
+            f->parameters[0].declared_type.type_id->text != "int[3]" ||
+            f->parameters[1].declared_type.type_id->text != "int (double)")
+            return fail();
+    } else if (name == "dependent") {
+        if (! f->template_ || ! f->dependent || ! f->parameters[0].type.dependent ||
+            f->exception.state != pmacro::ExceptionState::Dependent)
+            return fail();
+    } else if (name == "linked") {
+        if (f->language_linkage != pmacro::LanguageLinkage::C) return fail();
+    } else if (name == "pack") {
+        if (! f->parameters[0].parameter_pack) return fail();
+    } else if (name == "inherited") {
+        if (f->parameters[0].default_argument.state != pmacro::DefaultArgumentState::None)
+            return fail();
+    } else if (name == "zero") {
+        if (! f->parameters.empty() || ! f->constexpr_) return fail();
+    } else if (name == "complex") {
+        if (f->parameters.size() != 2 || ! f->parameters[0].type.type_id || ! f->variadic)
+            return fail();
+    } else
+        return fail();
+    if (f->return_type.type_id && ! context.tokens(*f->return_type.type_id)) return fail();
+    return input.item;
+}
+
+[[pmacro::define("compiler-test")]]
+auto unsupported_function(pmacro::AttributeInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto first  = context.declaration();
+    auto second = context.declaration();
+    if (first || second || first.error() != pmacro::DeclarationError::UnsupportedDeclaration ||
+        first.error() != second.error())
+        return std::unexpected(pmacro::Error::Failure);
+    return input.item;
+}
+
+[[pmacro::define("compiler-test")]]
+auto changed_function(pmacro::AttributeInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto first  = context.declaration();
+    auto second = context.declaration();
+    if (first || second || first.error() != pmacro::DeclarationError::ChangedInput ||
+        first.error() != second.error())
+        return std::unexpected(pmacro::Error::Failure);
+    return input.item;
+}

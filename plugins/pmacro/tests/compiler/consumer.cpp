@@ -185,3 +185,45 @@ static_assert(__is_same(later_type, Later));
 int main() {
     return sample::imported(41) != 42 || sample::wrapper(41) != 42;
 }
+
+namespace functions
+{
+[[pmacro::attr("compiler-test::function"), pmacro::attr("compiler-test::function")]]
+int defaults(int = 2, const int& = 3) noexcept;
+[[pmacro::attr("compiler-test::function")]]
+inline static auto defined(int value) noexcept(false) -> int {
+    return value;
+}
+[[pmacro::attr("compiler-test::function")]]
+auto deduced(int value) {
+    return value;
+}
+[[pmacro::attr("compiler-test::function")]]
+void adjusted(int a[3], int cb(double));
+template<class T>
+[[pmacro::attr("compiler-test::function")]]
+T dependent(T value) noexcept(sizeof(T) > 1);
+template<class... T>
+[[pmacro::attr("compiler-test::function")]]
+void pack(T... values);
+extern "C" [[pmacro::attr("compiler-test::function")]]
+int  linked(int);
+void inherited(int = 5);
+[[pmacro::attr("compiler-test::function")]]
+void inherited(int);
+[[pmacro::attr("compiler-test::function")]]
+constexpr int zero() {
+    return 0;
+}
+template<class A, class B>
+struct Pair {};
+[[pmacro::attr("compiler-test::function")]]
+void complex(Pair<int, Pair<int, double>>, int (*)(double), ...);
+struct Members {
+    [[pmacro::attr("compiler-test::unsupported_function")]]
+    int method(int);
+};
+[[pmacro::attr("compiler-test::rewrite", "int changed(double);"),
+  pmacro::attr("compiler-test::changed_function")]]
+int changed(int);
+} // namespace functions

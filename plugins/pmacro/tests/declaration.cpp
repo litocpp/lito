@@ -23,6 +23,7 @@ auto require(bool condition, std::string_view message) -> void {
 
 struct TestState {
     std::shared_ptr<const Declaration> saved;
+    std::shared_ptr<const Declaration> function;
     CodeFragment                       fragment;
     Span                               span;
     unsigned                           pass    = 0;
@@ -36,6 +37,11 @@ public:
 
     void HandleTranslationUnit(clang::ASTContext& context) override {
         if (state_.pass == 1) {
+            const auto& function = std::get<FunctionInfo>(state_.function->data);
+            require(function.parameters[0].name == "value" &&
+                        function.parameters[0].default_argument.expression->code->text == "9" &&
+                        function.return_type.type_id->text == "int",
+                    "function snapshot did not outlive AST");
             require(state_.saved->name == "Owned", "snapshot name did not outlive AST");
             const auto& field = std::get<RecordInfo>(state_.saved->data).fields.front();
             require(field.name == "value" && field.initializer->code->text == "42",
@@ -71,6 +77,18 @@ public:
             } else if (name == "Broken") {
                 require(! result && result.error() == DeclarationError::InvalidDeclaration,
                         "invalid definition error");
+            } else if (name == "function_owned") {
+                require(result && again && *result == *again, "function snapshot not cached");
+                const auto& function = std::get<FunctionInfo>((*result)->data);
+                require(function.form == FunctionForm::Definition &&
+                            function.parameters.size() == 1 &&
+                            function.exception.state == ExceptionState::NonThrowing,
+                        "completed function signature");
+                state_.function = *result;
+            } else if (name == "function_deleted") {
+                require(result &&
+                            std::get<FunctionInfo>((*result)->data).form == FunctionForm::Deleted,
+                        "completed deleted function form");
             } else if (name == "Owned") {
                 require(result && again && *result == *again, "snapshot not cached");
                 state_.saved       = *result;
@@ -135,11 +153,13 @@ extern "C++" int main() {
     require(clang::tooling::runToolOnCodeWithArgs(
                 std::make_unique<DeclarationAction>(state),
                 "struct Forward; int ordinary; struct Owned { int value = 42; }; struct Empty {}; "
-                "struct Anonymous { struct { int x; } value; };",
+                "struct Anonymous { struct { int x; } value; }; "
+                "int function_owned(int value = 9) noexcept { return value; } "
+                "void function_deleted() = delete;",
                 { "-std=c++23" },
                 "first.cpp"),
             "first AST failed");
-    require(state.checked == 5 && state.saved, "missing first AST checks");
+    require(state.checked == 7 && state.saved && state.function, "missing first AST checks");
     state.pass = 1;
     require(clang::tooling::runToolOnCodeWithArgs(std::make_unique<DeclarationAction>(state),
                                                   "int second;",
@@ -152,7 +172,7 @@ extern "C++" int main() {
                                                     { "-std=c++23" },
                                                     "invalid.cpp"),
             "invalid source unexpectedly compiled");
-    require(state.checked == 7, "missing lifetime/error checks");
+    require(state.checked == 9, "missing lifetime/error checks");
     std::cout << "declaration owner: snapshot lifetime, source identity, cached errors and "
                  "representation passed\n";
 }

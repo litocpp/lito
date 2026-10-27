@@ -92,7 +92,8 @@ enum class RepresentationError
 {
     Unavailable,
     Unnameable,
-    RequiresTemplateContext
+    RequiresTemplateContext,
+    UndeducedType
 };
 
 struct SourceInfo {
@@ -175,13 +176,79 @@ struct EnumInfo {
     std::vector<EnumeratorInfo> enumerators;
 };
 
+enum class DefaultArgumentState
+{
+    None,
+    Available,
+    Deferred
+};
+enum class ExceptionState
+{
+    PotentiallyThrowing,
+    NonThrowing,
+    Dependent,
+    Unavailable
+};
+enum class FunctionForm
+{
+    Declaration,
+    Definition,
+    Deleted,
+    Defaulted,
+    Unavailable
+};
+enum class LanguageLinkage
+{
+    Cxx,
+    C,
+    Unavailable
+};
+
+struct DefaultArgumentInfo {
+    DefaultArgumentState          state = DefaultArgumentState::None;
+    std::optional<ExpressionInfo> expression;
+    bool                          inherited = false;
+};
+
+struct ParameterInfo {
+    std::optional<std::string> name;
+    TypeInfo                   declared_type;
+    TypeInfo                   type;
+    DefaultArgumentInfo        default_argument;
+    bool                       parameter_pack = false;
+    std::vector<AttributeInfo> attributes;
+    SourceInfo                 source;
+};
+
+struct ExceptionInfo {
+    ExceptionState                state = ExceptionState::Unavailable;
+    std::optional<ExpressionInfo> condition;
+    SourceInfo                    source;
+};
+
+struct FunctionInfo {
+    TypeInfo                   return_type;
+    std::vector<ParameterInfo> parameters;
+    ExceptionInfo              exception;
+    FunctionForm               form                       = FunctionForm::Unavailable;
+    LanguageLinkage            language_linkage           = LanguageLinkage::Unavailable;
+    bool                       default_calling_convention = false;
+    bool                       variadic                   = false;
+    bool                       dependent                  = false;
+    bool                       template_                  = false;
+    bool                       static_                    = false;
+    bool                       inline_                    = false;
+    bool                       constexpr_                 = false;
+    bool                       consteval_                 = false;
+};
+
 struct Declaration {
-    std::optional<std::string>         name;
-    std::optional<std::string>         qualified_name;
-    std::vector<AttributeInfo>         attributes;
-    std::vector<HelperInfo>            helpers;
-    SourceInfo                         source;
-    std::variant<RecordInfo, EnumInfo> data;
+    std::optional<std::string>                       name;
+    std::optional<std::string>                       qualified_name;
+    std::vector<AttributeInfo>                       attributes;
+    std::vector<HelperInfo>                          helpers;
+    SourceInfo                                       source;
+    std::variant<RecordInfo, EnumInfo, FunctionInfo> data;
 };
 
 enum class DeclarationError
@@ -189,7 +256,8 @@ enum class DeclarationError
     NotInInvocation,
     UnsupportedDeclaration,
     IncompleteDefinition,
-    InvalidDeclaration
+    InvalidDeclaration,
+    ChangedInput
 };
 
 enum class FragmentError

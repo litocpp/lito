@@ -70,28 +70,74 @@ A package has at most one pmacro target and cannot also declare `[lib]`. The tar
 `module`, `sources`, `source-groups`, and `when` with the same source ownership rules as a C++
 library. It does not accept output names, linker options, install fields, or runtime resources.
 
-Lito always builds this target for the build host as a PIC archive. It then generates registration
-objects and links only the providers selected by a consumer into that consumer's aggregate Clang
-plugin. The target automatically receives Lito's `pmacro` compiler-support package. A pmacro
-provider may use ordinary C/C++ library dependencies, but cannot depend on another pmacro provider.
-An override for the builtin `pmacro` package must still provide `[plugin]`.
+Lito always builds this target for the build host as a PIC archive. The bootstrap pmacro plugin
+generates registrations during normal provider compilation; callbacks and registrations belong to
+the same source objects in that archive. Lito links the support archive and the providers selected
+by a consumer into its aggregate Clang plugin. The target automatically receives Lito's `pmacro`
+compiler-support package. A provider may use ordinary C/C++ library dependencies, but cannot depend
+on another pmacro provider. An override for the builtin `pmacro` package must still provide `[plugin]`.
 
 Provider functions use `[[pmacro::define]]`. An optional string literal selects their public macro
 scope: `[[pmacro::define("wasmto")]]` on `bindgen` registers `wasmto::bindgen`. Without an argument,
 the scope is the provider package name. The scope must be non-empty and must not contain `::`.
 Registration and dependency selection retain the actual provider package identity.
-`AttributeInput` definitions are invoked through
-`pmacro::attr`; `DeriveInput` definitions are invoked through `pmacro::derive`. Both receive and
-return token streams. Function-like macros, Clang AST access, semantic query APIs, and side outputs
-are not part of this interface.
+`AttributeInput` definitions are invoked through `pmacro::attr`; `DeriveInput` definitions are invoked
+through `pmacro::derive`. Both receive and return token streams. Provider code and the public pmacro
+module use C++23 and `import std`.
 
-`pmacro::attr` replaces its annotated item with the returned tokens. `pmacro::derive` retains the
-original complete record, union, or enum and appends each derive provider's output in argument
-order. A fixed `pmacro::helper("provider::derive", ...)` attribute may carry provider-owned tokens
-on that item or its members; Lito removes claimed helpers before authoritative compilation.
-Invocations and helpers are supported only at main-source spelling locations. Active macros apply
-to replaceable file/namespace declarations and record members, not statements, expressions,
-parameters, or type positions.
+Expansion runs inside the consumer's normal Clang compilation. The active Parser and Sema consume
+generated tokens, and that compilation produces the object and BMI. Lito scans the original source
+dependencies and prepares the plugins; it does not receive rewritten C++ or rescan macro output.
+Macros must preserve the module declaration and direct imports. Preprocessing within macro-handled
+source fragments is unsupported and remains the caller's responsibility.
+
+An attribute macro returns a complete item. Record transformations retain the existing declaration,
+type identity, and declaration head, and replace the unparsed definition contents. Renaming or
+deleting the record is rejected. Ordinary free-function declarations can produce a matching
+definition and auxiliary declarations; function-definition transformations retain the parsed head.
+This is not a general rollback interface for declarations already processed by Sema.
+
+`pmacro::derive` retains the original complete record, union, or enum and appends each provider's
+output in argument order. A fixed `pmacro::helper("scope::derive", ...)` attribute carries
+provider-owned arguments on that item or its members. The pmacro plugin validates helper ownership
+and consumes its control attributes during compilation.
+
+`Context::declaration()` returns a shared, immutable, owned snapshot whose `data` is a variant of
+`RecordInfo`, `EnumInfo`, and `FunctionInfo`. It includes fields, enumerators or function parameters,
+types, attributes, and source information; record/enum helpers retain their existing ownership. A
+record attribute can request an analysis of its input before its members enter the main Sema;
+derive reads the completed declaration. Repeated queries reuse the snapshot, and a changed record
+input gets a new snapshot.
+
+Ordinary named free functions reuse the host's current declaration without a second parse. Parameters
+retain optional names, original and adjusted types, default-argument states, attributes and source
+locations. The function includes its return type, declaration/definition form, language linkage,
+default calling convention flag, exception state and storage/template flags. This is a snapshot at
+the attribute callback: the body has not been analyzed, inherited defaults may not yet be merged,
+and an undeduced return type reports `RepresentationError::UndeducedType`. Dependent or deferred
+exception information is kept explicit. Methods and special function names return
+`UnsupportedDeclaration`. A function input changed by an earlier attribute returns `ChangedInput`
+on later model queries instead of pairing new tokens with the old AST. The existing snapshot remains
+readable. Function attributes require an unconsumed semicolon or body; deleted/defaulted forms are
+outside this invocation boundary. A completed declaration can still describe `FunctionForm::Deleted`.
+
+The function model changes the host C++ ABI in pmacro 0.6.0. Providers must be rebuilt; Lito's aggregate
+recipe identity invalidates previous plugin artifacts.
+
+`TypeInfo::display` is diagnostic text. Available `type_id` fragments are C++ code representations,
+not stable type identities. `Context::tokens(fragment)` validates the fragment's source context and
+preserves its available diagnostic location. The model does not expose Clang objects, global type
+lookup, target layout, or arbitrary template instantiation.
+
+`Context::emit(OutputLocation::AfterItem, tokens)` appends declarations after the complete declaration
+group. `NamespaceEnd` inserts them before the enclosing lexical namespace block closes, where they
+can refer to later declarations in that block. It requires an enclosing namespace. A derive's
+returned tokens precede its `AfterItem` emissions; emissions from a failed callback are discarded.
+These outputs enter the same compilation and do not write external files.
+
+Invocations use supported declaration positions and source spelling locations. Function-like macros,
+statement/expression/type-position macros, public mutable AST access, and arbitrary side files are
+not supported. The expansion depth is limited to 64 and generated output to 16 MiB per compilation.
 
 ## `[[bin]]`
 

@@ -17,6 +17,7 @@ struct PreparedInput {
     clang::SourceLocation      end;
     clang::SourceLocation      namespace_end;
     std::optional<std::expected<std::shared_ptr<const Declaration>, DeclarationError>> snapshot;
+    bool function_input_changed = false;
 };
 
 class Compilation;
@@ -30,7 +31,20 @@ public:
           state_(compiler),
           definitions_(compiler, options_) {
         state_.declaration_query = [this](const clang::Decl& declaration) {
-            auto        found  = prepared_.find(const_cast<clang::Decl*>(&declaration));
+            auto found = prepared_.find(const_cast<clang::Decl*>(&declaration));
+            if (llvm::isa<clang::FunctionDecl>(declaration) && found != prepared_.end()) {
+                auto& input = found->second;
+                if (! input.snapshot) {
+                    if (input.function_input_changed)
+                        input.snapshot = std::unexpected(DeclarationError::ChangedInput);
+                    else {
+                        const auto form =
+                            input.body ? FunctionForm::Definition : FunctionForm::Declaration;
+                        input.snapshot = state_.declaration(declaration, form);
+                    }
+                }
+                return *input.snapshot;
+            }
             const auto* record = llvm::dyn_cast<clang::CXXRecordDecl>(&declaration);
             if (! record || ! record->isBeingDefined() || found == prepared_.end())
                 return state_.declaration(declaration);
@@ -244,7 +258,13 @@ private:
         return {};
     }
     auto capture(clang::Decl& declaration) -> std::optional<PreparedInput> {
-        auto& p       = parser();
+        auto& p = parser();
+        if (llvm::isa<clang::FunctionDecl>(declaration) &&
+            ! p.getCurToken().isOneOf(clang::tok::semi, clang::tok::l_brace)) {
+            fail(declaration.getLocation(),
+                 "function macro requires an unconsumed declaration or body");
+            return {};
+        }
         auto  begin   = declaration.getBeginLoc();
         auto& manager = compiler_.getSourceManager();
         for (const auto* attribute : declaration.specific_attrs<clang::AnnotateAttr>()) {
@@ -268,6 +288,22 @@ private:
         if (current == tokens.end()) {
             fail(declaration.getLocation(), "macro input is not at a declaration boundary");
             return {};
+        }
+        if (llvm::isa<clang::FunctionDecl>(declaration)) {
+            unsigned depth = 0;
+            for (auto token = tokens.begin(); token != current; ++token) {
+                if (token->isOneOf(clang::tok::l_paren, clang::tok::l_square, clang::tok::l_brace))
+                    ++depth;
+                if (token->isOneOf(
+                        clang::tok::r_paren, clang::tok::r_square, clang::tok::r_brace) &&
+                    depth)
+                    --depth;
+                if (token->is(clang::tok::semi) && ! depth) {
+                    fail(declaration.getLocation(),
+                         "function macro requires an unconsumed declaration or body");
+                    return {};
+                }
+            }
         }
         input.current   = current - tokens.begin();
         unsigned parens = 0, brackets = 0, braces = 0;
@@ -561,7 +597,18 @@ private:
             }
             auto text = invoke(input, *queue[index].attribute, false, queue[index].arguments);
             if (! text) return;
-            output     = lex(*text);
+            output = lex(*text);
+            if (llvm::isa<clang::FunctionDecl>(input.declaration)) {
+                const auto before = lex(clean_input(input));
+                input.function_input_changed |=
+                    before.size() != output.size() ||
+                    ! std::equal(before.begin(),
+                                 before.end(),
+                                 output.begin(),
+                                 [&](const auto& left, const auto& right) {
+                                     return same(left, right);
+                                 });
+            }
             auto extra = state_.take_outputs();
             appended.insert(appended.end(), extra.begin(), extra.end());
             if (output.empty()) {
