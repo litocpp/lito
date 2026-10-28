@@ -24,6 +24,7 @@ auto require(bool condition, std::string_view message) -> void {
 struct TestState {
     std::shared_ptr<const Declaration> saved;
     std::shared_ptr<const Declaration> function;
+    std::shared_ptr<const Declaration> methods;
     CodeFragment                       fragment;
     Span                               span;
     unsigned                           pass    = 0;
@@ -57,6 +58,11 @@ public:
                 sources_.fragment_source(state_.fragment, sources_.main_span(0, 0));
             require(! no_span && no_span.error() == FragmentError::ForeignSource,
                     "old fragment without spans was accepted");
+            const auto& methods = std::get<RecordInfo>(state_.methods->data).methods;
+            require(methods[0].kind == MethodKind::Constructor && methods[1].const_ &&
+                        methods[1].ref_qualifier == RefQualifier::LValue &&
+                        methods[1].function.parameters[0].type.type_id->text == "int",
+                    "method snapshot did not outlive AST");
             ++state_.checked;
             return;
         }
@@ -89,6 +95,18 @@ public:
                 require(result &&
                             std::get<FunctionInfo>((*result)->data).form == FunctionForm::Deleted,
                         "completed deleted function form");
+            } else if (name == "Methods") {
+                require(result.has_value(), "method record unavailable");
+                state_.methods      = *result;
+                const auto& methods = std::get<RecordInfo>((*result)->data).methods;
+                require(methods.size() >= 8 && methods[0].kind == MethodKind::Constructor &&
+                            methods[1].name == "read" && methods[1].const_ &&
+                            methods[2].ref_qualifier == RefQualifier::RValue &&
+                            methods[3].function.static_ && methods[4].access == Access::Private &&
+                            methods[5].kind == MethodKind::Destructor && methods[5].virtual_ &&
+                            methods[6].kind == MethodKind::Conversion &&
+                            methods[7].kind == MethodKind::Operator,
+                        "method facts missing");
             } else if (name == "Owned") {
                 require(result && again && *result == *again, "snapshot not cached");
                 state_.saved       = *result;
@@ -155,11 +173,15 @@ extern "C++" int main() {
                 "struct Forward; int ordinary; struct Owned { int value = 42; }; struct Empty {}; "
                 "struct Anonymous { struct { int x; } value; }; "
                 "int function_owned(int value = 9) noexcept { return value; } "
-                "void function_deleted() = delete;",
+                "void function_deleted() = delete; "
+                "class Methods { public: explicit Methods(int); int read(int) const &; void "
+                "consume() &&; "
+                "static int count(); private: void hidden(); public: virtual ~Methods(); "
+                "operator bool() const; int operator+(int) const; };",
                 { "-std=c++23" },
                 "first.cpp"),
             "first AST failed");
-    require(state.checked == 7 && state.saved && state.function, "missing first AST checks");
+    require(state.checked == 8 && state.saved && state.function, "missing first AST checks");
     state.pass = 1;
     require(clang::tooling::runToolOnCodeWithArgs(std::make_unique<DeclarationAction>(state),
                                                   "int second;",
@@ -172,7 +194,7 @@ extern "C++" int main() {
                                                     { "-std=c++23" },
                                                     "invalid.cpp"),
             "invalid source unexpectedly compiled");
-    require(state.checked == 9, "missing lifetime/error checks");
+    require(state.checked == 10, "missing lifetime/error checks");
     std::cout << "declaration owner: snapshot lifetime, source identity, cached errors and "
                  "representation passed\n";
 }

@@ -81,6 +81,7 @@ private:
 
     auto build(const clang::Decl& declaration, FunctionForm form)
         -> std::expected<std::shared_ptr<const Declaration>, DeclarationError>;
+    auto function(const clang::FunctionDecl& declaration, FunctionForm form) -> FunctionInfo;
     auto type(clang::QualType type, SourceInfo source) const -> TypeInfo;
     auto expression(const clang::Expr* expression) const -> ExpressionInfo;
 

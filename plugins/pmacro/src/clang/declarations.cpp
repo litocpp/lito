@@ -393,6 +393,74 @@ auto DeclarationStore::expression(const clang::Expr* expression) const -> Expres
     return result;
 }
 
+auto DeclarationStore::function(const clang::FunctionDecl& declaration, FunctionForm form)
+    -> FunctionInfo {
+    const auto*  function = &declaration;
+    FunctionInfo info;
+    info.form = form;
+    if (form == FunctionForm::Unavailable) {
+        info.form = function->isDeletedAsWritten()             ? FunctionForm::Deleted
+                    : function->isDefaulted()                  ? FunctionForm::Defaulted
+                    : function->isThisDeclarationADefinition() ? FunctionForm::Definition
+                                                               : FunctionForm::Declaration;
+    }
+    info.return_type =
+        type(function->getReturnType(),
+             sources_.info(function->getReturnTypeSourceRange(), function->getLocation()));
+    info.language_linkage = function->getLanguageLinkage() == clang::CLanguageLinkage
+                                ? LanguageLinkage::C
+                                : LanguageLinkage::Cxx;
+    info.variadic         = function->isVariadic();
+    info.dependent  = function->isDependentContext() || function->getType()->isDependentType();
+    info.template_  = function->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate;
+    info.static_    = function->getStorageClass() == clang::SC_Static;
+    info.inline_    = function->isInlineSpecified();
+    info.constexpr_ = function->isConstexpr();
+    info.consteval_ = function->isConsteval();
+    if (const auto* prototype = function->getType()->getAs<clang::FunctionProtoType>()) {
+        info.default_calling_convention = prototype->getCallConv() == clang::CC_C;
+        info.exception.source =
+            sources_.info(function->getExceptionSpecSourceRange(), function->getLocation());
+        switch (prototype->getExceptionSpecType()) {
+        case clang::EST_DependentNoexcept: info.exception.state = ExceptionState::Dependent; break;
+        case clang::EST_Unevaluated:
+        case clang::EST_Uninstantiated:
+        case clang::EST_Unparsed: break;
+        default:
+            info.exception.state = prototype->isNothrow() ? ExceptionState::NonThrowing
+                                                          : ExceptionState::PotentiallyThrowing;
+            break;
+        }
+        if (const auto* condition = prototype->getNoexceptExpr())
+            info.exception.condition = expression(condition);
+    }
+    for (const auto* parameter : function->parameters()) {
+        ParameterInfo value;
+        if (parameter->getIdentifier()) value.name = parameter->getNameAsString();
+        value.source         = sources_.info(parameter->getSourceRange(), parameter->getLocation());
+        value.declared_type  = type(parameter->getOriginalType(), value.source);
+        value.type           = type(parameter->getType(), value.source);
+        value.parameter_pack = parameter->isParameterPack();
+        value.attributes     = attributes(*parameter).attributes;
+        auto& argument       = value.default_argument;
+        argument.inherited   = parameter->hasInheritedDefaultArg();
+        if (parameter->hasDefaultArg()) {
+            argument.state = DefaultArgumentState::Deferred;
+            if (! parameter->hasUnparsedDefaultArg()) {
+                const auto* expr = parameter->hasUninstantiatedDefaultArg()
+                                       ? parameter->getUninstantiatedDefaultArg()
+                                       : parameter->getDefaultArg();
+                if (expr) {
+                    argument.state      = DefaultArgumentState::Available;
+                    argument.expression = expression(expr);
+                }
+            }
+        }
+        info.parameters.push_back(std::move(value));
+    }
+    return info;
+}
+
 auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
     -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> {
     const auto* record      = llvm::dyn_cast<clang::RecordDecl>(&declaration);
@@ -421,8 +489,40 @@ auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
                          : record->isClass() ? RecordKind::Class
                                              : RecordKind::Struct;
         info.dependent = record->isDependentContext();
-        if (const auto* cxx = llvm::dyn_cast<clang::CXXRecordDecl>(record))
+        if (const auto* cxx = llvm::dyn_cast<clang::CXXRecordDecl>(record)) {
             info.has_bases = cxx->getNumBases() != 0;
+            for (const auto* child : cxx->decls()) {
+                const auto* method = llvm::dyn_cast<clang::CXXMethodDecl>(child);
+                if (const auto* wrapper = llvm::dyn_cast<clang::FunctionTemplateDecl>(child))
+                    method = llvm::dyn_cast<clang::CXXMethodDecl>(wrapper->getTemplatedDecl());
+                if (! method) continue;
+                MethodInfo value;
+                value.name             = method->getNameAsString();
+                value.function         = this->function(*method, FunctionForm::Unavailable);
+                value.function.static_ = method->isStatic();
+                value.kind = llvm::isa<clang::CXXConstructorDecl>(method)  ? MethodKind::Constructor
+                             : llvm::isa<clang::CXXDestructorDecl>(method) ? MethodKind::Destructor
+                             : llvm::isa<clang::CXXConversionDecl>(method) ? MethodKind::Conversion
+                             : method->isOverloadedOperator()              ? MethodKind::Operator
+                                                                           : MethodKind::Ordinary;
+                value.access = method->getAccess() == clang::AS_private     ? Access::Private
+                               : method->getAccess() == clang::AS_protected ? Access::Protected
+                                                                            : Access::Public;
+                value.ref_qualifier =
+                    method->getRefQualifier() == clang::RQ_LValue   ? RefQualifier::LValue
+                    : method->getRefQualifier() == clang::RQ_RValue ? RefQualifier::RValue
+                                                                    : RefQualifier::None;
+                value.const_     = method->isConst();
+                value.volatile_  = method->isVolatile();
+                value.virtual_   = method->isVirtual();
+                value.implicit   = method->isImplicit();
+                value.source     = sources_.info(method->getSourceRange(), method->getLocation());
+                const auto& data = attributes(*method);
+                value.attributes = data.attributes;
+                value.helpers    = data.helpers;
+                info.methods.push_back(std::move(value));
+            }
+        }
         for (const auto* field : record->fields()) {
             FieldInfo value;
             if (field->getIdentifier()) value.name = field->getNameAsString();
@@ -463,71 +563,7 @@ auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
         }
         result->data = std::move(info);
     } else {
-        FunctionInfo info;
-        info.form = form;
-        if (form == FunctionForm::Unavailable) {
-            info.form = function->isDeletedAsWritten()             ? FunctionForm::Deleted
-                        : function->isDefaulted()                  ? FunctionForm::Defaulted
-                        : function->isThisDeclarationADefinition() ? FunctionForm::Definition
-                                                                   : FunctionForm::Declaration;
-        }
-        info.return_type =
-            type(function->getReturnType(),
-                 sources_.info(function->getReturnTypeSourceRange(), function->getLocation()));
-        info.language_linkage = function->getLanguageLinkage() == clang::CLanguageLinkage
-                                    ? LanguageLinkage::C
-                                    : LanguageLinkage::Cxx;
-        info.variadic         = function->isVariadic();
-        info.dependent  = function->isDependentContext() || function->getType()->isDependentType();
-        info.template_  = function->getTemplatedKind() != clang::FunctionDecl::TK_NonTemplate;
-        info.static_    = function->getStorageClass() == clang::SC_Static;
-        info.inline_    = function->isInlineSpecified();
-        info.constexpr_ = function->isConstexpr();
-        info.consteval_ = function->isConsteval();
-        if (const auto* prototype = function->getType()->getAs<clang::FunctionProtoType>()) {
-            info.default_calling_convention = prototype->getCallConv() == clang::CC_C;
-            info.exception.source =
-                sources_.info(function->getExceptionSpecSourceRange(), function->getLocation());
-            switch (prototype->getExceptionSpecType()) {
-            case clang::EST_DependentNoexcept:
-                info.exception.state = ExceptionState::Dependent;
-                break;
-            case clang::EST_Unevaluated:
-            case clang::EST_Uninstantiated:
-            case clang::EST_Unparsed: break;
-            default:
-                info.exception.state = prototype->isNothrow() ? ExceptionState::NonThrowing
-                                                              : ExceptionState::PotentiallyThrowing;
-                break;
-            }
-            if (const auto* condition = prototype->getNoexceptExpr())
-                info.exception.condition = expression(condition);
-        }
-        for (const auto* parameter : function->parameters()) {
-            ParameterInfo value;
-            if (parameter->getIdentifier()) value.name = parameter->getNameAsString();
-            value.source = sources_.info(parameter->getSourceRange(), parameter->getLocation());
-            value.declared_type  = type(parameter->getOriginalType(), value.source);
-            value.type           = type(parameter->getType(), value.source);
-            value.parameter_pack = parameter->isParameterPack();
-            value.attributes     = attributes(*parameter).attributes;
-            auto& argument       = value.default_argument;
-            argument.inherited   = parameter->hasInheritedDefaultArg();
-            if (parameter->hasDefaultArg()) {
-                argument.state = DefaultArgumentState::Deferred;
-                if (! parameter->hasUnparsedDefaultArg()) {
-                    const auto* expr = parameter->hasUninstantiatedDefaultArg()
-                                           ? parameter->getUninstantiatedDefaultArg()
-                                           : parameter->getDefaultArg();
-                    if (expr) {
-                        argument.state      = DefaultArgumentState::Available;
-                        argument.expression = expression(expr);
-                    }
-                }
-            }
-            info.parameters.push_back(std::move(value));
-        }
-        result->data = std::move(info);
+        result->data = this->function(*function, form);
     }
     return result;
 }

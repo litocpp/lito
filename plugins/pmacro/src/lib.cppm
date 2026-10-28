@@ -161,13 +161,6 @@ struct EnumeratorInfo {
     SourceInfo                    source;
 };
 
-struct RecordInfo {
-    RecordKind             kind      = RecordKind::Struct;
-    bool                   has_bases = false;
-    bool                   dependent = false;
-    std::vector<FieldInfo> fields;
-};
-
 struct EnumInfo {
     bool                        scoped                   = false;
     bool                        fixed_underlying_type    = false;
@@ -240,6 +233,42 @@ struct FunctionInfo {
     bool                       inline_                    = false;
     bool                       constexpr_                 = false;
     bool                       consteval_                 = false;
+};
+
+enum class MethodKind
+{
+    Ordinary,
+    Constructor,
+    Destructor,
+    Conversion,
+    Operator
+};
+enum class RefQualifier
+{
+    None,
+    LValue,
+    RValue
+};
+struct MethodInfo {
+    std::string                name;
+    FunctionInfo               function;
+    MethodKind                 kind          = MethodKind::Ordinary;
+    Access                     access        = Access::Public;
+    RefQualifier               ref_qualifier = RefQualifier::None;
+    bool                       const_        = false;
+    bool                       volatile_     = false;
+    bool                       virtual_      = false;
+    bool                       implicit      = false;
+    std::vector<AttributeInfo> attributes;
+    std::vector<HelperInfo>    helpers;
+    SourceInfo                 source;
+};
+struct RecordInfo {
+    RecordKind              kind      = RecordKind::Struct;
+    bool                    has_bases = false;
+    bool                    dependent = false;
+    std::vector<FieldInfo>  fields;
+    std::vector<MethodInfo> methods;
 };
 
 struct Declaration {
