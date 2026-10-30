@@ -1021,6 +1021,21 @@ int main() {
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(1));
 
+    auto commands = rstd::fs::read_to_string(result->compilation_database.as_path()).unwrap();
+    auto database = rstd::json::from_str(commands.as_str()).unwrap();
+    EXPECT_EQ(database.as_array().unwrap()->len(), usize(2));
+    for (const auto& entry : *database.as_array().unwrap()) {
+        auto c_source = entry["file"_str].as_str().unwrap().ends_with("value.c"_str);
+        auto c_flag   = false;
+        auto cpp_flag = false;
+        for (const auto& argument : *entry["arguments"_str].as_array().unwrap()) {
+            if (argument.as_str().unwrap() == "-DLITO_C_GLOBAL=1"_str) c_flag = true;
+            if (argument.as_str().unwrap() == "-DLITO_CPP_GLOBAL=1"_str) cpp_flag = true;
+        }
+        EXPECT_EQ(c_flag, c_source);
+        EXPECT_EQ(cpp_flag, ! c_source);
+    }
+
     auto conflicting = project_build_request(
         "c-cpp-target-conflict"_str, project->root.as_path(), strings("fixture-cpp-consumer"_str));
     conflicting.configuration.global_options.c.push(lito::config::BuildOptionInput {
@@ -1256,10 +1271,16 @@ auto main() -> int {
     auto generated = output.join(
         PathBuf::from("generated/fixture-host-tool-app/src/generated.cpp"_str).as_path());
     EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+    auto commands = rstd::fs::read_to_string(first->compilation_database.as_path()).unwrap();
+    auto database = rstd::json::from_str(commands.as_str()).unwrap();
+    EXPECT_EQ(database.as_array().unwrap()->len(), usize(4));
+    EXPECT_TRUE(commands.as_str().contains("generated.cpp"_str));
+    EXPECT_TRUE(commands.as_str().contains("tool/src/main.cpp"_str));
 
     auto second = lito::build(request);
     ASSERT_TRUE(second.is_ok());
     EXPECT_EQ(second->compiled, usize {});
+    EXPECT_EQ(rstd::fs::read_to_string(second->compilation_database.as_path()).unwrap(), commands);
 }
 
 TEST_F(BuildCommand, HostToolsShareOnlyMatchingBuildEnvironments) {
@@ -1395,9 +1416,22 @@ int main(int argc, char** argv) {
         auto host_directory =
             result->product.build_directory.join(PathBuf::from("plugin-host"_str).as_path());
         EXPECT_EQ(rstd::fs::exists(host_directory.as_path()).unwrap_or(false), isolated);
+        auto commands = rstd::fs::read_to_string(result->compilation_database.as_path()).unwrap();
+        EXPECT_EQ(commands.as_str().contains("generator/main.cpp"_str), ! isolated);
+        if (isolated) {
+            auto host_commands = rstd::fs::read_to_string(
+                host_directory.join(PathBuf::from("compile_commands.json"_str).as_path())
+                    .as_path());
+            ASSERT_TRUE(host_commands.is_ok());
+            EXPECT_TRUE(host_commands->as_str().contains("generator/main.cpp"_str));
+            EXPECT_TRUE(host_commands->as_str().contains("shared/lib.cppm"_str));
+            EXPECT_FALSE(host_commands->as_str().contains("consumer.cppm"_str));
+        }
         auto warm = lito::build(request);
         ASSERT_TRUE(warm.is_ok());
         EXPECT_EQ(warm->compiled, usize {});
+        EXPECT_EQ(rstd::fs::read_to_string(warm->compilation_database.as_path()).unwrap(),
+                  commands);
     }
 }
 
@@ -3620,6 +3654,17 @@ static clang::FrontendPluginRegistry::Add<MarkerPlugin>
     auto cold = build_ok();
     ASSERT_TRUE(cold.is_ok());
     EXPECT_EQ(cold->compiler_plugins.len(), usize(1));
+    auto commands = rstd::fs::read_to_string(cold->compilation_database.as_path()).unwrap();
+    auto database = rstd::json::from_str(commands.as_str()).unwrap();
+    for (const auto& entry : *database.as_array().unwrap()) {
+        auto source = entry["file"_str].as_str().unwrap();
+        if (! source.ends_with("main_attr.cpp"_str) && ! source.ends_with("plain.cpp"_str))
+            continue;
+        auto loaded = false;
+        for (const auto& argument : *entry["arguments"_str].as_array().unwrap())
+            if (argument.as_str().unwrap().starts_with("-fplugin="_str)) loaded = true;
+        EXPECT_EQ(loaded, source.ends_with("main_attr.cpp"_str));
+    }
     EXPECT_FALSE(rstd::fs::exists(build_root("attribute-plugin-selection"_str)
                                       .join(PathBuf::from("plugin-host"_str).as_path())
                                       .as_path())
@@ -3629,6 +3674,7 @@ static clang::FrontendPluginRegistry::Add<MarkerPlugin>
     EXPECT_EQ(warm->compiled, usize {});
     EXPECT_TRUE(warm->frontend.persistent_scan_hits > usize {});
 
+    EXPECT_EQ(rstd::fs::read_to_string(warm->compilation_database.as_path()).unwrap(), commands);
     auto plain = project->root.join(PathBuf::from("plain.cpp"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(plain.as_path(), "int plain = 1;\n"_str.as_bytes()).is_ok());
     auto cached_selection = build_ok();

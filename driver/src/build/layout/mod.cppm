@@ -195,6 +195,10 @@ public:
     auto directory() const -> ref<rstd::path::Path> { return output_.as_path(); }
     auto output() const -> ref<rstd::path::Path> { return output_.as_path(); }
 
+    auto compilation_database() const -> PathBuf {
+        return join(output_.as_path(), "compile_commands.json"_str);
+    }
+
     auto clone() const -> BuildLayout { return BuildLayout { base_.clone(), output_.clone() }; }
 
     auto generated_root() const -> PathBuf { return join(output_.as_path(), "generated"_str); }

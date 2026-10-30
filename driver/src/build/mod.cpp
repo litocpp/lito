@@ -24,6 +24,7 @@ import :build.script.error;
 import :build.generated.error;
 import :build.compile;
 import :build.compile.plan;
+import :build.compile.database;
 import :build.action_graph.native;
 import :build.profiling;
 import :build.project;
@@ -940,11 +941,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         completed_targets.push(u8 {});
         library_paths.emplace_back();
     }
-    auto compiled           = usize {};
-    auto reused             = usize {};
-    auto build_timing       = BuildTimingReport {};
-    auto compile_progress   = CompileProgressTracker {};
-    auto compile_statistics = CompileExecutionStatistics {};
+    auto compiled             = usize {};
+    auto reused               = usize {};
+    auto build_timing         = BuildTimingReport {};
+    auto compile_progress     = CompileProgressTracker {};
+    auto compile_statistics   = CompileExecutionStatistics {};
+    auto compilation_database = CompilationDatabase {};
     if (plugin_host.is_some()) compile_statistics.merge(plugin_host->compile_execution);
 
     auto compiler_plugins = Vec<BuiltCompilerPlugin>::make();
@@ -1175,6 +1177,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                           execute_host_target,
                                                           stage_timing);
         if (host_execution.is_err()) return Err(rstd::move(host_execution).unwrap_err());
+        compilation_database = rstd::move(host_action_plan.compile.database);
         compiled += host_execution->compiled;
         reused += host_execution->reused;
         compile_statistics.merge(host_execution->statistics);
@@ -1337,6 +1340,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                         request.observer);
     if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
     auto actions                = rstd::move(materialized).unwrap();
+    actions.compile.database    = rstd::move(compilation_database);
     auto documentation_units    = rstd::move(actions.documentation);
     auto documentation_retained = documentation_retained_bytes(documentation_units);
     initial_plan_scope.finish();
@@ -1481,6 +1485,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (! available_aggregates.is_empty())
         rstd_try(attach_proc_macro_plugins(
             package, package_plan, target_units, available_aggregates, toolchain, actions.compile));
+    rstd_try(sync_compilation_database(actions.compile, units, layout));
     const BuiltArtifact* configured_artifact_processor = nullptr;
     if (project.configuration.toolchain.wasm.is_some() &&
         project.configuration.toolchain.wasm->processor.is_some()) {
@@ -1956,6 +1961,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     return Ok(BuildSummary {
         .product                    = rstd::move(completed_product).unwrap(),
+        .compilation_database       = layout.compilation_database(),
         .package                    = package.name.clone(),
         .selected_targets           = rstd::move(selected_targets),
         .selected_packages          = rstd::move(selected_packages),

@@ -18,6 +18,7 @@ export namespace lito
 
 struct BuildSummary {
     CompletedBuildProduct               product;
+    PathBuf                             compilation_database;
     String                              package;
     Vec<lito::package::PackageTargetId> selected_targets;
     Vec<cpp::SelectedPackageMetadata>   selected_packages;

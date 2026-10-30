@@ -78,6 +78,13 @@ lito build --target codegen --target viewer -j 8
 Without explicit package/target selection, Lito uses package defaults or workspace
 `default-members`. `build` uses the `debug` profile when `--profile` is omitted.
 
+Builds automatically write `compile_commands.json` in the effective build directory, such as
+`build/debug/` or `build/release/`. The database contains the selected dependency closure, including
+cached units, with the actual compiler arguments, source, working directory, and staging output.
+Shared host tools and generated sources appear in the same database; isolated host environments
+have their own database. It is published after the full scan and plugin preparation, before target
+compilation. Unchanged contents are not rewritten. `--outputs-json` is a separate artifact report.
+
 `--example`, `--examples`, and `--target` are mutually exclusive selection modes. An example name
 shared by multiple selected packages requires `-p` to disambiguate. Example executables are stored
 under `examples/PACKAGE/`, separately from ordinary binaries and tests.

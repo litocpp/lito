@@ -125,6 +125,7 @@ target_sources(
          src/registry/mod.cppm
          src/build/compile/test.cppm
          src/build/compile/plan.cppm
+         src/build/compile/database.cppm
          src/build/discovery/package.cppm
          src/build/frontend/mod.cppm
          src/build/frontend/observer.cppm

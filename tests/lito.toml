@@ -31,6 +31,7 @@ sources = [
   "src/command/bench.cpp",
   "src/command/examples.cpp",
   "src/command/build.cpp",
+  "src/command/compilation_database.cpp",
   "src/command/clean.cpp",
   "src/command/format.cpp",
   "src/command/install.cpp",

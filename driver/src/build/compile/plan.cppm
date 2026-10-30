@@ -9,6 +9,7 @@ import :build.artifact;
 import :build.documentation;
 import :build.error;
 import :build.compile;
+import :build.compile.database;
 import lito.toolchain.common;
 import lito.system;
 import :cache;
@@ -134,7 +135,27 @@ struct CompileNodePlan {
 
 struct CompilePlan {
     Vec<CompileNodePlan> nodes;
+    CompilationDatabase  database;
 };
+
+auto sync_compilation_database(CompilePlan&                  plan,
+                               const Vec<cpp::PreparedUnit>& units,
+                               const BuildLayout&            layout) -> BuildResult<empty> {
+    if (plan.nodes.len() != units.len()) {
+        return Err(
+            BuildError::Message("compilation database inputs have inconsistent lengths"_Str));
+    }
+    for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit) {
+        if (plan.database.contains(unit)) continue;
+        const auto& invocation = plan.nodes[unit].invocation;
+        if (invocation.is_none()) {
+            return Err(BuildError::Message("compilation database invocation was not retained"_Str));
+        }
+        auto recorded = plan.database.record(unit, units[unit].unit.source.as_path(), *invocation);
+        if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
+    }
+    return plan.database.sync(layout.compilation_database().as_path(), units.len());
+}
 
 struct CompilePlanRetainedBytes {
     usize total {};
@@ -753,6 +774,9 @@ public:
             plan_->nodes[unit].invocation.is_none()) {
             return Err(BuildError::Message("compile action is not available for submission"_Str));
         }
+        auto recorded = plan_->database.record(
+            unit, (*units_)[unit].unit.source.as_path(), *plan_->nodes[unit].invocation);
+        if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
         auto        started        = rstd::time::Instant::now();
         auto        cache_decision = rstd::move(decisions_[unit]).unwrap_unchecked();
         auto        target         = cpp::project_target((*units_)[unit].unit);
