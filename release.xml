@@ -1,3 +1,17 @@
+<release version="0.8.8" date="2026-10-30">
+  <description>
+    <ul>
+      <li>Generate compile_commands.json.</li>
+      <li>Expose declaration metadata to pmacro.</li>
+      <li>Add pmacro::Context::emit.</li>
+      <li>Expand pmacro fragments with Clang.</li>
+      <li>Support directory inputs and outputs in lito.run.</li>
+      <li>Fix comment line splicing.</li>
+      <li>Update rstd to 0.1.10.</li>
+      <li>Update licrypto to 0.2.0.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.7" date="2026-10-20">
   <description>
     <ul>
