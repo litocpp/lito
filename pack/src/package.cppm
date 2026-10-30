@@ -37,6 +37,7 @@ struct PackPackageSummary {
     PathBuf                                          output;
     Vec<String>                                      files;
     Vec<PathBuf>                                     directories;
+    Vec<PathBuf>                                     inputs;
     Option<lito::registry::InspectedRegistryArchive> artifact;
 };
 
@@ -46,6 +47,22 @@ auto pack_package(PackPackageRequest request) -> lito::package::PackageResult<Pa
 
 namespace
 {
+
+auto append_manifest_inputs(Vec<PathBuf>&                            inputs,
+                            const lito::workspace::WorkspaceCatalog& workspace) -> void {
+    const auto append = [&](ref<rstd::path::Path> path) {
+        if (! inputs.iter().any([&](auto input) {
+                return input->as_path() == path;
+            })) {
+            inputs.push(PathBuf::from(path));
+        }
+    };
+    append(workspace.manifest_path());
+    for (const auto& name : workspace.names()) {
+        const auto package = workspace.package(name.as_str());
+        if (package.is_some()) append((**package).manifest_path.as_path());
+    }
+}
 
 auto select_publish_package(lito::workspace::WorkspaceCatalog& catalog,
                             const Option<String>&              requested)
@@ -77,7 +94,10 @@ auto lito::pack_package(PackPackageRequest request)
             rstd::into<lito::package::PackageError>(rstd::move(resolved).unwrap_err());
         return Err(rstd::move(package_error));
     }
-    auto project  = rstd::move(resolved).unwrap();
+    auto project = rstd::move(resolved).unwrap();
+    auto inputs  = Vec<PathBuf>::make();
+    append_manifest_inputs(inputs, project.primary);
+    if (project.tests.is_some()) append_manifest_inputs(inputs, *project.tests);
     auto manifest = rstd_try(select_publish_package(project.primary, request.package));
     auto name     = lito::registry::RegistryPackageName::parse(manifest.name.as_str());
     if (name.is_err()) {
@@ -129,6 +149,10 @@ auto lito::pack_package(PackPackageRequest request)
     }
     auto paths       = files->paths();
     auto directories = as<Clone>(files->directories()).clone();
+    for (const auto& input : files->inputs()) {
+        if (input.as_path() != manifest.manifest_path.as_path()) inputs.push(input.clone());
+    }
+    for (const auto& directory : directories) inputs.push(directory.clone());
     if (request.list) {
         return Ok(PackPackageSummary {
             .package     = rstd::move(package),
@@ -136,6 +160,7 @@ auto lito::pack_package(PackPackageRequest request)
             .output      = rstd::move(output),
             .files       = rstd::move(paths),
             .directories = rstd::move(directories),
+            .inputs      = rstd::move(inputs),
         });
     }
     auto built = lito::registry::PackageArchiveBuilder::build(
@@ -149,6 +174,7 @@ auto lito::pack_package(PackPackageRequest request)
         .output      = rstd::move(output),
         .files       = rstd::move(paths),
         .directories = rstd::move(directories),
+        .inputs      = rstd::move(inputs),
         .artifact    = Some(rstd::move(built).unwrap()),
     });
 }

@@ -1161,6 +1161,109 @@ sources = ["src/lib.cppm"]
     EXPECT_EQ(packed->artifact->candidate.version.text(), "1.2.3"_str);
 }
 
+TEST_F(Manifest, PackPackageTracksWorkspaceManifestsAndPhysicalInputs) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "pack-inputs"
+members = ["library", "other"]
+
+[workspace.package]
+version = "1.2.3"
+readme = "README.md"
+
+[workspace.dependencies]
+dependency = "0.1.0"
+)toml"_str },
+        { "README.md"_str, "Shared package documentation\n"_str },
+        { "library/lito.toml"_str, R"toml([package]
+name = "sample"
+version.workspace = true
+readme.workspace = true
+
+[lib]
+name = "sample"
+module = "sample"
+archive = "sample"
+
+[dependencies]
+dependency.workspace = true
+)toml"_str },
+        { "library/src/lib.cppm"_str, "export module sample;\n"_str },
+        { "library/assets/data.bin"_str, "data"_str },
+        { "library/build/output.bin"_str, "generated data"_str },
+        { "library/.git/index"_str, "ignored data"_str },
+        { "library/nested/lito.toml"_str, R"toml([package]
+name = "nested"
+version = "0.1.0"
+
+[lib]
+name = "nested"
+module = "nested"
+archive = "nested"
+)toml"_str },
+        { "library/nested/src/lib.cppm"_str, "export module nested;\n"_str },
+        { "other/lito.toml"_str, R"toml([package]
+name = "other"
+version = "0.1.0"
+
+[lib]
+name = "other"
+module = "other"
+archive = "other"
+)toml"_str },
+        { "other/src/lib.cppm"_str, "export module other;\n"_str },
+    };
+    auto project = materialize("pack-inputs"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    const auto library = project->root.join(PathBuf::from("library"_str).as_path());
+    const auto output =
+        build_root("pack-inputs"_str).join(PathBuf::from("sample.tar.zst"_str).as_path());
+    const PathBuf roots[] = { project->root.clone(), library.clone() };
+    for (const auto& root : roots) {
+        auto packed = lito::pack_package(lito::PackPackageRequest {
+            .root    = root.clone(),
+            .package = Some("sample"_Str),
+            .output  = Some(output.clone()),
+            .list    = true,
+            .registry =
+                lito::PackageRegistryContext {
+                    .owner =
+                        lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+                },
+        });
+        if (packed.is_err()) {
+            auto message = error_chain_text(rstd::move(packed).unwrap_err());
+            rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+            return;
+        }
+        const auto contains = [&](ref<str> relative) {
+            const auto path = project->root.join(PathBuf::from(relative).as_path());
+            return packed->inputs.iter().any([&](auto input) {
+                return input->as_path() == path.as_path();
+            });
+        };
+        EXPECT_TRUE(contains("lito.toml"_str));
+        EXPECT_TRUE(contains("library/lito.toml"_str));
+        EXPECT_TRUE(contains("other/lito.toml"_str));
+        EXPECT_TRUE(contains("README.md"_str));
+        EXPECT_TRUE(contains("library/src/lib.cppm"_str));
+        EXPECT_TRUE(contains("library/assets/data.bin"_str));
+        EXPECT_TRUE(contains("library"_str));
+        EXPECT_TRUE(contains("library/src"_str));
+        EXPECT_TRUE(contains("library/assets"_str));
+        EXPECT_TRUE(contains("library/nested"_str));
+        EXPECT_FALSE(contains("library/README.md"_str));
+        EXPECT_FALSE(contains("library/nested/lito.toml"_str));
+        EXPECT_FALSE(contains("library/nested/src/lib.cppm"_str));
+        EXPECT_FALSE(contains("library/build"_str));
+        EXPECT_FALSE(contains("library/.git"_str));
+        EXPECT_FALSE(contains("other/src/lib.cppm"_str));
+        EXPECT_FALSE(packed->inputs.iter().any([&](auto input) {
+            return input->as_path() == output.as_path();
+        }));
+    }
+}
+
 TEST_F(Manifest, PackPackagePreservesWorkspacePkgConfigDependencies) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]

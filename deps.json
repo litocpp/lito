@@ -17,6 +17,12 @@
     "rev": "1199a8fe2b119774a85adbd33043fc5ef7b20d3c",
     "narHash": "sha256-9aeEoT7M3hIXWylKLy4wKXnomSQII+Bftd94kWNm5pw="
   },
+  "liresto": {
+    "owner": "litocpp",
+    "repo": "liresto",
+    "rev": "a36aa4edd009197cd123275143bfb00d67b3f769",
+    "narHash": "sha256-Orb/Pcn8gNfRKFkRhPwxHI/R/qtlsM83EVFdZ7wXhdw="
+  },
   "zstd": {
     "owner": "facebook",
     "repo": "zstd",

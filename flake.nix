@@ -37,6 +37,7 @@
         rstdSrc = fetchDependency "rstd";
         luatoSrc = fetchDependency "luato";
         licryptoSrc = fetchDependency "licrypto";
+        lirestoSrc = fetchDependency "liresto";
         zstdSrc = fetchDependency "zstd";
 
         luaSrc = pkgs.fetchzip {
@@ -74,6 +75,7 @@
             "-DFETCHCONTENT_SOURCE_DIR_RSTD=${rstdSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_LUATO=${luatoSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_LICRYPTO=${licryptoSrc}"
+            "-DFETCHCONTENT_SOURCE_DIR_LIRESTO=${lirestoSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_ZSTD=${zstdSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_LUA=${luaSrc}"
             "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"

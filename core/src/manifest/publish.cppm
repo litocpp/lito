@@ -31,14 +31,18 @@ using PackageFileSetResult = Result<T, PackageFileSetError>;
 
 class PackageFileSet {
     lito::source::SourceTree tree_;
+    Vec<PathBuf>             inputs_;
     Vec<PathBuf>             directories_;
 
-    PackageFileSet(lito::source::SourceTree tree, Vec<PathBuf> directories)
-        : tree_(rstd::move(tree)), directories_(rstd::move(directories)) {}
+    PackageFileSet(lito::source::SourceTree tree, Vec<PathBuf> inputs, Vec<PathBuf> directories)
+        : tree_(rstd::move(tree)),
+          inputs_(rstd::move(inputs)),
+          directories_(rstd::move(directories)) {}
     friend class PackageFileSetResolver;
 
 public:
     auto tree() const noexcept -> const lito::source::SourceTree& { return tree_; }
+    auto inputs() const noexcept -> const Vec<PathBuf>& { return inputs_; }
     auto directories() const noexcept -> const Vec<PathBuf>& { return directories_; }
 
     auto paths() const -> Vec<String> {
@@ -198,6 +202,7 @@ struct FileSetState {
     rstd::collections::BTreeMap<String, empty> candidates;
     rstd::collections::BTreeMap<String, empty> selected;
     Vec<String>                                pruned_roots;
+    Vec<PathBuf>                               inputs;
     Vec<PathBuf>                               directories;
 };
 
@@ -273,6 +278,7 @@ auto append_file(FileSetState&             state,
                 "cannot add published file '{}': {}", portable, rstd::move(added).unwrap_err()) });
     }
     state.selected.insert(String::make(portable), empty {});
+    state.inputs.push(PathBuf::from(physical));
     return Ok(empty {});
 }
 
@@ -316,6 +322,7 @@ auto collect_directory(FileSetState& state, ref<rstd::path::Path> physical, ref<
                 continue;
             }
             if (rstd_try(nested_manifest(path.as_path()))) {
+                state.directories.push(path.clone());
                 if (explicit_pattern_crosses_nested(state, portable.as_str())) {
                     return Err(PackageFileSetError {
                         .message =
@@ -603,6 +610,7 @@ auto include_package_readme(FileSetState& state) -> PackageFileSetResult<empty> 
     }
     state.candidates.insert(portable.clone(), empty {});
     state.selected.insert(portable.clone(), empty {});
+    state.inputs.push(physical.clone());
     return Ok(empty {});
 }
 
@@ -650,5 +658,6 @@ auto lito::manifest::PackageFileSetResolver::resolve(const PackageManifest&     
     }
     rstd_try(include_package_readme(state));
     rstd_try(validate_references(state));
-    return Ok(PackageFileSet(rstd::move(state.tree), rstd::move(state.directories)));
+    return Ok(PackageFileSet(
+        rstd::move(state.tree), rstd::move(state.inputs), rstd::move(state.directories)));
 }

@@ -84,6 +84,9 @@ endif()
 lito_declare_dependency(licrypto)
 FetchContent_MakeAvailable(licrypto)
 
+lito_declare_dependency(liresto)
+FetchContent_MakeAvailable(liresto)
+
 add_subdirectory(third-party/zstd)
 add_subdirectory(frontend)
 add_subdirectory(core)
@@ -102,6 +105,9 @@ endif()
 install(FILES ${licrypto_SOURCE_DIR}/LICENSE-MIT
               ${licrypto_SOURCE_DIR}/LICENSE-APACHE
         DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/licrypto)
+install(FILES ${liresto_SOURCE_DIR}/LICENSE-MIT
+              ${liresto_SOURCE_DIR}/LICENSE-APACHE
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/liresto)
 
 string(TOLOWER "${CMAKE_SYSTEM_NAME}" LITO_PACKAGE_SYSTEM)
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" LITO_PACKAGE_PROCESSOR)

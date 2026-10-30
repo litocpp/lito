@@ -5,6 +5,7 @@ export module lito.package_embed;
 
 import rstd;
 import lito.pack;
+import liresto;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -14,18 +15,20 @@ namespace
 {
 
 struct Options {
-    PathBuf        root;
-    Option<String> package;
-    String         registry;
-    PathBuf        archive;
-    PathBuf        descriptor;
-    PathBuf        depfile;
+    PathBuf                       root;
+    Option<String>                package;
+    String                        registry;
+    PathBuf                       archive;
+    PathBuf                       descriptor;
+    liresto::build::SourceOptions source;
+    liresto::build::Outputs       outputs;
 };
 
 auto usage_failure(ref<str> message) -> Result<Options, String> {
     return Err(rstd::format("{}\nusage: lito-package-embed --root <path> [--package <name>] "
                             "--registry <identity> --archive <path> --descriptor <path> "
-                            "--depfile <path>",
+                            "--source <path> --blob <path> --depfile <path> "
+                            "--module <name> --namespace <name> --function <name>",
                             message));
 }
 
@@ -35,7 +38,12 @@ auto parse_options() -> Result<Options, String> {
     auto registry   = Option<String> {};
     auto archive    = Option<PathBuf> {};
     auto descriptor = Option<PathBuf> {};
+    auto source     = Option<PathBuf> {};
+    auto blob       = Option<PathBuf> {};
     auto depfile    = Option<PathBuf> {};
+    auto module     = Option<String> {};
+    auto name_space = Option<String> {};
+    auto function   = Option<String> {};
     auto arguments  = rstd::env::args();
     (void)arguments.next();
     while (auto argument = arguments.next()) {
@@ -68,16 +76,37 @@ auto parse_options() -> Result<Options, String> {
             if (auto error = repeated(descriptor, "--descriptor"_str); error.is_some())
                 return usage_failure(error->as_str());
             descriptor = Some(PathBuf::from(rstd::move(value).unwrap()));
+        } else if (argument->as_str() == "--source"_str) {
+            if (auto error = repeated(source, "--source"_str); error.is_some())
+                return usage_failure(error->as_str());
+            source = Some(PathBuf::from(rstd::move(value).unwrap()));
+        } else if (argument->as_str() == "--blob"_str) {
+            if (auto error = repeated(blob, "--blob"_str); error.is_some())
+                return usage_failure(error->as_str());
+            blob = Some(PathBuf::from(rstd::move(value).unwrap()));
         } else if (argument->as_str() == "--depfile"_str) {
             if (auto error = repeated(depfile, "--depfile"_str); error.is_some())
                 return usage_failure(error->as_str());
             depfile = Some(PathBuf::from(rstd::move(value).unwrap()));
+        } else if (argument->as_str() == "--module"_str) {
+            if (auto error = repeated(module, "--module"_str); error.is_some())
+                return usage_failure(error->as_str());
+            module = Some(rstd::move(value).unwrap());
+        } else if (argument->as_str() == "--namespace"_str) {
+            if (auto error = repeated(name_space, "--namespace"_str); error.is_some())
+                return usage_failure(error->as_str());
+            name_space = Some(rstd::move(value).unwrap());
+        } else if (argument->as_str() == "--function"_str) {
+            if (auto error = repeated(function, "--function"_str); error.is_some())
+                return usage_failure(error->as_str());
+            function = Some(rstd::move(value).unwrap());
         } else {
             return usage_failure(rstd::format("unknown option '{}'", argument->as_str()).as_str());
         }
     }
     if (root.is_none() || registry.is_none() || archive.is_none() || descriptor.is_none() ||
-        depfile.is_none()) {
+        source.is_none() || blob.is_none() || depfile.is_none() || module.is_none() ||
+        name_space.is_none() || function.is_none()) {
         return usage_failure("required options are missing"_str);
     }
     return Ok(Options {
@@ -86,54 +115,22 @@ auto parse_options() -> Result<Options, String> {
         .registry   = rstd::move(registry).unwrap(),
         .archive    = rstd::move(archive).unwrap(),
         .descriptor = rstd::move(descriptor).unwrap(),
-        .depfile    = rstd::move(depfile).unwrap(),
+        .source = {
+            .module     = rstd::move(module).unwrap(),
+            .name_space = rstd::move(name_space).unwrap(),
+            .function   = rstd::move(function).unwrap(),
+        },
+        .outputs = {
+            .blob    = rstd::move(blob).unwrap(),
+            .source  = rstd::move(source).unwrap(),
+            .depfile = rstd::move(depfile).unwrap(),
+        },
     });
 }
 
-auto depfile_path(ref<rstd::path::Path> path) -> Result<String, String> {
-    auto text = path.to_str();
-    if (text.is_none()) {
-        return Err(rstd::format("depfile path '{}' is not valid UTF-8", path));
-    }
-    auto result = String::make();
-    for (auto byte : text->as_bytes()) {
-        if (byte == u8('$')) {
-            result.push_str("$$"_str);
-        } else {
-            if (byte == u8(' ') || byte == u8('#') || byte == u8(':') || byte == u8('\\')) {
-                result.push_ascii(u8('\\'));
-            }
-            result.push_ascii(byte);
-        }
-    }
-    return Ok(rstd::move(result));
-}
-
-auto make_depfile(const Options& options, const lito::PackPackageSummary& package)
-    -> Result<String, String> {
-    auto dependencies = rstd::collections::BTreeMap<String, empty>::make();
-    for (const auto& file : package.files) {
-        auto path = options.root.join(PathBuf::from(file.as_str()).as_path());
-        dependencies.insert(rstd_try(depfile_path(path.as_path())), empty {});
-    }
-    for (const auto& directory : package.directories) {
-        dependencies.insert(rstd_try(depfile_path(directory.as_path())), empty {});
-    }
-    auto result = rstd_try(depfile_path(options.archive.as_path()));
-    result.push_str(":\\\n"_str);
-    auto paths = dependencies.keys();
-    auto index = usize {};
-    for (auto path : paths) {
-        result.push_str("  "_str);
-        result.push_str((*path).as_str());
-        if (index + usize(1) != paths.len()) result.push_str(" \\\n"_str);
-        ++index;
-    }
-    result.push_ascii(u8('\n'));
-    return Ok(rstd::move(result));
-}
-
 auto write_output(ref<rstd::path::Path> path, ref<str> contents) -> Result<empty, String> {
+    auto current = rstd::fs::read(path);
+    if (current.is_ok() && current->as_slice() == contents.as_bytes()) return Ok(empty {});
     auto parent = path.parent();
     if (parent.is_some()) {
         auto created = rstd::fs::create_dir_all(*parent);
@@ -186,10 +183,19 @@ auto run(Options options) -> Result<empty, String> {
     if (package.artifact.is_none()) return Err("package archive was not produced"_Str);
     auto descriptor = lito::registry::serialize_verified_publish_candidate(*package.artifact);
     descriptor.push_ascii(u8('\n'));
-    auto depfile = rstd_try(make_depfile(options, package));
     rstd_try(write_output(options.descriptor.as_path(), descriptor.as_str()));
-    rstd_try(write_output(options.depfile.as_path(), depfile.as_str()));
-    return Ok(empty {});
+    auto archive = rstd::fs::read(package.output.as_path());
+    if (archive.is_err()) {
+        return Err(rstd::format("cannot read archive '{}': {}",
+                                package.output.as_path(),
+                                rstd::move(archive).unwrap_err()));
+    }
+    liresto::build::Builder builder;
+    rstd_try(builder.add_memory("archive"_str, rstd::move(archive).unwrap()));
+    rstd_try(builder.add_memory("descriptor"_str, rstd::move(descriptor).into_bytes()));
+    for (const auto& input : package.inputs) rstd_try(builder.dependency(input.as_path()));
+    auto prepared = rstd_try(rstd::move(builder).prepare());
+    return prepared.emit(options.source, options.outputs);
 }
 
 } // namespace

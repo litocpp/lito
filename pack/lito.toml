@@ -18,6 +18,7 @@ link-stdlib = false
 lito-core = { workspace = true, pub = true }
 lito-zstd = { workspace = true }
 licrypto = { workspace = true }
+liresto = { workspace = true }
 rstd-std = { workspace = true, pub = true }
 rstd-json = { workspace = true }
 rstd-nostd = { workspace = true, usage = "link" }

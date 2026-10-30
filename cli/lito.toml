@@ -10,6 +10,7 @@ link-stdlib = false
 [dependencies]
 lito-driver = { workspace = true }
 lito-pack = { workspace = true, usage = "tool" }
+liresto = { workspace = true }
 rstd-std = { workspace = true }
 rstd-argparse = { workspace = true }
 rstd-nostd = { workspace = true, usage = "link" }

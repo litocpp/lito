@@ -35,4 +35,4 @@ target_sources(
           CXX_MODULES
           FILES
           src/package_embed.cppm)
-target_link_libraries(lito-package-embed PRIVATE lito.pack rstd::nostd)
+target_link_libraries(lito-package-embed PRIVATE lito.pack liresto rstd::nostd)
