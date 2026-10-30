@@ -842,7 +842,7 @@ class PackageGraphResolver {
         consumption.is_public = declaration.is_public.is_some() && *declaration.is_public;
         auto host_tools       = Vec<PackageTargetId>::make();
         if (consumption.usage.uses_tool()) {
-            if (consumption.is_public) {
+            if (consumption.is_public && ! consumption.usage.uses_library()) {
                 return Err(PackageError::Message(rstd::format(
                     "tool dependency '{}' cannot be public", declaration.name.as_str())));
             }
@@ -859,7 +859,9 @@ class PackageGraphResolver {
                     rstd::format("tool dependency '{}' requires a provider with a host-tool binary",
                                  declaration.name.as_str())));
             }
-        } else if (! lito::manifest::package_has_library_target(provider->manifest)) {
+        }
+        if (consumption.usage.uses_library() &&
+            ! lito::manifest::package_has_library_target(provider->manifest)) {
             return Err(
                 PackageError::Message(rstd::format("dependency '{}' requires a C/C++ library; use "
                                                    "usage = 'tool' to consume a host tool",

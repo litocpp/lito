@@ -1435,6 +1435,149 @@ int main(int argc, char** argv) {
     }
 }
 
+TEST_F(BuildCommand, CombinedToolDependencySharesOrIsolatesItsOwnLibrary) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "combined-consumer"
+version = "0.1.0"
+[lib]
+name = "combined-consumer"
+module = "combined.consumer"
+archive = "combined.consumer"
+sources = ["lib.cppm"]
+[dependencies.generator]
+path = "generator"
+usage = ["compile", "link", "tool"]
+pub = true
+)toml"_str },
+        { "lib.cppm"_str, R"cpp(export module combined.consumer;
+export import combined.generator;
+export import :generated;
+export int value() { return generated_value + generator_value(); }
+)cpp"_str },
+        { "build.lua"_str,
+          R"lua(local target = lito.target({kind = "lib", name = "combined-consumer"})
+local generated = lito.run({tool = lito.host_tool(target, "generator", "generate"), cwd = ".",
+  args = {"@OUTPUT@"}, inputs = {"lib.cppm"}, outputs = {"generated.cppm"}})
+lito.target_add_generated_source(target, generated.outputs[1])
+)lua"_str },
+        { "generator/lito.toml"_str, R"toml([package]
+name = "generator"
+version = "0.1.0"
+[lib]
+name = "generator"
+module = "combined.generator"
+archive = "combined.generator"
+sources = ["lib.cppm"]
+[[bin]]
+name = "generate"
+host-tool = true
+link-stdlib = false
+sources = ["main.cpp"]
+)toml"_str },
+        { "generator/lib.cppm"_str, R"cpp(export module combined.generator;
+export int generator_value() { return 42; }
+)cpp"_str },
+        { "generator/main.cpp"_str, R"cpp(#include <stdio.h>
+import combined.generator;
+int main(int argc, char** argv) {
+    if (argc != 2) return 1;
+    auto* output = fopen(argv[1], "wb");
+    if (!output) return 2;
+    auto written = fprintf(output, "export module combined.consumer:generated;\nexport constexpr int generated_value = %d;\n", generator_value());
+    return fclose(output) == 0 && written > 0 ? 0 : 3;
+}
+)cpp"_str },
+        { "downstream/lito.toml"_str, R"toml([package]
+name = "downstream"
+version = "0.1.0"
+[[bin]]
+name = "downstream"
+sources = ["main.cpp"]
+link-stdlib = false
+[dependencies.combined-consumer]
+path = ".."
+)toml"_str },
+        { "downstream/main.cpp"_str, R"cpp(import combined.consumer;
+import combined.generator;
+int main() { return value() == 84 && generator_value() == 42 ? 0 : 1; }
+)cpp"_str },
+        { "downstream/build.lua"_str,
+          R"lua(local target = lito.target({kind = "bin", name = "downstream"})
+assert(not pcall(lito.host_tool, target, "generator", "generate"))
+)lua"_str },
+    };
+    auto project = materialize("combined-tool"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    const int environments[] = { 0, 1, 2 };
+    for (int environment : environments) {
+        auto request = build_request(
+            project->root.as_path(),
+            build_root(rstd::format("combined-tool-{}", environment).as_str()).as_path(),
+            {});
+        if (environment == 1) {
+            request.configuration.toolchain.target = lito::config::ToolchainTargetSelection::Config(
+                "unknown"_Str,
+                lito::system::require_architecture("wasm32"_str).unwrap(),
+                None(),
+                None());
+            request.configuration.toolchain.wasm   = Some(lito::config::WasmToolchainSpec {});
+            request.configuration.standard_library = lito::config::StandardLibrarySelection::Libcxx;
+        }
+        if (environment == 2)
+            request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+                .arguments = strings("-DTARGET_ONLY=1"_str),
+                .source    = "combined tool test"_Str,
+            });
+        auto capture     = GeneratedScanOrderCapture {};
+        request.observer = Some(lito::BuildEventSink {
+            .context = rstd::addressof(capture),
+            .notify  = capture_generated_scan_order,
+        });
+        auto result      = lito::build(request);
+        if (result.is_err())
+            rstd::test::fail_current(
+                error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+        ASSERT_TRUE(result.is_ok());
+        auto compiled  = usize {};
+        auto generated = false;
+        for (const auto& event : capture.events) {
+            if (event.kind == lito::BuildEventKind::BuildToolRun) generated = true;
+            if (event.kind == lito::BuildEventKind::Compile &&
+                event.path.as_str().ends_with("generator/lib.cppm"_str))
+                ++compiled;
+            if (event.kind == lito::BuildEventKind::Scan &&
+                event.target == "combined-consumer::lib::combined-consumer"_str)
+                EXPECT_TRUE(generated);
+        }
+        EXPECT_EQ(compiled, environment == 0 ? usize(1) : usize(2));
+        auto host =
+            result->product.build_directory.join(PathBuf::from("plugin-host"_str).as_path());
+        EXPECT_EQ(rstd::fs::exists(host.as_path()).unwrap_or(false), environment != 0);
+        auto warm = lito::build(request);
+        ASSERT_TRUE(warm.is_ok());
+        EXPECT_EQ(warm->compiled, usize {});
+    }
+    auto downstream = project->root.join(PathBuf::from("downstream"_str).as_path());
+    auto request =
+        build_request(downstream.as_path(), build_root("combined-public"_str).as_path(), {});
+    auto result = lito::build(request);
+    if (result.is_err())
+        rstd::test::fail_current(
+            error_chain_text(result.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(result.is_ok());
+    auto executed = false;
+    for (const auto& artifact : result->product.artifacts) {
+        if (artifact.target.package != "downstream"_str) continue;
+        auto status =
+            rstd::process::Command::make(artifact.primary.path.as_path().as_os_str()).status();
+        ASSERT_TRUE(status.is_ok());
+        EXPECT_TRUE(status->success());
+        executed = true;
+    }
+    EXPECT_TRUE(executed);
+}
+
 TEST_F(BuildCommand, ToolDependencyRunsOnHostWhileGeneratingWasmSources) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

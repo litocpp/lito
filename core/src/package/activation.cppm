@@ -177,6 +177,10 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                 const auto& name = dependency.as_Cpp().value.name;
                 selected_host.insert(name.clone(), empty {});
                 tools.insert(name.clone(), empty {});
+                if (! host && dependency.as_Cpp().value.consumption.usage.uses_library()) {
+                    selected_target.insert(name.clone(), empty {});
+                    record(dependency, false, DependencyKind::Normal, edge_index);
+                }
                 if (! host && artifact_processor.is_some() && name.as_str() == **artifact_processor)
                     processors.insert(name.clone(), empty {});
             } else if (host) {
@@ -210,6 +214,10 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                     const auto& name = dependency.as_Cpp().value.name;
                     selected_host.insert(name.clone(), empty {});
                     tools.insert(name.clone(), empty {});
+                    if (dependency.as_Cpp().value.consumption.usage.uses_library()) {
+                        selected_target.insert(name.clone(), empty {});
+                        record(dependency, false, DependencyKind::Development, edge_index);
+                    }
                     if (artifact_processor.is_some() && name.as_str() == **artifact_processor)
                         processors.insert(name.clone(), empty {});
                 } else {

@@ -414,6 +414,58 @@ TEST(PackageFeatures, ToolUsageKeepsHostAndTargetInstancesSeparate) {
     EXPECT_TRUE(selected_name(selected->host, "host-library"_str));
 }
 
+TEST(PackageFeatures, CombinedToolUsageSelectsBothDomainsForNormalAndDevelopmentEdges) {
+    const bool kinds[] = { false, true };
+    for (bool development : kinds) {
+        auto edge = dependency("generator"_str);
+        edge.as_Cpp().value.consumption.usage =
+            lito::dependency::DependencyUsage::from_facets(true, true, false, true).unwrap();
+        auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+        edges.push(rstd::move(edge));
+        auto graph = lito::package::ResolvedPackageGraph {};
+        graph.packages.push(development ? package("root"_str, {}, {}, rstd::move(edges))
+                                        : package("root"_str, {}, rstd::move(edges)));
+        auto dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
+        dependencies.push(conditioned_dependency("host-library"_str, "target.os == \"linux\""_str));
+        graph.packages.push(package("generator"_str, {}, rstd::move(dependencies)));
+        graph.packages.push(package("host-library"_str));
+        auto environment = lito::package::PackageConditionEnvironment {};
+        environment.target.set_string("target.os"_Str, "unknown"_Str);
+        environment.host.set_string("target.os"_Str, "linux"_Str);
+        auto targets = library_targets("root"_str);
+        if (development) {
+            auto inactive = lito::package::select_conditioned_packages(
+                graph, names("root"_str), targets, nullptr, None(), {}, environment, false);
+            ASSERT_TRUE(inactive.is_ok());
+            EXPECT_FALSE(selected_name(inactive->target, "generator"_str));
+            EXPECT_FALSE(selected_name(inactive->host, "generator"_str));
+            targets[usize {}].kind = lito::package::PackageTargetKind::Test;
+        }
+        auto selected = lito::package::select_conditioned_packages(
+            graph, names("root"_str), targets, nullptr, None(), {}, environment, false);
+        ASSERT_TRUE(selected.is_ok());
+        EXPECT_TRUE(selected_name(selected->target, "generator"_str));
+        EXPECT_TRUE(selected_name(selected->host, "generator"_str));
+        EXPECT_TRUE(selected_name(selected->tools, "generator"_str));
+        EXPECT_FALSE(selected_name(selected->target, "host-library"_str));
+        EXPECT_TRUE(selected_name(selected->host, "host-library"_str));
+        auto target_edges = usize {}, host_edges = usize {};
+        for (const auto& selected_edge : selected->graph.dependencies) {
+            if (selected_edge.consumer.package != usize {}) continue;
+            EXPECT_EQ(selected_edge.declaration, usize {});
+            EXPECT_EQ(selected_edge.kind,
+                      development ? lito::package::DependencyKind::Development
+                                  : lito::package::DependencyKind::Normal);
+            if (selected_edge.provider.host)
+                ++host_edges;
+            else
+                ++target_edges;
+        }
+        EXPECT_EQ(target_edges, usize(1));
+        EXPECT_EQ(host_edges, usize(1));
+    }
+}
+
 TEST(PackageFeatures, ProcessorConfigurationRequiresActiveToolUsage) {
     auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
     edges.push(dependency("processor"_str));

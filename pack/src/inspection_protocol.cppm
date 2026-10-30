@@ -310,7 +310,7 @@ auto parse_dependency(const Json& value, usize index)
             .message = rstd::format("{}.pub cannot be true for development or runtime dependencies",
                                     context) });
     }
-    if (usage.uses_tool() && is_public) {
+    if (usage.uses_tool() && ! usage.uses_library() && is_public) {
         return Err(RegistryInspectionProtocolError {
             .message = rstd::format("{}.pub cannot be true for tool dependencies", context) });
     }

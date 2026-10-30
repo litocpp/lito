@@ -82,8 +82,19 @@ usage = "tool"
 The provider must expose a `[[bin]]` with `host-tool = true`. Lito builds it and its library
 dependencies for the host, including during cross-compilation. Tool consumption contributes no
 target headers, modules, definitions, or link inputs, even when the provider also exposes a library.
-`tool` cannot be combined with compile, link, or runtime, and `pub = true` is rejected. Scalar
-`"tool"` and singleton array `["tool"]` forms are equivalent.
+Combine `tool` with `compile` and/or `link` to also consume the provider's library:
+
+```toml
+[dependencies.resources]
+version = "1.0.0"
+usage = ["compile", "link", "tool"]
+```
+
+The library is consumed in the consumer's build domain; the executable and its dependencies are
+built for the host. Compatible host and target builds share one environment, otherwise they remain
+isolated. The provider must expose both the requested library and a host-tool binary. `pub = true`
+propagates only the library facets, never tool access; it is rejected for tool-only dependencies.
+`runtime` remains exclusive. Scalar `"tool"` and singleton array `["tool"]` forms are equivalent.
 
 Normal and development dependencies accept tool usage. Workspace members set it on their dependency
 reference; `[workspace.dependencies]` continues to declare only the source. Development tool inputs

@@ -667,8 +667,6 @@ TEST_F(Manifest, DependencyUsageRejectsInvalidAndMixedShapes) {
         "usage = []"_str,
         "usage = [\"compile\", \"compile\"]"_str,
         "usage = [\"compile\", \"unknown\"]"_str,
-        "usage = [\"tool\", \"compile\"]"_str,
-        "usage = [\"tool\", \"link\"]"_str,
         "usage = [\"tool\", \"runtime\"]"_str,
         "usage = [\"tool\", \"tool\"]"_str,
         "usage = \"tool\"\npub = true"_str,
@@ -742,6 +740,59 @@ usage = "tool"
     }
     ASSERT_EQ(restored->dev_dependencies.len(), usize(1));
     EXPECT_TRUE(restored->dev_dependencies[usize {}].usage->uses_tool());
+}
+
+TEST_F(Manifest, CombinedToolUsagePreservesLibraryFacetsAndVisibility) {
+    constexpr ref<str> usages[] = {
+        "[\"compile\", \"tool\"]"_str,
+        "[\"link\", \"tool\"]"_str,
+        "[\"tool\", \"link\", \"compile\"]"_str,
+    };
+    auto index = usize {};
+    for (auto usage : usages) {
+        auto contents = rstd::format(R"toml([package]
+name = "combined-tool"
+version = "0.1.0"
+[lib]
+name = "combined-tool"
+module = "combined.tool"
+archive = "combined.tool"
+[dependencies.generator]
+version = "1.0.0"
+usage = {}
+pub = true
+[dev-dependencies.helper]
+version = "1.0.0"
+usage = {}
+)toml",
+                                     usage,
+                                     usage);
+        auto name     = rstd::format("combined-tool-{}", index++);
+        auto project  = manifest(name.as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_ok());
+        auto serialized = lito::manifest::serialize_standalone_package_manifest(
+            *loaded,
+            lito::manifest::StandaloneManifestOptions {
+                .owner_registry =
+                    lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+            });
+        ASSERT_TRUE(serialized.is_ok());
+        auto roundtrip =
+            manifest(rstd::format("{}-roundtrip", name).as_str(), serialized->as_str());
+        ASSERT_TRUE(roundtrip.is_ok());
+        auto restored = lito::manifest::load_package_manifest(roundtrip->root.as_path());
+        ASSERT_TRUE(restored.is_ok());
+        const auto& edge = restored->dependencies[usize {}];
+        ASSERT_TRUE(edge.usage.is_some());
+        EXPECT_TRUE(edge.usage->uses_tool());
+        EXPECT_EQ(edge.usage->uses_compile(), usage.contains("compile"_str));
+        EXPECT_EQ(edge.usage->uses_link(), usage.contains("link"_str));
+        ASSERT_TRUE(edge.is_public.is_some());
+        EXPECT_TRUE(*edge.is_public);
+        EXPECT_EQ(*edge.usage, *restored->dev_dependencies[usize {}].usage);
+    }
 }
 
 TEST_F(Manifest, PublicDependenciesRequireALibraryConsumer) {

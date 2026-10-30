@@ -581,7 +581,7 @@ TEST(RegistryMetadata, ParsesTrustedRawIndexAndChecksRequestContext) {
                     .is_err());
 }
 
-TEST(RegistryMetadata, ToolUsageRejectsPublicAndMixedLifecycles) {
+TEST(RegistryMetadata, ToolUsageAllowsLibraryFacetsButRejectsRuntimeAndPublicToolOnly) {
     struct Case {
         ref<str> usage;
         bool     public_edge;
@@ -590,8 +590,9 @@ TEST(RegistryMetadata, ToolUsageRejectsPublicAndMixedLifecycles) {
     const Case cases[] = {
         { "[\"tool\"]"_str, false, true },
         { "[\"tool\"]"_str, true, false },
-        { "[\"tool\",\"compile\"]"_str, false, false },
-        { "[\"tool\",\"link\"]"_str, false, false },
+        { "[\"tool\",\"compile\"]"_str, false, true },
+        { "[\"tool\",\"link\"]"_str, true, true },
+        { "[\"compile\",\"link\",\"tool\"]"_str, true, true },
         { "[\"tool\",\"runtime\"]"_str, false, false },
     };
     for (const auto& item : cases) {
@@ -623,6 +624,10 @@ archive = "sample"
 [dependencies.generator]
 version = "1.0.0"
 usage = "tool"
+[dependencies.resources]
+version = "1.0.0"
+usage = ["compile", "link", "tool"]
+pub = true
 )toml"_str)
                     .is_ok());
     ASSERT_TRUE(tree.add_text("src/lib.cppm"_str, "export module sample;\n"_str).is_ok());
@@ -638,9 +643,14 @@ usage = "tool"
     auto protocol = lito::registry::serialize_verified_publish_candidate(*archive);
     auto parsed   = lito::registry::parse_verified_publish_candidate(protocol.as_str().as_bytes());
     ASSERT_TRUE(parsed.is_ok());
-    ASSERT_EQ(parsed->dependencies.len(), usize(1));
+    ASSERT_EQ(parsed->dependencies.len(), usize(2));
     EXPECT_TRUE(parsed->dependencies[usize {}].consumption.usage.uses_tool());
     EXPECT_FALSE(parsed->dependencies[usize {}].consumption.is_public);
+    const auto& combined = parsed->dependencies[usize(1)].consumption;
+    EXPECT_TRUE(combined.usage.uses_tool());
+    EXPECT_TRUE(combined.usage.uses_compile());
+    EXPECT_TRUE(combined.usage.uses_link());
+    EXPECT_TRUE(combined.is_public);
 }
 
 TEST(RegistrySolver, BacktracksAndUnifiesEachPackageToOneVersion) {

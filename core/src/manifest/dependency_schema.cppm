@@ -96,8 +96,8 @@ auto parse_usage(const Option<wire::TextList>& value, ref<str> context)
     }
     auto usage = DependencyUsage::from_facets(has_compile, has_link, has_runtime, has_tool);
     if (usage.is_none()) {
-        return Err(ManifestSchemaError::Domain(rstd::format(
-            "{} cannot combine tool with other usages or runtime with compile or link", context)));
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{} cannot combine runtime with other usages", context)));
     }
     return Ok(Some(*usage));
 }
@@ -558,8 +558,8 @@ auto parse_dependencies(Option<rstd::collections::BTreeMap<String, wire::Depende
             return Err(ManifestSchemaError::Domain(
                 rstd::format("{}.pub must be false for a development dependency", context)));
         }
-        if (parsed_usage.is_some() && parsed_usage->uses_tool() && parsed_public.is_some() &&
-            *parsed_public) {
+        if (parsed_usage.is_some() && parsed_usage->uses_tool() && ! parsed_usage->uses_library() &&
+            parsed_public.is_some() && *parsed_public) {
             return Err(ManifestSchemaError::Domain(
                 rstd::format("{}.pub must be false when usage is 'tool'", context)));
         }

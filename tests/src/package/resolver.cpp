@@ -25,11 +25,14 @@ TEST_F(PackageResolver, ToolUsageRequiresTheDeclaredProviderInterface) {
         bool binary;
         bool host;
         bool valid;
+        bool combined {};
     };
     const Case cases[] = {
-        { true, false, true, true, true },   { true, true, true, true, true },
-        { true, true, false, false, false }, { true, false, true, false, false },
-        { false, false, true, true, false }, { false, true, true, true, true },
+        { true, false, true, true, true },         { true, true, true, true, true },
+        { true, true, false, false, false },       { true, false, true, false, false },
+        { false, false, true, true, false },       { false, true, true, true, true },
+        { true, true, true, true, true, true },    { true, false, true, true, false, true },
+        { true, true, false, false, false, true },
     };
     auto index = usize {};
     for (const auto& item : cases) {
@@ -45,7 +48,9 @@ sources = ["main.cpp"]
 path = "provider"
 {}
 )toml",
-                                 item.tool ? "usage = \"tool\""_str : ""_str);
+                                 item.combined ? "usage = [\"compile\", \"link\", \"tool\"]"_str
+                                 : item.tool   ? "usage = \"tool\""_str
+                                               : ""_str);
         auto provider =
             "[package]\nname = \"provider\"\nversion = \"0.1.0\"\nstandard = \"c++23\"\n"_Str;
         if (item.library)
@@ -70,8 +75,10 @@ path = "provider"
         if (! item.valid) {
             ASSERT_TRUE(graph.is_err());
             auto message = error_chain_text(graph.unwrap_err());
-            EXPECT_TRUE(message.as_str().contains(item.tool ? "host-tool binary"_str
-                                                            : "usage = 'tool'"_str));
+            EXPECT_TRUE(message.as_str().contains(item.combined && ! item.library
+                                                      ? "requires a C/C++ library"_str
+                                                  : item.tool ? "host-tool binary"_str
+                                                              : "usage = 'tool'"_str));
             continue;
         }
         for (const auto& package : graph->packages) {
@@ -79,6 +86,7 @@ path = "provider"
             ASSERT_EQ(package.dependencies.len(), usize(1));
             const auto& dependency = package.dependencies[usize {}].as_Cpp().value;
             EXPECT_EQ(dependency.consumption.usage.uses_tool(), item.tool);
+            EXPECT_EQ(dependency.consumption.usage.uses_library(), ! item.tool || item.combined);
             EXPECT_EQ(dependency.host_tools.len(), item.tool ? usize(1) : usize {});
             if (item.tool) EXPECT_EQ(dependency.host_tools[usize {}].name, "generate"_str);
         }

@@ -1073,7 +1073,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
-            if (cpp_dependency.consumption.usage.uses_tool()) continue;
+            if (! cpp_dependency.consumption.usage.uses_library()) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' depends on package '{}' which does not expose a "
@@ -1085,7 +1085,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& dependency : package.active_dev_dependencies()) {
             if (! dependency.is_Cpp()) continue;
             const auto& cpp_dependency = dependency.as_Cpp().value;
-            if (cpp_dependency.consumption.usage.uses_tool()) continue;
+            if (! cpp_dependency.consumption.usage.uses_library()) continue;
             if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return Err(lito::package::PackageError::Message(
                     rstd::format("package '{}' has development dependency '{}' which does not "
@@ -1194,7 +1194,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                    .collect<Vec<lito::package::PackageTargetId>>(),
                 });
             }
-            if (cpp_dependency.consumption.usage.uses_tool()) continue;
+            if (! cpp_dependency.consumption.usage.uses_library()) continue;
             if (! selected.contains_key(cpp_dependency.name.as_str())) {
                 return Err(lito::package::PackageError::Message(rstd::format(
                     "resolved dependency '{}' is missing", cpp_dependency.name.as_str())));
@@ -1207,7 +1207,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             dependencies.push(DependencySpec {
                 .target      = (**library).clone(),
-                .consumption = cpp_dependency.consumption,
+                .consumption = {
+                    .usage = cpp_dependency.consumption.usage.library_usage().unwrap(),
+                    .is_public = cpp_dependency.consumption.is_public,
+                },
             });
         }
         auto proc_macro_dependencies = Vec<ProcMacroDependencySpec>::make();
@@ -1264,7 +1267,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                        .collect<Vec<lito::package::PackageTargetId>>(),
                     });
                 }
-                if (cpp_dependency.consumption.usage.uses_tool()) continue;
+                if (! cpp_dependency.consumption.usage.uses_library()) continue;
                 if (! selected.contains_key(cpp_dependency.name.as_str())) {
                     return Err(lito::package::PackageError::Message(
                         rstd::format("resolved development dependency '{}' is missing",
@@ -1278,7 +1281,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 }
                 dev_dependencies.push(DependencySpec {
                     .target      = (**library).clone(),
-                    .consumption = cpp_dependency.consumption,
+                    .consumption = {
+                        .usage = cpp_dependency.consumption.usage.library_usage().unwrap(),
+                        .is_public = cpp_dependency.consumption.is_public,
+                    },
                 });
             }
         }

@@ -231,7 +231,7 @@ auto parse_usage(const Json& value, ref<str> context)
     auto result = lito::dependency::DependencyUsage::from_facets(compile, link, runtime, tool);
     if (result.is_none()) {
         return metadata_failure<lito::dependency::DependencyUsage>(
-            context, "must contain compile/link, runtime, or tool without mixing lifecycles"_str);
+            context, "must contain compile/link/tool or runtime without mixing lifecycles"_str);
     }
     return Ok(*result);
 }
@@ -297,7 +297,7 @@ auto parse_dependency(const Json& value, ref<str> context)
             return metadata_failure<lito::registry::RegistryDependencyProjection>(
                 context, "development and runtime dependencies cannot be public"_str);
         }
-        if (usage->uses_tool() && *is_public) {
+        if (usage->uses_tool() && ! usage->uses_library() && *is_public) {
             return metadata_failure<lito::registry::RegistryDependencyProjection>(
                 context, "tool dependencies cannot be public"_str);
         }

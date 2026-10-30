@@ -48,13 +48,15 @@ public:
 
     static auto from_facets(bool compile, bool link, bool runtime, bool tool) noexcept
         -> Option<DependencyUsage> {
-        if (tool) {
-            if (compile || link || runtime) return None<DependencyUsage>();
-            return Some(tool_only());
-        }
         if (runtime) {
-            if (compile || link) return None<DependencyUsage>();
+            if (compile || link || tool) return None<DependencyUsage>();
             return Some(runtime_only());
+        }
+        if (tool) {
+            auto bits = tool_bit;
+            if (compile) bits |= compile_bit;
+            if (link) bits |= link_bit;
+            return Some(DependencyUsage(bits));
         }
         if (compile && link) return Some(compile_and_link());
         if (compile) return Some(compile_only());
@@ -84,6 +86,12 @@ public:
 
     constexpr auto uses_tool() const noexcept -> bool {
         return contains(DependencyUsageFacet::Tool);
+    }
+
+    constexpr auto uses_library() const noexcept -> bool { return uses_compile() || uses_link(); }
+
+    auto library_usage() const noexcept -> Option<DependencyUsage> {
+        return from_facets(uses_compile(), uses_link(), false, false);
     }
 
     constexpr auto len() const noexcept -> usize {
