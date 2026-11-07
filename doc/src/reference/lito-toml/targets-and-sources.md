@@ -124,6 +124,11 @@ outside this invocation boundary. A completed declaration can still describe `Fu
 The function model changes the host C++ ABI in pmacro 0.6.0. Providers must be rebuilt; Lito's aggregate
 recipe identity invalidates previous plugin artifacts.
 
+`Declaration::scope` describes the lexical declaration scope. `Declaration::after_item_export`
+describes whether declarations emitted after the item are already exported, require an explicit
+`export`, or are not exported. These fields change the host C++ ABI in pmacro 0.8.0; providers must
+be rebuilt with the matching builtin pmacro package.
+
 `TypeInfo::display` is diagnostic text. Available `type_id` fragments are C++ code representations,
 not stable type identities. `Context::tokens(fragment)` validates the fragment's source context and
 preserves its available diagnostic location. The model does not expose Clang objects, global type

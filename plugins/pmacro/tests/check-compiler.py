@@ -45,6 +45,13 @@ plugin = [f"-fplugin={build / 'aggregate.so'}"]
 run("consumer", flags + plugin + [str(root / "tests/compiler/consumer.cpp"), "-nostdlib++", "-o", str(build / "consumer")])
 run("consumer-run", [str(build / "consumer")])
 
+contexts = build / "contexts.cpp"
+contexts.write_text('''struct [[pmacro::derive("compiler-test::context_info")]] Global {};
+namespace { struct [[pmacro::derive("compiler-test::context_info")]] Normal {}; }
+static_assert(from_Global() == 42 && from_Normal() == 42);
+''')
+run("ordinary-contexts", flags + plugin + ["-c", str(contexts), "-o", str(build / "contexts.o")])
+
 interface = build / "interface.cppm"
 dependency = build / "dependency.cppm"
 dependency.write_text("export module available; export namespace foreign { using Count = long; struct Value {}; }\n")
@@ -52,6 +59,15 @@ run("dependency-module", flags + ["-c", str(dependency), f"-fmodule-output={buil
                                  "-o", str(build / "available.o")])
 interface.write_text('''export module generated;
 import available;
+export struct [[pmacro::derive("compiler-test::context_info")]] Direct {};
+export { struct [[pmacro::derive("compiler-test::context_info")]] InExportBlock {}; }
+export namespace context_check {
+struct [[pmacro::derive("compiler-test::context_info")]] InExportNamespace {};
+}
+namespace context_check {
+struct [[pmacro::derive("compiler-test::context_info")]] Normal {};
+struct Outer { struct [[pmacro::derive("compiler-test::context_info")]] Nested {}; };
+}
 export namespace exported {
 using Choice = long;
 struct [[pmacro::attr("compiler-test::warning"), pmacro::derive("compiler-test::after")]] Seed {};
@@ -71,6 +87,7 @@ run("interface", flags + plugin + ["-c", str(interface), f"-fmodule-output={buil
                                   "-o", str(build / "generated.o")])
 importer = build / "importer.cpp"
 importer.write_text('''import generated;
+static_assert(from_Direct() == 42 && from_InExportBlock() == 42 && context_check::from_InExportNamespace() == 42);
 static_assert(exported::generated() == 42 && block::generated() == 42);
 static_assert(__is_same(exported::generated_choice, long));
 static_assert(__is_same(block::generated_choice, short));

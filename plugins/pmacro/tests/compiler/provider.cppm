@@ -4,6 +4,31 @@ import std;
 import pmacro;
 
 [[pmacro::define("compiler-test")]]
+auto context_info(pmacro::DeriveInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto declaration = context.declaration();
+    if (! declaration || ! (*declaration)->name) return std::unexpected(pmacro::Error::Failure);
+    const auto& value  = **declaration;
+    const auto& name   = *value.name;
+    const bool  nested = name == "Nested";
+    const auto  scope =
+        nested ? pmacro::DeclarationScope::Record : pmacro::DeclarationScope::Namespace;
+    const auto export_ = name == "Direct" ? pmacro::AfterItemExport::Required
+                         : name == "InExportNamespace" || name == "InExportBlock"
+                             ? pmacro::AfterItemExport::Inherited
+                             : pmacro::AfterItemExport::NotExported;
+    if (value.scope != scope || value.after_item_export != export_) {
+        context.diagnostic(pmacro::DiagnosticLevel::Error,
+                           input.item_span,
+                           "declaration context mismatch: " + name);
+        return std::unexpected(pmacro::Error::Failure);
+    }
+    if (nested) return context.stream();
+    return context.parse((export_ == pmacro::AfterItemExport::Required ? "export " : "") +
+                         std::string("constexpr int from_") + name + "() { return 42; }");
+}
+
+[[pmacro::define("compiler-test")]]
 auto replace(pmacro::AttributeInput, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
     return context.parse("struct Value { long value; Value* next; };");

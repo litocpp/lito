@@ -271,12 +271,27 @@ struct RecordInfo {
     std::vector<MethodInfo> methods;
 };
 
+enum class DeclarationScope
+{
+    Namespace,
+    Record,
+    Other
+};
+enum class AfterItemExport
+{
+    NotExported,
+    Inherited,
+    Required
+};
+
 struct Declaration {
-    std::optional<std::string>                       name;
-    std::optional<std::string>                       qualified_name;
-    std::vector<AttributeInfo>                       attributes;
-    std::vector<HelperInfo>                          helpers;
-    SourceInfo                                       source;
+    std::optional<std::string> name;
+    std::optional<std::string> qualified_name;
+    std::vector<AttributeInfo> attributes;
+    std::vector<HelperInfo>    helpers;
+    SourceInfo                 source;
+    DeclarationScope           scope             = DeclarationScope::Other;
+    AfterItemExport            after_item_export = AfterItemExport::NotExported;
     std::variant<RecordInfo, EnumInfo, FunctionInfo> data;
 };
 
