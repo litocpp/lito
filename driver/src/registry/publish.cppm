@@ -695,14 +695,17 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
             request.package,
             "Registry publish requires a bearer token"_str);
     }
-    auto body        = request_body(request);
-    auto idempotency = rstd::format(
-        "lito-{}", rstd_try(licrypto::sha256_hex(body.as_str()).map_err([&](licrypto::Error error) {
-            return RegistryPublishError { .crypto  = Some(error.clone()),
+    auto body = request_body(request);
+    auto hash = licrypto::sha256_hex(body.as_str());
+    if (hash.is_err()) {
+        auto error = rstd::move(hash).unwrap_err();
+        auto message = rstd::format("publish identity: {}", error);
+        return Err(RegistryPublishError { .crypto  = Some(rstd::move(error)),
                                           .kind    = RegistryPublishErrorKind::Infrastructure,
                                           .package = request.package.clone(),
-                                          .message = rstd::format("publish identity: {}", error) };
-        })));
+                                          .message = rstd::move(message) });
+    }
+    auto idempotency = rstd::format("lito-{}", hash->as_str());
     auto headers = authorization_headers(*request.token);
     headers.push(RegistryPublishHeader {
         .name  = "Content-Type"_Str,
