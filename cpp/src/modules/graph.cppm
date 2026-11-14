@@ -1,6 +1,7 @@
 export module lito.cpp:modules.graph;
 
 import rstd;
+import ligraph;
 import lito.core;
 import :bmi;
 import :build.scan;
@@ -94,28 +95,6 @@ auto publicly_reexported(const PackagePlan&      package,
         if (contains_unit(public_target_units[*dependency_target], provider)) return true;
     }
     return false;
-}
-
-auto visit(UnitId                   unit,
-           const Vec<PreparedUnit>& units,
-           const Vec<Vec<UnitId>>&  direct_inputs,
-           Vec<uint8_t>&            colors,
-           Vec<UnitId>&             compile_order) -> ModuleResult<empty> {
-    auto& color = colors[unit];
-    if (color == 2) return Ok(empty {});
-    if (color == 1) {
-        return Err(ModuleError::Graph(
-            rstd::format("module import cycle at '{}'", units[unit].unit.source.as_path())));
-    }
-
-    color = 1;
-    for (auto input : direct_inputs[unit]) {
-        auto dependency = visit(input, units, direct_inputs, colors, compile_order);
-        if (dependency.is_err()) return dependency;
-    }
-    color = 2;
-    compile_order.emplace_back(unit);
-    return Ok(empty {});
 }
 
 } // namespace lito::cpp
@@ -1053,17 +1032,19 @@ auto resolve_semantic_build(const PackagePlan&           package,
         }
     }
 
-    auto colors = Vec<uint8_t>::with_capacity(units.len());
-    for (auto unit = UnitId {}; unit < units.len(); ++unit) colors.emplace_back(0);
-    auto compile_order = Vec<UnitId>::make();
-    for (auto unit : c_units) {
-        colors[unit] = uint8_t(2);
-        compile_order.emplace_back(unit);
+    auto roots = c_units.clone();
+    roots.extend_from_slice(cpp_units.as_slice());
+    auto traversal = ligraph::DfsWorkspace {};
+    auto ordered   = ligraph::dependency_order(
+        ligraph::adjacency_view(direct_inputs.as_slice()), roots.as_slice(), traversal);
+    if (ordered.is_err()) {
+        auto error = rstd::move(ordered).unwrap_err();
+        if (error.kind == ligraph::ErrorKind::InvalidNode)
+            return Err(ModuleError::Graph("invalid module dependency index"_Str));
+        return Err(ModuleError::Graph(
+            rstd::format("module import cycle at '{}'", units[error.node].unit.source.as_path())));
     }
-    for (auto unit : cpp_units) {
-        auto ordered = visit(unit, units, direct_inputs, colors, compile_order);
-        if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
-    }
+    auto compile_order = rstd::move(ordered).unwrap();
 
     auto resolved_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) resolved_inputs.emplace_back();

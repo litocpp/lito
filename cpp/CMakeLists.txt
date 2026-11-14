@@ -51,3 +51,4 @@ target_sources(
          src/standard_library/mod.cppm
          src/standard_library/model.cppm)
 target_link_libraries(lito.cpp PUBLIC lito.core lito.frontend rstd.std)
+target_link_libraries(lito.cpp PRIVATE ligraph::ligraph)

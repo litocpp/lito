@@ -5,6 +5,12 @@
     "rev": "05748d842307476dd86dfa14237838295cb5ec77",
     "narHash": "sha256-e5bE9b420mymOLJo5N5yltKTtRUQXeyRyURS5Xdje0g="
   },
+  "ligraph": {
+    "owner": "litocpp",
+    "repo": "ligraph",
+    "rev": "774173d9f537b28db4d5f81a2a96bf306b3d86e9",
+    "narHash": "sha256-2v7oP17de4INxFAGIsmzQe9d+bBMz3PskS88h8Ho40g="
+  },
   "luato": {
     "owner": "litocpp",
     "repo": "luato",

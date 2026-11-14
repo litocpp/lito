@@ -73,6 +73,9 @@ endfunction()
 lito_declare_dependency(rstd)
 FetchContent_MakeAvailable(rstd)
 
+lito_declare_dependency(ligraph)
+FetchContent_MakeAvailable(ligraph)
+
 set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 lito_declare_dependency(luato)
 FetchContent_MakeAvailable(luato)

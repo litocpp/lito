@@ -8,6 +8,7 @@ module = "lito.cpp"
 archive = "lito.cpp"
 
 [dependencies]
+ligraph = { workspace = true }
 lito-core = { workspace = true, pub = true }
 lito-frontend = { workspace = true, pub = true }
 rstd-std = { workspace = true, pub = true }

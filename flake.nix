@@ -35,6 +35,7 @@
           };
 
         rstdSrc = fetchDependency "rstd";
+        ligraphSrc = fetchDependency "ligraph";
         luatoSrc = fetchDependency "luato";
         licryptoSrc = fetchDependency "licrypto";
         lirestoSrc = fetchDependency "liresto";
@@ -73,6 +74,7 @@
             "-DCMAKE_C_COMPILER_RANLIB=${llvmPkgs.llvm}/bin/llvm-ranlib"
             "-DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES=${llvmPkgs.libcxx.dev}/include/c++/v1;${llvmPkgs.libcxx.dev}/include;${pkgs.glibc.dev}/include"
             "-DFETCHCONTENT_SOURCE_DIR_RSTD=${rstdSrc}"
+            "-DFETCHCONTENT_SOURCE_DIR_LIGRAPH=${ligraphSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_LUATO=${luatoSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_LICRYPTO=${licryptoSrc}"
             "-DFETCHCONTENT_SOURCE_DIR_LIRESTO=${lirestoSrc}"
