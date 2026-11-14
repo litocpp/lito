@@ -271,8 +271,7 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
                              ref<str>                    logical_name,
                              FrontendAnalysisService&    analysis_service)
     -> BuildResult<Option<ImportOwner>> {
-    auto candidates       = Vec<ImportOwnerCandidate>::make();
-    auto highest_priority = usize {};
+    auto candidates = Vec<ImportOwnerCandidate>::make();
     for (auto visible : plan.visible_targets[importer]) {
         const auto& target = package.targets[visible];
         if (target.source.discovery == lito::manifest::SourceDiscoveryMode::Explicit) continue;
@@ -296,30 +295,24 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
         if (source.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(source).unwrap_err()));
         }
-        if (priority > highest_priority) highest_priority = priority;
         candidates.push(ImportOwnerCandidate {
             .target   = visible,
             .priority = priority,
             .source   = rstd::move(source).unwrap(),
         });
     }
-    auto matching = Vec<usize>::make();
-    for (usize index {}; index < candidates.len(); ++index) {
-        if (candidates[index].priority == highest_priority) matching.emplace_back(index);
-    }
-    if (matching.is_empty()) return Ok(None());
-    if (matching.len() == usize(1)) {
-        auto index = matching[usize {}];
-        return Ok(Some(ImportOwner {
-            .target = candidates[index].target,
-            .source = rstd::move(candidates[index].source),
-        }));
-    }
+    rstd::slice_::sort_unstable_by(
+        candidates.as_mut_slice().as_mut_ref(),
+        [](const ImportOwnerCandidate& left, const ImportOwnerCandidate& right) {
+            if (left.priority != right.priority) return left.priority > right.priority;
+            return left.target < right.target;
+        });
 
     auto selected = Option<usize> {};
-    for (auto index : matching) {
+    for (usize index {}; index < candidates.len(); ++index) {
         auto& candidate = candidates[index];
-        auto  context   = discovery_compile_context(
+        if (selected.is_some() && candidate.priority < candidates[*selected].priority) break;
+        auto context = discovery_compile_context(
             package, plan, candidate.target, candidate.source.relative_path.as_path());
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         const auto& compile_context =
