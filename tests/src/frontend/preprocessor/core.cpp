@@ -467,6 +467,7 @@ auto run_preprocessor_test() -> int {
                 "export LITO_IMPORT :dependency;\n"
                 "struct [[pmacro::attr(\"fixture::attr\")]] MacroAttribute {};\n"
                 "struct [[pmacro::derive(\"fixture::derive\")]] MacroDerive {};\n"
+                "[[pmacro::invoke(\"fixture::input\", Input, { name: String })]];\n"
                 "struct [[other::marker]] OtherAttribute {};\n"
                 "#endif\n"
                 "#define LITO_DUP(value) value + value\n"
@@ -621,13 +622,15 @@ auto run_preprocessor_test() -> int {
         ! facts->imports[usize {}].exported) {
         return 10;
     }
-    if (facts->scoped_attributes.len() != usize(3) ||
+    if (facts->scoped_attributes.len() != usize(4) ||
         facts->scoped_attributes[usize {}].scope != "pmacro"_str ||
         facts->scoped_attributes[usize {}].name != "attr"_str ||
         facts->scoped_attributes[usize(1)].scope != "pmacro"_str ||
         facts->scoped_attributes[usize(1)].name != "derive"_str ||
-        facts->scoped_attributes[usize(2)].scope != "other"_str ||
-        facts->scoped_attributes[usize(2)].name != "marker"_str) {
+        facts->scoped_attributes[usize(2)].scope != "pmacro"_str ||
+        facts->scoped_attributes[usize(2)].name != "invoke"_str ||
+        facts->scoped_attributes[usize(3)].scope != "other"_str ||
+        facts->scoped_attributes[usize(3)].name != "marker"_str) {
         return 35;
     }
     if (streamed->statistics.scratch_releases != usize(1)) return 34;
@@ -734,6 +737,57 @@ TEST(Preprocessor, AttributeScopesRemainConservativeForImportsAndPragmas) {
         EXPECT_TRUE(facts->attribute_scopes.may_use("absent"_str));
     }
     EXPECT_TRUE(lito::frontend::AttributeScopeUsage {}.may_use("absent"_str));
+}
+
+TEST(Preprocessor, InvokeSelectsPmacroWithoutInferringProviderScopesFromArguments) {
+    auto sources = MemorySources {};
+    sources.add("/invocations.cpp"_str, R"cpp(
+#include "invocations.hpp"
+[[pmacro::invoke("entity_provider::entity_input", Input, Fields, model, {
+    name: String,
+    nested: (value, [first, second], { third; fourth; })
+})]];
+#if 0
+[[inactive_plugin::marker]];
+#endif
+)cpp"_str);
+    sources.add("/invocations.hpp"_str,
+                "[[pmacro::invoke(\"header_provider::declare\", Header)]];\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto consumer    = lito::frontend::parser::ModuleDependencyConsumer::make();
+    auto translation = preprocess_to(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/invocations.cpp"_str),
+            .environment_identity = "invoke-scopes"_Str,
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events,
+        consumer);
+    ASSERT_TRUE(translation.is_ok());
+    auto facts = consumer.finish(*translation);
+    ASSERT_TRUE(facts.is_ok());
+    EXPECT_TRUE(facts->attribute_scopes.complete);
+    EXPECT_TRUE(facts->attribute_scopes.may_use("pmacro"_str));
+    EXPECT_FALSE(facts->attribute_scopes.may_use("entity_provider"_str));
+    EXPECT_FALSE(facts->attribute_scopes.may_use("header_provider"_str));
+    EXPECT_FALSE(facts->attribute_scopes.may_use("inactive_plugin"_str));
+    ASSERT_EQ(facts->scoped_attributes.len(), usize(1));
+    EXPECT_EQ(facts->scoped_attributes[usize {}].scope, "pmacro"_str);
+    EXPECT_EQ(facts->scoped_attributes[usize {}].name, "invoke"_str);
+    auto restored = lito::frontend::restore(lito::frontend::snapshot(*facts));
+    ASSERT_TRUE(restored.is_some());
+    EXPECT_TRUE(restored->attribute_scopes.complete);
+    EXPECT_TRUE(restored->attribute_scopes.may_use("pmacro"_str));
+    ASSERT_EQ(restored->scoped_attributes.len(), usize(1));
+    EXPECT_EQ(restored->scoped_attributes[usize {}].name, "invoke"_str);
 }
 
 TEST(Preprocessor, RescansMacroReplacementsWithFollowingTokens) {
@@ -936,6 +990,53 @@ TEST(FrontendModules, KeepsDeclarationsAndImportsAcrossTokenChunks) {
         EXPECT_EQ(facts->imports[usize(1)].location.line, usize(5));
         EXPECT_EQ(facts->imports[usize(1)].location.path.as_path().to_str().unwrap(),
                   "/modules.cppm"_str);
+    }
+}
+
+TEST(FrontendModules, InvokeArgumentsDoNotDeclareModulesOrImportsAcrossTokenChunks) {
+    auto      translation = module_translation(R"cpp(
+[[pmacro::invoke("fixture::declare", {
+    export module hidden;
+    import hidden;
+    { import nested; }
+    import :hidden;
+}, [module, import, export], R"text(import literal;)text")]];
+export module fixture.invocations;
+[[pmacro::invoke("fixture::entity_input", Input, Fields, model, {
+    name: String,
+    values: [first, second, { import hidden_again; }]
+})]];
+import visible;
+namespace nested {
+    [[pmacro::invoke("fixture::declare", { module ignored; import ignored; })]];
+}
+export import :part;
+)cpp"_str);
+    const int chunks[]    = { 1, 2, 7, 100 };
+    for (auto chunk : chunks) {
+        auto consumer = lito::frontend::parser::ModuleDependencyConsumer::make();
+        for (auto offset = usize {}; offset < translation.tokens.len();) {
+            auto length = translation.tokens.len() - offset;
+            if (length > usize(chunk)) length = usize(chunk);
+            ASSERT_TRUE(consumer
+                            .consume(slice<Token>::from_raw_parts(
+                                translation.tokens.as_ptr() + offset.to_primitive(), length))
+                            .is_ok());
+            offset += length;
+        }
+        auto facts = consumer.finish(translation);
+        ASSERT_TRUE(facts.is_ok());
+        ASSERT_TRUE(facts->provided.is_some());
+        EXPECT_EQ(facts->provided->logical_name, "fixture.invocations"_str);
+        EXPECT_TRUE(facts->provided->is_interface);
+        ASSERT_EQ(facts->imports.len(), usize(2));
+        EXPECT_EQ(facts->imports[usize {}].logical_name, "visible"_str);
+        EXPECT_FALSE(facts->imports[usize {}].exported);
+        EXPECT_EQ(facts->imports[usize(1)].logical_name, "fixture.invocations:part"_str);
+        EXPECT_TRUE(facts->imports[usize(1)].exported);
+        ASSERT_EQ(facts->scoped_attributes.len(), usize(1));
+        EXPECT_EQ(facts->scoped_attributes[usize {}].scope, "pmacro"_str);
+        EXPECT_EQ(facts->scoped_attributes[usize {}].name, "invoke"_str);
     }
 }
 

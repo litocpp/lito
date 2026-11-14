@@ -15,6 +15,13 @@ struct FragmentSource {
     bool exact;
 };
 
+struct LexicalContext {
+    DeclarationScope scope             = DeclarationScope::Other;
+    AfterItemExport  after_item_export = AfterItemExport::NotExported;
+};
+
+auto lexical_context(const clang::Decl& declaration) -> LexicalContext;
+
 class SourceRegistry {
 public:
     explicit SourceRegistry(clang::CompilerInstance& compiler);

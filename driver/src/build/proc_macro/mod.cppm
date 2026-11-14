@@ -307,7 +307,7 @@ auto build_proc_macro_aggregates(const cpp::BuildConfiguration&        configura
         rstd_try(append_link_inputs(inputs, support_target, package, plan, libraries));
 
         auto aggregate_identity_source =
-            "lito-proc-macro-aggregate-product-v5\ncontract:cpp3\n"_Str;
+            "lito-proc-macro-aggregate-product-v6\ncontract:cpp4\n"_Str;
         aggregate_identity_source.push_str(request.identity.as_str());
         aggregate_identity_source.push_ascii('\n');
         aggregate_identity_source.push_str(support_content_identity.as_str());

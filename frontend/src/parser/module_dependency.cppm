@@ -83,9 +83,11 @@ public:
                 attribute_states_.emplace_back();
                 scoped_attributes_.emplace_back();
             }
-            observe_scoped_attribute(token,
-                                     attribute_states_[token.expansion.source],
-                                     scoped_attributes_[token.expansion.source]);
+            auto&      attribute_state  = attribute_states_[token.expansion.source];
+            const auto inside_attribute = attribute_state.in_list;
+            observe_scoped_attribute(
+                token, attribute_state, scoped_attributes_[token.expansion.source]);
+            if (inside_attribute || attribute_state.in_list) continue;
             auto& state = states_[token.expansion.source];
             if (token.kind == lexical::TokenKind::Newline) continue;
             const auto& text = token.text;

@@ -33,7 +33,8 @@ rtti = false
 ''')
 main = work / "src/main.cpp"
 main.write_text('''import lito.test.pmacro.consumer;
-static_assert(scoped_identity_valid && scoped_derive_valid && equal_has_marker);
+static_assert(scoped_identity_valid && scoped_derive_valid && scoped_invoke_valid && equal_has_marker);
+static_assert(__is_same(InvokedAlias, InvokedValue) && invoked_pair.first.value == 42);
 static_assert(prefix_value == 7 && Equal{7} == Equal{7} && !(Equal{7} == Equal{8}));
 static_assert(sizeof(ReplaceSeed) == sizeof(int) && sizeof(RecursiveSeed) == sizeof(int));
 int main() { return Value{7}.value == 7 && TokenModel{}.value == 42 && Arguments{9}.value == 9 ? 0 : 1; }
@@ -57,7 +58,7 @@ result = subprocess.run(command, cwd=work, stdout=subprocess.PIPE, stderr=subpro
 (work / "recursive.log").write_text(result.stdout)
 if result.returncode == 0 or "recursion limit" not in result.stdout:
     raise RuntimeError(f"missing recursion failure; see {work / 'recursive.log'}")
-print("existing provider: attr, derive, helper, import, diagnostic, recursion passed")
+print("existing provider: invoke, attr, derive, helper, import, diagnostic, recursion passed")
 for name, source, diagnostic in [
     ("rename", 'struct [[pmacro::attr("pmacro-basic-provider::replace")]] Other {};', "must retain the same declaration head"),
     ("remove", 'struct [[pmacro::attr("pmacro-basic-provider::remove")]] RemoveSeed {};', "must retain the same declaration"),

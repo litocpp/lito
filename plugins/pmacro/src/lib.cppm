@@ -450,6 +450,14 @@ struct DeriveInput {
     Span        item_span;
 };
 
+struct FunctionInput {
+    TokenStream      arguments;
+    Span             attribute_span;
+    Span             invocation_span;
+    DeclarationScope scope             = DeclarationScope::Other;
+    AfterItemExport  after_item_export = AfterItemExport::NotExported;
+};
+
 namespace host
 {
 
@@ -499,6 +507,7 @@ protected:
 using MacroResult    = std::expected<TokenStream, Error>;
 using AttributeMacro = MacroResult (*)(AttributeInput, Context&) noexcept;
 using DeriveMacro    = MacroResult (*)(DeriveInput, Context&) noexcept;
+using FunctionMacro  = MacroResult (*)(FunctionInput, Context&) noexcept;
 
 struct AttributeCallback {
     AttributeMacro function {};
@@ -508,17 +517,23 @@ struct DeriveCallback {
     DeriveMacro function {};
 };
 
-using MacroCallback = std::variant<AttributeCallback, DeriveCallback>;
+struct FunctionCallback {
+    FunctionMacro function {};
+};
+
+using MacroCallback = std::variant<AttributeCallback, DeriveCallback, FunctionCallback>;
 
 enum class MacroKind
 {
     Attr,
     Derive,
+    Function,
 };
 
 constexpr auto macro_kind(const MacroCallback& callback) noexcept -> MacroKind {
-    return std::holds_alternative<AttributeCallback>(callback) ? MacroKind::Attr
-                                                               : MacroKind::Derive;
+    if (std::holds_alternative<AttributeCallback>(callback)) return MacroKind::Attr;
+    if (std::holds_alternative<DeriveCallback>(callback)) return MacroKind::Derive;
+    return MacroKind::Function;
 }
 
 struct MacroDescriptor {

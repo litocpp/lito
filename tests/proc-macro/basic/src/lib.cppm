@@ -36,6 +36,32 @@ auto scoped_derive(pmacro::DeriveInput, pmacro::Context& context) noexcept
     return context.parse("inline constexpr bool scoped_derive_valid = true;");
 }
 
+[[pmacro::define("pmacro-basic")]]
+auto scoped_invoke(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto declaration = context.declaration();
+    if (context.macro_identity() != "pmacro-basic::scoped_invoke" ||
+        context.provider_identity() != "pmacro-basic-provider" || declaration ||
+        declaration.error() != pmacro::DeclarationError::UnsupportedDeclaration ||
+        input.scope != pmacro::DeclarationScope::Namespace ||
+        input.after_item_export != pmacro::AfterItemExport::Inherited ||
+        input.arguments.size() != 3 || input.arguments[0].spelling() != "InvokedValue" ||
+        input.arguments[1].spelling() != "," ||
+        input.arguments[2].delimiter() != pmacro::Delimiter::Brace ||
+        ! contains_token(input.arguments, "missing_type") ||
+        ! contains_token(input.arguments, "\"balanced,){}[]\""))
+        return std::unexpected(pmacro::Error::Failure);
+    return context.parse("struct InvokedValue { long value; }; "
+                         "using InvokedAlias = InvokedValue; "
+                         "inline constexpr bool scoped_invoke_valid = true;");
+}
+
+[[pmacro::define]]
+auto invoke_tokens(pmacro::FunctionInput input, pmacro::Context&) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    return input.arguments;
+}
+
 [[pmacro::define]]
 auto token_model(pmacro::AttributeInput input, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {

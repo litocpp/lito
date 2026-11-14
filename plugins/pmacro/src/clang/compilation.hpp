@@ -23,6 +23,32 @@ struct PreparedInput {
 class Compilation;
 thread_local std::unordered_map<clang::Sema*, Compilation*> compilations;
 
+struct InvocationExclusions {
+    std::unordered_map<unsigned, std::vector<clang::SourceRange>> ranges;
+};
+
+class InvocationPreprocessing final : public clang::PPCallbacks {
+public:
+    InvocationPreprocessing(clang::SourceManager&                 manager,
+                            std::shared_ptr<InvocationExclusions> exclusions)
+        : manager_(manager), exclusions_(std::move(exclusions)) {}
+
+    auto SourceRangeSkipped(clang::SourceRange range, clang::SourceLocation) -> void override {
+        exclude(range);
+    }
+
+private:
+    auto exclude(clang::SourceRange range) -> void {
+        if (range.isInvalid()) return;
+        range = { manager_.getExpansionLoc(range.getBegin()),
+                  manager_.getExpansionLoc(range.getEnd()) };
+        exclusions_->ranges[manager_.getFileID(range.getBegin()).getHashValue()].push_back(range);
+    }
+
+    clang::SourceManager&                 manager_;
+    std::shared_ptr<InvocationExclusions> exclusions_;
+};
+
 class Compilation final : public clang::SemaConsumer {
 public:
     Compilation(clang::CompilerInstance& compiler, ExpansionOptions options)
@@ -30,6 +56,8 @@ public:
           options_(std::move(options)),
           state_(compiler),
           definitions_(compiler, options_) {
+        compiler_.getPreprocessor().addPPCallbacks(std::make_unique<InvocationPreprocessing>(
+            compiler_.getSourceManager(), invocation_exclusions_));
         state_.declaration_query = [this](const clang::Decl& declaration) {
             auto found = prepared_.find(const_cast<clang::Decl*>(&declaration));
             if (llvm::isa<clang::FunctionDecl>(declaration) && found != prepared_.end()) {
@@ -79,6 +107,81 @@ public:
             }
     }
 
+    auto prepare_function(clang::Decl&               declaration,
+                          const clang::AnnotateAttr& attribute,
+                          clang::CharSourceRange     arguments) -> void {
+        if (compiler_.getDiagnostics().hasErrorOccurred()) return;
+        auto input = capture(declaration, false);
+        if (! input) return;
+        auto site = state_.sources().attribute_span(attribute);
+        if (! site || input->tokens.empty() || input->current == 0 ||
+            input->tokens.front().getLocation() != state_.sources().location(*site) ||
+            ! parser().getCurToken().is(clang::tok::semi) ||
+            input->current + 1 != input->tokens.size()) {
+            fail(attribute.getLocation(),
+                 "'pmacro::invoke' requires its own attribute declaration");
+            return;
+        }
+        auto        site_text   = state_.sources().text(*site);
+        const auto  beginning   = state_.sources().location(*site);
+        const auto& manager     = compiler_.getSourceManager();
+        auto        file_tokens = raw(manager.getLocForStartOfFile(manager.getFileID(beginning)));
+        auto at = std::find_if(file_tokens.begin(), file_tokens.end(), [&](const auto& token) {
+            return token.getLocation() == beginning;
+        });
+        const auto previous = [&](auto current) {
+            while (current != file_tokens.begin()) {
+                --current;
+                if (! excluded_invocation(current->getLocation())) return current;
+            }
+            return file_tokens.end();
+        };
+        auto prior        = previous(at);
+        auto before_prior = prior == file_tokens.end() ? file_tokens.end() : previous(prior);
+        if (prior != file_tokens.end() && before_prior != file_tokens.end() &&
+            prior->is(clang::tok::r_square) && before_prior->is(clang::tok::r_square)) {
+            fail(attribute.getLocation(),
+                 "'pmacro::invoke' requires its own attribute declaration");
+            return;
+        }
+        const auto site_end =
+            state_.sources().location(Span(site->source(), site->end(), site->end()));
+        const auto closing_end =
+            clang::Lexer::getLocForEndOfToken(input->tokens[input->current - 1].getLocation(),
+                                              0,
+                                              compiler_.getSourceManager(),
+                                              compiler_.getLangOpts());
+        const auto argument_span = state_.sources().spelling(arguments);
+        if (! site_text || ! llvm::StringRef(*site_text).starts_with("[[") ||
+            ! llvm::StringRef(*site_text).ends_with("]]") || ! argument_span ||
+            closing_end != site_end || state_.sources().location(*site).isMacroID()) {
+            fail(attribute.getLocation(), "'pmacro::invoke' requires source-spelled token input");
+            return;
+        }
+        auto source = state_.sources().text(*argument_span);
+        if (! source) {
+            fail(attribute.getLocation(), "cannot locate 'pmacro::invoke' arguments");
+            return;
+        }
+        auto output = invoke(*input, attribute, host::MacroKind::Function, *source, *argument_span);
+        if (! output) return;
+        auto                      after = lex(*output);
+        std::vector<clang::Token> deferred;
+        for (const auto& [location, stream] : state_.take_outputs()) {
+            auto text = state_.render(stream);
+            if (! text) {
+                fail(attribute.getLocation(), "invalid appended TokenStream");
+                return;
+            }
+            if (location == OutputLocation::AfterItem)
+                append(after, lex(*text));
+            else
+                append(deferred, lex(*text));
+        }
+        if (! deferred.empty() && ! insert_namespace_end(declaration, std::move(deferred))) return;
+        insert_after(input->end, std::move(after));
+    }
+
     auto HandleTopLevelDecl(clang::DeclGroupRef group) -> bool override {
         for (auto* declaration : group) {
             if (! options_.provider.empty()) definitions_.observe(declaration);
@@ -96,6 +199,8 @@ public:
     }
 
     auto HandleTagDeclDefinition(clang::TagDecl* declaration) -> void override {
+        // Clang drops standalone member attributes before invoking attribute handlers.
+        audit_record_invocations(*declaration);
         auto found = prepared_.find(declaration);
         if (found == prepared_.end() || ! completed_.insert(declaration).second) return;
         auto attributes = std::vector<const clang::AnnotateAttr*> {};
@@ -123,7 +228,7 @@ public:
             owned_helpers_.insert(helper.attribute);
         std::vector<clang::Token> after;
         for (const auto* attribute : attributes) {
-            auto output = invoke(input, *attribute, true);
+            auto output = invoke(input, *attribute, host::MacroKind::Derive);
             if (! output) return;
             append(after, lex(*output));
             for (const auto& [location, stream] : state_.take_outputs()) {
@@ -150,6 +255,68 @@ public:
     }
 
 private:
+    auto excluded_invocation(clang::SourceLocation location) const -> bool {
+        const auto& manager = compiler_.getSourceManager();
+        const auto  found =
+            invocation_exclusions_->ranges.find(manager.getFileID(location).getHashValue());
+        if (found == invocation_exclusions_->ranges.end()) return false;
+        for (const auto& range : found->second)
+            if (manager.isPointWithin(location, range.getBegin(), range.getEnd())) return true;
+        return false;
+    }
+
+    auto audit_record_invocations(const clang::TagDecl& declaration) -> void {
+        if (! llvm::isa<clang::RecordDecl>(declaration) || declaration.isFromASTFile() ||
+            compiler_.getDiagnostics().hasErrorOccurred())
+            return;
+        auto source = state_.sources().rewrite_span(declaration.getSourceRange());
+        if (! source) return;
+        auto text = state_.sources().text(*source);
+        if (! text || text->find("pmacro") == std::string::npos ||
+            text->find("[[") == std::string::npos)
+            return;
+        const auto& manager = compiler_.getSourceManager();
+        auto        tokens  = raw(declaration.getBeginLoc());
+        for (std::size_t index = 0; index + 1 < tokens.size(); ++index) {
+            if (manager.isBeforeInTranslationUnit(declaration.getEndLoc(),
+                                                  tokens[index].getLocation()))
+                break;
+            if (excluded_invocation(tokens[index].getLocation()) ||
+                ! tokens[index].is(clang::tok::l_square) ||
+                ! tokens[index + 1].is(clang::tok::l_square))
+                continue;
+            std::vector<clang::tok::TokenKind> groups;
+            bool                               head = true;
+            for (index += 2; index < tokens.size(); ++index) {
+                const auto& token = tokens[index];
+                if (excluded_invocation(token.getLocation())) continue;
+                if (groups.empty() && index + 1 < tokens.size() && token.is(clang::tok::r_square) &&
+                    tokens[index + 1].is(clang::tok::r_square)) {
+                    ++index;
+                    break;
+                }
+                if (groups.empty() && head && index + 2 < tokens.size() &&
+                    compiler_.getPreprocessor().getSpelling(token) == "pmacro" &&
+                    tokens[index + 1].is(clang::tok::coloncolon) &&
+                    compiler_.getPreprocessor().getSpelling(tokens[index + 2]) == "invoke") {
+                    fail(token.getLocation(),
+                         "'pmacro::invoke' requires a standalone namespace-scope attribute "
+                         "declaration");
+                    return;
+                }
+                if (groups.empty()) head = token.is(clang::tok::comma);
+                if (token.is(clang::tok::l_paren))
+                    groups.push_back(clang::tok::r_paren);
+                else if (token.is(clang::tok::l_brace))
+                    groups.push_back(clang::tok::r_brace);
+                else if (token.is(clang::tok::l_square))
+                    groups.push_back(clang::tok::r_square);
+                else if (! groups.empty() && token.is(groups.back()))
+                    groups.pop_back();
+            }
+        }
+    }
+
     auto finish_declaration(clang::Decl& declaration) -> void {
         if (declaration.isFromASTFile()) return;
         if (! finished_.insert(&declaration).second) return;
@@ -212,10 +379,13 @@ private:
                                buffer.getBufferStart(),
                                buffer.getBufferStart(),
                                buffer.getBufferEnd());
+            bool         directive = false;
             for (;;) {
                 clang::Token token;
                 lexer.LexFromRawLexer(token);
                 if (token.is(clang::tok::eof)) break;
+                if (token.isAtStartOfLine()) directive = token.is(clang::tok::hash);
+                if (directive) continue;
                 if (token.is(clang::tok::comment)) continue;
                 if (token.is(clang::tok::raw_identifier))
                     compiler_.getPreprocessor().LookUpIdentifierInfo(token);
@@ -239,6 +409,11 @@ private:
         auto tokens                   = raw(manager.getLocForStartOfFile(file));
         return { tokens.begin(), tokens.end() };
     }
+    static auto enclosing_namespace(clang::DeclContext* context) -> clang::NamespaceDecl* {
+        for (; context; context = context->getLexicalParent())
+            if (auto* ns = llvm::dyn_cast<clang::NamespaceDecl>(context)) return ns;
+        return nullptr;
+    }
     auto namespace_end(clang::DeclContext* context) -> clang::SourceLocation {
         for (; context; context = context->getLexicalParent()) {
             auto* ns = llvm::dyn_cast<clang::NamespaceDecl>(context);
@@ -257,7 +432,8 @@ private:
         }
         return {};
     }
-    auto capture(clang::Decl& declaration) -> std::optional<PreparedInput> {
+    auto capture(clang::Decl& declaration, bool resolve_namespace_end = true)
+        -> std::optional<PreparedInput> {
         auto& p = parser();
         if (llvm::isa<clang::FunctionDecl>(declaration) &&
             ! p.getCurToken().isOneOf(clang::tok::semi, clang::tok::l_brace)) {
@@ -279,10 +455,11 @@ private:
             return {};
         }
         PreparedInput input;
-        input.declaration   = &declaration;
-        input.namespace_end = namespace_end(declaration.getLexicalDeclContext());
-        auto tokens         = raw(begin);
-        auto current        = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) {
+        input.declaration = &declaration;
+        if (resolve_namespace_end)
+            input.namespace_end = namespace_end(declaration.getLexicalDeclContext());
+        auto tokens  = raw(begin);
+        auto current = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) {
             return t.getLocation() == p.getCurToken().getLocation();
         });
         if (current == tokens.end()) {
@@ -343,6 +520,48 @@ private:
         input.controls = controls(input);
         return input;
     }
+    auto insert_namespace_end(const clang::Decl& declaration, std::vector<clang::Token> output)
+        -> bool {
+        // Inactive branches may contain unmatched braces, so use the preprocessed token stream.
+        auto*    context = declaration.getLexicalDeclContext();
+        unsigned depth   = 0;
+        for (; context && ! llvm::isa<clang::NamespaceDecl>(context);
+             context = context->getLexicalParent()) {
+            if (const auto* exported = llvm::dyn_cast<clang::ExportDecl>(context))
+                depth += exported->hasBraces();
+            if (const auto* linkage = llvm::dyn_cast<clang::LinkageSpecDecl>(context))
+                depth += linkage->hasBraces();
+        }
+        if (! context) {
+            fail(declaration.getLocation(), "macro output has no namespace target");
+            return false;
+        }
+        std::vector<clang::Token> replay;
+        auto&                     pp = compiler_.getPreprocessor();
+        for (;;) {
+            clang::Token token;
+            pp.Lex(token);
+            if (token.is(clang::tok::eof)) {
+                replay.push_back(token);
+                enter(std::move(replay));
+                fail(declaration.getLocation(), "macro output has no active namespace target");
+                return false;
+            }
+            if (token.is(clang::tok::r_brace)) {
+                if (depth == 0) {
+                    append(replay, std::move(output));
+                    replay.push_back(token);
+                    enter(std::move(replay));
+                    return true;
+                }
+                --depth;
+            } else if (token.is(clang::tok::l_brace)) {
+                ++depth;
+            }
+            replay.push_back(token);
+        }
+    }
+
     auto insert_before(clang::SourceLocation anchor, std::vector<clang::Token> output) -> void {
         if (output.empty()) return;
         if (anchor.isInvalid()) {
@@ -494,19 +713,20 @@ private:
     }
     auto invoke(PreparedInput&             input,
                 const clang::AnnotateAttr& attribute,
-                bool                       derive,
-                llvm::StringRef            argument_override = {}) -> std::optional<std::string> {
-        const auto identity = attribute.getAnnotation().drop_front(derive ? derive_annotation.size()
-                                                                          : attr_annotation.size());
+                host::MacroKind            kind,
+                llvm::StringRef            argument_override = {},
+                std::optional<Span>        argument_span     = {}) -> std::optional<std::string> {
+        const auto prefix   = kind == host::MacroKind::Derive     ? derive_annotation
+                              : kind == host::MacroKind::Function ? invoke_annotation
+                                                                  : attr_annotation;
+        const auto identity = attribute.getAnnotation().drop_front(prefix.size());
         const auto split    = identity.find("::");
         if (split == llvm::StringRef::npos || split == 0 || split + 2 == identity.size() ||
             identity.drop_front(split + 2).contains("::")) {
             fail(attribute.getLocation(), "pmacro identity must be 'scope::macro-name'");
             return {};
         }
-        auto lookup = state_.find(identity.take_front(split),
-                                  identity.drop_front(split + 2),
-                                  derive ? host::MacroKind::Derive : host::MacroKind::Attr);
+        auto lookup = state_.find(identity.take_front(split), identity.drop_front(split + 2), kind);
         if (lookup.status != MacroLookupStatus::Found) {
             fail(attribute.getLocation(),
                  "pmacro identity is not provided with the required kind by the aggregate plugin");
@@ -517,14 +737,19 @@ private:
             fail(attribute.getLocation(), "cannot locate macro attribute");
             return {};
         }
-        auto item      = state_.token_stream(state_.make_stream(clean_input(input), input.span));
+        auto item = kind == host::MacroKind::Function
+                        ? TokenStream {}
+                        : state_.token_stream(state_.make_stream(clean_input(input), input.span));
         auto arguments = argument_override;
         state_.enter_invocation(identity.take_front(split),
                                 identity.drop_front(split + 2),
                                 lookup.provider,
                                 *site,
                                 *input.declaration);
-        state_.allow_namespace_output(input.namespace_end.isValid());
+        state_.allow_namespace_output(
+            kind == host::MacroKind::Function
+                ? enclosing_namespace(input.declaration->getLexicalDeclContext()) != nullptr
+                : input.namespace_end.isValid());
         const auto source_file =
             compiler_.getSourceManager().getFileID(state_.sources().location(input.span));
         active_trace_ = origins_[source_file.getHashValue()];
@@ -536,17 +761,41 @@ private:
                 report(compiler_.getDiagnostics(), location, clang::DiagnosticsEngine::Note, name);
             return {};
         }
-        auto context = state_.context();
-        auto result =
-            derive
-                ? std::get<host::DeriveCallback>(lookup.macro->callback)
-                      .function({ item, *site, input.span }, context)
-                : std::get<host::AttributeCallback>(lookup.macro->callback)
-                      .function({ state_.token_stream(state_.make_stream(arguments, *site, false)),
-                                  item,
-                                  *site,
-                                  input.span },
-                                context);
+        auto              context = state_.context();
+        host::MacroResult result  = std::unexpected(Error::Failure);
+        switch (kind) {
+        case host::MacroKind::Attr:
+            result =
+                std::get<host::AttributeCallback>(lookup.macro->callback)
+                    .function({ state_.token_stream(state_.make_stream(arguments, *site, false)),
+                                item,
+                                *site,
+                                input.span },
+                              context);
+            break;
+        case host::MacroKind::Derive:
+            result = std::get<host::DeriveCallback>(lookup.macro->callback)
+                         .function({ item, *site, input.span }, context);
+            break;
+        case host::MacroKind::Function: {
+            const auto lexical = lexical_context(*input.declaration);
+            const auto handle =
+                state_.make_stream(arguments, argument_span.value_or(*site), true, true);
+            if (! handle) {
+                state_.leave_invocation();
+                fail(attribute.getLocation(), "unbalanced 'pmacro::invoke' arguments");
+                return {};
+            }
+            result = std::get<host::FunctionCallback>(lookup.macro->callback)
+                         .function({ state_.token_stream(handle),
+                                     *site,
+                                     input.span,
+                                     lexical.scope,
+                                     lexical.after_item_export },
+                                   context);
+            break;
+        }
+        }
         state_.leave_invocation();
         if (! result) {
             state_.take_outputs();
@@ -561,8 +810,10 @@ private:
         auto text = state_.render(*result);
         if (! text)
             fail(attribute.getLocation(), "pmacro provider returned an invalid TokenStream");
-        else if (! state_.accept_output(*text, attribute.getLocation()))
+        else if (! state_.accept_output(*text, attribute.getLocation())) {
+            state_.take_outputs();
             return {};
+        }
         return text;
     }
     auto same(const clang::Token& left, const clang::Token& right) -> bool {
@@ -595,7 +846,8 @@ private:
                            call.attribute->getAnnotation().drop_front(attr_annotation.size()));
                 return;
             }
-            auto text = invoke(input, *queue[index].attribute, false, queue[index].arguments);
+            auto text = invoke(
+                input, *queue[index].attribute, host::MacroKind::Attr, queue[index].arguments);
             if (! text) return;
             output = lex(*text);
             if (llvm::isa<clang::FunctionDecl>(input.declaration)) {
@@ -735,11 +987,22 @@ private:
     std::unordered_set<clang::Decl*>                                       finished_;
     std::unordered_set<const clang::AnnotateAttr*>                         owned_helpers_;
     using Trace = std::vector<std::pair<std::string, clang::SourceLocation>>;
-    std::unordered_map<unsigned, Trace> origins_;
-    Trace                               active_trace_;
+    std::unordered_map<unsigned, Trace>   origins_;
+    Trace                                 active_trace_;
+    std::shared_ptr<InvocationExclusions> invocation_exclusions_ =
+        std::make_shared<InvocationExclusions>();
 };
 
 auto prepare_invocation(clang::Sema& sema, clang::Decl& declaration) -> void {
     auto found = compilations.find(&sema);
     if (found != compilations.end()) found->second->prepare(declaration);
+}
+
+auto prepare_function_invocation(clang::Sema&               sema,
+                                 clang::Decl&               declaration,
+                                 const clang::AnnotateAttr& attribute,
+                                 clang::CharSourceRange     arguments) -> void {
+    auto found = compilations.find(&sema);
+    if (found != compilations.end())
+        found->second->prepare_function(declaration, attribute, arguments);
 }

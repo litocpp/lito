@@ -27,4 +27,12 @@ TEST(ProcMacroBuild, AggregateSelectionIdentityIncludesProviders) {
 TEST(ProcMacroBuild, ScopedIdentityPreservesProvider) {
     EXPECT_TRUE(scoped_identity_valid);
     EXPECT_TRUE(scoped_derive_valid);
+    EXPECT_TRUE(scoped_invoke_valid);
+    EXPECT_TRUE(invoked_generated::scoped_derive_valid);
+}
+
+TEST(ProcMacroBuild, InvokeDeclarationsSurviveModuleImport) {
+    static_assert(__is_same(InvokedAlias, InvokedValue));
+    EXPECT_EQ(InvokedValue { 42 }.value, 42);
+    EXPECT_EQ(invoked_pair.first.value, 42);
 }

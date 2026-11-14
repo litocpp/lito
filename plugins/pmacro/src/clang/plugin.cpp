@@ -7,6 +7,7 @@ module;
 #include <clang/AST/Expr.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/Lex/Preprocessor.h>
+#include <clang/Lex/PPCallbacks.h>
 #include <clang/Parse/Parser.h>
 #include <clang/Sema/SemaConsumer.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -31,6 +32,10 @@ namespace pmacro::clang_bridge
 {
 
 auto prepare_invocation(clang::Sema&, clang::Decl&) -> void;
+auto prepare_function_invocation(clang::Sema&,
+                                 clang::Decl&,
+                                 const clang::AnnotateAttr&,
+                                 clang::CharSourceRange) -> void;
 
 constexpr llvm::StringLiteral define_annotation         = "pmacro.define";
 constexpr llvm::StringLiteral define_scope_annotation   = "pmacro.define:";
@@ -38,6 +43,7 @@ constexpr llvm::StringLiteral attr_annotation           = "pmacro.attr:";
 constexpr llvm::StringLiteral attr_arguments_annotation = "pmacro.attr.arguments:";
 constexpr llvm::StringLiteral derive_annotation         = "pmacro.derive:";
 constexpr llvm::StringLiteral helper_annotation         = "pmacro.helper:";
+constexpr llvm::StringLiteral invoke_annotation         = "pmacro.invoke:";
 
 auto report(clang::DiagnosticsEngine&       diagnostics,
             clang::SourceLocation           location,
@@ -350,6 +356,66 @@ public:
     }
 };
 
+class InvokeAttribute final : public clang::ParsedAttrInfo {
+public:
+    InvokeAttribute() {
+        static constexpr Spelling spellings[] = {
+            { clang::ParsedAttr::AS_CXX11, "pmacro::invoke" },
+        };
+        Spellings = spellings;
+    }
+
+    auto diagAppertainsToDecl(clang::Sema&             sema,
+                              const clang::ParsedAttr& attribute,
+                              const clang::Decl*       declaration) const -> bool override {
+        if (llvm::isa<clang::EmptyDecl>(declaration) &&
+            lexical_context(*declaration).scope == DeclarationScope::Namespace)
+            return true;
+        report(sema.getDiagnostics(),
+               attribute.getLoc(),
+               clang::DiagnosticsEngine::Error,
+               "'pmacro::invoke' requires a standalone namespace-scope attribute declaration");
+        return false;
+    }
+
+    auto diagAppertainsToStmt(clang::Sema&             sema,
+                              const clang::ParsedAttr& attribute,
+                              const clang::Stmt*) const -> bool override {
+        report(sema.getDiagnostics(),
+               attribute.getLoc(),
+               clang::DiagnosticsEngine::Error,
+               "'pmacro::invoke' requires a standalone namespace-scope attribute declaration");
+        return false;
+    }
+
+    auto handleDeclAttribute(clang::Sema&             sema,
+                             clang::Decl*             declaration,
+                             const clang::ParsedAttr& attribute) const -> AttrHandling override {
+        if (attribute.getLoc().isMacroID()) {
+            report(sema.getDiagnostics(),
+                   attribute.getLoc(),
+                   clang::DiagnosticsEngine::Error,
+                   "'pmacro::invoke' requires source-spelled token input");
+            return AttributeNotApplied;
+        }
+        auto parsed = parse_string_arguments(sema, attribute, "'pmacro::invoke'", true);
+        if (! parsed || parsed->values.size() != 1) {
+            report(sema.getDiagnostics(),
+                   attribute.getLoc(),
+                   clang::DiagnosticsEngine::Error,
+                   "'pmacro::invoke' requires an ordinary string literal macro identity and "
+                   "a comma before any token arguments");
+            return AttributeNotApplied;
+        }
+        auto  annotation = invoke_annotation.str() + parsed->values.front();
+        auto* control =
+            clang::AnnotateAttr::Create(sema.Context, annotation, nullptr, 0, parsed->range);
+        declaration->addAttr(control);
+        prepare_function_invocation(sema, *declaration, *control, parsed->tail);
+        return AttributeApplied;
+    }
+};
+
 class DeriveAttribute final : public clang::ParsedAttrInfo {
 public:
     DeriveAttribute() {
@@ -617,7 +683,9 @@ public:
                 (std::holds_alternative<pmacro::host::AttributeCallback>(macro.callback) &&
                  std::get<pmacro::host::AttributeCallback>(macro.callback).function != nullptr) ||
                 (std::holds_alternative<pmacro::host::DeriveCallback>(macro.callback) &&
-                 std::get<pmacro::host::DeriveCallback>(macro.callback).function != nullptr);
+                 std::get<pmacro::host::DeriveCallback>(macro.callback).function != nullptr) ||
+                (std::holds_alternative<pmacro::host::FunctionCallback>(macro.callback) &&
+                 std::get<pmacro::host::FunctionCallback>(macro.callback).function != nullptr);
             if (macro.name.empty() || ! valid_callback)
                 return { .status = MacroLookupStatus::InvalidRegistration };
             if (llvm::StringRef(macro.name) != name) continue;
@@ -976,8 +1044,9 @@ public:
             out << "\", pmacro::host::MacroDescriptor { \"";
             llvm::printEscapedString(definition.name, out);
             out << "\", pmacro::host::"
-                << (definition.kind == host::MacroKind::Attr ? "AttributeCallback"
-                                                             : "DeriveCallback")
+                << (definition.kind == host::MacroKind::Attr     ? "AttributeCallback"
+                    : definition.kind == host::MacroKind::Derive ? "DeriveCallback"
+                                                                 : "FunctionCallback")
                 << " { &::" << definition.qualified_name << " }, \"";
             llvm::printEscapedString(definition.scope, out);
             out << "\" } }; }\n";
@@ -1044,7 +1113,8 @@ private:
             return;
         }
         if (function.getNumParams() != 2) {
-            reject("'pmacro::define' function must take AttributeInput or DeriveInput and "
+            reject("'pmacro::define' function must take AttributeInput or DeriveInput or "
+                   "FunctionInput and "
                    "Context&");
             return;
         }
@@ -1052,9 +1122,11 @@ private:
         auto       kind       = pmacro::host::MacroKind::Attr;
         if (input_name == "pmacro::DeriveInput") {
             kind = pmacro::host::MacroKind::Derive;
+        } else if (input_name == "pmacro::FunctionInput") {
+            kind = pmacro::host::MacroKind::Function;
         } else if (input_name != "pmacro::AttributeInput") {
             reject("first 'pmacro::define' parameter must be pmacro::AttributeInput or "
-                   "pmacro::DeriveInput");
+                   "pmacro::DeriveInput or pmacro::FunctionInput");
             return;
         }
         const auto context_type = function.getParamDecl(1)->getType();
@@ -1145,6 +1217,8 @@ static clang::ParsedAttrInfoRegistry::Add<pmacro::clang_bridge::DefineAttribute>
     define_attribute("pmacro_define", "defines a C++ procedural macro");
 static clang::ParsedAttrInfoRegistry::Add<pmacro::clang_bridge::AttrAttribute>
     attr_attribute("pmacro_attr", "applies a C++ procedural attribute macro");
+static clang::ParsedAttrInfoRegistry::Add<pmacro::clang_bridge::InvokeAttribute>
+    invoke_attribute("pmacro_invoke", "invokes a C++ procedural token macro");
 static clang::ParsedAttrInfoRegistry::Add<pmacro::clang_bridge::DeriveAttribute>
     derive_attribute("pmacro_derive", "applies C++ procedural derive macros");
 static clang::ParsedAttrInfoRegistry::Add<pmacro::clang_bridge::HelperAttribute>

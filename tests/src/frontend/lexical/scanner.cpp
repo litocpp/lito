@@ -498,6 +498,41 @@ TEST(Lexical, FullAndCompactSinksAgreeOnPhysicalLocations) {
     }
 }
 
+TEST(Lexical, InvokePreservesBalancedArgumentTokensAndLocations) {
+    auto source  = fixture_source(R"cpp([[pmacro::invoke("entity::input", Input, Fields, model, {
+    name: String,
+    nested: Option<Pair<First, Second>>,
+    tokens: ([first, second], { import hidden; }, R"tag([[raw]])tag")
+})]];
+)cpp"_str);
+    auto full    = lex(source);
+    auto compact = lex_scan_file(source);
+    ASSERT_TRUE(full.is_ok());
+    ASSERT_TRUE(compact.is_ok());
+    ASSERT_EQ(full->len(), compact->tokens.len());
+    usize opens {}, closes {};
+    auto  found_name = false;
+    auto  found_raw  = false;
+    for (auto index = usize {}; index < full->len(); ++index) {
+        const auto& token  = (*full)[index];
+        const auto  stored = compact->token(source.id, index);
+        EXPECT_EQ(token.kind, stored.kind());
+        EXPECT_TRUE(token.text.same_bytes(stored.text()));
+        EXPECT_EQ(token.spelling.offset, stored.location().offset);
+        EXPECT_EQ(token.spelling.line, stored.location().line);
+        EXPECT_EQ(token.spelling.column, stored.location().column);
+        if (token.text == "["_str) ++opens;
+        if (token.text == "]"_str) ++closes;
+        found_name |= token.text == "invoke"_str;
+        found_raw |=
+            token.kind == TokenKind::StringLiteral && token.text == "R\"tag([[raw]])tag\""_str;
+    }
+    EXPECT_EQ(opens, usize(3));
+    EXPECT_EQ(closes, usize(3));
+    EXPECT_TRUE(found_name);
+    EXPECT_TRUE(found_raw);
+}
+
 TEST(Lexical, CommentContinuationsPreservePhysicalLocationsAndLogicalLines) {
     const ref<str> endings[] = { "\n"_str, "\r\n"_str, "\r"_str };
     for (auto ending : endings) {

@@ -16,14 +16,20 @@ flags = [args.cxx, "-std=c++23", "-stdlib=libstdc++", "-fno-exceptions", "-fno-r
          "-Wno-reserved-module-identifier", f"-fprebuilt-module-path={build}"]
 
 
-def run(name, arguments, expected=None, absent=None):
-    result = subprocess.run(arguments, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def run(name, arguments, expected=None, absent=None, failures=None):
+    result = subprocess.run(arguments, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=120)
     (build / f"{name}.log").write_text(result.stdout)
     valid = result.returncode == 0 if expected is None else result.returncode != 0 and expected in result.stdout
     if absent is not None:
         valid = valid and absent not in result.stdout
     if not valid:
-        raise RuntimeError(f"{name} failed; see {build / (name + '.log')}")
+        message = f"{name} failed; see {build / (name + '.log')}"
+        if failures is None:
+            raise RuntimeError(message)
+        failures.append(message)
+        print(message, flush=True)
+        return
     print(f"{name}: passed", flush=True)
 
 
@@ -126,14 +132,178 @@ for name, (source, diagnostic) in cases.items():
 
 for name, source, diagnostic in [
     ("define-signature", '[[pmacro::define("compiler-test")]] int invalid(int value) { return value; }',
-     "must take AttributeInput or DeriveInput"),
+     "must take"),
     ("define-overload", '''[[pmacro::define("compiler-test")]]
 auto invalid(pmacro::AttributeInput input, pmacro::Context&) noexcept -> std::expected<pmacro::TokenStream, pmacro::Error> { return input.item; }
 void invalid(int) {}''', "must not be overloaded"),
+    ("define-invoke-noexcept", '''[[pmacro::define("compiler-test")]]
+auto invalid(pmacro::FunctionInput input, pmacro::Context&) -> std::expected<pmacro::TokenStream, pmacro::Error> { return input.arguments; }''',
+     "must be noexcept"),
+    ("define-invoke-reference", '''[[pmacro::define("compiler-test")]]
+auto invalid(const pmacro::FunctionInput& input, pmacro::Context&) noexcept -> std::expected<pmacro::TokenStream, pmacro::Error> { return input.arguments; }''',
+     "first 'pmacro::define' parameter"),
+    ("define-invoke-context", '''[[pmacro::define("compiler-test")]]
+auto invalid(pmacro::FunctionInput input, const pmacro::Context&) noexcept -> std::expected<pmacro::TokenStream, pmacro::Error> { return input.arguments; }''',
+     "second 'pmacro::define' parameter"),
+    ("define-invoke-result", '''[[pmacro::define("compiler-test")]]
+auto invalid(pmacro::FunctionInput input, pmacro::Context&) noexcept -> std::expected<pmacro::TokenStream, int> { return input.arguments; }''',
+     "must return"),
 ]:
     path = build / f"{name}.cppm"
     path.write_text("export module invalid_provider;\nimport std;\nimport pmacro;\n" + source + "\n")
     run(name, flags + [f"-fplugin={build / 'pmacro.so'}", "-Xclang", "-plugin-arg-pmacro", "-Xclang",
                       "provider=invalid-provider", "-fsyntax-only", str(path)], diagnostic)
 
-print("in-compiler expansion: scope, identity, snapshots, positions, PCM and failures passed")
+run("invoke-consumer", flags + plugin + [str(root / "tests/compiler/invoke.cpp"), "-nostdlib++",
+                                        "-o", str(build / "invoke-consumer")])
+run("invoke-consumer-run", [str(build / "invoke-consumer")])
+run("invoke-passive", flags + plugin + [str(root / "tests/compiler/invoke-passive.cpp"),
+                                       "-nostdlib++", "-o", str(build / "invoke-passive")])
+run("invoke-passive-run", [str(build / "invoke-passive")])
+run("invoke-conditional", flags + plugin + [str(root / "tests/compiler/invoke-conditional.cpp"),
+                                           "-nostdlib++", "-o", str(build / "invoke-conditional")])
+run("invoke-conditional-run", [str(build / "invoke-conditional")])
+
+invoke_interface = build / "invoke-interface.cppm"
+invoke_interface.write_text('''export module invoked;
+import available;
+[[pmacro::invoke("compiler-test::function_context", Private, NotExported)]];
+export [[pmacro::invoke("compiler-test::function_context", Direct, Required)]];
+export {
+[[pmacro::invoke("compiler-test::function_context", Block, Inherited)]];
+[[pmacro::invoke("compiler-test::declarations",
+    struct PublicInput { foreign::Count value; };
+    constexpr PublicInput make_input() { return {42}; }
+)]];
+namespace invoked_block {
+[[pmacro::invoke("compiler-test::function_context", Nested, Inherited)]];
+[[pmacro::invoke("compiler-test::function_positions")]];
+struct Later { foreign::Count value; };
+}
+}
+export namespace invoked_namespace {
+[[pmacro::invoke("compiler-test::function_context", Namespace, Inherited)]];
+inline namespace version {
+[[pmacro::invoke("compiler-test::function_context", Inline, Inherited)]];
+}
+}
+namespace export_deferred {
+export {
+[[pmacro::invoke("compiler-test::function_positions")]];
+}
+struct Later { long value; };
+}
+static_assert(export_deferred::invoked_after == 42);
+static_assert(__is_same(export_deferred::invoked_later_type, export_deferred::Later));
+static_assert(export_deferred::invoked_end() == sizeof(export_deferred::Later));
+static_assert(invoked_Private() == 42 && make_input().value == 42);
+''')
+run("invoke-interface", flags + plugin + ["-c", str(invoke_interface),
+                                         f"-fmodule-output={build / 'invoked.pcm'}",
+                                         "-o", str(build / "invoked.o")])
+invoke_importer = build / "invoke-importer.cpp"
+invoke_importer.write_text('''import invoked;
+static_assert(invoked_Direct() == 42 && invoked_Block() == 42);
+static_assert(make_input().value == 42 && __is_same(decltype(PublicInput::value), long));
+static_assert(invoked_block::invoked_Nested() == 42 && invoked_block::invoked_after == 42);
+static_assert(__is_same(invoked_block::invoked_later_type, invoked_block::Later));
+static_assert(invoked_block::invoked_end() == sizeof(invoked_block::Later));
+static_assert(invoked_namespace::invoked_Namespace() == 42 && invoked_namespace::invoked_Inline() == 42);
+static_assert(export_deferred::invoked_after == 42);
+int main() { return make_input().value != 42; }
+''')
+run("invoke-independent-importer", flags + [str(invoke_importer), str(build / "invoked.o"),
+                                           str(build / "available.o"), "-nostdlib++",
+                                           "-o", str(build / "invoke-importer")])
+run("invoke-independent-run", [str(build / "invoke-importer")])
+invoke_private = build / "invoke-private.cpp"
+invoke_private.write_text('import invoked;\nstatic_assert(invoked_Private() == 42);\n')
+run("invoke-private-not-exported", flags + ["-fsyntax-only", str(invoke_private)], "invoked_Private")
+
+invoke_cases = {
+    "invoke-record": ('struct Member { [[pmacro::invoke("compiler-test::declarations")]]; };',
+                      "namespace-scope"),
+    "invoke-function-body": ('void body() { [[pmacro::invoke("compiler-test::declarations")]]; }',
+                             "namespace-scope"),
+    "invoke-expression": ('int value = [[pmacro::invoke("compiler-test::declarations")]];',
+                          "expected"),
+    "invoke-attached-record": ('[[pmacro::invoke("compiler-test::declarations")]] struct Attached {};',
+                               "misplaced attributes"),
+    "invoke-attached-variable": ('[[pmacro::invoke("compiler-test::declarations")]] int attached;',
+                                 "standalone"),
+    "invoke-attached-function": ('[[pmacro::invoke("compiler-test::declarations")]] void attached();',
+                                 "standalone"),
+    "invoke-type-attribute": ('struct [[pmacro::invoke("compiler-test::declarations")]] Attached {};',
+                              "standalone"),
+    "invoke-multiple-attributes": ('[[pmacro::invoke("compiler-test::declarations"), pmacro::invoke("compiler-test::declarations")]];',
+                                   "requires source-spelled token input"),
+    "invoke-mixed-before": ('[[deprecated, pmacro::invoke("compiler-test::declarations")]];',
+                            "pmacro::invoke"),
+    "invoke-mixed-after": ('[[pmacro::invoke("compiler-test::declarations"), deprecated]];',
+                           "pmacro::invoke"),
+    "invoke-separate-attributes": ('[[pmacro::invoke("compiler-test::declarations")]] [[deprecated]];',
+                                   "pmacro::invoke"),
+    "invoke-unknown-attribute-after": ('[[pmacro::invoke("compiler-test::declarations")]] [[unrecognized::marker]];',
+                                       "requires"),
+    "invoke-unknown-attribute-before": ('[[unrecognized::marker]] [[pmacro::invoke("compiler-test::declarations")]];',
+                                        "requires"),
+    "invoke-attribute-across-directive": ('[[unrecognized::marker]]\n#define UNUSED 123\n[[pmacro::invoke("compiler-test::declarations")]];',
+                                          "requires"),
+    "invoke-unknown-provider": ('[[pmacro::invoke("missing-provider::declarations")]];',
+                                "required kind"),
+    "invoke-unknown-macro": ('[[pmacro::invoke("compiler-test::missing")]];', "required kind"),
+    "invoke-wrong-attr-kind": ('[[pmacro::invoke("compiler-test::replace")]];', "required kind"),
+    "invoke-wrong-derive-kind": ('[[pmacro::invoke("compiler-test::after")]];', "required kind"),
+    "invoke-as-attr": ('struct [[pmacro::attr("compiler-test::declarations")]] Wrong {};',
+                       "required kind"),
+    "invoke-as-derive": ('struct [[pmacro::derive("compiler-test::declarations")]] Wrong {};',
+                         "required kind"),
+    "invoke-bare-identity": ('[[pmacro::invoke("declarations")]];', "identity"),
+    "invoke-empty-identity": ('[[pmacro::invoke("")]];', "identity"),
+    "invoke-nested-identity": ('[[pmacro::invoke("compiler-test::nested::declarations")]];', "identity"),
+    "invoke-missing-identity": ('[[pmacro::invoke()]];', "string"),
+    "invoke-non-string-identity": ('[[pmacro::invoke(42)]];', "string"),
+    "invoke-wide-identity": ('[[pmacro::invoke(L"compiler-test::declarations")]];', "string"),
+    "invoke-utf8-identity": ('[[pmacro::invoke(u8"compiler-test::declarations")]];', "string"),
+    "invoke-concatenated-identity": ('[[pmacro::invoke("compiler-test::" "declarations")]];', "string"),
+    "invoke-missing-comma": ('[[pmacro::invoke("compiler-test::declarations" int value;)]];', "comma"),
+    "invoke-missing-semicolon": ('[[pmacro::invoke("compiler-test::declarations")]]', "expected external declaration"),
+    "invoke-unbalanced-brace": ('[[pmacro::invoke("compiler-test::declarations", {)]];', "pmacro::invoke"),
+    "invoke-unbalanced-bracket": ('[[pmacro::invoke("compiler-test::declarations", [})]];', "unbalanced"),
+    "invoke-import": ('[[pmacro::invoke("compiler-test::declarations", import available;)]];',
+                      "must not change module dependencies"),
+    "invoke-export-import": ('[[pmacro::invoke("compiler-test::declarations", export import available;)]];',
+                             "must not change module dependencies"),
+    "invoke-module": ('[[pmacro::invoke("compiler-test::declarations", module;)]];',
+                      "must not change module dependencies"),
+    "invoke-nested-import": ('[[pmacro::invoke("compiler-test::declarations", namespace bad { import available; })]];',
+                             "must not change module dependencies"),
+    "invoke-emitted-import": ('namespace bad { [[pmacro::invoke("compiler-test::function_emit", import available;)]]; }',
+                              "must not change module dependencies"),
+    "invoke-failed-transaction": ('namespace failed { [[pmacro::invoke("compiler-test::function_fail")]]; }',
+                                  "provider returned an expansion error"),
+    "invoke-output-budget": ('[[pmacro::invoke("compiler-test::function_budget")]];', "output budget exceeded"),
+    "invoke-recursion": ('[[pmacro::invoke("compiler-test::function_loop")]];', "recursion limit"),
+    "invoke-depth-limit": ('[[pmacro::invoke("compiler-test::function_depth", 64)]];', "recursion limit"),
+}
+failures = []
+for name, (source, diagnostic) in invoke_cases.items():
+    path = build / f"{name}.cpp"
+    path.write_text(source + "\n")
+    run(name, flags + plugin + ["-fsyntax-only", str(path)], diagnostic,
+        "uncommitted-invoke-output" if name == "invoke-failed-transaction" else None, failures)
+
+invoke_diagnostic = build / "invoke-diagnostic.cpp"
+invoke_diagnostic.write_text('''namespace diagnostic {
+[[pmacro::invoke("compiler-test::function_diagnostic", {
+    missing_field: Missing
+})]];
+}
+''')
+run("invoke-diagnostic-position", flags + plugin + ["-fsyntax-only", str(invoke_diagnostic)],
+    f"{invoke_diagnostic}:3:5: error: invoke field diagnostic", failures=failures)
+
+if failures:
+    raise RuntimeError("\n".join(failures))
+
+print("in-compiler expansion: attr, derive, invoke, scope, tokens, PCM and failures passed")

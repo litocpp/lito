@@ -461,6 +461,25 @@ auto DeclarationStore::function(const clang::FunctionDecl& declaration, Function
     return info;
 }
 
+auto lexical_context(const clang::Decl& declaration) -> LexicalContext {
+    LexicalContext result;
+    const auto*    lexical = declaration.getLexicalDeclContext();
+    if (declaration.isInExportDeclContext()) {
+        const auto* export_decl  = llvm::dyn_cast<clang::ExportDecl>(lexical);
+        result.after_item_export = export_decl && ! export_decl->hasBraces()
+                                       ? AfterItemExport::Required
+                                       : AfterItemExport::Inherited;
+    }
+    while (lexical &&
+           (llvm::isa<clang::ExportDecl>(lexical) || llvm::isa<clang::LinkageSpecDecl>(lexical)))
+        lexical = lexical->getLexicalParent();
+    if (lexical && lexical->isFileContext())
+        result.scope = DeclarationScope::Namespace;
+    else if (lexical && lexical->isRecord())
+        result.scope = DeclarationScope::Record;
+    return result;
+}
+
 auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
     -> std::expected<std::shared_ptr<const Declaration>, DeclarationError> {
     const auto* record      = llvm::dyn_cast<clang::RecordDecl>(&declaration);
@@ -473,22 +492,11 @@ auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
     if ((record && ! record->isCompleteDefinition()) ||
         (enumeration && ! enumeration->isCompleteDefinition()))
         return std::unexpected(DeclarationError::IncompleteDefinition);
-    auto        result  = std::make_shared<Declaration>();
-    const auto& named   = llvm::cast<clang::NamedDecl>(declaration);
-    const auto* lexical = declaration.getLexicalDeclContext();
-    if (declaration.isInExportDeclContext()) {
-        const auto* export_decl   = llvm::dyn_cast<clang::ExportDecl>(lexical);
-        result->after_item_export = export_decl && ! export_decl->hasBraces()
-                                        ? AfterItemExport::Required
-                                        : AfterItemExport::Inherited;
-    }
-    while (lexical &&
-           (llvm::isa<clang::ExportDecl>(lexical) || llvm::isa<clang::LinkageSpecDecl>(lexical)))
-        lexical = lexical->getLexicalParent();
-    if (lexical && lexical->isFileContext())
-        result->scope = DeclarationScope::Namespace;
-    else if (lexical && lexical->isRecord())
-        result->scope = DeclarationScope::Record;
+    auto        result        = std::make_shared<Declaration>();
+    const auto& named         = llvm::cast<clang::NamedDecl>(declaration);
+    const auto  context       = lexical_context(declaration);
+    result->scope             = context.scope;
+    result->after_item_export = context.after_item_export;
     if (named.getIdentifier()) {
         result->name           = named.getNameAsString();
         result->qualified_name = named.getQualifiedNameAsString();

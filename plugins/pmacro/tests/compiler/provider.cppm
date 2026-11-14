@@ -278,3 +278,232 @@ auto changed_function(pmacro::AttributeInput input, pmacro::Context& context) no
         return std::unexpected(pmacro::Error::Failure);
     return input.item;
 }
+
+auto check_function_input(pmacro::FunctionInput input, pmacro::Context& context) noexcept -> bool {
+    auto first    = context.declaration();
+    auto second   = context.declaration();
+    auto site     = context.call_site();
+    auto previous = input.attribute_span.begin();
+    for (auto token : input.arguments) {
+        auto span = token.span();
+        if (span.source() != input.invocation_span.source() || span.begin() < previous ||
+            span.begin() <= input.attribute_span.begin() ||
+            span.end() >= input.attribute_span.end() ||
+            span.begin() < input.invocation_span.begin() ||
+            span.end() > input.invocation_span.end() || span.end() <= span.begin())
+            return false;
+        previous = span.end();
+    }
+    return ! first && ! second &&
+           first.error() == pmacro::DeclarationError::UnsupportedDeclaration &&
+           second.error() == first.error() && input.scope == pmacro::DeclarationScope::Namespace &&
+           input.arguments.valid() && site && input.attribute_span.source() != 0 &&
+           input.attribute_span.source() == input.invocation_span.source() &&
+           input.invocation_span.begin() <= input.attribute_span.begin() &&
+           input.invocation_span.end() > input.attribute_span.end() &&
+           context.join(input.attribute_span, input.invocation_span) &&
+           context.provider_identity() == "compiler-test-provider" &&
+           ! context.target_triple().empty();
+}
+
+auto exact_token_spans(pmacro::TokenStream tokens,
+                       pmacro::Span        root,
+                       std::string_view    source) noexcept -> bool {
+    auto previous = root.begin();
+    for (auto token : tokens) {
+        auto span = token.span();
+        if (span.source() != root.source() || span.begin() < previous ||
+            span.end() <= span.begin() || span.begin() < root.begin() || span.end() > root.end())
+            return false;
+        auto text = source.substr(span.begin() - root.begin(), span.end() - span.begin());
+        if (token.kind() == pmacro::TokenKind::Group) {
+            const auto delimiter = token.delimiter();
+            const auto open      = delimiter == pmacro::Delimiter::Parenthesis ? '('
+                                   : delimiter == pmacro::Delimiter::Brace     ? '{'
+                                                                               : '[';
+            const auto close     = delimiter == pmacro::Delimiter::Parenthesis ? ')'
+                                   : delimiter == pmacro::Delimiter::Brace     ? '}'
+                                                                               : ']';
+            if (text.size() < 2 || text.front() != open || text.back() != close ||
+                ! exact_token_spans(token.children(), root, source))
+                return false;
+            for (auto child : token.children())
+                if (child.span().begin() <= span.begin() || child.span().end() >= span.end())
+                    return false;
+        } else if (text != token.spelling()) {
+            return false;
+        }
+        previous = span.end();
+    }
+    return true;
+}
+
+[[pmacro::define("compiler-test")]]
+auto span_model(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    constexpr auto source = std::string_view {
+        "marker, { key: (long), text: \"a,b){}[]\", values: [3, {inner: missing::Type}] }"
+    };
+    if (! check_function_input(input, context) || input.arguments.size() != 3)
+        return std::unexpected(pmacro::Error::Failure);
+    auto first = input.arguments[0].span();
+    auto last  = input.arguments[2].span();
+    auto root  = pmacro::Span { first.source(), first.begin(), last.end() };
+    if (root.end() - root.begin() != source.size() ||
+        ! exact_token_spans(input.arguments, root, source))
+        return std::unexpected(pmacro::Error::Failure);
+    return context.parse("inline constexpr bool exact_invoke_spans = true;");
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_diagnostic(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_function_input(input, context) || input.arguments.size() != 1 ||
+        input.arguments[0].delimiter() != pmacro::Delimiter::Brace)
+        return std::unexpected(pmacro::Error::Failure);
+    auto fields = input.arguments[0].children();
+    if (fields.size() != 3 || fields[0].spelling() != "missing_field")
+        return std::unexpected(pmacro::Error::Failure);
+    context.diagnostic(pmacro::DiagnosticLevel::Error, fields[0].span(), "invoke field diagnostic");
+    return std::unexpected(pmacro::Error::Failure);
+}
+
+[[pmacro::define("compiler-test")]]
+auto declarations(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_function_input(input, context) ||
+        context.macro_identity() != "compiler-test::declarations")
+        return std::unexpected(pmacro::Error::Failure);
+    return input.arguments;
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_context(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_function_input(input, context) || input.arguments.size() != 3 ||
+        input.arguments[0].kind() != pmacro::TokenKind::Ident ||
+        input.arguments[1].spelling() != ",")
+        return std::unexpected(pmacro::Error::Failure);
+    const auto name    = input.arguments[0].spelling();
+    const auto mode    = input.arguments[2].spelling();
+    const auto export_ = mode == "Required"    ? pmacro::AfterItemExport::Required
+                         : mode == "Inherited" ? pmacro::AfterItemExport::Inherited
+                                               : pmacro::AfterItemExport::NotExported;
+    if (input.after_item_export != export_) return std::unexpected(pmacro::Error::Failure);
+    return context.parse(
+        std::string(export_ == pmacro::AfterItemExport::Required ? "export " : "") +
+        "constexpr int invoked_" + std::string(name) + "() { return 42; }");
+}
+
+[[pmacro::define("compiler-test")]]
+auto entity_input(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_function_input(input, context) || input.arguments.size() != 3 ||
+        input.arguments[0].kind() != pmacro::TokenKind::Ident ||
+        input.arguments[1].spelling() != "," ||
+        input.arguments[2].delimiter() != pmacro::Delimiter::Brace)
+        return std::unexpected(pmacro::Error::Failure);
+    auto fields = input.arguments[2].children();
+    if (fields.size() != 7 || fields[0].spelling() != "value" || fields[1].spelling() != ":" ||
+        fields[2].delimiter() != pmacro::Delimiter::Parenthesis || fields[3].spelling() != "," ||
+        fields[4].spelling() != "options" || fields[5].spelling() != ":" ||
+        fields[6].delimiter() != pmacro::Delimiter::Bracket)
+        return std::unexpected(pmacro::Error::Failure);
+    auto options = fields[6].children();
+    if (options.size() != 3 || options[0].spelling() != "1" || options[1].spelling() != "," ||
+        options[2].delimiter() != pmacro::Delimiter::Brace)
+        return std::unexpected(pmacro::Error::Failure);
+    auto type = fields[2].children();
+    if (type.size() != 1 || type[0].kind() != pmacro::TokenKind::Ident)
+        return std::unexpected(pmacro::Error::Failure);
+    return context.parse("struct " + std::string(input.arguments[0].spelling()) + " { " +
+                         std::string(type[0].spelling()) + " value; };");
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_positions(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_function_input(input, context)) return std::unexpected(pmacro::Error::Failure);
+    auto after = context.parse("inline constexpr int invoked_after = invoked_first + 1;");
+    auto end   = context.parse("using invoked_later_type = Later; "
+                               "constexpr int invoked_end() { return sizeof(Later); }");
+    if (! after || ! end || ! context.emit(pmacro::OutputLocation::AfterItem, *after) ||
+        ! context.emit(pmacro::OutputLocation::NamespaceEnd, *end))
+        return std::unexpected(pmacro::Error::Failure);
+    return context.parse("inline constexpr int invoked_first = 41;");
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_emit(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! context.emit(pmacro::OutputLocation::NamespaceEnd, input.arguments))
+        return std::unexpected(pmacro::Error::Failure);
+    return context.stream();
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_global_end(pmacro::FunctionInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto output = context.stream();
+    if (! output) return std::unexpected(pmacro::Error::Failure);
+    auto result = context.emit(pmacro::OutputLocation::NamespaceEnd, *output);
+    if (result || result.error() != pmacro::Error::InvalidArgument)
+        return std::unexpected(pmacro::Error::Failure);
+    return output;
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_fail(pmacro::FunctionInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto output = context.parse("static_assert(false, \"uncommitted-invoke-output\");");
+    if (output) {
+        (void)context.emit(pmacro::OutputLocation::AfterItem, *output);
+        (void)context.emit(pmacro::OutputLocation::NamespaceEnd, *output);
+    }
+    return std::unexpected(pmacro::Error::Failure);
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_budget(pmacro::FunctionInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto output = context.parse("static_assert(true, \"" + std::string(1024 * 1024, 'x') + "\");");
+    if (! output) return std::unexpected(pmacro::Error::Failure);
+    for (int i = 0; i < 17; ++i)
+        if (! context.emit(pmacro::OutputLocation::AfterItem, *output))
+            return std::unexpected(pmacro::Error::Failure);
+    return context.stream();
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_loop(pmacro::FunctionInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    return context.parse("[[pmacro::invoke(\"compiler-test::function_loop\")]];");
+}
+
+[[pmacro::define("compiler-test")]]
+auto function_depth(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (input.arguments.size() != 1) return std::unexpected(pmacro::Error::InvalidArgument);
+    auto value        = unsigned {};
+    auto text         = input.arguments[0].spelling();
+    auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc {} || end != text.data() + text.size())
+        return std::unexpected(pmacro::Error::InvalidArgument);
+    if (value == 0) return context.parse("inline constexpr int invoked_depth = 64;");
+    return context.parse("[[pmacro::invoke(\"compiler-test::function_depth\", " +
+                         std::to_string(value - 1) + ")]];");
+}
+
+[[pmacro::define("compiler-test")]]
+auto invoke_from_derive(pmacro::DeriveInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    return context.parse("[[pmacro::invoke(\"compiler-test::declarations\", "
+                         "inline constexpr int invoked_from_derive = 42;)]];");
+}
+
+static_assert(pmacro::host::macro_kind(pmacro::host::FunctionCallback { &declarations }) ==
+              pmacro::host::MacroKind::Function);
+static_assert(pmacro::host::macro_kind(pmacro::host::AttributeCallback { &replace }) ==
+              pmacro::host::MacroKind::Attr);
+static_assert(pmacro::host::macro_kind(pmacro::host::DeriveCallback { &after }) ==
+              pmacro::host::MacroKind::Derive);

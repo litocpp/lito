@@ -19,6 +19,19 @@ export {
 
     struct [[pmacro::derive("pmacro-basic::scoped_derive")]] ScopedValue {};
 
+    [[pmacro::invoke("pmacro-basic::scoped_invoke",
+                     InvokedValue,
+                     { value: (long), options: [missing_type, { text: "balanced,){}[]" }] })]];
+
+    [[pmacro::invoke("pmacro-basic-provider::invoke_tokens")]];
+    [[pmacro::invoke(
+        "pmacro-basic-provider::invoke_tokens", struct InvokedFirst { int value; };
+        struct InvokedSecond { InvokedFirst first; };
+        inline constexpr InvokedSecond invoked_pair { { 42 } };
+        namespace invoked_generated {
+            struct [[pmacro::derive("pmacro-basic::scoped_derive")]] InvokedDerived {};
+        })]];
+
     [[pmacro::attr("pmacro-basic-provider::identity")]]
     inline constexpr int prefix_value = 7;
 

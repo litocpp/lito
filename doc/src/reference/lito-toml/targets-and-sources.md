@@ -82,8 +82,41 @@ scope: `[[pmacro::define("wasmto")]]` on `bindgen` registers `wasmto::bindgen`. 
 the scope is the provider package name. The scope must be non-empty and must not contain `::`.
 Registration and dependency selection retain the actual provider package identity.
 `AttributeInput` definitions are invoked through `pmacro::attr`; `DeriveInput` definitions are invoked
-through `pmacro::derive`. Both receive and return token streams. Provider code and the public pmacro
-module use C++23 and `import std`.
+through `pmacro::derive`; `FunctionInput` definitions are invoked through `pmacro::invoke`. All three
+receive and return token streams. Provider code and the public pmacro module use C++23 and `import std`.
+
+A function macro is a standalone attribute declaration at global or namespace scope:
+
+```cpp
+[[pmacro::invoke("entity::entity_input", AlbumInput, AlbumFields, album, {
+    name: String,
+    sort_name: Option<String>,
+    track_count: i32
+})]];
+```
+
+Its provider is an ordinary `[[pmacro::define("entity")]]` function named `entity_input`, taking
+`FunctionInput` and `Context&`, returning `host::MacroResult`, and declared `noexcept`. Lito selects
+providers from the consumer's declared pmacro dependencies; the public scope does not replace the
+provider package identity. Raw scanning recognizes `pmacro::invoke` without interpreting the DSL or
+mistaking its argument tokens for module declarations or imports.
+
+The first argument must be the macro's string-literal identity. The remaining balanced tokens are
+passed as `FunctionInput::arguments`, excluding that identity and its separating comma. They need not
+be C++ expressions or declarations; their syntax belongs to the provider. `attribute_span` identifies
+the control attribute, while `invocation_span` includes the standalone declaration and its terminating
+semicolon. `scope` and `after_item_export` describe the real lexical and export context, without a
+host declaration. `Context::declaration()` returns `UnsupportedDeclaration` for this callback.
+
+The returned tokens replace the invocation with zero or more declarations. This does not use a
+preprocessor macro wrapper or pragma. Class members, statements, expressions and type positions are
+outside the function-macro invocation boundary.
+
+Write the invocation and its arguments directly in source. Combining it with preprocessing macros,
+whether as an outer wrapper or inside its arguments, is unsupported. Such combinations have no
+expansion or diagnostic guarantees; source-spelling checks may reject them.
+Conditional directives such as `#if` and `#ifdef` may surround an invocation; Clang selects the active
+branch before expansion. Conditional directives inside an invocation are unsupported.
 
 Expansion runs inside the consumer's normal Clang compilation. The active Parser and Sema consume
 generated tokens, and that compilation produces the object and BMI. Lito scans the original source
@@ -129,6 +162,10 @@ describes whether declarations emitted after the item are already exported, requ
 `export`, or are not exported. These fields change the host C++ ABI in pmacro 0.8.0; providers must
 be rebuilt with the matching builtin pmacro package.
 
+`FunctionInput`, `host::MacroKind::Function`, and `host::FunctionCallback` extend the host C++ ABI in
+pmacro 0.9.0. Providers and aggregate plugins must be rebuilt with the matching builtin package;
+Lito's aggregate recipe identity invalidates previous plugin artifacts.
+
 `TypeInfo::display` is diagnostic text. Available `type_id` fragments are C++ code representations,
 not stable type identities. `Context::tokens(fragment)` validates the fragment's source context and
 preserves its available diagnostic location. The model does not expose Clang objects, global type
@@ -140,9 +177,9 @@ can refer to later declarations in that block. It requires an enclosing namespac
 returned tokens precede its `AfterItem` emissions; emissions from a failed callback are discarded.
 These outputs enter the same compilation and do not write external files.
 
-Invocations use supported declaration positions and source spelling locations. Function-like macros,
-statement/expression/type-position macros, public mutable AST access, and arbitrary side files are
-not supported. The expansion depth is limited to 64 and generated output to 16 MiB per compilation.
+Invocations use supported declaration positions and source spelling locations. Statement/expression/
+type-position macros, public mutable AST access, and arbitrary side files are not supported. The
+expansion depth is limited to 64 and generated output to 16 MiB per compilation.
 
 ## `[[bin]]`
 
