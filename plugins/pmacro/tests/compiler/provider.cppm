@@ -368,6 +368,107 @@ auto function_diagnostic(pmacro::FunctionInput input, pmacro::Context& context) 
     return std::unexpected(pmacro::Error::Failure);
 }
 
+auto splice_source(pmacro::TokenStream scaffold,
+                   pmacro::TokenStream type,
+                   pmacro::TokenStream initializer,
+                   pmacro::Context&    context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto output = context.stream();
+    if (! output) return output;
+    for (auto token : scaffold) {
+        if (token.kind() == pmacro::TokenKind::Ident && token.spelling() == "TYPE_SLOT") {
+            if (! output->append(type)) return std::unexpected(pmacro::Error::Failure);
+        } else if (token.kind() == pmacro::TokenKind::Ident && token.spelling() == "INIT_SLOT") {
+            if (! output->append(initializer)) return std::unexpected(pmacro::Error::Failure);
+        } else if (token.kind() == pmacro::TokenKind::Group) {
+            auto children = splice_source(token.children(), type, initializer, context);
+            if (! children) return children;
+            auto group = context.group(token.delimiter(), *children, token.span());
+            if (! group || ! output->append(*group)) return std::unexpected(pmacro::Error::Failure);
+        } else if (! output->append(token)) {
+            return std::unexpected(pmacro::Error::Failure);
+        }
+    }
+    return output;
+}
+
+[[pmacro::define("compiler-test")]]
+auto spanned_derive(pmacro::DeriveInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto snapshot = context.declaration();
+    if (! snapshot) return std::unexpected(pmacro::Error::Failure);
+    const auto* record = std::get_if<pmacro::RecordInfo>(&(*snapshot)->data);
+    if (! record || record->fields.size() != 1 || ! record->fields[0].type.type_id ||
+        ! record->fields[0].initializer || ! record->fields[0].initializer->code)
+        return std::unexpected(pmacro::Error::Failure);
+    const auto& field       = record->fields[0];
+    auto        type        = context.tokens(*field.type.type_id);
+    auto        initializer = context.tokens(*field.initializer->code);
+    if (! type || ! initializer || type->size() == 0)
+        return std::unexpected(pmacro::Error::Failure);
+    const bool reject   = ! (*snapshot)->helpers.empty();
+    auto       scaffold = context.parse(
+        reject
+            ? "using rejected = typename TYPE_SLOT::Missing;"
+            : "using snapshot_type = TYPE_SLOT; inline constexpr auto snapshot_value = INIT_SLOT;",
+        (*type)[0].span());
+    if (! scaffold) return scaffold;
+    auto output = splice_source(*scaffold, *type, *initializer, context);
+    if (! output || ! context.emit(pmacro::OutputLocation::AfterItem, *output))
+        return std::unexpected(pmacro::Error::Failure);
+    return context.stream();
+}
+
+[[pmacro::define("compiler-test")]]
+auto spanned_record(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (input.arguments.size() != 5) return std::unexpected(pmacro::Error::InvalidArgument);
+    auto type          = input.arguments[0].children();
+    auto initializer   = input.arguments[2].children();
+    auto invalid       = context.parse("ignored", pmacro::Span {});
+    auto unbalanced    = context.parse("(", input.invocation_span);
+    auto invalid_group = context.group(pmacro::Delimiter::None, type, input.invocation_span);
+    if (invalid || invalid_group || unbalanced ||
+        invalid.error() != pmacro::Error::InvalidArgument ||
+        unbalanced.error() != pmacro::Error::InvalidArgument ||
+        invalid_group.error() != pmacro::Error::InvalidArgument)
+        return std::unexpected(pmacro::Error::Failure);
+    auto cyclic = context.stream();
+    if (! cyclic) return cyclic;
+    auto recursive = context.group(pmacro::Delimiter::Brace, *cyclic, input.invocation_span);
+    if (! recursive || cyclic->append(*recursive)) return std::unexpected(pmacro::Error::Failure);
+    const bool reject = input.arguments[4].spelling() == "reject";
+    auto       scaffold =
+        context.parse(reject ? "struct [[pmacro::derive(\"compiler-test::spanned_derive\"), "
+                               "pmacro::helper(\"compiler-test::spanned_derive\", reject)]] "
+                               "Spanned { TYPE_SLOT value = INIT_SLOT; };"
+                             : "struct [[pmacro::derive(\"compiler-test::spanned_derive\")]] "
+                               "Spanned { TYPE_SLOT value = INIT_SLOT; };",
+                      input.invocation_span);
+    if (! scaffold) return scaffold;
+    return splice_source(*scaffold, type, initializer, context);
+}
+
+[[pmacro::define("compiler-test")]]
+auto spanned_output(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (input.arguments.size() < 3) return std::unexpected(pmacro::Error::InvalidArgument);
+    auto output = context.parse("using Spanned =", input.invocation_span);
+    auto end    = context.parse(";", input.invocation_span);
+    auto type   = context.stream();
+    if (! output || ! end || ! type) return std::unexpected(pmacro::Error::Failure);
+    for (std::size_t i = 2; i < input.arguments.size(); ++i)
+        if (! type->append(input.arguments[i])) return std::unexpected(pmacro::Error::Failure);
+    if (! output->append(*type) || ! output->append(*end))
+        return std::unexpected(pmacro::Error::Failure);
+    const auto mode = input.arguments[0].spelling();
+    if (mode == "returned") return output;
+    const auto location =
+        mode == "after" ? pmacro::OutputLocation::AfterItem : pmacro::OutputLocation::NamespaceEnd;
+    if (! context.emit(location, *output)) return std::unexpected(pmacro::Error::Failure);
+    return context.stream();
+}
+
 [[pmacro::define("compiler-test")]]
 auto declarations(pmacro::FunctionInput input, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {

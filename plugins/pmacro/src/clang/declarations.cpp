@@ -4,6 +4,7 @@ module;
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/Expr.h>
 #include <clang/AST/DeclTemplate.h>
+#include <clang/AST/TypeLoc.h>
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Lex/Lexer.h>
 #include <llvm/Support/raw_ostream.h>
@@ -93,7 +94,7 @@ auto SourceRegistry::spelling(clang::CharSourceRange range) const
     -> std::expected<Span, SourceError> {
     if (range.isInvalid()) return std::unexpected(SourceError::Unavailable);
     auto&      manager = compiler_.getSourceManager();
-    const auto begin = range.getBegin(), end = range.getEnd();
+    const auto begin = output_location(range.getBegin()), end = output_location(range.getEnd());
     // Different expansion records can spell unrelated pieces of one declaration.
     if ((begin.isMacroID() || end.isMacroID()) &&
         (! begin.isMacroID() || ! end.isMacroID() ||
@@ -123,7 +124,7 @@ auto SourceRegistry::info(clang::SourceRange range, clang::SourceLocation anchor
     if (anchor.isInvalid()) anchor = range.getBegin();
     anchor          = compiler_.getSourceManager().getExpansionLoc(anchor);
     auto diagnostic = file_span(clang::CharSourceRange::getTokenRange(anchor, anchor));
-    if (diagnostic) result.diagnostic = *diagnostic;
+    if (diagnostic) result.diagnostic = output_source(*diagnostic).span;
     return result;
 }
 
@@ -170,6 +171,7 @@ auto SourceRegistry::attribute_span(const clang::AnnotateAttr& attribute) const
 }
 
 auto SourceRegistry::rewrite_span(clang::SourceRange range) const -> std::optional<Span> {
+    range = { output_location(range.getBegin()), output_location(range.getEnd()) };
     if (range.getBegin().isMacroID() || range.getEnd().isMacroID()) return {};
     auto span = spelling(clang::CharSourceRange::getTokenRange(range));
     if (! span) return {};
@@ -237,6 +239,121 @@ auto SourceRegistry::fragment_source(const CodeFragment& fragment, Span fallback
     const auto anchor = fragment.source.diagnostic.value_or(fallback);
     if (! valid(anchor)) return std::unexpected(FragmentError::InvalidFragment);
     return FragmentSource { anchor, false };
+}
+
+auto SourceRegistry::register_output(clang::FileID file, std::vector<OutputOrigin> origins)
+    -> void {
+    const auto                buffer = compiler_.getSourceManager().getBufferData(file);
+    std::vector<OutputOrigin> merged;
+    for (auto& origin : origins) {
+        if (! merged.empty()) {
+            auto&      previous    = merged.back();
+            const auto gap         = buffer.slice(previous.end, origin.begin);
+            const bool adjacent    = previous.end <= origin.begin && gap.trim().empty();
+            const bool same_anchor = previous.origin == CodeOrigin::Rendered &&
+                                     origin.origin == CodeOrigin::Rendered &&
+                                     previous.span.source() == origin.span.source() &&
+                                     previous.span.begin() == origin.span.begin() &&
+                                     previous.span.end() == origin.span.end();
+            // Attribute brackets must share an expansion record to remain one compound token.
+            const auto spelling = buffer.slice(previous.begin, origin.end);
+            const bool brackets = ! spelling.empty() &&
+                                  (spelling.front() == '[' || spelling.front() == ']') &&
+                                  std::all_of(spelling.begin(), spelling.end(), [&](char c) {
+                                      return c == spelling.front();
+                                  });
+            const bool spelled_brackets = brackets && previous.origin == CodeOrigin::Spelled &&
+                                          origin.origin == CodeOrigin::Spelled &&
+                                          previous.span.source() == origin.span.source() &&
+                                          previous.span.end() == origin.span.begin();
+            if (adjacent && (same_anchor || spelled_brackets)) {
+                previous.end = origin.end;
+                if (spelled_brackets)
+                    previous.span =
+                        Span(previous.span.source(), previous.span.begin(), origin.span.end());
+                continue;
+            }
+        }
+        merged.push_back(std::move(origin));
+    }
+    output_origins_.emplace(file.getHashValue(), std::move(merged));
+}
+
+auto SourceRegistry::output_source(Span span, bool exact) const -> FragmentSource {
+    if (parent_) return parent_->output_source(span, exact);
+    FragmentSource result { span, exact };
+    for (unsigned depth = 0; depth < 64 && valid(result.span); ++depth) {
+        const auto found = output_origins_.find(file(result.span).getHashValue());
+        if (found == output_origins_.end()) break;
+        const auto& origins = found->second;
+        const auto  next    = std::lower_bound(origins.begin(),
+                                               origins.end(),
+                                               result.span.begin(),
+                                               [](const auto& origin, auto begin) {
+                                               return origin.end <= begin;
+                                               });
+        if (next == origins.end() || next->begin > result.span.begin() || ! valid(next->span))
+            break;
+        auto       mapped       = next->span;
+        const bool mapped_exact = result.exact && next->origin == CodeOrigin::Spelled &&
+                                  result.span.end() <= next->end &&
+                                  next->end - next->begin == mapped.end() - mapped.begin();
+        if (mapped_exact)
+            mapped = Span(mapped.source(),
+                          mapped.begin() + result.span.begin() - next->begin,
+                          mapped.begin() + result.span.end() - next->begin);
+        if (mapped.source() == result.span.source() && mapped.begin() == result.span.begin() &&
+            mapped.end() == result.span.end())
+            break;
+        result = { mapped, mapped_exact };
+    }
+    return result;
+}
+
+auto SourceRegistry::output_location(clang::SourceLocation location) const
+    -> clang::SourceLocation {
+    auto& manager = compiler_.getSourceManager();
+    // Snapshots read continuous generated spelling without unwrapping ordinary C++ macros.
+    if (location.isMacroID() &&
+        output_expansions_.contains(manager.getFileID(location).getHashValue()))
+        return manager.getSpellingLoc(location);
+    return location;
+}
+
+auto SourceRegistry::expand_output(clang::SourceLocation location, unsigned length)
+    -> clang::SourceLocation {
+    auto& manager = compiler_.getSourceManager();
+    auto  span    = file_span(
+        clang::CharSourceRange::getCharRange(location, location.getLocWithOffset(length)));
+    if (! span) return location;
+    auto found = output_origins_.find(manager.getFileID(location).getHashValue());
+    if (found == output_origins_.end()) return location;
+    auto entry = std::lower_bound(found->second.begin(),
+                                  found->second.end(),
+                                  span->begin(),
+                                  [](const auto& origin, auto begin) {
+                                      return origin.end <= begin;
+                                  });
+    if (entry == found->second.end() || entry->begin > span->begin() || span->end() > entry->end)
+        return location;
+    if (entry->expansion.isValid())
+        return entry->expansion.getLocWithOffset(span->begin() - entry->begin);
+    const auto source = output_source(Span(span->source(), entry->begin, entry->end));
+    if (! valid(source.span) ||
+        (source.span.source() == span->source() && source.span.begin() == span->begin() &&
+         source.span.end() == span->end()))
+        return location;
+    const auto spelling =
+        manager.getLocForStartOfFile(manager.getFileID(location)).getLocWithOffset(entry->begin);
+    const auto expansion = manager.createExpansionLoc(
+        spelling,
+        this->location(source.span),
+        this->location(Span(source.span.source(), source.span.end(), source.span.end())),
+        entry->end - entry->begin,
+        false);
+    output_expansions_.insert(manager.getFileID(expansion).getHashValue());
+    entry->expansion = expansion;
+    return expansion.getLocWithOffset(span->begin() - entry->begin);
 }
 
 auto DeclarationStore::attributes(const clang::Decl& declaration) -> const PreparedAttributes& {
@@ -548,15 +665,18 @@ auto DeclarationStore::build(const clang::Decl& declaration, FunctionForm form)
         for (const auto* field : record->fields()) {
             FieldInfo value;
             if (field->getIdentifier()) value.name = field->getNameAsString();
-            value.kind     = field->isAnonymousStructOrUnion() ? FieldKind::AnonymousRecord
-                             : field->isUnnamedBitField()      ? FieldKind::UnnamedBitField
-                                                               : FieldKind::Named;
-            value.access   = field->getAccess() == clang::AS_private     ? Access::Private
-                             : field->getAccess() == clang::AS_protected ? Access::Protected
-                                                                         : Access::Public;
-            value.mutable_ = field->isMutable();
-            value.source   = sources_.info(field->getSourceRange(), field->getLocation());
-            value.type     = type(field->getType(), value.source);
+            value.kind       = field->isAnonymousStructOrUnion() ? FieldKind::AnonymousRecord
+                               : field->isUnnamedBitField()      ? FieldKind::UnnamedBitField
+                                                                 : FieldKind::Named;
+            value.access     = field->getAccess() == clang::AS_private     ? Access::Private
+                               : field->getAccess() == clang::AS_protected ? Access::Protected
+                                                                           : Access::Public;
+            value.mutable_   = field->isMutable();
+            value.source     = sources_.info(field->getSourceRange(), field->getLocation());
+            auto type_source = value.source;
+            if (const auto* info = field->getTypeSourceInfo())
+                type_source = sources_.info(info->getTypeLoc().getSourceRange());
+            value.type = type(field->getType(), std::move(type_source));
             if (field->isBitField()) value.bit_width = expression(field->getBitWidth());
             if (field->hasInClassInitializer())
                 value.initializer = expression(field->getInClassInitializer());

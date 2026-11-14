@@ -36,6 +36,7 @@ auto prepare_function_invocation(clang::Sema&,
                                  clang::Decl&,
                                  const clang::AnnotateAttr&,
                                  clang::CharSourceRange) -> void;
+auto generated_spelling(clang::Sema&, clang::SourceLocation) -> clang::SourceLocation;
 
 constexpr llvm::StringLiteral define_annotation         = "pmacro.define";
 constexpr llvm::StringLiteral define_scope_annotation   = "pmacro.define:";
@@ -97,8 +98,8 @@ auto parse_string_arguments(clang::Sema&             sema,
 
     auto&       manager  = sema.getSourceManager();
     const auto& language = sema.getLangOpts();
-    auto        location =
-        clang::Lexer::getLocForEndOfToken(attribute.getRange().getEnd(), 0, manager, language);
+    auto        location = clang::Lexer::getLocForEndOfToken(
+        generated_spelling(sema, attribute.getRange().getEnd()), 0, manager, language);
     auto token = clang::Token {};
     if (clang::Lexer::getRawToken(location, token, manager, language, true) ||
         ! token.is(clang::tok::l_paren)) {
@@ -247,7 +248,10 @@ public:
             auto&       source_manager = sema.getSourceManager();
             const auto& language       = sema.getLangOpts();
             auto        location       = clang::Lexer::getLocForEndOfToken(
-                attribute.getRange().getEnd(), 0, source_manager, language);
+                generated_spelling(sema, attribute.getRange().getEnd()),
+                0,
+                source_manager,
+                language);
             auto token = clang::Token {};
             if (! clang::Lexer::getRawToken(location, token, source_manager, language, true) &&
                 token.is(clang::tok::l_paren)) {
@@ -391,7 +395,7 @@ public:
     auto handleDeclAttribute(clang::Sema&             sema,
                              clang::Decl*             declaration,
                              const clang::ParsedAttr& attribute) const -> AttrHandling override {
-        if (attribute.getLoc().isMacroID()) {
+        if (generated_spelling(sema, attribute.getLoc()).isMacroID()) {
             report(sema.getDiagnostics(),
                    attribute.getLoc(),
                    clang::DiagnosticsEngine::Error,
@@ -508,6 +512,7 @@ struct StoredToken {
     pmacro::Spacing            spacing { pmacro::Spacing::Alone };
     std::string                spelling;
     pmacro::Span               span {};
+    pmacro::CodeOrigin         origin { pmacro::CodeOrigin::Rendered };
     pmacro::host::StreamHandle children {};
     bool                       leading_space {};
 };
@@ -605,9 +610,11 @@ public:
                 const auto children = create_stored_stream();
                 auto&      parent   = *get_stream(current);
                 parent.tokens.push_back(StoredToken {
-                    .kind          = pmacro::TokenKind::Group,
-                    .delimiter     = delimiter(token.getKind()),
-                    .span          = token_span,
+                    .kind      = pmacro::TokenKind::Group,
+                    .delimiter = delimiter(token.getKind()),
+                    .span      = token_span,
+                    .origin =
+                        exact_spans && span.source() ? CodeOrigin::Spelled : CodeOrigin::Rendered,
                     .children      = children,
                     .leading_space = token.hasLeadingSpace(),
                 });
@@ -644,9 +651,10 @@ public:
                 stream.tokens.back().spacing = pmacro::Spacing::Joint;
             }
             stream.tokens.push_back(StoredToken {
-                .kind          = kind,
-                .spelling      = std::move(spelling),
-                .span          = token_span,
+                .kind     = kind,
+                .spelling = std::move(spelling),
+                .span     = token_span,
+                .origin = exact_spans && span.source() ? CodeOrigin::Spelled : CodeOrigin::Rendered,
                 .leading_space = token.hasLeadingSpace(),
             });
         }
@@ -654,8 +662,8 @@ public:
         return root;
     }
 
-    auto render(const pmacro::TokenStream& stream) const -> std::optional<std::string> {
-        auto       output = std::string {};
+    auto render(const pmacro::TokenStream& stream) const -> std::optional<RenderedOutput> {
+        auto       output = RenderedOutput {};
         const auto handle = token_stream_handle(stream);
         if (handle == 0) return std::nullopt;
         if (! render_stream(handle, output)) return std::nullopt;
@@ -780,19 +788,37 @@ private:
         return { "[", "]" };
     }
 
-    auto render_stream(pmacro::host::StreamHandle handle, std::string& output) const -> bool {
+    auto render_stream(pmacro::host::StreamHandle handle, RenderedOutput& output) const -> bool {
         const auto* stream = get_stream(handle);
         if (stream == nullptr) return false;
+        const auto write = [&](llvm::StringRef text, Span span, CodeOrigin origin) {
+            const auto begin = static_cast<std::uint32_t>(output.text.size());
+            output.text.append(text.data(), text.size());
+            if (! sources_.valid(span)) return;
+            const auto source = sources_.output_source(span, origin == CodeOrigin::Spelled);
+            output.origins.push_back({ begin,
+                                       static_cast<std::uint32_t>(output.text.size()),
+                                       source.span,
+                                       source.exact ? CodeOrigin::Spelled : CodeOrigin::Rendered });
+        };
         for (const auto& token : stream->tokens) {
-            if (token.leading_space && ! output.empty()) output.push_back(' ');
+            if (token.leading_space && ! output.text.empty()) output.text.push_back(' ');
             if (token.kind != pmacro::TokenKind::Group) {
-                output.append(token.spelling);
+                write(token.spelling, token.span, token.origin);
                 continue;
             }
             const auto [opening, closing] = group_spelling(token.delimiter);
-            output.append(opening);
+            const bool exact =
+                token.origin == CodeOrigin::Spelled && token.span.end() > token.span.begin();
+            write(opening,
+                  exact ? Span(token.span.source(), token.span.begin(), token.span.begin() + 1)
+                        : token.span,
+                  token.origin);
             if (! render_stream(token.children, output)) return false;
-            output.append(closing);
+            write(closing,
+                  exact ? Span(token.span.source(), token.span.end() - 1, token.span.end())
+                        : token.span,
+                  token.origin);
         }
         return true;
     }
@@ -821,7 +847,7 @@ private:
             return std::unexpected(Error::InvalidArgument);
         }
         auto text = render(make_token_stream(output));
-        if (! text || ! accept_output(*text, sources_.location(call_site_)))
+        if (! text || ! accept_output(text->text, sources_.location(call_site_)))
             return std::unexpected(Error::Failure);
         outputs_.emplace_back(location, make_token_stream(output));
         return {};
@@ -834,7 +860,30 @@ private:
 
     auto parse_stream(std::string_view source) noexcept
         -> std::expected<pmacro::host::StreamHandle, pmacro::Error> override {
-        return make_stream(llvm::StringRef(source), {});
+        return make_stream(llvm::StringRef(source), {}, false);
+    }
+
+    auto parse_stream(std::string_view source, Span diagnostic_anchor) noexcept
+        -> std::expected<pmacro::host::StreamHandle, pmacro::Error> override {
+        if (! valid_span(diagnostic_anchor)) return std::unexpected(Error::InvalidArgument);
+        auto handle = make_stream(llvm::StringRef(source), diagnostic_anchor, false, true);
+        if (! handle) return std::unexpected(Error::InvalidArgument);
+        return handle;
+    }
+
+    auto group_token(Delimiter                  delimiter,
+                     pmacro::host::StreamHandle children,
+                     Span                       diagnostic_anchor) noexcept
+        -> std::expected<pmacro::host::RuntimeToken, Error> override {
+        if ((delimiter != Delimiter::Parenthesis && delimiter != Delimiter::Brace &&
+             delimiter != Delimiter::Bracket) ||
+            ! get_stream(children) || ! valid_span(diagnostic_anchor))
+            return std::unexpected(Error::InvalidArgument);
+        return pmacro::host::RuntimeToken { .kind      = TokenKind::Group,
+                                            .delimiter = delimiter,
+                                            .span      = diagnostic_anchor,
+                                            .origin    = CodeOrigin::Rendered,
+                                            .children  = children };
     }
 
     auto stream_size(pmacro::host::StreamHandle handle) const noexcept
@@ -856,6 +905,7 @@ private:
             .spacing   = token.spacing,
             .spelling  = token.spelling,
             .span      = token.span,
+            .origin    = token.origin,
             .children  = token.children,
         };
     }
@@ -868,6 +918,16 @@ private:
         if (token.kind == pmacro::TokenKind::Group) {
             if (token.delimiter == pmacro::Delimiter::None || get_stream(token.children) == nullptr)
                 return std::unexpected(pmacro::Error::InvalidArgument);
+            std::vector<pmacro::host::StreamHandle>        pending { token.children };
+            std::unordered_set<pmacro::host::StreamHandle> visited;
+            while (! pending.empty()) {
+                const auto child = pending.back();
+                pending.pop_back();
+                if (child == handle) return std::unexpected(pmacro::Error::InvalidArgument);
+                if (! visited.insert(child).second) continue;
+                for (const auto& item : get_stream(child)->tokens)
+                    if (item.kind == TokenKind::Group) pending.push_back(item.children);
+            }
         } else if (token.delimiter != pmacro::Delimiter::None || token.children != 0) {
             return std::unexpected(pmacro::Error::InvalidArgument);
         }
@@ -889,6 +949,7 @@ private:
             .spacing       = token.spacing,
             .spelling      = std::string(token.spelling),
             .span          = token.span,
+            .origin        = token.origin,
             .children      = token.children,
             .leading_space = leading_space,
         });

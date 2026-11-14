@@ -15,6 +15,19 @@ struct FragmentSource {
     bool exact;
 };
 
+struct OutputOrigin {
+    std::uint32_t         begin;
+    std::uint32_t         end;
+    Span                  span;
+    CodeOrigin            origin;
+    clang::SourceLocation expansion;
+};
+
+struct RenderedOutput {
+    std::string               text;
+    std::vector<OutputOrigin> origins;
+};
+
 struct LexicalContext {
     DeclarationScope scope             = DeclarationScope::Other;
     AfterItemExport  after_item_export = AfterItemExport::NotExported;
@@ -44,6 +57,10 @@ public:
         -> std::expected<CodeFragment, RepresentationError>;
     auto fragment_source(const CodeFragment& fragment, Span fallback) const
         -> std::expected<FragmentSource, FragmentError>;
+    auto output_source(Span span, bool exact = true) const -> FragmentSource;
+    auto register_output(clang::FileID file, std::vector<OutputOrigin> origins) -> void;
+    auto output_location(clang::SourceLocation location) const -> clang::SourceLocation;
+    auto expand_output(clang::SourceLocation location, unsigned length) -> clang::SourceLocation;
 
 private:
     auto file_span(clang::CharSourceRange range) const -> std::expected<Span, SourceError>;
@@ -57,6 +74,8 @@ private:
     Span                                                                        input_;
     mutable std::vector<std::pair<std::uint64_t, clang::FileID>>                files_;
     mutable std::unordered_map<const clang::AnnotateAttr*, std::optional<Span>> attribute_spans_;
+    std::unordered_map<unsigned, std::vector<OutputOrigin>>                     output_origins_;
+    std::unordered_set<unsigned>                                                output_expansions_;
 };
 
 struct PreparedHelper {

@@ -303,6 +303,59 @@ invoke_diagnostic.write_text('''namespace diagnostic {
 run("invoke-diagnostic-position", flags + plugin + ["-fsyntax-only", str(invoke_diagnostic)],
     f"{invoke_diagnostic}:3:5: error: invoke field diagnostic", failures=failures)
 
+for mode in ["returned", "after", "end"]:
+    path = build / f"native-{mode}-type.cpp"
+    path.write_text('''namespace native_type {
+[[pmacro::invoke("compiler-test::spanned_output", ''' + mode + ''',
+    MissingType
+)]];
+}
+''')
+    run(f"native-{mode}-type-position", flags + plugin + ["-fsyntax-only", str(path)],
+        f"{path}:3:5: error: unknown type name 'MissingType'", failures=failures)
+
+native_token = build / "native-group-token.cpp"
+native_token.write_text('''namespace native_token {
+[[pmacro::invoke("compiler-test::spanned_output", returned,
+    long[missing_bound]
+)]];
+}
+''')
+run("native-group-token-position", flags + plugin + ["-fsyntax-only", str(native_token)],
+    f"{native_token}:3:10: error: use of undeclared identifier 'missing_bound'", failures=failures)
+
+spanned_nested = build / "native-nested-derive.cpp"
+spanned_nested.write_text('''namespace mapped {
+using Count = long;
+[[pmacro::invoke("compiler-test::spanned_record", (Count), ((40 + 2)), accept)]];
+static_assert(__is_same(snapshot_type, Count));
+static_assert(snapshot_value == 42 && Spanned{}.value == 42);
+}
+''')
+run("native-nested-derive-snapshot", flags + plugin + ["-fsyntax-only", str(spanned_nested)],
+    failures=failures)
+
+spanned_nested_error = build / "native-nested-derive-error.cpp"
+spanned_nested_error.write_text('''namespace mapped {
+struct Complete {};
+[[pmacro::invoke("compiler-test::spanned_record",
+    (Complete), (Complete{}), reject
+)]];
+}
+''')
+run("native-nested-derive-position", flags + plugin + ["-fsyntax-only", str(spanned_nested_error)],
+    f"{spanned_nested_error}:4:6: error: no type named 'Missing'", failures=failures)
+
+native_initializer = build / "native-initializer.cpp"
+native_initializer.write_text('''namespace mapped {
+[[pmacro::invoke("compiler-test::spanned_record", (long),
+    (missing_initializer), accept
+)]];
+}
+''')
+run("native-initializer-position", flags + plugin + ["-fsyntax-only", str(native_initializer)],
+    f"{native_initializer}:3:6: error: use of undeclared identifier 'missing_initializer'", failures=failures)
+
 if failures:
     raise RuntimeError("\n".join(failures))
 

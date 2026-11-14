@@ -326,6 +326,7 @@ struct RuntimeToken {
     Spacing          spacing { Spacing::Alone };
     std::string_view spelling;
     Span             span;
+    CodeOrigin       origin { CodeOrigin::Rendered };
     StreamHandle     children {};
 };
 
@@ -342,10 +343,12 @@ public:
     constexpr auto spacing() const noexcept -> Spacing { return value_.spacing; }
     constexpr auto spelling() const noexcept -> std::string_view { return value_.spelling; }
     constexpr auto span() const noexcept -> Span { return value_.span; }
+    constexpr auto origin() const noexcept -> CodeOrigin { return value_.origin; }
     auto           children() const noexcept -> TokenStream;
 
 private:
     friend class TokenStream;
+    friend class Context;
 
     constexpr TokenTree(host::Runtime* runtime, host::RuntimeToken value) noexcept
         : runtime_(runtime), value_(value) {}
@@ -417,6 +420,12 @@ public:
         -> std::expected<TokenStream, FragmentError>;
     auto stream() const noexcept -> std::expected<TokenStream, Error>;
     auto parse(std::string_view source) const noexcept -> std::expected<TokenStream, Error>;
+    // Generated text is diagnosed at the anchor, not treated as source spelling.
+    auto parse(std::string_view source, Span diagnostic_anchor) const noexcept
+        -> std::expected<TokenStream, Error>;
+    auto group(Delimiter          delimiter,
+               const TokenStream& children,
+               Span diagnostic_anchor) const noexcept -> std::expected<TokenTree, Error>;
     auto emit(OutputLocation location, const TokenStream& output) const noexcept
         -> std::expected<void, Error>;
     auto diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept
@@ -472,6 +481,11 @@ public:
     virtual auto create_stream() noexcept -> std::expected<StreamHandle, Error> = 0;
     virtual auto parse_stream(std::string_view source) noexcept
         -> std::expected<StreamHandle, Error> = 0;
+    virtual auto parse_stream(std::string_view source, Span diagnostic_anchor) noexcept
+        -> std::expected<StreamHandle, Error> = 0;
+    virtual auto
+    group_token(Delimiter delimiter, StreamHandle children, Span diagnostic_anchor) noexcept
+        -> std::expected<RuntimeToken, Error> = 0;
     virtual auto stream_size(StreamHandle handle) const noexcept
         -> std::expected<std::size_t, Error> = 0;
     virtual auto stream_token(StreamHandle handle, std::size_t index) const noexcept
@@ -647,6 +661,25 @@ auto Context::parse(std::string_view source) const noexcept -> std::expected<Tok
     auto handle = runtime_->parse_stream(source);
     if (! handle) return std::unexpected(handle.error());
     return runtime_->make_token_stream(*handle);
+}
+
+auto Context::parse(std::string_view source, Span diagnostic_anchor) const noexcept
+    -> std::expected<TokenStream, Error> {
+    if (runtime_ == nullptr) return std::unexpected(Error::InvalidArgument);
+    auto handle = runtime_->parse_stream(source, diagnostic_anchor);
+    if (! handle) return std::unexpected(handle.error());
+    return runtime_->make_token_stream(*handle);
+}
+
+auto Context::group(Delimiter          delimiter,
+                    const TokenStream& children,
+                    Span diagnostic_anchor) const noexcept -> std::expected<TokenTree, Error> {
+    if (runtime_ == nullptr) return std::unexpected(Error::InvalidArgument);
+    const auto handle = runtime_->token_stream_handle(children);
+    if (! handle) return std::unexpected(Error::InvalidArgument);
+    auto token = runtime_->group_token(delimiter, handle, diagnostic_anchor);
+    if (! token) return std::unexpected(token.error());
+    return TokenTree(runtime_, *token);
 }
 
 auto Context::diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept

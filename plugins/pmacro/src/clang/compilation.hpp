@@ -92,6 +92,9 @@ public:
         compilations.erase(sema_);
         sema_ = nullptr;
     }
+    auto generated_spelling(clang::SourceLocation location) -> clang::SourceLocation {
+        return state_.sources().output_location(location);
+    }
 
     auto prepare(clang::Decl& declaration) -> void {
         if (annotation(declaration, derive_annotation)) derivations_.insert(&declaration);
@@ -278,8 +281,9 @@ private:
         const auto& manager = compiler_.getSourceManager();
         auto        tokens  = raw(declaration.getBeginLoc());
         for (std::size_t index = 0; index + 1 < tokens.size(); ++index) {
-            if (manager.isBeforeInTranslationUnit(declaration.getEndLoc(),
-                                                  tokens[index].getLocation()))
+            if (manager.isBeforeInTranslationUnit(
+                    state_.sources().output_location(declaration.getEndLoc()),
+                    tokens[index].getLocation()))
                 break;
             if (excluded_invocation(tokens[index].getLocation()) ||
                 ! tokens[index].is(clang::tok::l_square) ||
@@ -367,6 +371,7 @@ private:
         compiler_.getPreprocessor().EnterTokenStream(std::move(owned), tokens.size(), true, true);
     }
     auto raw(clang::SourceLocation begin) -> llvm::ArrayRef<clang::Token> {
+        begin                  = state_.sources().output_location(begin);
         auto& manager          = compiler_.getSourceManager();
         auto  file             = manager.getFileID(begin);
         auto [entry, inserted] = files_.try_emplace(file.getHashValue());
@@ -401,13 +406,27 @@ private:
                              });
         return llvm::ArrayRef<clang::Token>(tokens).drop_front(first - tokens.begin());
     }
-    auto lex(llvm::StringRef text) -> std::vector<clang::Token> {
+    auto lex(RenderedOutput output) -> std::vector<clang::Token> {
         auto& manager = compiler_.getSourceManager();
-        auto  file =
-            manager.createFileID(llvm::MemoryBuffer::getMemBufferCopy(text, "<pmacro-output>"));
-        origins_[file.getHashValue()] = active_trace_;
-        auto tokens                   = raw(manager.getLocForStartOfFile(file));
-        return { tokens.begin(), tokens.end() };
+        auto  file    = manager.createFileID(
+            llvm::MemoryBuffer::getMemBufferCopy(output.text, "<pmacro-output>"));
+        state_.sources().register_output(file, std::move(output.origins));
+        origins_[file.getHashValue()]    = active_trace_;
+        auto                      tokens = raw(manager.getLocForStartOfFile(file));
+        std::vector<clang::Token> result(tokens.begin(), tokens.end());
+        for (auto& token : result)
+            token.setLocation(
+                state_.sources().expand_output(token.getLocation(), token.getLength()));
+        return result;
+    }
+    auto lex(llvm::StringRef text) -> std::vector<clang::Token> {
+        return lex(RenderedOutput { text.str(), {} });
+    }
+    auto lex_input(const PreparedInput& input) -> std::vector<clang::Token> {
+        auto       text = clean_input(input);
+        const auto size = static_cast<std::uint32_t>(text.size());
+        return lex(
+            RenderedOutput { std::move(text), { { 0, size, input.span, CodeOrigin::Spelled } } });
     }
     static auto enclosing_namespace(clang::DeclContext* context) -> clang::NamespaceDecl* {
         for (; context; context = context->getLexicalParent())
@@ -441,7 +460,7 @@ private:
                  "function macro requires an unconsumed declaration or body");
             return {};
         }
-        auto  begin   = declaration.getBeginLoc();
+        auto  begin   = state_.sources().output_location(declaration.getBeginLoc());
         auto& manager = compiler_.getSourceManager();
         for (const auto* attribute : declaration.specific_attrs<clang::AnnotateAttr>()) {
             auto span = state_.sources().attribute_span(*attribute);
@@ -460,7 +479,8 @@ private:
             input.namespace_end = namespace_end(declaration.getLexicalDeclContext());
         auto tokens  = raw(begin);
         auto current = std::find_if(tokens.begin(), tokens.end(), [&](const auto& t) {
-            return t.getLocation() == p.getCurToken().getLocation();
+            return t.getLocation() ==
+                   state_.sources().output_location(p.getCurToken().getLocation());
         });
         if (current == tokens.end()) {
             fail(declaration.getLocation(), "macro input is not at a declaration boundary");
@@ -578,7 +598,8 @@ private:
                 replay.push_back(token);
                 break;
             }
-            if (token.getLocation() == anchor) {
+            if (state_.sources().output_location(token.getLocation()) ==
+                state_.sources().output_location(anchor)) {
                 append(replay, std::move(output));
                 replay.push_back(token);
                 break;
@@ -589,7 +610,8 @@ private:
     }
     auto insert_after(clang::SourceLocation anchor, std::vector<clang::Token> output) -> void {
         if (output.empty()) return;
-        if (parser().getCurToken().getLocation() == anchor) {
+        if (state_.sources().output_location(parser().getCurToken().getLocation()) ==
+            state_.sources().output_location(anchor)) {
             enter(std::move(output));
             return;
         }
@@ -599,7 +621,8 @@ private:
             clang::Token token;
             pp.Lex(token);
             replay.push_back(token);
-            if (token.getLocation() == anchor) {
+            if (state_.sources().output_location(token.getLocation()) ==
+                state_.sources().output_location(anchor)) {
                 append(replay, std::move(output));
                 break;
             }
@@ -715,7 +738,7 @@ private:
                 const clang::AnnotateAttr& attribute,
                 host::MacroKind            kind,
                 llvm::StringRef            argument_override = {},
-                std::optional<Span>        argument_span     = {}) -> std::optional<std::string> {
+                std::optional<Span>        argument_span = {}) -> std::optional<RenderedOutput> {
         const auto prefix   = kind == host::MacroKind::Derive     ? derive_annotation
                               : kind == host::MacroKind::Function ? invoke_annotation
                                                                   : attr_annotation;
@@ -810,7 +833,7 @@ private:
         auto text = state_.render(*result);
         if (! text)
             fail(attribute.getLocation(), "pmacro provider returned an invalid TokenStream");
-        else if (! state_.accept_output(*text, attribute.getLocation())) {
+        else if (! state_.accept_output(text->text, attribute.getLocation())) {
             state_.take_outputs();
             return {};
         }
@@ -826,7 +849,7 @@ private:
         const auto original_body    = input.body;
         const auto original_current = input.current;
         const auto target_namespace = input.namespace_end;
-        auto       original         = lex(clean_input(input));
+        auto       original         = lex_input(input);
         auto       head             = definition_open(original);
         auto       queue            = input.controls;
         std::erase_if(queue, [](const auto& control) {
@@ -876,7 +899,9 @@ private:
             input.source = *state_.sources().text(*span);
             input.span   = *span;
             input.tokens = output;
-            input.body   = definition_open(output);
+            for (auto& token : input.tokens)
+                token.setLocation(state_.sources().output_location(token.getLocation()));
+            input.body = definition_open(output);
             input.snapshot.reset();
             input.controls = controls(input);
             for (const auto& control : input.controls) {
@@ -887,7 +912,7 @@ private:
                     queue.push_back(control);
             }
         }
-        output = lex(clean_input(input));
+        output = lex_input(input);
         if (original_body && head) {
             unsigned depth = 0;
             for (std::size_t at = *head; at < output.size(); ++at) {
@@ -948,11 +973,14 @@ private:
                 return;
             }
             auto& pp = compiler_.getPreprocessor();
-            if (parser().getCurToken().getLocation() != original_end)
+            if (state_.sources().output_location(parser().getCurToken().getLocation()) !=
+                state_.sources().output_location(original_end))
                 for (;;) {
                     clang::Token token;
                     pp.Lex(token);
-                    if (token.getLocation() == original_end) break;
+                    if (state_.sources().output_location(token.getLocation()) ==
+                        state_.sources().output_location(original_end))
+                        break;
                     if (token.is(clang::tok::eof)) {
                         fail(attribute.getLocation(),
                              "lost macro input while replacing definition");
@@ -996,6 +1024,12 @@ private:
 auto prepare_invocation(clang::Sema& sema, clang::Decl& declaration) -> void {
     auto found = compilations.find(&sema);
     if (found != compilations.end()) found->second->prepare(declaration);
+}
+
+auto generated_spelling(clang::Sema& sema, clang::SourceLocation location)
+    -> clang::SourceLocation {
+    auto found = compilations.find(&sema);
+    return found == compilations.end() ? location : found->second->generated_spelling(location);
 }
 
 auto prepare_function_invocation(clang::Sema&               sema,
