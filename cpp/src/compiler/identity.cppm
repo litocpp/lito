@@ -93,47 +93,95 @@ auto option_effect_name(CppVendorOptionEffect effect) -> ref<str> {
     return "unknown"_str;
 }
 
-auto append_semantic_identity(String& output, const CppCompileOptions& options) -> void {
-    push_identity(output, "standard"_str, options.language.standard.as_str());
-    push_identity(output, "exceptions"_str, options.language.exceptions);
-    push_identity(output, "rtti"_str, options.language.rtti);
-    push_identity(output,
-                  "sized-deallocation"_str,
-                  cpp_sized_deallocation_name(options.language.sized_deallocation));
-    push_identity(
-        output, "stdlib"_str, lito::config::standard_library_name(options.abi.standard_library));
-    push_identity(output,
-                  "ms-runtime-lib"_str,
-                  options.common.microsoft_runtime_library.is_some()
-                      ? lito::compiler::microsoft_runtime_library_name(
-                            *options.common.microsoft_runtime_library)
-                      : "<default>"_str);
+template<typename Emit>
+auto visit_semantic_options(const CppCompileOptions& options, Emit emit) -> void {
+    emit("standard"_str, options.language.standard.as_str());
+    emit("exceptions"_str, options.language.exceptions ? "true"_str : "false"_str);
+    emit("rtti"_str, options.language.rtti ? "true"_str : "false"_str);
+    emit("sized-deallocation"_str,
+         cpp_sized_deallocation_name(options.language.sized_deallocation));
+    emit("stdlib"_str, lito::config::standard_library_name(options.abi.standard_library));
+    emit("ms-runtime-lib"_str,
+         options.common.microsoft_runtime_library.is_some()
+             ? lito::compiler::microsoft_runtime_library_name(
+                   *options.common.microsoft_runtime_library)
+             : "<default>"_str);
     if (options.abi.resolved_standard_library.is_some()) {
-        push_identity(output,
-                      "resolved-stdlib"_str,
-                      options.abi.resolved_standard_library->headers_identity.as_str());
+        emit("resolved-stdlib"_str,
+             options.abi.resolved_standard_library->headers_identity.as_str());
     }
-    push_identity(output, "posix-threads"_str, lito::compiler::uses_posix_threads(options.common));
+    emit("posix-threads"_str,
+         lito::compiler::uses_posix_threads(options.common) ? "true"_str : "false"_str);
     for (const auto& value : options.language.modes) {
-        push_identity(output,
-                      rstd::format("language:{}", value.family.as_str()).as_str(),
-                      value.value.as_str());
+        emit(rstd::format("language:{}", value.family.as_str()).as_str(), value.value.as_str());
     }
     for (const auto& value : options.abi.modes) {
-        push_identity(
-            output, rstd::format("abi:{}", value.family.as_str()).as_str(), value.value.as_str());
+        emit(rstd::format("abi:{}", value.family.as_str()).as_str(), value.value.as_str());
     }
     if (options.common.target.target.is_some()) {
-        push_identity(output, "target"_str, options.common.target.target->as_str());
+        emit("target"_str, options.common.target.target->as_str());
     }
     if (options.common.target.sysroot.is_some()) {
-        push_identity(output, "sysroot"_str, options.common.target.sysroot->as_str());
+        emit("sysroot"_str, options.common.target.sysroot->as_str());
     }
     for (const auto& value : options.target.features) {
-        push_identity(output,
-                      rstd::format("target:{}", value.family.as_str()).as_str(),
-                      value.value.as_str());
+        emit(rstd::format("target:{}", value.family.as_str()).as_str(), value.value.as_str());
     }
+}
+
+template<typename Emit>
+auto visit_bmi_vendor_options(const CppCompileOptions& options, Emit emit) -> void {
+    for (const auto& value : options.vendor) {
+        if (value.effect == CppVendorOptionEffect::Language ||
+            value.effect == CppVendorOptionEffect::Abi ||
+            value.effect == CppVendorOptionEffect::Preprocessor ||
+            value.effect == CppVendorOptionEffect::Unknown) {
+            emit(option_effect_name(value.effect), value.value.as_str());
+        }
+    }
+}
+
+auto append_semantic_identity(String& output, const CppCompileOptions& options) -> void {
+    visit_semantic_options(options, [&](ref<str> key, ref<str> value) {
+        push_identity(output, key, value);
+    });
+}
+
+struct CppIdentityField {
+    String      name;
+    Vec<String> values;
+};
+
+auto bmi_identity_fields(const CppCompileOptions& options) -> Vec<CppIdentityField> {
+    auto result = Vec<CppIdentityField>::make();
+    auto append = [&](ref<str> name, ref<str> value) {
+        for (auto& field : result) {
+            if (field.name.as_str() != name) continue;
+            field.values.push(String::make(value));
+            return;
+        }
+        auto values = Vec<String>::make();
+        values.push(String::make(value));
+        result.push(CppIdentityField { String::make(name), rstd::move(values) });
+    };
+    visit_semantic_options(options, append);
+    visit_bmi_vendor_options(options, [&](ref<str> effect, ref<str> value) {
+        append("vendor semantic options"_str, rstd::format("{}: {}", effect, value).as_str());
+    });
+    return result;
+}
+
+auto identity_field_value(const CppIdentityField* field) -> String {
+    if (field == nullptr) return "<unset>"_Str;
+    if (field->values.len() == usize(1))
+        return rstd::format("{:?}", field->values[usize {}].as_str());
+    auto result = "["_Str;
+    for (const auto& value : field->values) {
+        if (result.len() > usize(1)) result.push_str(", "_str);
+        result.push_str(rstd::format("{:?}", value.as_str()).as_str());
+    }
+    result.push_ascii(']');
+    return result;
 }
 
 } // namespace lito::cpp
@@ -378,13 +426,48 @@ auto cpp_scan_identity(const CppCompileOptions& options) -> String {
 auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String {
     auto result = "lito-cpp-bmi-compatibility-v3\n"_Str;
     append_semantic_identity(result, options);
-    for (const auto& value : options.vendor) {
-        if (value.effect == CppVendorOptionEffect::Language ||
-            value.effect == CppVendorOptionEffect::Abi ||
-            value.effect == CppVendorOptionEffect::Preprocessor ||
-            value.effect == CppVendorOptionEffect::Unknown) {
-            push_identity(result, option_effect_name(value.effect), value.value.as_str());
+    visit_bmi_vendor_options(options, [&](ref<str> key, ref<str> value) {
+        push_identity(result, key, value);
+    });
+    return result;
+}
+
+auto cpp_bmi_compatibility_diagnostic(const CppCompileOptions& current,
+                                      const CppCompileOptions& incoming) -> String {
+    auto current_fields  = bmi_identity_fields(current);
+    auto incoming_fields = bmi_identity_fields(incoming);
+    auto find = [](const Vec<CppIdentityField>& fields, ref<str> name) -> const CppIdentityField* {
+        for (const auto& field : fields)
+            if (field.name.as_str() == name) return &field;
+        return nullptr;
+    };
+    auto result = String::make();
+    auto append = [&](ref<str> name, const CppIdentityField* left, const CppIdentityField* right) {
+        if (left != nullptr && right != nullptr && left->values.len() == right->values.len()) {
+            auto equal = true;
+            for (auto index = usize {}; index < left->values.len(); ++index) {
+                if (left->values[index].as_str() != right->values[index].as_str()) equal = false;
+            }
+            if (equal) return;
         }
+        result.push_str(rstd::format("\n  {}: current={}, incoming={}",
+                                     name,
+                                     identity_field_value(left).as_str(),
+                                     identity_field_value(right).as_str())
+                            .as_str());
+    };
+    for (const auto& field : current_fields) {
+        append(field.name.as_str(), &field, find(incoming_fields, field.name.as_str()));
+    }
+    for (const auto& field : incoming_fields) {
+        if (find(current_fields, field.name.as_str()) == nullptr)
+            append(field.name.as_str(), nullptr, &field);
+    }
+    if (result.is_empty() && cpp_bmi_compatibility_identity(current).as_str() !=
+                                 cpp_bmi_compatibility_identity(incoming).as_str()) {
+        result = rstd::format("\n  option ordering: current={:?}, incoming={:?}",
+                              cpp_bmi_compatibility_identity(current).as_str(),
+                              cpp_bmi_compatibility_identity(incoming).as_str());
     }
     return result;
 }

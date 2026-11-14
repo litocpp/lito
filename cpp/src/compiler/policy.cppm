@@ -249,7 +249,8 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
     if (cpp_bmi_compatibility_identity(input).as_str() !=
         cpp_bmi_compatibility_identity(extra).as_str()) {
         return Err(CppOptionError::Message(
-            "cannot merge C++ contexts with different semantic or ABI options"_Str));
+            rstd::format("cannot merge C++ contexts with different semantic or ABI options{}",
+                         cpp_bmi_compatibility_diagnostic(input, extra).as_str())));
     }
     auto layer = CppOptionLayer {};
     for (const auto& include : extra.preprocessor.include_directories) {

@@ -441,8 +441,19 @@ auto attachment_context(const CompileContext&   library,
     auto merged =
         merge_cpp_options(rstd::move(result.language.as_Cpp().options), consumer_cpp.options);
     if (merged.is_err()) {
-        return Err(lito::package::PackageError::Configuration(
-            erase_error(rstd::move(merged).unwrap_err())));
+        auto error   = rstd::move(merged).unwrap_err();
+        auto context = rstd::format("target attachment '{}' to '{}'",
+                                    target_text(attachment.consumer_target).as_str(),
+                                    target_text(attachment.library_target).as_str());
+        if (error.is_Message()) {
+            error.as_Message().message =
+                rstd::format("{}: {}", context.as_str(), error.as_Message().message.as_str());
+        } else {
+            auto& source = error.as_Argument().context;
+            source = source.is_empty() ? rstd::move(context)
+                                       : rstd::format("{}; {}", context.as_str(), source.as_str());
+        }
+        return Err(lito::package::PackageError::Configuration(erase_error(rstd::move(error))));
     }
     auto& result_cpp               = result.language.as_Cpp();
     result_cpp.options             = rstd::move(merged).unwrap();
@@ -1236,37 +1247,31 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         contexts[target].scan_id = scan_context_id(contexts[target]);
     }
 
-    for (auto target = TargetId {}; target < package.targets.len(); ++target) {
-        const auto& attachment = package.targets[target].attachment;
-        if (attachment.is_none()) continue;
-        auto consumer_id = target_index(package, attachment->consumer_target);
-        auto library_id  = target_index(package, attachment->library_target);
-        if (consumer_id.is_none() || library_id.is_none()) {
-            return Err(lito::package::PackageError::Message(
-                "target attachment references an unknown target"_Str));
-        }
-        if (! append_unique(visible_targets[target], target)) {
-            return Err(lito::package::PackageError::Message(
-                "target attachment target is repeated in the build graph"_Str));
-        }
-        append_unique(visible_targets[target], visible_targets[*library_id]);
-        append_unique(visible_targets[target], visible_targets[*consumer_id]);
-        auto attached =
-            attachment_context(contexts[*library_id], contexts[*consumer_id], *attachment);
-        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
-        contexts[target] = rstd::move(attached).unwrap();
-    }
-
     auto expanded_target_order = Vec<TargetId>::with_capacity(package.targets.len());
-    for (auto selected_target : target_order) {
-        for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
-            const auto& attachment = package.targets[candidate].attachment;
-            if (attachment.is_some() &&
-                attachment->consumer_target == package.targets[selected_target].id) {
-                expanded_target_order.emplace_back(candidate);
+    for (auto consumer : target_order) {
+        for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+            const auto& attachment = package.targets[target].attachment;
+            if (attachment.is_none() ||
+                attachment->consumer_target != package.targets[consumer].id) {
+                continue;
             }
+            auto library = target_index(package, attachment->library_target);
+            if (library.is_none()) {
+                return Err(lito::package::PackageError::Message(
+                    "target attachment references an unknown target"_Str));
+            }
+            if (! append_unique(visible_targets[target], target)) {
+                return Err(lito::package::PackageError::Message(
+                    "target attachment target is repeated in the build graph"_Str));
+            }
+            append_unique(visible_targets[target], visible_targets[*library]);
+            append_unique(visible_targets[target], visible_targets[consumer]);
+            auto attached = attachment_context(contexts[*library], contexts[consumer], *attachment);
+            if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
+            contexts[target] = rstd::move(attached).unwrap();
+            expanded_target_order.emplace_back(target);
         }
-        expanded_target_order.emplace_back(selected_target);
+        expanded_target_order.emplace_back(consumer);
     }
     target_order = rstd::move(expanded_target_order);
 
