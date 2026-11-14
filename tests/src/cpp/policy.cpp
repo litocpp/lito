@@ -15,7 +15,7 @@ using namespace lito_test;
 TEST(Cpp, MaterializesTypedDefaultWarnings) {
     auto defaults = cpp_options(
         "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
-    ASSERT_EQ(defaults.diagnostics.warnings.len(), usize(5));
+    ASSERT_EQ(defaults.diagnostics.warnings.len(), usize(6));
     EXPECT_EQ(defaults.diagnostics.warnings[usize {}].warning, compiler::CompilerWarning::All);
     EXPECT_TRUE(defaults.diagnostics.warnings[usize {}].enabled);
     EXPECT_EQ(defaults.diagnostics.warnings[usize(1)].warning, compiler::CompilerWarning::Pedantic);
@@ -41,7 +41,7 @@ TEST(Cpp, MaterializesTypedDefaultWarnings) {
 TEST(C, MaterializesTypedCommonOptions) {
     auto options =
         c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C23);
-    ASSERT_EQ(options.diagnostics.warnings.len(), usize(3));
+    ASSERT_EQ(options.diagnostics.warnings.len(), usize(4));
     EXPECT_EQ(options.diagnostics.warnings[usize {}].warning, compiler::CompilerWarning::All);
     EXPECT_EQ(options.diagnostics.warnings[usize(1)].warning, compiler::CompilerWarning::Pedantic);
     EXPECT_EQ(options.diagnostics.warnings[usize(2)].warning,

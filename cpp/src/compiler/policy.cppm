@@ -52,6 +52,9 @@ auto default_cpp_warnings() -> Vec<lito::compiler::CompilerWarningOption> {
     result.push(lito::compiler::CompilerWarningOption {
         .warning = lito::compiler::CompilerWarning::UnknownAttributes,
     });
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::ReturnTypeError,
+    });
     return result;
 }
 

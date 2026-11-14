@@ -44,6 +44,8 @@ public:
 
     auto add_typed(CppCompilerArgument argument, CompilerArgumentDefinition definition) -> void;
 
+    auto add_ignored(CompilerArgumentDefinition definition) -> void;
+
     auto build() && -> CppOptionResult<CppArgumentParser>;
 
 private:
@@ -76,6 +78,13 @@ auto CppArgumentSchema::add_typed(CppCompilerArgument        argument,
     });
 }
 
+auto CppArgumentSchema::add_ignored(CompilerArgumentDefinition definition) -> void {
+    schema_.add(rstd::move(definition));
+    bindings_.push(CppCompilerArgumentBinding {
+        .ignored = true,
+    });
+}
+
 auto CppArgumentSchema::build() && -> CppOptionResult<CppArgumentParser> {
     auto parser = rstd_try(rstd::move(schema_).build());
     return Ok(CppArgumentParser(rstd::move(parser), rstd::move(bindings_)));
@@ -90,9 +99,18 @@ auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) con
     auto parsed = rstd::move(parsed_result).unwrap();
     auto result = CppArgumentLayer {};
     for (auto& matched : parsed) {
-        auto binding  = matched.definition.is_some()
-                            ? rstd::addressof(bindings_[*matched.definition])
-                            : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        auto binding = matched.definition.is_some()
+                           ? rstd::addressof(bindings_[*matched.definition])
+                           : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        if (binding != nullptr && binding->ignored) {
+            rstd::io::eprintln("lito: warning: {} arguments {}..{}: ignoring compiler option '{}' "
+                               "managed by Lito",
+                               source,
+                               matched.range.begin,
+                               matched.range.end,
+                               matched.spelling.as_str());
+            continue;
+        }
         auto argument = rstd_try(make_cpp_compiler_argument(matched, binding, source));
         result.occurrences.push(CppCompilerArgumentOccurrence {
             .argument   = rstd::move(argument),
@@ -114,9 +132,18 @@ auto CppArgumentParser::parse_c(const Vec<String>& arguments, ref<str> source) c
     auto parsed = rstd::move(parsed_result).unwrap();
     auto result = lito::c::CArgumentLayer {};
     for (auto& matched : parsed) {
-        auto binding  = matched.definition.is_some()
-                            ? rstd::addressof(bindings_[*matched.definition])
-                            : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        auto binding = matched.definition.is_some()
+                           ? rstd::addressof(bindings_[*matched.definition])
+                           : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        if (binding != nullptr && binding->ignored) {
+            rstd::io::eprintln("lito: warning: {} arguments {}..{}: ignoring compiler option '{}' "
+                               "managed by Lito",
+                               source,
+                               matched.range.begin,
+                               matched.range.end,
+                               matched.spelling.as_str());
+            continue;
+        }
         auto argument = rstd_try(make_c_compiler_argument(matched, binding, source));
         result.occurrences.push(lito::c::CCompilerArgumentOccurrence {
             .argument   = rstd::move(argument),

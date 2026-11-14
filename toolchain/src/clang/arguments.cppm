@@ -352,6 +352,13 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
         "-fno-ptrauth"_str,
         cpp::CompilerArgumentValueForm::OptionalJoined);
 
+    auto return_type = definition("return-type-error"_str);
+    spelling(return_type, "-Wreturn-type"_str);
+    spelling(return_type, "-Wno-return-type"_str);
+    spelling(return_type, "-Werror=return-type"_str);
+    spelling(return_type, "-Wno-error=return-type"_str);
+    schema.add_ignored(rstd::move(return_type));
+
     add_warning(schema, compiler::CompilerWarning::All, true, "all-warnings"_str, "-Wall"_str);
     add_warning(schema,
                 compiler::CompilerWarning::Pedantic,

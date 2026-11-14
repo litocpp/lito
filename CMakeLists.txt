@@ -32,6 +32,7 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 option(LITO_USE_SYSTEM_ZSTD "Use the system zstd package" OFF)
 
 add_compile_options(
+  "-Werror=return-type"
   "$<$<COMPILE_LANGUAGE:CXX>:-fmodules-reduced-bmi>"
   "$<$<COMPILE_LANGUAGE:CXX>:-Wall>"
   "$<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>"

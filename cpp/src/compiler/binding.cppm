@@ -20,6 +20,7 @@ struct CppCompilerArgumentBinding {
     CppCompilerArgumentKind     kind { CppCompilerArgumentKind::VendorLanguage };
     String                      family;
     Option<CppCompilerArgument> typed;
+    bool                        ignored { false };
 };
 
 } // namespace lito::cpp

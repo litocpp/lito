@@ -66,6 +66,7 @@ enum class CompilerWarning
     GnuStatementExpression,
     DeprecatedDeclarations,
     UnknownAttributes,
+    ReturnTypeError,
 };
 
 struct CompilerWarningOption {

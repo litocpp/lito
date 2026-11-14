@@ -535,6 +535,7 @@ auto cpp_warning_name(lito::compiler::CompilerWarning value) noexcept -> ref<str
     case lito::compiler::CompilerWarning::DeprecatedDeclarations:
         return "deprecated-declarations"_str;
     case lito::compiler::CompilerWarning::UnknownAttributes: return "unknown-attributes"_str;
+    case lito::compiler::CompilerWarning::ReturnTypeError: return "return-type-error"_str;
     }
     return "unknown"_str;
 }
