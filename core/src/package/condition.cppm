@@ -83,6 +83,34 @@ auto dependency_condition_matches(const ResolvedPackage&          owner,
     return Ok(*matched);
 }
 
+auto resolve_build_tool_conditions(ResolvedPackage&                package,
+                                   const lito::condition::Context& context,
+                                   bool host_instance) -> PackageResult<empty> {
+    auto activity = Vec<bool>::with_capacity(package.manifest.build_tools.len());
+    for (const auto& tool : package.manifest.build_tools) {
+        auto enabled = true;
+        if (tool.condition.is_some()) {
+            auto matched = lito::condition::evaluate(tool.condition->expression, context);
+            if (matched.is_err()) {
+                return Err(PackageError::Message(rstd::format(
+                    "package '{}' manifest '{}' build-tool '{}' condition '{}' is invalid: {}",
+                    package.manifest.name.as_str(),
+                    package.manifest.manifest_path.as_path(),
+                    tool.alias.as_str(),
+                    tool.condition->source.as_str(),
+                    rstd::move(matched).unwrap_err())));
+            }
+            enabled = *matched;
+        }
+        activity.push(bool(enabled));
+    }
+    if (host_instance)
+        package.selected_host_build_tool_activity = Some(rstd::move(activity));
+    else
+        package.selected_build_tool_activity = Some(rstd::move(activity));
+    return Ok(empty {});
+}
+
 auto resolve_external_dependency_conditions(lito::package::ResolvedPackage& package,
                                             const lito::condition::Context& context)
     -> lito::package::PackageResult<empty> {

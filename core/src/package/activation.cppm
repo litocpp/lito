@@ -126,6 +126,7 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
         }
         auto context =
             make_package_condition_context(package, host ? *host_environment : environment.target);
+        rstd_try(resolve_build_tool_conditions(package, context, host));
         const auto record = [&](const ResolvedRequiredDependency& dependency,
                                 bool                              provider_host,
                                 DependencyKind                    kind,
@@ -251,9 +252,11 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
         incoming.push(usize {});
         package.host_view = false;
         package.features.clear();
-        package.selected_pkg_config_dependencies = None();
-        package.selected_cmake_dependencies      = None();
-        package.selected_cargo_dependencies      = None();
+        package.selected_pkg_config_dependencies  = None();
+        package.selected_cmake_dependencies       = None();
+        package.selected_cargo_dependencies       = None();
+        package.selected_build_tool_activity      = None();
+        package.selected_host_build_tool_activity = None();
         for (auto& edge : package.dependencies)
             edge.activation.target = edge.activation.host = false;
         for (auto& edge : package.dev_dependencies)

@@ -12,6 +12,8 @@ import :manifest.primitives;
 import :manifest.wire;
 import :package.identity;
 import :parse.value;
+import :condition;
+import :dependency.condition;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -83,7 +85,22 @@ auto parse_build_tools(Option<wire::BuildTools> value)
             return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
                 rstd::move(alias_path), "invalid tool alias"_str)));
         }
-        const auto tool = tools.get(alias.as_str()).unwrap_unchecked();
+        const auto tool      = tools.get(alias.as_str()).unwrap_unchecked();
+        auto       condition = Option<lito::dependency::DependencyCondition> {};
+        if (tool->condition.is_some()) {
+            auto expression = lito::condition::parse(tool->condition->as_str());
+            if (expression.is_err()) {
+                return Err(
+                    ManifestSchemaError::Domain(rstd::format("build-tool '{}' condition '{}': {}",
+                                                             alias.as_str(),
+                                                             tool->condition->as_str(),
+                                                             rstd::move(expression).unwrap_err())));
+            }
+            condition = Some(lito::dependency::DependencyCondition {
+                .source     = tool->condition->clone(),
+                .expression = rstd::move(expression).unwrap(),
+            });
+        }
         if (tool->path.is_some()) {
             if (tool->version.is_some() || tool->executable.is_some() || tool->archives.is_some()) {
                 return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
@@ -96,8 +113,9 @@ auto parse_build_tools(Option<wire::BuildTools> value)
                     "must be a non-empty executable path without NUL"_str)));
             }
             result.push(BuildToolRequirement {
-                .alias  = alias.clone(),
-                .source = BuildToolSource::Path(PathBuf::from(tool->path->as_str())),
+                .alias     = alias.clone(),
+                .source    = BuildToolSource::Path(PathBuf::from(tool->path->as_str())),
+                .condition = rstd::move(condition),
             });
             continue;
         }
@@ -154,12 +172,13 @@ auto parse_build_tools(Option<wire::BuildTools> value)
             });
         }
         result.push(BuildToolRequirement {
-            .alias  = alias.clone(),
-            .source = BuildToolSource::Archive(ArchiveBuildTool {
+            .alias     = alias.clone(),
+            .source    = BuildToolSource::Archive(ArchiveBuildTool {
                 .version    = tool->version->clone(),
                 .executable = rstd::move(executable),
                 .archives   = rstd::move(archives),
             }),
+            .condition = rstd::move(condition),
         });
     }
     return Ok(rstd::move(result));

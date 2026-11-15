@@ -20,6 +20,23 @@ Dynamic libraries and script interpreters are not pinned. Absolute paths are mac
 local tools are neither downloaded nor included in source bundles or download lock entries.
 Offline builds still require them to be installed on the host, including during cross-compilation.
 
+An optional `condition` uses the consuming package instance's dependency condition context,
+including `target.os`, features, host, profile, and toolchain values. An inactive tool is not
+looked up, downloaded, or executed. `lito.tool("ALIAS")` returns `nil` for a declared inactive
+tool; unknown or ambiguous aliases remain errors. The condition selects whether the tool is
+needed for the target; archive selection still uses the build host.
+
+```toml
+[build-tools.wayland-scanner]
+path = "wayland-scanner"
+condition = 'target.os == "linux"'
+```
+
+```lua
+local scanner = lito.tool("wayland-scanner")
+if not scanner then return end
+```
+
 A downloaded host build tool requires:
 
 - `version`: a non-empty identity string;

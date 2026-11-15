@@ -151,7 +151,21 @@ struct ResolvedPackage {
     Option<Vec<lito::dependency::PkgConfigExternalDependency>> selected_pkg_config_dependencies;
     Option<Vec<lito::dependency::CMakeDependencyRequirement>>  selected_cmake_dependencies;
     Option<Vec<lito::dependency::CargoDependencyRequirement>>  selected_cargo_dependencies;
+    Option<Vec<bool>>                                          selected_build_tool_activity;
+    Option<Vec<bool>>                                          selected_host_build_tool_activity;
     bool                                                       host_view { false };
+    auto build_tool_is_active(usize index) const noexcept -> bool {
+        const auto& selected =
+            host_view ? selected_host_build_tool_activity : selected_build_tool_activity;
+        return selected.is_none() || (*selected)[index];
+    }
+    auto build_tool_is_required(usize index) const noexcept -> bool {
+        if (selected_build_tool_activity.is_none() && selected_host_build_tool_activity.is_none())
+            return true;
+        return (selected_build_tool_activity.is_some() && (*selected_build_tool_activity)[index]) ||
+               (selected_host_build_tool_activity.is_some() &&
+                (*selected_host_build_tool_activity)[index]);
+    }
     auto effective_pkg_config_dependencies() const
         -> const Vec<lito::dependency::PkgConfigExternalDependency>& {
         return selected_pkg_config_dependencies.is_some()

@@ -106,10 +106,12 @@ auto configure_binding(ConfigureSession& session, luato::Table request)
     return Ok(rstd::move(result));
 }
 
-auto tool_binding(ToolActionSession& session, String alias) -> luato::Result<luato::OpaqueHandle> {
+auto tool_binding(ToolActionSession& session, String alias)
+    -> luato::Result<Option<luato::OpaqueHandle>> {
+    if (session.tool_is_disabled(alias.as_str())) return Ok(None());
     auto tool = session.tool(alias.as_str());
     if (tool.is_err()) return Err(binding_error(rstd::move(tool).unwrap_err()));
-    return Ok(luato::OpaqueHandle { tool->identity });
+    return Ok(Some(luato::OpaqueHandle { tool->identity }));
 }
 
 auto target_binding(ToolActionSession& session, luato::Table request)

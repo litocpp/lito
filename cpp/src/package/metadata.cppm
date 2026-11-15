@@ -183,6 +183,7 @@ struct PackageBuildToolRequirement {
     String                               package;
     PathBuf                              root;
     lito::manifest::BuildToolRequirement requirement;
+    bool                                 enabled { true };
 };
 
 enum class BuildScriptOwnerKind

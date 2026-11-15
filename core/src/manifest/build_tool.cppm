@@ -7,6 +7,7 @@ import rstd;
 import licrypto;
 import lito.system;
 import :parse;
+import :dependency.condition;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -32,8 +33,9 @@ class BuildToolSource {
 };
 
 struct BuildToolRequirement {
-    String          alias;
-    BuildToolSource source;
+    String                                        alias;
+    BuildToolSource                               source;
+    Option<lito::dependency::DependencyCondition> condition;
 };
 
 } // namespace lito::manifest

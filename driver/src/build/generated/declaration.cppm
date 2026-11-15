@@ -12,6 +12,11 @@ using namespace lito::system;
 namespace lito
 {
 
+auto ToolActionSession::tool_is_disabled(ref<str> alias) const noexcept -> bool {
+    return default_package_.is_some() ? tools_.disabled(default_package_->as_str(), alias)
+                                      : tools_.disabled(alias);
+}
+
 auto ToolActionSession::tool(ref<str> alias) const -> BuildScriptResult<BuildScriptHandle> {
     auto identity = default_package_.is_some() ? tools_.identity(default_package_->as_str(), alias)
                                                : tools_.identity(alias);

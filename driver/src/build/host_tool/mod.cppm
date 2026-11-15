@@ -178,7 +178,9 @@ auto resolve_host_build_tool_archives(const lito::package::ResolvedPackageGraph&
     auto requests = Vec<lito::source::ArchiveSourceFetchRequest>::make();
     for (const auto& package : graph.packages) {
         if (! requested_package(packages, package.manifest.name.as_str())) continue;
-        for (const auto& tool : package.manifest.build_tools) {
+        for (usize index {}; index < package.manifest.build_tools.len(); ++index) {
+            if (! package.build_tool_is_required(index)) continue;
+            const auto& tool = package.manifest.build_tools[index];
             if (! tool.source.is_Archive()) continue;
             auto archive = rstd_try(select_host_build_tool_archive(tool, host));
             requests.push(lito::source::ArchiveSourceFetchRequest {
@@ -201,6 +203,28 @@ struct ResolvedHostBuildTool {
 
 class ResolvedHostBuildTools {
 public:
+    auto disabled(ref<str> package, ref<str> alias) const noexcept -> bool {
+        for (const auto& tool : disabled_) {
+            if (tool.package == package && tool.alias == alias) return true;
+        }
+        return false;
+    }
+
+    auto disabled(ref<str> alias) const noexcept -> bool {
+        for (const auto& tool : tools_) {
+            if (tool->alias == alias) return false;
+        }
+        auto count = usize {};
+        for (const auto& tool : disabled_) {
+            if (tool.alias == alias) ++count;
+        }
+        return count == usize(1);
+    }
+
+    void push_disabled(String package, String alias) {
+        disabled_.push(DisabledTool { rstd::move(package), rstd::move(alias) });
+    }
+
     auto get(ref<str> package, ref<str> alias) const noexcept
         -> Option<ref<ResolvedHostBuildTool>> {
         for (const auto& tool : tools_) {
@@ -241,6 +265,11 @@ public:
     void push(Box<ResolvedHostBuildTool> tool) { tools_.push(rstd::move(tool)); }
 
 private:
+    struct DisabledTool {
+        String package;
+        String alias;
+    };
+    Vec<DisabledTool>               disabled_;
     Vec<Box<ResolvedHostBuildTool>> tools_;
 };
 
@@ -306,6 +335,10 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
     auto result       = ResolvedHostBuildTools {};
     for (const auto& owned : metadata.build_tools) {
         if (! requested_package(packages, owned.package.as_str())) continue;
+        if (! owned.enabled) {
+            result.push_disabled(owned.package.clone(), owned.requirement.alias.clone());
+            continue;
+        }
         if (owned.requirement.source.is_Path()) {
             const auto& declared  = owned.requirement.source.as_Path().requested;
             auto        requested = declared.clone();

@@ -1101,11 +1101,17 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
-        for (auto& requirement : package.manifest.build_tools) {
+        auto tool_context =
+            make_package_condition_context(package, configuration, profile, platform);
+        rstd_try(
+            lito::package::resolve_build_tool_conditions(package, tool_context, package.host_view));
+        for (usize index {}; index < package.manifest.build_tools.len(); ++index) {
+            auto& requirement = package.manifest.build_tools[index];
             build_tools.push(PackageBuildToolRequirement {
                 .package     = package.manifest.name.clone(),
                 .root        = package.manifest.root.clone(),
                 .requirement = rstd::move(requirement),
+                .enabled     = package.build_tool_is_active(index),
             });
         }
         if (package.manifest.standard.is_none()) continue;

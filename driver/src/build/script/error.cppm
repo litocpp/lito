@@ -49,26 +49,6 @@ struct Impl<convert::From<licrypto::Error>, lito::BuildScriptError> {
 };
 
 template<>
-struct Impl<fmt::Display, luato::Error> : ImplBase<luato::Error> {
-    auto fmt(fmt::Formatter& formatter) const -> bool {
-        const auto& error = this->self();
-        if (error.traceback.is_empty()) return formatter.write_str(error.message.as_str());
-        return formatter.write_str(
-            rstd::format("{}\n{}", error.message.as_str(), error.traceback.as_str()).as_str());
-    }
-};
-
-template<>
-struct Impl<fmt::Debug, luato::Error> : ImplBase<luato::Error> {
-    auto fmt(fmt::Formatter& formatter) const -> bool {
-        return as<fmt::Display>(this->self()).fmt(formatter);
-    }
-};
-
-template<>
-struct Impl<error::Error, luato::Error> : DefaultInImpl<error::Error, luato::Error> {};
-
-template<>
 struct Impl<convert::From<lito::BuildLayoutError>, lito::BuildScriptError> {
     static auto from(lito::BuildLayoutError error) -> lito::BuildScriptError {
         return lito::BuildScriptError::Layout(rstd::move(error));

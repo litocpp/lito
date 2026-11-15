@@ -101,6 +101,7 @@ public:
           observer_(rstd::addressof(observer)) {}
 
     auto tool(ref<str> alias) const -> BuildScriptResult<BuildScriptHandle>;
+    auto tool_is_disabled(ref<str> alias) const noexcept -> bool;
 
     auto target(TargetScriptRequest request) const -> BuildScriptResult<BuildScriptHandle>;
 

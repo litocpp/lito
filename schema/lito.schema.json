@@ -906,11 +906,6 @@
     },
     "hostBuildTool": {
       "type": "object",
-      "required": [
-        "version",
-        "executable",
-        "archives"
-      ],
       "properties": {
         "version": {
           "$ref": "#/definitions/nonEmptyString"
@@ -927,9 +922,53 @@
             }
           },
           "additionalProperties": false
+        },
+        "path": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "path"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "version"
+                ]
+              },
+              {
+                "required": [
+                  "executable"
+                ]
+              },
+              {
+                "required": [
+                  "archives"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "version",
+            "executable",
+            "archives"
+          ],
+          "not": {
+            "required": [
+              "path"
+            ]
+          }
+        }
+      ]
     },
     "hostBuildTools": {
       "type": "object",

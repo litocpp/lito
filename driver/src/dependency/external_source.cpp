@@ -124,7 +124,9 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
     auto resolved_indices = rstd::collections::BTreeMap<String, usize>::make();
     for (auto& package : graph.packages) {
         package.externals.clear();
-        for (const auto& tool : package.manifest.build_tools) {
+        for (usize index {}; index < package.manifest.build_tools.len(); ++index) {
+            if (! package.build_tool_is_required(index)) continue;
+            const auto& tool = package.manifest.build_tools[index];
             if (! tool.source.is_Archive()) continue;
             for (const auto& archive : tool.source.as_Archive().recipe.archives) {
                 auto architectures = Vec<Architecture>::make();

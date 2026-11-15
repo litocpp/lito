@@ -26,6 +26,7 @@ struct BuildTool {
     Option<String>                                                version;
     Option<String>                                                executable;
     Option<rstd::collections::BTreeMap<String, BuildToolArchive>> archives;
+    Option<String>                                                condition;
 };
 
 using BuildTools = rstd::collections::BTreeMap<String, BuildTool>;
@@ -125,13 +126,20 @@ struct Impl<serde::Deserialize, lito::manifest::wire::BuildTool> {
         auto archives   = serde::OptionalField<
             rstd::collections::BTreeMap<String, lito::manifest::wire::BuildToolArchive>>(
             "archives"_str);
-        rstd_try(serde::deserialize_record(
-            deserializer, serde::UnknownFieldPolicy::Reject, path, version, executable, archives));
+        auto condition = serde::OptionalField<String>("condition"_str);
+        rstd_try(serde::deserialize_record(deserializer,
+                                           serde::UnknownFieldPolicy::Reject,
+                                           path,
+                                           version,
+                                           executable,
+                                           archives,
+                                           condition));
         return Ok(lito::manifest::wire::BuildTool {
             .path       = path.take(),
             .version    = version.take(),
             .executable = executable.take(),
             .archives   = archives.take(),
+            .condition  = condition.take(),
         });
     }
 };
