@@ -370,6 +370,42 @@ constexpr auto includes_generated(const cpp::ResolvedSourceGroup& group,
            group.availability == cpp::GeneratedSourceAvailability::BeforeHostTools;
 }
 
+auto resolve_target_source(const cpp::ResolvedTarget& target,
+                           ref<rstd::path::Path>      root,
+                           const PathBuf&             declared,
+                           ref<str>                   group,
+                           ref<str>                   identity,
+                           bool                       external,
+                           bool generated) -> cpp::SourceDiscoveryResult<cpp::ResolvedSource> {
+    auto resolved = resolve_declared_source(root, declared.as_path(), ! generated);
+    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+    auto       source = rstd::move(resolved).unwrap();
+    const auto language_matches =
+        generated ? target.language == lito::manifest::PackageLanguage::Cpp
+        : target.language == lito::manifest::PackageLanguage::C
+            ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
+            : lito::manifest::cpp_manifest_source(source.canonical_path.as_path());
+    if (! language_matches) {
+        return Err(cpp::SourceDiscoveryError::Message(
+            rstd::format("target '{}::{}' is a {} target and cannot compile source '{}'",
+                         target.id.package.as_str(),
+                         target.id.name.as_str(),
+                         lito::manifest::package_language_name(target.language),
+                         source.canonical_path.as_path())));
+    }
+    if (! group.is_empty()) {
+        auto virtual_root = PathBuf::from("source-groups"_str);
+        virtual_root.push(PathBuf::from(group).as_path());
+        virtual_root.push(source.relative_path.as_path());
+        source.relative_path = rstd::move(virtual_root);
+    }
+    source.source_root     = PathBuf::from(root);
+    source.origin_identity = String::make(identity);
+    source.external        = external;
+    source.generated       = generated;
+    return Ok(rstd::move(source));
+}
+
 static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
                                            SourceDiscoveryScope       scope)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
@@ -381,23 +417,11 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
                              ref<str>              identity,
                              bool                  external,
                              bool                  generated) -> cpp::SourceDiscoveryResult<empty> {
-        auto resolved = resolve_declared_source(root, declared.as_path(), ! generated);
+        auto resolved =
+            resolve_target_source(target, root, declared, group, identity, external, generated);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-        auto       source = rstd::move(resolved).unwrap();
-        const auto language_matches =
-            generated ? target.language == lito::manifest::PackageLanguage::Cpp
-            : target.language == lito::manifest::PackageLanguage::C
-                ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
-                : lito::manifest::cpp_manifest_source(source.canonical_path.as_path());
-        if (! language_matches) {
-            return Err(cpp::SourceDiscoveryError::Message(
-                rstd::format("target '{}::{}' is a {} target and cannot compile source '{}'",
-                             target.id.package.as_str(),
-                             target.id.name.as_str(),
-                             lito::manifest::package_language_name(target.language),
-                             source.canonical_path.as_path())));
-        }
-        auto key = path_text(source.canonical_path.as_path());
+        auto source = rstd::move(resolved).unwrap();
+        auto key    = path_text(source.canonical_path.as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto source_key = rstd::move(key).unwrap();
         auto owner      = group.is_empty() ? "target sources"_str : group;
@@ -411,16 +435,6 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
                 owner,
                 source.canonical_path.as_path())));
         }
-        if (! group.is_empty()) {
-            auto virtual_root = PathBuf::from("source-groups"_str);
-            virtual_root.push(PathBuf::from(group).as_path());
-            virtual_root.push(source.relative_path.as_path());
-            source.relative_path = rstd::move(virtual_root);
-        }
-        source.source_root     = PathBuf::from(root);
-        source.origin_identity = String::make(identity);
-        source.external        = external;
-        source.generated       = generated;
         owners.insert(source_key.clone(), String::make(owner));
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
@@ -769,23 +783,20 @@ auto discover_sources(const cpp::PackageMetadata&    package,
             }
         }
         for (const auto& group : resolved_target.source_groups) {
-            if (! includes_generated(group, scope)) continue;
+            if (group.generated && ! includes_generated(group, scope)) continue;
             for (const auto& declared : group.sources) {
-                auto resolved = resolve_declared_source(
-                    group.root.as_path(), declared.as_path(), ! group.generated);
+                auto resolved = resolve_target_source(resolved_target,
+                                                      group.root.as_path(),
+                                                      declared,
+                                                      group.name.as_str(),
+                                                      group.identity.as_str(),
+                                                      group.external,
+                                                      group.generated);
                 if (resolved.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
                 }
-                auto source       = rstd::move(resolved).unwrap();
-                auto virtual_root = PathBuf::from("source-groups"_str);
-                virtual_root.push(PathBuf::from(group.name.as_str()).as_path());
-                virtual_root.push(source.relative_path.as_path());
-                source.relative_path   = rstd::move(virtual_root);
-                source.generated       = true;
-                source.source_root     = group.root.clone();
-                source.origin_identity = group.identity.clone();
-                source.external        = group.external;
-                auto enqueued          = enqueue_candidate(
+                auto source   = rstd::move(resolved).unwrap();
+                auto enqueued = enqueue_candidate(
                     target, rstd::move(source), false, path_names, name_paths, queued, queue);
                 if (enqueued.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));

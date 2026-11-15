@@ -198,6 +198,82 @@ int main() { return 0; }
     ASSERT_TRUE(built.is_ok());
 }
 
+TEST_F(BuildCommand, DiscoversConditionalSourceGroupsAlongsideModules) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "conditional-module-sources"
+version = "0.1.0"
+
+[lib]
+name = "conditional-module-sources"
+module = "conditional.sources"
+archive = "conditional-sources"
+when = [
+  { condition = 'feature.native', source-groups = ["native"] },
+  { condition = 'feature.disabled', source-groups = ["disabled"] },
+]
+
+[features]
+native = { default = true }
+disabled = { default = false }
+
+[source-groups.native]
+sources = ["native.cpp", "bridge.mm"]
+
+[source-groups.disabled]
+sources = ["disabled.cpp"]
+
+[[bin]]
+name = "conditional-module-sources"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "src/lib.cppm"_str, "export module conditional.sources; export import :value;\n"_str },
+        { "src/value.cppm"_str,
+          "export module conditional.sources:value; export int answer();\n"_str },
+        { "src/value.cpp"_str, R"cpp(module;
+extern "C" int native_value();
+extern "C" int bridge_value();
+module conditional.sources;
+int answer() { return native_value() + bridge_value(); }
+)cpp"_str },
+        { "native.cpp"_str, "extern \"C\" int native_value() { return 7; }\n"_str },
+        { "bridge.mm"_str, R"cpp(#ifndef __OBJC__
+#error Objective-C++ language mode required
+#endif
+extern "C" int bridge_value() { return 35; }
+)cpp"_str },
+        { "disabled.cpp"_str, "#error inactive source group must not be compiled\n"_str },
+        { "main.cpp"_str,
+          "import conditional.sources; int main() { return answer() == 42 ? 0 : 1; }\n"_str },
+    };
+    auto project = materialize("conditional-module-sources"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("conditional-module-sources"_str).as_path(),
+                                 strings("conditional-module-sources"_str),
+                                 build_profile("release"_str));
+    auto built   = lito::build(request);
+    if (built.is_err())
+        rstd::test::fail_current(
+            error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(built.is_ok());
+    EXPECT_EQ(built->scanned, usize(6));
+    auto executed = false;
+    for (const auto& artifact : built->product.artifacts) {
+        if (artifact.target.kind != lito::package::PackageTargetKind::Binary) continue;
+        auto status =
+            rstd::process::Command::make(artifact.primary.path.as_path().as_os_str()).status();
+        ASSERT_TRUE(status.is_ok());
+        EXPECT_TRUE(status->success());
+        executed = true;
+    }
+    EXPECT_TRUE(executed);
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize());
+}
+
 struct CMakeOverrideEvents {
     usize fetch {};
     usize source_operations {};
