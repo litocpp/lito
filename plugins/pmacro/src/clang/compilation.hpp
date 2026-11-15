@@ -223,12 +223,12 @@ public:
         }
         for (const auto& helper : state_.helpers(*declaration))
             if (! identities.contains(helper.value.owner)) {
-                fail(helper.attribute->getLocation(),
+                fail(helper.location,
                      "'pmacro::helper' owner is not present in the enclosing derive group");
                 return;
             }
         for (const auto& helper : state_.helpers(*declaration))
-            owned_helpers_.insert(helper.attribute);
+            owned_helpers_.insert(helper.identity);
         std::vector<clang::Token> after;
         for (const auto* attribute : attributes) {
             auto output = invoke(input, *attribute, host::MacroKind::Derive);
@@ -330,6 +330,10 @@ private:
             for (auto* member : context->decls()) finish_declaration(*member);
         if (auto* function = llvm::dyn_cast<clang::FunctionDecl>(&declaration))
             for (auto* parameter : function->parameters()) finish_declaration(*parameter);
+        for (const auto& helper : state_.attributes(declaration).helper_attributes)
+            if (! owned_helpers_.contains(helper.identity))
+                fail(helper.location,
+                     "'pmacro::helper' is not owned by an active derive invocation");
         std::vector<clang::Attr*> retained;
         for (auto* attribute : declaration.attrs()) {
             auto* control = llvm::dyn_cast<clang::AnnotateAttr>(attribute);
@@ -337,10 +341,6 @@ private:
                 retained.push_back(attribute);
                 continue;
             }
-            if (control->getAnnotation().starts_with(helper_annotation) &&
-                ! owned_helpers_.contains(control))
-                fail(control->getLocation(),
-                     "'pmacro::helper' is not owned by an active derive invocation");
             if (control->getAnnotation().starts_with(define_annotation) &&
                 options_.provider.empty())
                 fail(control->getLocation(), "'pmacro::define' requires a provider compilation");
@@ -1013,7 +1013,7 @@ private:
     std::unordered_set<const clang::Decl*>                                 completed_;
     std::unordered_set<const clang::Decl*>                                 derivations_;
     std::unordered_set<clang::Decl*>                                       finished_;
-    std::unordered_set<const clang::AnnotateAttr*>                         owned_helpers_;
+    std::unordered_set<std::size_t>                                        owned_helpers_;
     using Trace = std::vector<std::pair<std::string, clang::SourceLocation>>;
     std::unordered_map<unsigned, Trace>   origins_;
     Trace                                 active_trace_;

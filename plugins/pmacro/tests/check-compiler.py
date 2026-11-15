@@ -51,6 +51,24 @@ plugin = [f"-fplugin={build / 'aggregate.so'}"]
 run("consumer", flags + plugin + [str(root / "tests/compiler/consumer.cpp"), "-nostdlib++", "-o", str(build / "consumer")])
 run("consumer-run", [str(build / "consumer")])
 
+helper_source = root / "tests/compiler/helper-codegen.cppm"
+helper_flags = flags + ["-fmodules-reduced-bmi"]
+run("helper-codegen", helper_flags + plugin + ["-g2", "-c", str(helper_source),
+                                               f"-fmodule-output={build / 'helper_codegen.pcm'}",
+                                               "-o", str(build / "helper-codegen.o")])
+run("helper-codegen-ir", helper_flags + plugin + ["-g2", "-S", "-emit-llvm", str(helper_source),
+                                                  f"-fmodule-output={build / 'helper-codegen-ir.pcm'}",
+                                                  "-o", str(build / "helper-codegen.ll")])
+helper_ir = (build / "helper-codegen.ll").read_text()
+if "pmacro.helper" in helper_ir or "pmacro::helper" in helper_ir:
+    raise RuntimeError("helper metadata escaped into generated IR")
+if "user.field" not in helper_ir or "llvm.ptr.annotation" not in helper_ir:
+    raise RuntimeError("ordinary field annotation was not preserved")
+run("helper-independent-importer", flags + [str(root / "tests/compiler/helper-codegen-consumer.cpp"),
+                                           str(build / "helper-codegen.o"), "-nostdlib++",
+                                           "-o", str(build / "helper-importer")])
+run("helper-independent-run", [str(build / "helper-importer")])
+
 contexts = build / "contexts.cpp"
 contexts.write_text('''struct [[pmacro::derive("compiler-test::context_info")]] Global {};
 namespace { struct [[pmacro::derive("compiler-test::context_info")]] Normal {}; }
@@ -120,6 +138,9 @@ cases = {
     "forward": ('struct [[pmacro::derive("compiler-test::after")]] Forward;', "requires a complete record"),
     "helper": ('struct Orphan { [[pmacro::helper("compiler-test::after")]] int value; };',
                "is not owned by an active derive invocation"),
+    "helper-owner": ('struct [[pmacro::derive("compiler-test::helper_member")]] Wrong { '
+                     '[[pmacro::helper("compiler-test::helper_second", default)]] int value; };',
+                     "owner is not present in the enclosing derive group"),
     "failed-transaction": ('struct [[pmacro::attr("compiler-test::fail_after")]] Original {};',
                            "provider returned an expansion error"),
     "output-budget": ('struct [[pmacro::attr("compiler-test::budget")]] Original {};', "output budget exceeded"),

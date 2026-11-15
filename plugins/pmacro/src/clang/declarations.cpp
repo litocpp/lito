@@ -19,6 +19,8 @@ import std;
 namespace pmacro::clang_bridge
 {
 
+thread_local std::unordered_map<clang::ASTContext*, DeclarationStore*> declaration_stores;
+
 auto next_source_identity() -> std::uint64_t {
     static std::atomic<std::uint64_t> next { 1 };
     return next.fetch_add(1, std::memory_order_relaxed);
@@ -44,7 +46,33 @@ auto SourceRegistry::context() const -> SourceContextId {
 }
 
 DeclarationStore::DeclarationStore(clang::CompilerInstance& compiler, SourceRegistry& sources)
-    : compiler_(compiler), sources_(sources) {
+    : compiler_(compiler), context_(&compiler.getASTContext()), sources_(sources) {
+    declaration_stores.emplace(context_, this);
+}
+
+DeclarationStore::~DeclarationStore() {
+    declaration_stores.erase(context_);
+}
+
+auto DeclarationStore::record_helper(clang::Decl&           declaration,
+                                     std::string            owner,
+                                     clang::SourceRange     source,
+                                     clang::CharSourceRange arguments) -> bool {
+    const auto found = declaration_stores.find(&declaration.getASTContext());
+    if (found == declaration_stores.end()) return false;
+    // Inline CodeGen can precede tag completion, so helpers must stay outside the AST.
+    auto&      store = *found->second;
+    HelperInfo helper;
+    helper.owner     = std::move(owner);
+    helper.source    = store.sources_.info(source);
+    helper.arguments = store.sources_.fragment(arguments);
+    auto& prepared   = store.declarations_[&declaration];
+    prepared.helper_attributes.push_back(
+        { store.next_helper_++, source.getBegin(), std::move(helper) });
+    prepared.attributes.reset();
+    prepared.helpers.reset();
+    prepared.snapshot.reset();
+    return true;
 }
 
 auto SourceRegistry::identify(clang::FileID file) const -> std::uint64_t {
@@ -360,30 +388,11 @@ auto DeclarationStore::attributes(const clang::Decl& declaration) -> const Prepa
     auto& prepared = declarations_[&declaration];
     if (prepared.attributes) return *prepared.attributes;
     PreparedAttributes result;
+    result.helper_attributes = prepared.helper_attributes;
+    for (const auto& helper : result.helper_attributes) result.helpers.push_back(helper.value);
     for (const auto* attribute : declaration.attrs()) {
         if (const auto* annotation = llvm::dyn_cast<clang::AnnotateAttr>(attribute)) {
             const auto name = annotation->getAnnotation();
-            if (name.starts_with("pmacro.helper:")) {
-                HelperInfo helper;
-                helper.owner  = name.drop_front(14).str();
-                helper.source = sources_.info(attribute->getRange());
-                if (annotation->args_size() == 2) {
-                    const auto* begin =
-                        llvm::dyn_cast<clang::IntegerLiteral>(*annotation->args_begin());
-                    const auto* end =
-                        llvm::dyn_cast<clang::IntegerLiteral>(*(annotation->args_begin() + 1));
-                    if (begin && end)
-                        helper.arguments = sources_.fragment(clang::CharSourceRange::getCharRange(
-                            clang::SourceLocation::getFromRawEncoding(
-                                begin->getValue().getZExtValue()),
-                            clang::SourceLocation::getFromRawEncoding(
-                                end->getValue().getZExtValue())));
-                }
-                result.helpers.push_back(std::move(helper));
-                sources_.attribute_span(*annotation);
-                result.helper_attributes.push_back({ annotation, result.helpers.back() });
-                continue;
-            }
             if (name.starts_with("pmacro.")) continue;
         }
         AttributeInfo value;

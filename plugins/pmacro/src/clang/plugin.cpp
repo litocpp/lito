@@ -43,7 +43,6 @@ constexpr llvm::StringLiteral define_scope_annotation   = "pmacro.define:";
 constexpr llvm::StringLiteral attr_annotation           = "pmacro.attr:";
 constexpr llvm::StringLiteral attr_arguments_annotation = "pmacro.attr.arguments:";
 constexpr llvm::StringLiteral derive_annotation         = "pmacro.derive:";
-constexpr llvm::StringLiteral helper_annotation         = "pmacro.helper:";
 constexpr llvm::StringLiteral invoke_annotation         = "pmacro.invoke:";
 
 auto report(clang::DiagnosticsEngine&       diagnostics,
@@ -484,20 +483,14 @@ public:
                    "first argument to 'pmacro::helper' must be a non-empty string literal");
             return AttributeNotApplied;
         }
-        auto annotation = std::string(helper_annotation);
-        annotation.append(parsed->values.front());
-        clang::Expr* locations[] = {
-            clang::IntegerLiteral::Create(sema.Context,
-                                          llvm::APInt(32, parsed->tail.getBegin().getRawEncoding()),
-                                          sema.Context.UnsignedIntTy,
-                                          {}),
-            clang::IntegerLiteral::Create(sema.Context,
-                                          llvm::APInt(32, parsed->tail.getEnd().getRawEncoding()),
-                                          sema.Context.UnsignedIntTy,
-                                          {})
-        };
-        declaration->addAttr(
-            clang::AnnotateAttr::Create(sema.Context, annotation, locations, 2, parsed->range));
+        if (! DeclarationStore::record_helper(
+                *declaration, std::move(parsed->values.front()), parsed->range, parsed->tail)) {
+            report(sema.getDiagnostics(),
+                   attribute.getLoc(),
+                   clang::DiagnosticsEngine::Error,
+                   "'pmacro::helper' requires an active declaration store");
+            return AttributeNotApplied;
+        }
         return AttributeApplied;
     }
 };
@@ -568,6 +561,9 @@ public:
     }
     auto helpers(const clang::Decl& declaration) -> const std::vector<PreparedHelper>& {
         return declarations_.helpers(declaration);
+    }
+    auto attributes(const clang::Decl& declaration) -> const PreparedAttributes& {
+        return declarations_.attributes(declaration);
     }
 
     auto make_stream(llvm::StringRef source,

@@ -3,6 +3,83 @@ export module pmacro.compiler_test;
 import std;
 import pmacro;
 
+auto helper_arguments(const pmacro::HelperInfo& helper,
+                      std::string_view          owner,
+                      std::string_view          first,
+                      pmacro::Context&          context) -> bool {
+    if (helper.owner != owner || ! helper.arguments || ! helper.source.spelling) return false;
+    auto arguments = context.tokens(*helper.arguments);
+    return arguments &&
+           (first.empty() ? arguments->size() == 0
+                          : arguments->size() != 0 && (*arguments)[0].spelling() == first);
+}
+
+[[pmacro::define("compiler-test")]]
+auto helper_fields(pmacro::DeriveInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    auto first = context.declaration();
+    auto again = context.declaration();
+    if (! first || ! again || *first != *again) return std::unexpected(pmacro::Error::Failure);
+    const auto& value  = **first;
+    const auto* record = std::get_if<pmacro::RecordInfo>(&value.data);
+    if (! record || record->fields.size() != 2 || value.helpers.size() != 1 ||
+        ! helper_arguments(value.helpers[0], "compiler-test::helper_fields", "record", context))
+        return std::unexpected(pmacro::Error::Failure);
+    const auto& field = record->fields[0];
+    const auto& spare = record->fields[1];
+    if (field.helpers.size() != 2 || field.attributes.size() != 1 || spare.helpers.size() != 1 ||
+        ! helper_arguments(field.helpers[0], "compiler-test::helper_fields", "default", context) ||
+        ! helper_arguments(field.helpers[1], "compiler-test::helper_second", "rename", context) ||
+        ! helper_arguments(spare.helpers[0], "compiler-test::helper_fields", "", context))
+        return std::unexpected(pmacro::Error::Failure);
+    const auto method = std::ranges::find(record->methods, "allows", &pmacro::MethodInfo::name);
+    if (method == record->methods.end() || method->helpers.size() != 1 ||
+        ! helper_arguments(method->helpers[0], "compiler-test::helper_fields", "method", context))
+        return std::unexpected(pmacro::Error::Failure);
+    const auto name = context.macro_identity() == "compiler-test::helper_fields"
+                          ? "helper_fields_checked"
+                          : "helper_second_checked";
+    return context.parse(std::string("inline constexpr bool ") + name + " = true;");
+}
+
+[[pmacro::define("compiler-test")]]
+auto helper_second(pmacro::DeriveInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    return helper_fields(input, context);
+}
+
+auto check_helper_member(pmacro::Context& context) -> bool {
+    auto snapshot = context.declaration();
+    if (! snapshot) return false;
+    if (const auto* record = std::get_if<pmacro::RecordInfo>(&(*snapshot)->data))
+        return record->fields.size() == 1 && record->fields[0].helpers.size() == 1 &&
+               helper_arguments(record->fields[0].helpers[0],
+                                "compiler-test::helper_member",
+                                "default",
+                                context);
+    const auto* enumeration = std::get_if<pmacro::EnumInfo>(&(*snapshot)->data);
+    return enumeration && enumeration->enumerators.size() == 1 &&
+           enumeration->enumerators[0].helpers.size() == 1 &&
+           helper_arguments(enumeration->enumerators[0].helpers[0],
+                            "compiler-test::helper_member",
+                            "default",
+                            context);
+}
+
+[[pmacro::define("compiler-test")]]
+auto helper_member(pmacro::DeriveInput, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_helper_member(context)) return std::unexpected(pmacro::Error::Failure);
+    return context.stream();
+}
+
+[[pmacro::define("compiler-test")]]
+auto helper_snapshot(pmacro::AttributeInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    if (! check_helper_member(context)) return std::unexpected(pmacro::Error::Failure);
+    return input.item;
+}
+
 [[pmacro::define("compiler-test")]]
 auto context_info(pmacro::DeriveInput input, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {

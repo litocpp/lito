@@ -79,8 +79,9 @@ private:
 };
 
 struct PreparedHelper {
-    const clang::AnnotateAttr* attribute;
-    HelperInfo                 value;
+    std::size_t           identity;
+    clang::SourceLocation location;
+    HelperInfo            value;
 };
 
 struct PreparedAttributes {
@@ -92,6 +93,14 @@ struct PreparedAttributes {
 class DeclarationStore {
 public:
     DeclarationStore(clang::CompilerInstance& compiler, SourceRegistry& sources);
+    ~DeclarationStore();
+    DeclarationStore(const DeclarationStore&)                    = delete;
+    auto operator=(const DeclarationStore&) -> DeclarationStore& = delete;
+
+    static auto record_helper(clang::Decl&           declaration,
+                              std::string            owner,
+                              clang::SourceRange     source,
+                              clang::CharSourceRange arguments) -> bool;
 
     auto attributes(const clang::Decl& declaration) -> const PreparedAttributes&;
     auto helpers(const clang::Decl& declaration) -> const std::vector<PreparedHelper>&;
@@ -100,6 +109,7 @@ public:
 
 private:
     struct PreparedDeclaration {
+        std::vector<PreparedHelper>                helper_attributes;
         std::optional<PreparedAttributes>          attributes;
         std::optional<std::vector<PreparedHelper>> helpers;
         std::optional<std::expected<std::shared_ptr<const Declaration>, DeclarationError>> snapshot;
@@ -112,7 +122,9 @@ private:
     auto expression(const clang::Expr* expression) const -> ExpressionInfo;
 
     clang::CompilerInstance&                                    compiler_;
+    clang::ASTContext*                                          context_;
     SourceRegistry&                                             sources_;
+    std::size_t                                                 next_helper_ {};
     std::unordered_map<const clang::Decl*, PreparedDeclaration> declarations_;
 };
 
