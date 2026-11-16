@@ -325,3 +325,119 @@ link-stdlib = false
     ASSERT_TRUE(contents.is_ok());
     EXPECT_EQ(contents->as_str(), invalid);
 }
+
+TEST_F(FormatCommand, BuiltinDiscoversNearestStyleAndExplicitParentInheritance) {
+    struct Source {
+        ref<str> path;
+        ref<str> original;
+        ref<str> expected;
+    };
+    const Source sources[] = {
+        { "src/root.cpp"_str,
+          "int root(){return 1;}\n"_str,
+          "int root () {\n  return 1;\n}\n"_str },
+        { "src/nested/child.cpp"_str,
+          "int child(){return 2;}\n"_str,
+          "int child () {\n      return 2;\n}\n"_str },
+        { "src/isolated/value.cpp"_str,
+          "int value(){return 3;}\n"_str,
+          "int value() {\n   return 3;\n}\n"_str },
+    };
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-style-discovery"
+version = "0.1.0"
+[[bin]]
+name = "builtin-style-discovery"
+sources = ["src/root.cpp", "src/nested/child.cpp", "src/isolated/value.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str, "IndentWidth: 2\nSpaceBeforeParens: Always\n"_str },
+        { "_clang-format"_str, "IndentWidth: 7\n"_str },
+        { "src/nested/_clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nIndentWidth: 6\n"_str },
+        { "src/isolated/.clang-format"_str, "IndentWidth: 3\n"_str },
+        { sources[0].path, sources[0].original },
+        { sources[1].path, sources[1].original },
+        { sources[2].path, sources[2].original },
+    };
+    auto project = materialize("builtin-style-discovery"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .mode    = lito::FormatMode::Check,
+        .backend = lito::FormatBackend::Builtin,
+    };
+    auto checked = lito::format(request);
+    ASSERT_TRUE(checked.is_ok());
+    EXPECT_EQ(checked->files, usize(3));
+    EXPECT_EQ(checked->unformatted_files.len(), usize(3));
+    for (const auto& source : sources) {
+        auto path = project->root.join(PathBuf::from(source.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), source.original);
+    }
+    request.mode = lito::FormatMode::Write;
+    auto written = lito::format(request);
+    ASSERT_TRUE(written.is_ok());
+    for (const auto& source : sources) {
+        auto path = project->root.join(PathBuf::from(source.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), source.expected);
+    }
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
+}
+
+TEST_F(FormatCommand, BuiltinRejectsInvalidStylesBeforeWritingAnySource) {
+    constexpr auto    original = "int f(){return 1;}\n"_str;
+    const ProjectFile files[]  = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-style-errors"
+version = "0.1.0"
+[[bin]]
+name = "builtin-style-errors"
+sources = ["src/first.cpp", "src/nested/second.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str, "IndentWidth: 2\n"_str },
+        { "src/nested/.clang-format"_str, "IndentWidth: 2\n"_str },
+        { "src/first.cpp"_str, original },
+        { "src/nested/second.cpp"_str, original },
+    };
+    struct Case {
+        ref<str> configuration;
+        ref<str> key;
+    };
+    const Case cases[] = {
+        { "AlignConsecutiveAssignments: true\n"_str, "AlignConsecutiveAssignments"_str },
+        { "UseTab: Always\n"_str, "UseTab"_str },
+        { "TabWidth: 0\n"_str, "TabWidth"_str },
+        { "ColumnLimit: 80\n"_str, "ColumnLimit"_str },
+        { "IndentWidth: \"\"\n"_str, "IndentWidth"_str },
+        { "KeepEmptyLinesAtTheStartOfBlocks: false\n"
+          "KeepEmptyLines:\n  AtStartOfBlock: true\n"_str,
+          "AtStartOfBlock"_str },
+    };
+    auto project = materialize("builtin-style-errors"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto configuration =
+        project->root.join(PathBuf::from("src/nested/.clang-format"_str).as_path());
+    const ref<str> paths[] = { "src/first.cpp"_str, "src/nested/second.cpp"_str };
+    for (const auto& test : cases) {
+        ASSERT_TRUE(
+            rstd::fs::write(configuration.as_path(), test.configuration.as_bytes()).is_ok());
+        auto result = lito::format(lito::FormatRequest {
+            .root    = project->root.clone(),
+            .backend = lito::FormatBackend::Builtin,
+        });
+        ASSERT_TRUE(result.is_err()) << test.configuration;
+        auto message = error_chain_text(result.unwrap_err());
+        EXPECT_TRUE(message.as_str().contains(test.key)) << message;
+        EXPECT_TRUE(message.as_str().contains(".clang-format"_str)) << message;
+        for (auto source : paths) {
+            auto path = project->root.join(PathBuf::from(source).as_path());
+            EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), original);
+        }
+    }
+}

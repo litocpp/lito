@@ -21,7 +21,14 @@ using StringSet = rstd::collections::BTreeMap<String, empty>;
 namespace lito
 {
 
-auto format_builtin_source(ref<rstd::path::Path> path, FormatMode mode) -> CommandResult<bool> {
+struct FormatSource {
+    PathBuf                       path;
+    frontend::format::FormatStyle style;
+};
+
+auto format_builtin_source(ref<rstd::path::Path>                path,
+                           FormatMode                           mode,
+                           const frontend::format::FormatStyle& style) -> CommandResult<bool> {
     auto contents = rstd::fs::read(path);
     if (contents.is_err()) {
         return Err(CommandError::System(SystemError::Io(
@@ -32,7 +39,7 @@ auto format_builtin_source(ref<rstd::path::Path> path, FormatMode mode) -> Comma
             PathBuf::from(path),
             frontend::lexical::SourceText::from_bytes(rstd::move(contents).unwrap())),
     };
-    auto formatted = frontend::format::format_source(source);
+    auto formatted = frontend::format::format_source(source, style);
     if (formatted.is_err()) {
         auto error = rstd::move(formatted).unwrap_err();
         if (error.path.is_none()) error.path = Some(PathBuf::from(path));
@@ -120,7 +127,7 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     }
 
     auto       summary = FormatSummary {};
-    auto       paths   = Vec<PathBuf>::make();
+    auto       inputs  = Vec<FormatSource>::make();
     auto       seen    = StringSet::make();
     const auto discover_packages =
         [&](lito::workspace::WorkspaceCatalog& packages) -> CommandResult<empty> {
@@ -149,7 +156,7 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
                         "source path '{}' is not valid UTF-8", source.canonical_path.as_path())));
                 if (seen.contains_key(*key)) continue;
                 seen.insert(String::make(*key), empty {});
-                paths.push(source.canonical_path.clone());
+                inputs.push(FormatSource { .path = source.canonical_path.clone() });
             }
             ++summary.packages;
         }
@@ -162,29 +169,40 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     if (summary.packages != selected.len()) {
         return Err(CommandError::Message("selected packages are missing from local project"_Str));
     }
-    summary.files = paths.len();
-    if (paths.is_empty()) return Ok(rstd::move(summary));
+    summary.files = inputs.len();
+    if (inputs.is_empty()) return Ok(rstd::move(summary));
+    if (request.backend == FormatBackend::Builtin) {
+        auto resolver = frontend::format::StyleResolver {};
+        for (auto& input : inputs) {
+            auto style = resolver.for_source(input.path.as_path());
+            if (style.is_err())
+                return Err(
+                    CommandError::Message(rstd::format("{}", rstd::move(style).unwrap_err())));
+            input.style = *style;
+        }
+    }
     auto parallelism = rstd::thread::available_parallelism();
     auto jobs        = format_execution::worker_count(
-        paths.len(), parallelism.is_ok() ? Some(parallelism->get()) : None());
+        inputs.len(), parallelism.is_ok() ? Some(parallelism->get()) : None());
     auto executed =
-        format_execution::run(paths.len(), jobs, [&](usize index) -> CommandResult<bool> {
+        format_execution::run(inputs.len(), jobs, [&](usize index) -> CommandResult<bool> {
             if (request.backend == FormatBackend::Builtin)
-                return format_builtin_source(paths[index].as_path(), request.mode);
+                return format_builtin_source(
+                    inputs[index].path.as_path(), request.mode, inputs[index].style);
             if (request.mode == FormatMode::Check) {
-                auto result = formatter->is_formatted(paths[index].as_path());
+                auto result = formatter->is_formatted(inputs[index].path.as_path());
                 if (result.is_err())
                     return Err(rstd::into<CommandError>(rstd::move(result).unwrap_err()));
                 return Ok(*result);
             }
-            auto result = formatter->format(paths[index].as_path());
+            auto result = formatter->format(inputs[index].path.as_path());
             if (result.is_err())
                 return Err(rstd::into<CommandError>(rstd::move(result).unwrap_err()));
             return Ok(true);
         });
     if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
-    for (usize index {}; index < paths.len(); ++index) {
-        if (! (*executed)[index]) summary.unformatted_files.push(rstd::move(paths[index]));
+    for (usize index {}; index < inputs.len(); ++index) {
+        if (! (*executed)[index]) summary.unformatted_files.push(rstd::move(inputs[index].path));
     }
     return Ok(rstd::move(summary));
 }

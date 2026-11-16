@@ -9,6 +9,7 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito::frontend::lexical;
 using lito::frontend::format::format_source;
+using lito::frontend::format::parse_style_configuration;
 
 auto format_test_source(ref<str> contents) -> SourceFile {
     return SourceFile::make(usize {},
@@ -141,4 +142,80 @@ TEST(BuiltinFormat, LeavesSourceAndScanStorageUnchangedAndOwnsOutput) {
     ASSERT_TRUE(output.is_some());
     EXPECT_EQ(output->as_str(),
               "// original comment\r\nauto f() -> int {\r\n    return 7;\r\n}\r\n"_str);
+}
+
+TEST(BuiltinFormat, AppliesSupportedStyleOptionsToFinalOutput) {
+    struct Case {
+        ref<str> configuration;
+        ref<str> source;
+        ref<str> expected;
+    };
+    const Case cases[] = {
+        { "\xef\xbb\xbfIndentWidth: '2'\nUseTab: \"Never\" # indentation\nNamespaceIndentation: "
+          "All\n"
+          "BreakBeforeBraces: Attach\nSpaceBeforeAssignmentOperators: true\n"_str,
+          "namespace outer\n{\nnamespace inner\n{\nint value=1;\n}\n}\n"_str,
+          "namespace outer {\n  namespace inner {\n    int value = 1;\n  }\n}\n"_str },
+        { "IndentWidth: 2\nNamespaceIndentation: Inner\n"_str,
+          "namespace outer{namespace inner{int value;}}\r\n"_str,
+          "namespace outer {\r\nnamespace inner {\r\n  int value;\r\n}\r\n}\r\n"_str },
+        { "IndentWidth: 2\nNamespaceIndentation: None\n"_str,
+          "namespace sample{int f(){return 1;}}\n"_str,
+          "namespace sample {\nint f() {\n  return 1;\n}\n}\n"_str },
+        { "IndentWidth: 10\nTabWidth: 8\nUseTab: ForIndentation\n"_str,
+          "// lito-format off\n  int   untouched( ){return   2;}\n// lito-format on\n"
+          "int f(){return 1;}\n"_str,
+          "// lito-format off\n  int   untouched( ){return   2;}\n// lito-format on\n"
+          "int f() {\n\t  return 1;\n}\n"_str },
+        { "BreakBeforeBraces: Allman\nSpaceBeforeParens: Always\n"
+          "SpaceInEmptyParentheses: true\n"_str,
+          "int f(){return 1;}\n"_str,
+          "int f ( )\n{\n    return 1;\n}\n"_str },
+        { "BreakBeforeBraces: Allman\n"_str,
+          "void f(){if(true){run();}else{stop();}try{run();}catch(...){stop();}}\n"_str,
+          "void f()\n{\n    if (true)\n    {\n        run();\n    }\n"
+          "    else\n    {\n        stop();\n    }\n    try\n    {\n        run();\n    }\n"
+          "    catch (...)\n    {\n        stop();\n    }\n}\n"_str },
+        { "SpaceBeforeParens: Never\nSpacesInParentheses: true\n"
+          "SpaceBeforeAssignmentOperators: false\n"_str,
+          "int f(int x){int y=-x;y+=-1;if(x>0){return y;}return 0;}\n"_str,
+          "int f( int x ) {\n    int y= -x;\n    y+= -1;\n    if( x > 0 ) {\n"
+          "        return y;\n    }\n    return 0;\n}\n"_str },
+        { "AllowShortFunctionsOnASingleLine: All\nAllowShortBlocksOnASingleLine: Never\n"
+          "SpaceInEmptyParentheses: false\n"_str,
+          "int f( ){return 1;}\n"_str,
+          "int f() { return 1; }\n"_str },
+        { "AllowShortFunctionsOnASingleLine: Empty\nAllowShortBlocksOnASingleLine: Empty\n"
+          "SpacesInParentheses: false\n"_str,
+          "void empty(){}\nint full( int x ){return x;}\nvoid blocks(){if(true){}}\n"_str,
+          "void empty() {}\nint full(int x) {\n    return x;\n}\n"
+          "void blocks() {\n    if (true) {}\n}\n"_str },
+        { "AllowShortFunctionsOnASingleLine: None\nAllowShortBlocksOnASingleLine: Always\n"
+          "KeepEmptyLinesAtTheStartOfBlocks: false\nSpaceBeforeParens: ControlStatements\n"_str,
+          "int f(){\n\nif(true){return 1;}return 0;}\nint g(){return 2;}\n"_str,
+          "int f() {\n    if (true) { return 1; }\n    return 0;\n}\n"
+          "int g() {\n    return 2;\n}\n"_str },
+        { "MaxEmptyLinesToKeep: 1\nKeepEmptyLines:\n  AtStartOfFile: false\n"
+          "  AtEndOfFile: false\n  AtStartOfBlock: false\n  AtEndOfBlock: false\n"_str,
+          "\n\nint f(){\n\n\nint x;\n\n\nreturn 1;\n\n\n}\n\n\n"_str,
+          "int f() {\n    int x;\n\n    return 1;\n}\n"_str },
+        { "IndentWidth: 2\nMaxEmptyLinesToKeep: 2\nKeepEmptyLines:\n  AtStartOfFile: true\n"
+          "  AtEndOfFile: true\n  AtStartOfBlock: true\n  AtEndOfBlock: true\n"_str,
+          "\n\nint f(){\n\n\nreturn 1;\n\n\n}\n\n\n"_str,
+          "\n\nint f() {\n\n\n  return 1;\n\n\n}\n\n\n"_str },
+        { "---\nLanguage: Cpp\nColumnLimit: 0\nBasedOnStyle: LLVM\n...\n"_str,
+          "namespace sample{int f(){return 1;}}\n"_str,
+          "namespace sample {\nint f() { return 1; }\n}\n"_str },
+    };
+    for (const auto& test : cases) {
+        auto configuration = parse_style_configuration(test.configuration);
+        ASSERT_TRUE(configuration.is_ok()) << test.configuration;
+        auto style     = configuration->apply();
+        auto formatted = format_source(format_test_source(test.source), style);
+        ASSERT_TRUE(formatted.is_ok()) << test.configuration;
+        EXPECT_EQ(formatted->as_str(), test.expected) << test.configuration;
+        auto repeated = format_source(format_test_source(formatted->as_str()), style);
+        ASSERT_TRUE(repeated.is_ok());
+        EXPECT_EQ(repeated->as_str(), formatted->as_str()) << test.configuration;
+    }
 }

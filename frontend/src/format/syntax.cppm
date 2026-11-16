@@ -21,7 +21,8 @@ enum class BlockKind
 enum class OperatorRole
 {
     Unknown,
-    Binary
+    Binary,
+    Assignment
 };
 
 enum class ParenRole
@@ -55,6 +56,7 @@ struct TokenSource {
 
 struct TokenSyntax {
     usize        pair { usize::MAX };
+    usize        header_begin { usize::MAX };
     BlockKind    block { BlockKind::None };
     OperatorRole operator_role { OperatorRole::Unknown };
     ParenRole    paren_role { ParenRole::Unknown };
@@ -64,6 +66,9 @@ struct TokenSyntax {
     bool         word_like {};
     bool         expression_prefix {};
     bool         block_continuation {};
+    bool         brace_continuation {};
+    bool         simple_block {};
+    unsigned     block_statements {};
 };
 
 struct FormatToken {
@@ -362,6 +367,12 @@ auto binary_operator(const FormatSyntax& syntax, usize index) -> bool {
            syntax.tokens[right].source.kind == lexical::TokenKind::PpNumber;
 }
 
+auto assignment_operator(ref<str> text) -> bool {
+    return text == "="_str || text == "+="_str || text == "-="_str || text == "*="_str ||
+           text == "/="_str || text == "%="_str || text == "&="_str || text == "^="_str ||
+           text == "|="_str || text == "<<="_str || text == ">>="_str;
+}
+
 auto annotate_roles(FormatSyntax& syntax) -> void {
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token            = syntax.tokens[index];
@@ -374,10 +385,14 @@ auto annotate_roles(FormatSyntax& syntax) -> void {
             text == "return"_str || text == "co_return"_str || text == "throw"_str;
         token.syntax.block_continuation =
             text == "else"_str || text == "catch"_str || text == "while"_str;
+        token.syntax.brace_continuation = text == "else"_str || text == "catch"_str;
     }
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token = syntax.tokens[index];
-        if (binary_operator(syntax, index)) token.syntax.operator_role = OperatorRole::Binary;
+        if (assignment_operator(syntax.text(index)))
+            token.syntax.operator_role = OperatorRole::Assignment;
+        else if (binary_operator(syntax, index))
+            token.syntax.operator_role = OperatorRole::Binary;
         if (syntax.is(index, "->"_str)) {
             token.syntax.arrow_role = index != usize {} && syntax.is(index - usize(1), ")"_str)
                                           ? ArrowRole::TrailingReturn
@@ -393,6 +408,40 @@ auto annotate_roles(FormatSyntax& syntax) -> void {
         else if (previous.source.kind == lexical::TokenKind::Identifier || text == ")"_str ||
                  text == "]"_str)
             token.syntax.paren_role = ParenRole::Call;
+    }
+}
+
+auto annotate_simple_blocks(FormatSyntax& syntax) -> void {
+    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
+        auto& open = syntax.tokens[index];
+        if (! syntax.is(index, "{"_str) ||
+            (open.syntax.block != BlockKind::Function && open.syntax.block != BlockKind::Control) ||
+            open.syntax.pair == usize::MAX)
+            continue;
+        auto close = open.syntax.pair;
+        auto begin = open.syntax.header_begin == usize::MAX ? index : open.syntax.header_begin;
+        auto simple =
+            ! syntax.overlaps(syntax.tokens[begin].source.begin, syntax.tokens[close].source.end);
+        for (auto scan = begin; simple && scan < index; ++scan)
+            if (syntax.tokens[scan].source.comment) simple = false;
+        unsigned statements {};
+        unsigned parens {};
+        for (auto scan = index + usize(1); simple && scan < close; ++scan) {
+            const auto& token = syntax.tokens[scan];
+            auto        text  = syntax.text(scan);
+            if (token.source.comment || token.syntax.protected_text || text == "{"_str ||
+                text == "}"_str || text == ":"_str || control(text) || text == "else"_str ||
+                text == "do"_str || text == "try"_str)
+                simple = false;
+            if (text == "("_str || text == "["_str) ++parens;
+            if ((text == ")"_str || text == "]"_str) && parens != 0) --parens;
+            if (text == ";"_str && parens == 0) ++statements;
+        }
+        if (close != index + usize(1) && ! syntax.is(close - usize(1), ";"_str)) simple = false;
+        open.syntax.simple_block                     = simple;
+        open.syntax.block_statements                 = statements;
+        syntax.tokens[close].syntax.simple_block     = simple;
+        syntax.tokens[close].syntax.block_statements = statements;
     }
 }
 
@@ -473,9 +522,17 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
             index = token.syntax.pair;
             continue;
         }
-        token.syntax.block                            = kind;
-        syntax.tokens[token.syntax.pair].syntax.block = kind;
-        head                                          = index + usize(1);
+        auto header = head;
+        while (header < index && (syntax.tokens[header].source.comment ||
+                                  syntax.directive(syntax.tokens[header].source.begin) ||
+                                  syntax.overlaps(syntax.tokens[header].source.begin,
+                                                  syntax.tokens[header].source.end)))
+            ++header;
+        token.syntax.block                                   = kind;
+        token.syntax.header_begin                            = header;
+        syntax.tokens[token.syntax.pair].syntax.block        = kind;
+        syntax.tokens[token.syntax.pair].syntax.header_begin = header;
+        head                                                 = index + usize(1);
     }
 }
 
@@ -567,6 +624,7 @@ auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSy
         normalize_ranges(syntax.protected_ranges);
         annotate_roles(syntax);
         annotate_module_statements(syntax);
+        annotate_simple_blocks(syntax);
     }
     return Ok(rstd::move(syntax));
 }
