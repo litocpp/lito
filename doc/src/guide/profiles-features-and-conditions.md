@@ -109,6 +109,20 @@ lito build --features luato/vendored
 The second command requires `luato` to be a direct dependency of a selected root. Disable all root
 default features with `--no-default-features`; this does not disable defaults requested by dependencies.
 
+To persist package-specific preferences, use project configuration rather than manifest feature
+declarations:
+
+```toml
+# lito-config.toml or .lito/config.toml
+[packages.luato]
+features = ["vendored"]
+```
+
+Unlike CLI selectors, these requests also reach active transitive dependencies. They never activate
+an otherwise inactive package and are ignored when the package is not used. Manifest, CLI, and
+configured requests are unified. Clear only the configured request for an invocation with
+`-c 'packages.luato.features=[]'`; `--no-config` skips the local file but still loads shared config.
+
 For each declared feature, Lito owns a package-local integer macro. The default spelling uppercases
 the feature, changes `-` to `_`, and prefixes `LITO_FEAT_`, so `fast-path` becomes
 `LITO_FEAT_FAST_PATH`. Its value is available while preprocessing that package and does not escape

@@ -288,6 +288,7 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
         auto&      package = graph.packages[index];
         const auto name    = package.manifest.name.as_str();
         const auto active  = selected_target.contains_key(name) || selected_host.contains_key(name);
+        if (active) requests.configure(name, features);
         rstd_try(requests.resolve(package, active && features.all_features));
         if (selected_target.contains_key(name)) {
             auto context = make_package_condition_context(package, environment.target);

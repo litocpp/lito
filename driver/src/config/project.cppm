@@ -84,17 +84,18 @@ auto resolve_build_configuration(BuildConfigurationRequest request,
 }
 
 struct ProjectConfig {
-    PathBuf                           root;
-    lito::lock::LockConfig            lock;
-    ProcessEnvironmentSpec            environment;
-    lito::tools::ToolSpec             tools;
-    ToolchainSpec                     toolchain;
-    StandardLibrarySelection          standard_library { StandardLibrarySelection::Auto };
-    StandardLibraryRuntime            standard_library_runtime { StandardLibraryRuntime::Dynamic };
-    ProjectBuildOptions               build_options;
-    BuildTargetRequest                build_target;
-    lito::source::PackageSourceConfig sources;
-    lito::tools::cargo::Configuration cargo;
+    PathBuf                  root;
+    lito::lock::LockConfig   lock;
+    ProcessEnvironmentSpec   environment;
+    lito::tools::ToolSpec    tools;
+    ToolchainSpec            toolchain;
+    StandardLibrarySelection standard_library { StandardLibrarySelection::Auto };
+    StandardLibraryRuntime   standard_library_runtime { StandardLibraryRuntime::Dynamic };
+    ProjectBuildOptions      build_options;
+    Vec<lito::package::PackageFeatureRequest> package_features;
+    BuildTargetRequest                        build_target;
+    lito::source::PackageSourceConfig         sources;
+    lito::tools::cargo::Configuration         cargo;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;

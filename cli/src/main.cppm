@@ -1405,10 +1405,11 @@ extern "C++" int main() {
         request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
-        request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
-        request.build.selection.packages    = rstd::move(options.packages);
-        request.build.selection.features    = rstd::move(options.features);
-        request.build.locked                = options.locked || options.frozen || options.no_build;
+        request.build.cmake_build_overrides         = rstd::move(project.cmake_build_overrides);
+        request.build.selection.packages            = rstd::move(options.packages);
+        request.build.selection.features            = rstd::move(options.features);
+        request.build.selection.features.configured = rstd::move(project.package_features);
+        request.build.locked = options.locked || options.frozen || options.no_build;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
         if (managed_build_root.is_some()) {
             auto created = rstd::fs::create_dir_all(managed_build_root->as_path());
@@ -1562,7 +1563,8 @@ extern "C++" int main() {
                 .notify  = report_host_tool_resolution,
             }),
         };
-        auto report = lito::tree(request);
+        request.selection.features.configured = rstd::move(project.package_features);
+        auto report                           = lito::tree(request);
         if (report.is_err()) {
             report_error(rstd::move(report).unwrap_err());
             return 1;
@@ -1629,7 +1631,8 @@ extern "C++" int main() {
                 .notify  = report_host_tool_resolution,
             }),
         };
-        auto result = lito::fetch_dependencies(request);
+        request.selection.features.configured = rstd::move(project.package_features);
+        auto result                           = lito::fetch_dependencies(request);
         if (result.is_err()) {
             report_error(rstd::move(result).unwrap_err());
             return 1;
@@ -1707,9 +1710,10 @@ extern "C++" int main() {
         request.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
         request.selection.packages    = rstd::move(options.packages);
         request.selection.features    = rstd::move(options.features);
-        request.targets               = rstd::move(options.targets);
-        request.source                = rstd::move(options.source);
-        request.locked                = options.locked || options.frozen;
+        request.selection.features.configured = rstd::move(project.package_features);
+        request.targets                       = rstd::move(options.targets);
+        request.source                        = rstd::move(options.source);
+        request.locked                        = options.locked || options.frozen;
         if (options.profile.is_some()) request.profile = Some(options.profile->clone());
         auto event_context     = EventContext { .standard_error = true };
         request.observer       = Some(lito::BuildEventSink {
@@ -1771,8 +1775,9 @@ extern "C++" int main() {
         request.build.purpose               = lito::package::PackageSelectionPurpose::Documentation;
         request.build.selection.packages    = rstd::move(options.packages);
         request.build.selection.features    = rstd::move(options.features);
-        request.build.targets               = rstd::move(options.targets);
-        request.build.locked                = options.locked || options.frozen;
+        request.build.selection.features.configured = rstd::move(project.package_features);
+        request.build.targets                       = rstd::move(options.targets);
+        request.build.locked                        = options.locked || options.frozen;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
@@ -1862,13 +1867,14 @@ extern "C++" int main() {
         request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
-        request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
-        request.build.selection.packages    = rstd::move(options.packages);
-        request.build.selection.features    = rstd::move(options.features);
-        request.build.targets               = rstd::move(options.targets);
-        request.build.locked                = options.locked || options.frozen;
-        request.arguments                   = rstd::move(options.arguments);
-        request.no_run                      = options.no_run;
+        request.build.cmake_build_overrides         = rstd::move(project.cmake_build_overrides);
+        request.build.selection.packages            = rstd::move(options.packages);
+        request.build.selection.features            = rstd::move(options.features);
+        request.build.selection.features.configured = rstd::move(project.package_features);
+        request.build.targets                       = rstd::move(options.targets);
+        request.build.locked                        = options.locked || options.frozen;
+        request.arguments                           = rstd::move(options.arguments);
+        request.no_run                              = options.no_run;
         if (options.profile.is_some()) {
             request.build.profile = Some(options.profile->clone());
         }
@@ -1993,13 +1999,14 @@ extern "C++" int main() {
         request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
-        request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
-        request.build.selection.packages    = rstd::move(options.packages);
-        request.build.selection.features    = rstd::move(options.features);
-        request.build.targets               = rstd::move(options.targets);
-        request.build.locked                = options.locked || options.frozen;
-        request.arguments                   = rstd::move(options.arguments);
-        request.no_run                      = options.no_run;
+        request.build.cmake_build_overrides         = rstd::move(project.cmake_build_overrides);
+        request.build.selection.packages            = rstd::move(options.packages);
+        request.build.selection.features            = rstd::move(options.features);
+        request.build.selection.features.configured = rstd::move(project.package_features);
+        request.build.targets                       = rstd::move(options.targets);
+        request.build.locked                        = options.locked || options.frozen;
+        request.arguments                           = rstd::move(options.arguments);
+        request.no_run                              = options.no_run;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
@@ -2089,26 +2096,27 @@ extern "C++" int main() {
         options.outputs_json.is_some()
             ? Some(project_output_path(project.root.as_path(), rstd::move(*options.outputs_json)))
             : Option<rstd::path::PathBuf> {};
-    auto request                  = lito::BuildRequest {};
-    request.selection.root        = rstd::move(project.root);
-    request.environment           = rstd::move(project.environment);
-    request.tools                 = rstd::move(project.tools);
-    request.registries            = rstd::move(registry_bootstrap);
-    request.configuration         = build_configuration(rstd::move(project.toolchain),
-                                                        project.standard_library,
-                                                        project.standard_library_runtime,
-                                                        rstd::move(project.build_options),
-                                                        rstd::move(project.build_target));
-    request.lock                  = rstd::move(project.lock);
-    request.sources               = rstd::move(project.sources);
-    request.cargo                 = project.cargo;
-    request.pkg_config            = rstd::move(project.pkg_config);
-    request.cmake                 = rstd::move(project.cmake);
-    request.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
-    request.selection.packages    = rstd::move(options.packages);
-    request.selection.features    = rstd::move(options.features);
-    request.targets               = rstd::move(options.targets);
-    request.locked                = options.locked || options.frozen;
+    auto request                          = lito::BuildRequest {};
+    request.selection.root                = rstd::move(project.root);
+    request.environment                   = rstd::move(project.environment);
+    request.tools                         = rstd::move(project.tools);
+    request.registries                    = rstd::move(registry_bootstrap);
+    request.configuration                 = build_configuration(rstd::move(project.toolchain),
+                                                                project.standard_library,
+                                                                project.standard_library_runtime,
+                                                                rstd::move(project.build_options),
+                                                                rstd::move(project.build_target));
+    request.lock                          = rstd::move(project.lock);
+    request.sources                       = rstd::move(project.sources);
+    request.cargo                         = project.cargo;
+    request.pkg_config                    = rstd::move(project.pkg_config);
+    request.cmake                         = rstd::move(project.cmake);
+    request.cmake_build_overrides         = rstd::move(project.cmake_build_overrides);
+    request.selection.packages            = rstd::move(options.packages);
+    request.selection.features            = rstd::move(options.features);
+    request.selection.features.configured = rstd::move(project.package_features);
+    request.targets                       = rstd::move(options.targets);
+    request.locked                        = options.locked || options.frozen;
     if (options.profile.is_some()) request.profile = Some(options.profile->clone());
     request.execution.scan.jobs    = options.jobs;
     request.execution.compile.jobs = options.jobs;

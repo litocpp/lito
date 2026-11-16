@@ -27,6 +27,9 @@
     "build": {
       "$ref": "#/definitions/build"
     },
+    "packages": {
+      "$ref": "#/definitions/packages"
+    },
     "patch": {
       "$ref": "#/definitions/patches"
     },
@@ -309,6 +312,26 @@
           "enum": [
             "installed"
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "packages": {
+      "description": "Feature requests for active packages, including transitive dependencies. Entries do not select packages or activate dependency edges.",
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "type": "object",
+          "properties": {
+            "features": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

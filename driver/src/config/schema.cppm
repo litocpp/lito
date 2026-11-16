@@ -212,6 +212,39 @@ auto configured_build_options(const Option<lito::config::wire::Build>& build)
     return Ok(rstd::move(result));
 }
 
+auto configured_package_features(
+    const Option<rstd::collections::BTreeMap<String, lito::config::wire::Package>>& packages)
+    -> ConfigResult<Vec<lito::package::PackageFeatureRequest>> {
+    auto result = Vec<lito::package::PackageFeatureRequest>::make();
+    if (packages.is_none()) return Ok(rstd::move(result));
+    for (auto key : packages->keys()) {
+        auto name = key->as_str();
+        auto path = rstd::serde::DataPath().with_field("packages"_str).with_map_key(name);
+        if (! lito::manifest::valid_package_name(name))
+            return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                rstd::move(path), "must be a valid package name"_str)));
+        const auto& value = **packages->get(name);
+        if (value.features.is_none()) continue;
+        auto request = lito::package::PackageFeatureRequest {
+            .package = key->clone(),
+            .source  = rstd::format("config.packages.{}.features", name),
+        };
+        for (usize index {}; index < value.features->len(); ++index) {
+            const auto& feature = (*value.features)[index];
+            if (! lito::manifest::valid_feature_name(feature.as_str()))
+                return Err(ConfigError::Data(rstd::serde::Error::invalid_value(
+                    path.with_field("features"_str).with_index(index),
+                    "must be a valid feature name"_str)));
+            auto duplicate = request.features.iter().any([&](auto existing) {
+                return *existing == feature;
+            });
+            if (! duplicate) request.features.push(feature.clone());
+        }
+        if (! request.features.is_empty()) result.push(rstd::move(request));
+    }
+    return Ok(rstd::move(result));
+}
+
 auto environment_build_option(ToolchainEnvironmentVariable variable)
     -> ConfigResult<Option<BuildOptionInput>> {
     auto name  = toolchain_environment_variable_name(variable);
@@ -899,10 +932,11 @@ auto decode_project_config(PathBuf               root,
     auto lock        = rstd_try(configured_lock(wire.lock, root.as_path()));
     auto sources =
         rstd_try(configured_sources(document.get("patch"_str), wire.builtin, root.as_path()));
-    auto install       = rstd_try(configured_install(wire.install, root.as_path()));
-    auto doc           = rstd_try(configured_doc(wire.doc, root.as_path()));
-    auto build_options = rstd_try(configured_build_options(wire.build));
-    auto build_target  = rstd_try(configured_build_target(wire.build));
+    auto install          = rstd_try(configured_install(wire.install, root.as_path()));
+    auto doc              = rstd_try(configured_doc(wire.doc, root.as_path()));
+    auto build_options    = rstd_try(configured_build_options(wire.build));
+    auto package_features = rstd_try(configured_package_features(wire.packages));
+    auto build_target     = rstd_try(configured_build_target(wire.build));
     rstd_try(append_environment_build_options(build_options, environment_flags));
 
     return Ok(ProjectConfig {
@@ -914,6 +948,7 @@ auto decode_project_config(PathBuf               root,
         .standard_library         = standard_library,
         .standard_library_runtime = standard_library_runtime,
         .build_options            = rstd::move(build_options),
+        .package_features         = rstd::move(package_features),
         .build_target             = rstd::move(build_target),
         .sources                  = rstd::move(sources),
         .cargo                    = tools.cargo,

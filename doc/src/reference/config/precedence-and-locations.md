@@ -42,6 +42,10 @@ should share, such as the standard library contract or a project-wide CMake gene
 The shared file may not contain `tools.cmake.overrides`. Installed-package substitution is local
 machine state; put it in `.lito/config.toml` or pass it with `--config`.
 
+Both project files may declare `packages.NAME.features`. A local array replaces the shared array
+for that package; it does not replace other packages' settings. These configured requests are then
+unified with manifest and CLI feature requests, rather than overriding them.
+
 ## Local persisted config
 
 `.lito/config.toml` is read after the shared file. It is suitable for absolute tool paths, SDK
@@ -58,6 +62,8 @@ lito config get
 lito config get toolchain.stdlib
 lito config set toolchain.stdlib libstdc++
 lito config unset toolchain.stdlib
+lito config set packages.luato.features '["vendored"]'
+lito config unset packages.luato.features
 ```
 
 `set` parses `VALUE` as TOML when possible and otherwise stores it as an unquoted string. It

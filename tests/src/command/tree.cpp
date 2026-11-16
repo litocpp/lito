@@ -121,6 +121,87 @@ module = "tree.image"
     EXPECT_TRUE(lito::tree(request).is_err());
 }
 
+TEST_F(TreeCommand, ConfiguredFeaturesReachTransitivePackagesWithoutSelectingUnusedPackages) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "root"
+version = "0.1.0"
+[lib]
+name = "root"
+module = "root"
+archive = "root"
+[dependencies]
+middle = {path = "middle"}
+)toml"_str },
+        { "middle/lito.toml"_str, R"toml([package]
+name = "middle"
+version = "0.1.0"
+[lib]
+name = "middle"
+module = "middle"
+archive = "middle"
+[dependencies]
+provider = {path = "../provider"}
+)toml"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "provider"
+version = "0.1.0"
+[lib]
+name = "provider"
+module = "provider"
+archive = "provider"
+[features.vendored]
+default = false
+[dependencies]
+marker = {path = "../marker", condition = "feature.vendored"}
+[external-dependencies.pkg-config.runtime]
+module = "missing-runtime"
+condition = "!feature.vendored"
+)toml"_str },
+        { "marker/lito.toml"_str, R"toml([package]
+name = "marker"
+version = "0.1.0"
+[lib]
+name = "marker"
+module = "marker"
+archive = "marker"
+)toml"_str },
+        { ".lito/config.toml"_str, R"toml([packages.provider]
+features = ["vendored"]
+[packages.absent]
+features = ["missing"]
+)toml"_str },
+    };
+    auto project = materialize("tree-configured-features"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto config = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(config.is_ok());
+    auto request                          = tree_request(project->root.as_path());
+    request.selection.features.configured = rstd::move(config->package_features);
+    auto report                           = lito::tree(request);
+    ASSERT_TRUE(tree_succeeded(report));
+    EXPECT_EQ(report->selection.selected_root_names.len(), usize(1));
+    auto rendered = lito::render_tree(*report);
+    ASSERT_TRUE(rendered.is_ok());
+    EXPECT_TRUE(rendered->as_str().contains("marker v0.1.0"_str));
+    EXPECT_FALSE(rendered->as_str().contains("absent"_str));
+    for (const auto& package : report->selection.graph.packages)
+        if (package.manifest.name == "provider"_str)
+            EXPECT_TRUE(package.effective_pkg_config_dependencies().is_empty());
+    auto cleared = lito::config::load_project_config(
+        project->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .overrides = strings("packages.provider.features=[]"_str),
+        });
+    ASSERT_TRUE(cleared.is_ok());
+    request.selection.features.configured = rstd::move(cleared->package_features);
+    auto disabled                         = lito::tree(request);
+    ASSERT_TRUE(tree_succeeded(disabled));
+    auto text = lito::render_tree(*disabled);
+    ASSERT_TRUE(text.is_ok());
+    EXPECT_FALSE(text->as_str().contains("marker v0.1.0"_str));
+}
+
 TEST_F(TreeCommand, PurposesEnableOnlyTheirDevelopmentAndRuntimeEdges) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

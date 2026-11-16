@@ -61,13 +61,33 @@ auto parse_command_line_features(const Vec<String>& values)
 export namespace lito::package
 {
 
+struct PackageFeatureRequest {
+    String      package;
+    Vec<String> features;
+    String      source;
+
+    auto clone() const -> PackageFeatureRequest {
+        return { package.clone(), features.clone(), source.clone() };
+    }
+};
+
 struct FeatureSelection {
-    Vec<String> enabled;
-    bool        default_features { true };
-    bool        all_features { false };
+    Vec<String>                enabled;
+    bool                       default_features { true };
+    bool                       all_features { false };
+    Vec<PackageFeatureRequest> configured;
 
     auto clone() const -> FeatureSelection {
-        return { enabled.clone(), default_features, all_features };
+        return {
+            .enabled          = enabled.clone(),
+            .default_features = default_features,
+            .all_features     = all_features,
+            .configured       = configured.iter()
+                                    .map([](auto value) {
+                                  return value->clone();
+                              })
+                              .collect<Vec<PackageFeatureRequest>>(),
+        };
     }
 };
 
@@ -185,6 +205,14 @@ public:
             collect(edge.as_Pmacro().value);
     }
 
+    auto configure(ref<str> package, const FeatureSelection& selection) -> void {
+        for (const auto& value : selection.configured) {
+            if (value.package != package) continue;
+            for (const auto& feature : value.features)
+                request(package, feature.as_str(), value.source.as_str());
+        }
+    }
+
     auto resolve(ResolvedPackage& package, bool all_features) const -> PackageResult<empty> {
         const auto name = package.manifest.name.as_str();
         for (const auto& request : requests_) {
@@ -261,9 +289,12 @@ auto resolve_features(ResolvedPackageGraph&       graph,
                 if (selected(resolved_dependency_name(edge)))
                     requests.dependency(package.manifest.name.as_str(), edge);
     }
-    for (auto& package : graph.packages)
+    for (auto& package : graph.packages) {
+        if (selected(package.manifest.name.as_str()))
+            requests.configure(package.manifest.name.as_str(), selection);
         rstd_try(requests.resolve(
             package, selection.all_features && selected(package.manifest.name.as_str())));
+    }
     return Ok(empty {});
 }
 

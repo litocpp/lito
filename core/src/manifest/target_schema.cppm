@@ -976,25 +976,6 @@ auto parse_conditional_configurations(Option<Vec<wire::Condition>> value,
     return Ok(rstd::move(result));
 }
 
-auto feature_name_is_valid(ref<str> value) -> bool {
-    if (value.is_empty()) return false;
-    const auto bytes = value.as_bytes();
-    const auto first = bytes[usize {}];
-    if (! ((first >= u8('a') && first <= u8('z')) || (first >= u8('A') && first <= u8('Z')) ||
-           first == u8('_'))) {
-        return false;
-    }
-    for (usize index { 1 }; index < bytes.len(); ++index) {
-        const auto byte = bytes[index];
-        if ((byte >= u8('a') && byte <= u8('z')) || (byte >= u8('A') && byte <= u8('Z')) ||
-            (byte >= u8('0') && byte <= u8('9')) || byte == u8('-') || byte == u8('_')) {
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
 auto macro_name_is_valid(ref<str> value) -> bool {
     if (value.is_empty()) return false;
     const auto bytes = value.as_bytes();
@@ -1023,7 +1004,7 @@ auto parse_features(Option<wire::Features> value) -> ManifestSchemaResult<Vec<Fe
     for (auto name_ref : features.keys()) {
         const auto& name = *name_ref;
         auto        item = path.with_map_key(name.as_str());
-        if (! feature_name_is_valid(name.as_str())) {
+        if (! valid_feature_name(name.as_str())) {
             return Err(ManifestSchemaError::Data(
                 rstd::serde::Error::invalid_value(rstd::move(item), "invalid feature name"_str)));
         }

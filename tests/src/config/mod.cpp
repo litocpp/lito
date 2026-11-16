@@ -105,6 +105,129 @@ TEST(Config, BuildOptionClonePreservesOrderAndOwnership) {
     EXPECT_EQ(copied.linker[usize {}].arguments[usize {}], "-s"_str);
 }
 
+TEST_F(Config, PackageFeaturesDecodeAsOwnedRequests) {
+    auto project = config("package-features"_str, R"toml([packages.luato]
+features = ["vendored", "vendored"]
+[packages.sqlito]
+features = []
+[packages.unused]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->package_features.len(), usize(1));
+    const auto& request = loaded->package_features[usize {}];
+    EXPECT_EQ(request.package.as_str(), "luato"_str);
+    ASSERT_EQ(request.features.len(), usize(1));
+    EXPECT_EQ(request.features[usize {}].as_str(), "vendored"_str);
+    EXPECT_EQ(request.source.as_str(), "config.packages.luato.features"_str);
+    auto selection       = lito::package::FeatureSelection {};
+    selection.configured = rstd::move(loaded->package_features);
+    auto copied          = selection.clone();
+    selection.configured[usize {}].features.clear();
+    selection.configured[usize {}].source = "changed"_Str;
+    EXPECT_EQ(copied.configured[usize {}].features.len(), usize(1));
+    EXPECT_EQ(copied.configured[usize {}].source.as_str(), "config.packages.luato.features"_str);
+}
+
+TEST_F(Config, InvalidPackageFeaturesReportTheirConfigurationPath) {
+    struct Case {
+        ref<str> contents;
+        ref<str> path;
+    };
+    const Case cases[] = {
+        { "packages = []"_str, "$.packages"_str },
+        { "[packages]\nluato = []"_str, "$.packages.luato"_str },
+        { "[packages.luato]\nfeatures = 'vendored'"_str, "$.packages.luato.features"_str },
+        { "[packages.luato]\nfeatures = [false]"_str, "$.packages.luato.features[0]"_str },
+        { "[packages.luato]\nfeatures = ['']"_str, "$.packages.luato.features[0]"_str },
+        { "[packages.luato]\nfeatures = ['luato/vendored']"_str,
+          "$.packages.luato.features[0]"_str },
+        { "[packages.luato]\nfeatures = ['a,b']"_str, "$.packages.luato.features[0]"_str },
+        { "[packages.luato]\nfeatures = ['a b']"_str, "$.packages.luato.features[0]"_str },
+        { "[packages.luato]\ndefault-features = false"_str,
+          "$.packages.luato.default-features"_str },
+        { "[packages.'bad/name']\nfeatures = ['vendored']"_str, "bad/name"_str },
+    };
+    auto index = usize {};
+    for (const auto& item : cases) {
+        auto project =
+            config(rstd::format("package-features-invalid-{}", index++).as_str(), item.contents);
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::config::load_project_config(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        EXPECT_TRUE(error_chain_text(loaded.unwrap_err()).as_str().contains(item.path));
+    }
+}
+
+TEST_F(Config, PackageFeatureLayersReplaceArraysAndPreserveOtherPackages) {
+    const ProjectFile files[] = {
+        { "lito-config.toml"_str, R"toml([packages.luato]
+features = ["shared", "extra"]
+[packages.sqlito]
+features = ["vendored"]
+)toml"_str },
+        { ".lito/config.toml"_str, "[packages.luato]\nfeatures = ['local']\n"_str },
+    };
+    auto project = materialize("package-features-layers"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->package_features.len(), usize(2));
+    EXPECT_EQ(loaded->package_features[usize {}].package.as_str(), "luato"_str);
+    ASSERT_EQ(loaded->package_features[usize {}].features.len(), usize(1));
+    EXPECT_EQ(loaded->package_features[usize {}].features[usize {}].as_str(), "local"_str);
+    EXPECT_EQ(loaded->package_features[usize(1)].package.as_str(), "sqlito"_str);
+    auto shared = lito::config::load_project_config(project->root.as_path(),
+                                                    lito::config::ConfigLoadMode::LocalDisabled);
+    ASSERT_TRUE(shared.is_ok());
+    ASSERT_EQ(shared->package_features[usize {}].features.len(), usize(2));
+    EXPECT_EQ(shared->package_features[usize {}].features[usize {}].as_str(), "shared"_str);
+    auto cleared = lito::config::load_project_config(
+        project->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .overrides = strings("packages.luato.features=[]"_str),
+        });
+    ASSERT_TRUE(cleared.is_ok());
+    ASSERT_EQ(cleared->package_features.len(), usize(1));
+    EXPECT_EQ(cleared->package_features[usize {}].package.as_str(), "sqlito"_str);
+    auto invoked = lito::config::load_project_config(
+        project->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .mode      = lito::config::ConfigLoadMode::LocalDisabled,
+            .overrides = strings("packages.luato.features=['invocation']"_str),
+        });
+    ASSERT_TRUE(invoked.is_ok());
+    ASSERT_EQ(invoked->package_features[usize {}].features.len(), usize(1));
+    EXPECT_EQ(invoked->package_features[usize {}].features[usize {}].as_str(), "invocation"_str);
+}
+
+TEST_F(Config, PersistedPackageFeaturesValidateBeforeWriting) {
+    auto project = empty_project("package-features-persisted"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto root = project->root.as_path();
+    ASSERT_TRUE(
+        lito::config::set_persisted_config(root, "packages.luato.features"_str, "['vendored']"_str)
+            .is_ok());
+    EXPECT_TRUE(
+        lito::config::set_persisted_config(root, "packages.luato.features"_str, "['bad/name']"_str)
+            .is_err());
+    auto query = lito::config::get_persisted_config(root, Some("packages.luato.features"_Str));
+    ASSERT_TRUE(query.is_ok());
+    EXPECT_TRUE(query->output.as_str().contains("vendored"_str));
+    auto loaded = lito::config::load_project_config(root);
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->package_features.len(), usize(1));
+    EXPECT_TRUE(lito::config::unset_persisted_config(root, "packages.luato.features"_str).is_ok());
+    auto unset = lito::config::load_project_config(root);
+    ASSERT_TRUE(unset.is_ok());
+    EXPECT_TRUE(unset->package_features.is_empty());
+    auto host = config("package-features-host"_str, "[packages.luato]\nfeatures = false\n"_str);
+    ASSERT_TRUE(host.is_ok());
+    EXPECT_TRUE(lito::config::load_host_tool_command_config(host->root.as_path(), {}).is_ok());
+    EXPECT_TRUE(lito::config::load_project_config(host->root.as_path()).is_err());
+}
+
 TEST_F(Config, RemovedConfigFieldsAreRejectedByConfigOwner) {
     struct RemovedField {
         ref<str> name;

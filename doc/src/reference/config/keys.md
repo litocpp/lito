@@ -176,6 +176,31 @@ override applies to every selected dependency with that CMake package identity.
 
 `tools.cmake.overrides` is forbidden in `lito-config.toml`; use `.lito/config.toml` or `-c`.
 
+## `[packages.NAME]`
+
+`features` is an array of ordinary package-local feature names. Entries may omit the field or use
+an empty array to request nothing. Names must follow the manifest's feature-name rules; command-line
+`package/feature` selectors and comma/space-separated lists are not accepted inside array items.
+
+```toml
+[packages.luato]
+features = ["vendored"]
+
+[packages.sqlito]
+features = ["vendored"]
+```
+
+Requests apply to active packages, including transitive dependencies and host tools, before their
+dependency and external-provider conditions are evaluated. They do not select roots, acquire an
+otherwise absent package, or activate an incoming dependency edge. Entries for absent or inactive
+packages are ignored; an active package missing a requested feature produces an error identifying
+`config.packages.NAME.features`.
+
+Configured requests are unified with manifest and command-line requests. They cannot disable features
+requested elsewhere or override default features. Across config files and `-c`, the later array for
+the same package replaces the earlier array, while different packages merge independently.
+`-c 'packages.luato.features=[]'` clears only that package's configured requests.
+
 ## `[build]`
 
 Global build options are split by language and link domain:

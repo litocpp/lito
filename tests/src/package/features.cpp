@@ -400,6 +400,125 @@ TEST(PackageFeatures, RejectsMalformedAndOutOfScopeSelectors) {
     }
 }
 
+TEST(PackageFeatures, ConfiguredFeaturesReachActiveTransitivePackagesBeforeConditions) {
+    auto app_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    app_edges.push(dependency("middle"_str));
+    auto middle_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    middle_edges.push(dependency("lua"_str, names("manifest"_str), false));
+    auto lua_edges              = Vec<lito::package::ResolvedRequiredDependency>::make();
+    auto marker                 = dependency("marker"_str);
+    marker.activation.condition = Some(external_condition("feature.vendored"_str));
+    lua_edges.push(rstd::move(marker));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(
+        package("app"_str, feature_declarations("command"_str), rstd::move(app_edges)));
+    graph.packages.push(package("middle"_str, {}, rstd::move(middle_edges)));
+    graph.packages.push(package(
+        "lua"_str, feature_declarations("vendored"_str, "manifest"_str), rstd::move(lua_edges)));
+    graph.packages.push(package("marker"_str));
+    graph.packages.push(package("inactive"_str));
+    auto selection = lito::package::FeatureSelection { .enabled = names("command"_str) };
+    selection.configured.push(
+        { "lua"_Str, names("vendored"_str, "vendored"_str), "config.packages.lua.features"_Str });
+    selection.configured.push(
+        { "inactive"_Str, names("missing"_str), "config.packages.inactive.features"_Str });
+    selection.configured.push(
+        { "absent"_Str, names("missing"_str), "config.packages.absent.features"_Str });
+    auto roots    = names("app"_str);
+    auto targets  = library_targets("app"_str);
+    auto selected = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "command"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(2)], "vendored"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(2)], "manifest"_str));
+    EXPECT_TRUE(selected_name(selected->target, "marker"_str));
+    EXPECT_FALSE(selected_name(selected->target, "inactive"_str));
+    ASSERT_EQ(graph.packages[usize(2)].features[usize {}].activation_sources.len(), usize(1));
+    EXPECT_EQ(graph.packages[usize(2)].features[usize {}].activation_sources[usize {}].as_str(),
+              "config.packages.lua.features"_str);
+    ASSERT_TRUE(lito::package::resolve_features(graph, roots, selected->target, targets, selection)
+                    .is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(2)], "vendored"_str));
+    selection.configured.clear();
+    selected = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_FALSE(feature_enabled(graph.packages[usize(2)], "vendored"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(2)], "manifest"_str));
+    EXPECT_FALSE(selected_name(selected->target, "marker"_str));
+}
+
+TEST(PackageFeatures, ConfiguredUnknownFeaturesAreCheckedOnlyForActivePackages) {
+    auto edges                = Vec<lito::package::ResolvedRequiredDependency>::make();
+    auto edge                 = dependency("lua"_str);
+    edge.activation.condition = Some(external_condition("feature.enable"_str));
+    edges.push(rstd::move(edge));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("app"_str, feature_declarations("enable"_str), rstd::move(edges)));
+    graph.packages.push(package("lua"_str));
+    auto selection = lito::package::FeatureSelection {};
+    selection.configured.push(
+        { "lua"_Str, names("missing"_str), "config.packages.lua.features"_Str });
+    auto roots    = names("app"_str);
+    auto targets  = library_targets("app"_str);
+    auto selected = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_FALSE(selected_name(selected->target, "lua"_str));
+    selection.enabled.push("enable"_Str);
+    auto active = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(active.is_err());
+    auto error = error_chain_text(active.unwrap_err());
+    EXPECT_TRUE(error.as_str().contains("has no feature 'missing'"_str));
+    EXPECT_TRUE(error.as_str().contains("config.packages.lua.features"_str));
+}
+
+TEST(PackageFeatures, ClearingConfiguredRequestsDoesNotClearCommandLineFeatures) {
+    auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    edges.push(dependency("lua"_str, names("manifest"_str), false));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("app"_str, {}, rstd::move(edges)));
+    graph.packages.push(package("lua"_str, feature_declarations("vendored"_str, "manifest"_str)));
+    auto selection = lito::package::FeatureSelection { .enabled = names("lua/vendored"_str) };
+    selection.configured.push(
+        { "lua"_Str, names("vendored"_str), "config.packages.lua.features"_Str });
+    auto roots   = names("app"_str);
+    auto targets = library_targets("app"_str);
+    ASSERT_TRUE(lito::package::select_conditioned_packages(
+                    graph, roots, targets, nullptr, None(), selection, {}, false)
+                    .is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "manifest"_str));
+    EXPECT_EQ(graph.packages[usize(1)].features[usize {}].activation_sources.len(), usize(2));
+    selection.configured.clear();
+    ASSERT_TRUE(lito::package::select_conditioned_packages(
+                    graph, roots, targets, nullptr, None(), selection, {}, false)
+                    .is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "vendored"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "manifest"_str));
+    EXPECT_EQ(graph.packages[usize(1)].features[usize {}].activation_sources.len(), usize(1));
+}
+
+TEST(PackageFeatures, ConfiguredFeaturesApplyToActiveHostProviders) {
+    auto edges                            = Vec<lito::package::ResolvedRequiredDependency>::make();
+    auto tool                             = dependency("generator"_str);
+    tool.as_Cpp().value.consumption.usage = lito::dependency::DependencyUsage::tool_only();
+    edges.push(rstd::move(tool));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("app"_str, {}, rstd::move(edges)));
+    graph.packages.push(package("generator"_str, feature_declarations("vendored"_str)));
+    auto selection = lito::package::FeatureSelection {};
+    selection.configured.push(
+        { "generator"_Str, names("vendored"_str), "config.packages.generator.features"_Str });
+    auto selected = lito::package::select_conditioned_packages(
+        graph, names("app"_str), library_targets("app"_str), nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected_name(selected->host, "generator"_str));
+    EXPECT_FALSE(selected_name(selected->target, "generator"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "vendored"_str));
+}
+
 TEST(PackageFeatures, SelectsExternalDependenciesAfterGraphFeatureUnion) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
