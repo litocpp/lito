@@ -226,16 +226,46 @@ struct FormatStyleCase {
     ref<str> expected;
 };
 
+struct FormatMessageText {
+    ref<str> text;
+    auto     data() const -> const char* {
+        return reinterpret_cast<const char*>(text.as_bytes().as_ptr().as_raw_ptr());
+    }
+    auto size() const -> rstd::size_t { return text.len().to_primitive(); }
+};
+
+auto report_format_text(const char* label, ref<str> text) -> void {
+    for (usize begin {}; begin < text.len();) {
+        auto end = begin + usize(768);
+        if (end > text.len()) end = text.len();
+        auto chunk = text.get(begin, end);
+        while (chunk.is_none()) chunk = text.get(begin, --end);
+        ADD_FAILURE() << label << " [" << begin.to_primitive() << "]:\n"
+                      << FormatMessageText { *chunk };
+        begin = end;
+    }
+}
+
 auto expect_style_output(const FormatStyleCase& test) -> void {
     auto configuration = parse_style_configuration(test.configuration);
-    ASSERT_TRUE(configuration.is_ok()) << test.configuration;
+    ASSERT_TRUE(configuration.is_ok()) << FormatMessageText { test.configuration };
     auto style     = configuration->apply();
     auto formatted = format_source(format_test_source(test.source), style);
-    ASSERT_TRUE(formatted.is_ok()) << test.configuration;
-    EXPECT_EQ(formatted->as_str(), test.expected) << test.configuration;
+    ASSERT_TRUE(formatted.is_ok()) << FormatMessageText { test.configuration };
+    if (formatted->as_str() != test.expected) {
+        report_format_text("configuration", test.configuration);
+        report_format_text("source", test.source);
+        report_format_text("expected", test.expected);
+        report_format_text("actual", formatted->as_str());
+    }
     auto repeated = format_source(format_test_source(formatted->as_str()), style);
-    ASSERT_TRUE(repeated.is_ok());
-    EXPECT_EQ(repeated->as_str(), formatted->as_str()) << test.configuration;
+    ASSERT_TRUE(repeated.is_ok()) << FormatMessageText { test.configuration };
+    if (repeated->as_str() != formatted->as_str()) {
+        report_format_text("idempotence configuration", test.configuration);
+        report_format_text("idempotence source", test.source);
+        report_format_text("idempotence expected", formatted->as_str());
+        report_format_text("idempotence actual", repeated->as_str());
+    }
 }
 
 TEST(BuiltinFormat, NormalizesReferenceAliasesAndParenthesisRoles) {
@@ -423,6 +453,302 @@ TEST(BuiltinFormat, FormatsDirectRecordLabelsAndMembers) {
           "struct Base{int base;};class C : public Base{public:class Inner{public:int value;};};\n"_str,
           "struct Base {\n    int base;\n};\nclass C : public Base {\n  public:\n"
           "    class Inner {\n      public:\n        int value;\n    };\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, WrapsArgumentsParametersAndOperandsAtFiniteColumns) {
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 32\nAlignAfterOpenBracket: Align\nBinPackArguments: false\n"_str,
+          "void f(){consume(first_long_value,second_long_value,third_long_value);}\n"_str,
+          "void f() {\n    consume(first_long_value,\n            second_long_value,\n"
+          "            third_long_value);\n}\n"_str },
+        { "ColumnLimit: 40\nAlignAfterOpenBracket: Align\nBinPackParameters: OnePerLine\n"
+          "AllowAllParametersOfDeclarationOnNextLine: false\nAlwaysBreakAfterReturnType: None\n"
+          "IndentWrappedFunctionNames: false\n"_str,
+          "int combine(int first_parameter,int second_parameter,int third_parameter){return first_parameter;}\n"_str,
+          "int combine(int first_parameter,\n            int second_parameter,\n"
+          "            int third_parameter) {\n    return first_parameter;\n}\n"_str },
+        { "ColumnLimit: 32\nAlignAfterOpenBracket: Align\nBinPackParameters: OnePerLine\n"
+          "AllowAllParametersOfDeclarationOnNextLine: false\nAlwaysBreakAfterReturnType: None\n"
+          "IndentWrappedFunctionNames: false\n"_str,
+          "SomeLongReturnTypeName function_name(int first,int second);\n"_str,
+          "SomeLongReturnTypeName\nfunction_name(int first,\n              int second);\n"_str },
+        { "ColumnLimit: 40\nAlignOperands: true\n"_str,
+          "int f(){return first_operand+second_operand+third_operand;}\n"_str,
+          "int f() {\n    return first_operand +\n           second_operand +\n"
+          "           third_operand;\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, AlignsConsecutiveGroupsAndOnlySafeMacroSlots) {
+    const FormatStyleCase cases[] = {
+        { "AlignConsecutiveAssignments: true\n"_str,
+          "int a=1;\nint longer=2;\n\nint z=3;\n"_str,
+          "int a      = 1;\nint longer = 2;\n\nint z = 3;\n"_str },
+        { "AlignConsecutiveDeclarations: true\n"_str,
+          "int a;\nlong longer;\n\nchar z;\n"_str,
+          "int  a;\nlong longer;\n\nchar z;\n"_str },
+        { "AlignTrailingComments: true\n"_str,
+          "int a; // one\nint longer; // two\n\nint z; // three\n"_str,
+          "int a;      // one\nint longer; // two\n\nint z; // three\n"_str },
+        { "AlignConsecutiveMacros: true\n"_str,
+          "#define A 1\n#define LONGER 2\n#define F(x) #x\n\nauto text = F(a+b);\n"_str,
+          "#define A      1\n#define LONGER 2\n#define F(x)   #x\n\nauto text = F(a+b);\n"_str },
+        { "AlignEscapedNewlines: Left\n"_str,
+          "#define SUM(x) x +   \\\n  x + 1 \\\n  2\n\n#define WORD A\\\n1\n"_str,
+          "#define SUM(x) x + \\\n  x + 1            \\\n  2\n\n#define WORD A\\\n1\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, AppliesDeclarationAndExpressionSpacing) {
+    const FormatStyleCase cases[] = {
+        { "PointerAlignment: Left\n"_str,
+          "int *pointer;int f(int x){return *pointer*x;}\n"_str,
+          "int* pointer;\nint f(int x) {\n    return *pointer * x;\n}\n"_str },
+        { "SpaceAfterCStyleCast: false\n"_str,
+          "int f(double value){return (int) value;}\n"_str,
+          "int f(double value) {\n    return (int)value;\n}\n"_str },
+        { "SpaceAfterLogicalNot: true\n"_str,
+          "bool f(bool value){return !value;}\n"_str,
+          "bool f(bool value) {\n    return ! value;\n}\n"_str },
+        { "SpacesInAngles: false\n"_str, "Box< int > value;\n"_str, "Box<int> value;\n"_str },
+        { "SpaceBeforeCpp11BracedList: true\nCpp11BracedListStyle: false\n"
+          "SpacesInSquareBrackets: false\n"_str,
+          "int f(){int values[ ]{1,2};return values[ 0 ];}\n"_str,
+          "int f() {\n    int values[] { 1, 2 };\n    return values[0];\n}\n"_str },
+        { "SpaceBeforeInheritanceColon: true\n"_str,
+          "struct Base{int base;};struct Child:Base{int value;};\n"_str,
+          "struct Base {\n    int base;\n};\nstruct Child : Base {\n    int value;\n};\n"_str },
+        { "SpaceBeforeCtorInitializerColon: false\n"_str,
+          "struct Pair{int x;int y;Pair(int a,int b) : x(a),y(b){}};\n"_str,
+          "struct Pair {\n    int x;\n    int y;\n    Pair(int a, int b): x(a), y(b) {\n    }\n};\n"_str },
+        { "SpaceBeforeRangeBasedForLoopColon: true\n"_str,
+          "void f(){for(auto value:values){run(value);}}\n"_str,
+          "void f() {\n    for (auto value : values) {\n        run(value);\n    }\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, PlacesTemplateAttributesAndConstructorInitializers) {
+    const FormatStyleCase cases[] = {
+        { "AlwaysBreakTemplateDeclarations: true\nSpaceAfterTemplateKeyword: false\n"
+          "SpacesInAngles: false\n"_str,
+          "template < class T > T f(T value){return value;}\n"_str,
+          "template<class T>\nT f(T value) {\n    return value;\n}\n"_str },
+        { "BreakAfterAttributes: Always\n"_str,
+          "[[nodiscard]] int f(){return 1;}\n"_str,
+          "[[nodiscard]]\nint f() {\n    return 1;\n}\n"_str },
+        { "BasedOnStyle: LLVM\nIndentWidth: 4\nColumnLimit: 60\n"
+          "ConstructorInitializerAllOnOneLineOrOnePerLine: true\n"_str,
+          "struct Pair{Pair():first(11111111),second(22222222),third(33333333){}};\n"_str,
+          "struct Pair {\n    Pair()\n        : first(11111111),\n          second(22222222),\n"
+          "          third(33333333) {\n    }\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, DistinguishesShortStatementsCasesLambdasAndInlineMembers) {
+    const FormatStyleCase cases[] = {
+        { "AllowShortFunctionsOnASingleLine: InlineOnly\n"_str,
+          "int f(){return 1;}struct S{int g(){return 2;}void h(){}};\n"_str,
+          "int f() {\n    return 1;\n}\nstruct S {\n    int g() { return 2; }\n    void h() {}\n};\n"_str },
+        { "AllowShortIfStatementsOnASingleLine: true\n"_str,
+          "void f(){if(ready)\nrun();if(ready)\nrun();else\nstop();}\n"_str,
+          "void f() {\n    if (ready) run();\n    if (ready)\n        run();\n"
+          "    else\n        stop();\n}\n"_str },
+        { "AllowShortLoopsOnASingleLine: true\n"_str,
+          "void f(){for(int i=0;i<3;++i)\nrun(i);while(ready)\nwait();}\n"_str,
+          "void f() {\n    for (int i = 0; i < 3; ++i) run(i);\n    while (ready) wait();\n}\n"_str },
+        { "AllowShortLambdasOnASingleLine: false\nAllowShortFunctionsOnASingleLine: All\n"_str,
+          "void f(){auto fn=[](int x){return x;};}\n"_str,
+          "void f() {\n    auto fn = [](int x) {\n        return x;\n    };\n}\n"_str },
+        { "AllowShortCaseLabelsOnASingleLine: true\nIndentCaseLabels: false\n"_str,
+          "int f(int value){switch(value){case 0:return 1;case 1:return 2;default:return 0;}}\n"_str,
+          "int f(int value) {\n    switch (value) {\n    case 0: return 1;\n"
+          "    case 1: return 2;\n    default: return 0;\n    }\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, PreservesExplicitOrderingAndOpaqueTextPolicies) {
+    const FormatStyleCase cases[] = {
+        { "SortIncludes: Never\nSortUsingDeclarations: Never\nReflowComments: false\n"
+          "CompactNamespaces: false\nStandard: Latest\nSpacesInContainerLiterals: false\n"_str,
+          "#include \"z.hpp\"\n#include \"a.hpp\"\nusing Z=int;using A=int;\n"
+          "// keep    every   word and a deliberately long comment without wrapping or reflow\n"
+          "namespace a{namespace b{int value;}}\n"_str,
+          "#include \"z.hpp\"\n#include \"a.hpp\"\nusing Z = int;\nusing A = int;\n"
+          "// keep    every   word and a deliberately long comment without wrapping or reflow\n"
+          "namespace a {\n    namespace b {\n        int value;\n    }\n}\n"_str },
+        { "IndentPPDirectives: None\n"_str,
+          "    #  define VALUE 1\n\t# include \"header.hpp\"\n\nint f(){return VALUE;}\n"_str,
+          "#define VALUE 1\n#include \"header.hpp\"\n\nint f() {\n    return VALUE;\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+auto test_repository_style_configuration() -> ref<str> {
+    return "\xef\xbb\xbf"
+           R"yaml(---
+BasedOnStyle: LLVM
+
+AccessModifierOffset: -4
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveMacros: true
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: false
+AllowShortFunctionsOnASingleLine: InlineOnly
+
+AlwaysBreakAfterReturnType: None
+AlwaysBreakTemplateDeclarations: true
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterEnum: true
+  AfterNamespace: true
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+BinPackArguments: false
+BinPackParameters: OnePerLine
+CompactNamespaces: false
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+Cpp11BracedListStyle: false
+IndentCaseLabels: false
+IndentPPDirectives: None
+IndentWidth: 4
+IndentWrappedFunctionNames: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+Language: Cpp
+PointerAlignment: Left
+ReflowComments: false
+SortIncludes: Never
+SortUsingDeclarations: Never
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: true
+SpaceAfterTemplateKeyword: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: true
+SpaceBeforeCtorInitializerColon: false
+SpaceBeforeInheritanceColon: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+Standard: Latest
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakAfterAttributes: Always
+)yaml"_str;
+}
+
+auto test_repository_style_source() -> ref<str> {
+    return R"cpp(#include "z.hpp"
+#include "a.hpp"
+
+using Zulu=int;
+using Alfa=int;
+
+#define A 1
+#define LONGER 2
+
+namespace demo{
+template<class T>[[nodiscard]] T *identity(T *value){if(!value)return nullptr;return value;}
+struct Pair:Base{int first;long second;public:Pair(int a,int b):first(a),second(b){}int get(){return first;}};
+int plain(){return 1;}
+void run(){int values[ ]{1,2};for(auto value:values)use(value);while(!ready)wait();auto fn=[](int value){return value;};switch(values[ 0 ]){case 0:break;default:use(values[0]);}invoke(first_argument_name_with_extra_padding_000000000000,second_argument_name_with_extra_padding_000000000000,third_argument_name_with_extra_padding_000000000000);}
+}
+)cpp"_str;
+}
+
+auto test_repository_style_expected() -> ref<str> {
+    return R"cpp(#include "z.hpp"
+#include "a.hpp"
+
+using Zulu = int;
+using Alfa = int;
+
+#define A      1
+#define LONGER 2
+
+namespace demo
+{
+template<class T>
+[[nodiscard]]
+T* identity(T* value) {
+    if (! value) return nullptr;
+    return value;
+}
+struct Pair : Base {
+    int  first;
+    long second;
+public:
+    Pair(int a, int b): first(a), second(b) {}
+    int get() { return first; }
+};
+int plain() {
+    return 1;
+}
+void run() {
+    int values[] { 1, 2 };
+    for (auto value : values) use(value);
+    while (! ready) wait();
+    auto fn = [](int value) {
+        return value;
+    };
+    switch (values[0]) {
+    case 0: break;
+    default: use(values[0]);
+    }
+    invoke(first_argument_name_with_extra_padding_000000000000,
+           second_argument_name_with_extra_padding_000000000000,
+           third_argument_name_with_extra_padding_000000000000);
+}
+}
+)cpp"_str;
+}
+
+TEST(BuiltinFormat, AppliesTheCompleteRepositoryConfiguration) {
+    expect_style_output(FormatStyleCase {
+        test_repository_style_configuration(),
+        test_repository_style_source(),
+        test_repository_style_expected(),
+    });
+}
+
+TEST(BuiltinFormat, PreservesAmbiguousAnglesWithoutFreezingSurroundingCode) {
+    const FormatStyleCase cases[] = {
+        { "SpacesInAngles: false\n"_str,
+          "vector< T > value;\nvoid f(){if(check<T &&>::value){run();}if(check<T &&>()){run();}}\n"_str,
+          "vector< T > value;\nvoid f() {\n    if (check<T &&>::value) {\n        run();\n    }\n"
+          "    if (check<T &&>()) {\n        run();\n    }\n}\n"_str },
+        { "SpacesInAngles: false\n"_str,
+          "auto x=box<T &&>{};\n"_str,
+          "auto x = box<T &&>{};\n"_str },
+        { "SpacesInAngles: false\n"_str,
+          "template<bool B = X && Y> using selected=int;\n"_str,
+          "template<bool B = X && Y> using selected = int;\n"_str },
+        { "SpacesInAngles: false\n"_str,
+          "void f(){if(a<b && c>d){run();}}\n"_str,
+          "void f() {\n    if (a < b && c > d) {\n        run();\n    }\n}\n"_str },
     };
     for (const auto& test : cases) expect_style_output(test);
 }

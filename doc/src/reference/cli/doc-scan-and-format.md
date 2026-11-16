@@ -72,12 +72,12 @@ It does not resolve package dependencies, run build scripts, or require external
 Both backends use the same package selection and at most four workers. Check mode never writes;
 the builtin backend writes atomically only when the formatted bytes differ.
 
-Builtin formatting covers basic declarations, module/import statements, and recognized blocks.
-It preserves token spelling, literal and comment contents, preprocessor lines, conditional
+Builtin formatting covers declarations, module/import statements, recognized blocks and lists.
+It preserves token spelling, literal and comment contents, macro replacement text, protected conditional
 compilation regions, and the original newline convention. It keeps include/import order and does
-not reflow comments, align consecutive declarations, or apply column-limit wrapping. Complex or
-ambiguous structures are handled conservatively, so it is not a replacement for every
-clang-format rule.
+not reflow comments or reorder declarations. It supports column-limit wrapping and consecutive
+alignment for recognized syntax. Complex or ambiguous structures retain protected source ranges,
+so it is not a replacement for every clang-format rule.
 
 For each source, builtin searches its directory and then parent directories for `.clang-format`
 or `_clang-format`; `.clang-format` takes precedence in the same directory. The nearest file
@@ -85,8 +85,9 @@ replaces parent configuration unless it specifies `BasedOnStyle: InheritParentCo
 Configurations for all selected sources are checked before any source is written.
 
 With no configuration, builtin keeps its four-space default. A configuration overrides those
-defaults. `BasedOnStyle: LLVM` applies LLVM defaults for the supported options; it does not enable
-column wrapping or other unimplemented LLVM style rules.
+defaults. `BasedOnStyle: LLVM` applies defaults for the supported options, including an 80-column
+limit. It does not enable unimplemented LLVM style rules. Without configuration, builtin keeps
+its unlimited column width.
 
 Supported options and values:
 
@@ -108,17 +109,58 @@ The table describes the implemented subset; tests use hand-written expected resu
 | `SpaceBeforeAssignmentOperators` | Boolean; controls the space before assignment operators |
 | `SpacesInParens` | `Never`, `Custom` |
 | `SpacesInParensOptions` | Boolean fields `ExceptDoubleParentheses`, `InConditionalStatements`, `InCStyleCasts`, `InEmptyParentheses`, `Other` |
-| `AllowShortFunctionsOnASingleLine` | `None`, `Empty`, `All`; legacy `false`, `true` mean `None`, `All` |
+| `AllowShortFunctionsOnASingleLine` | `None`, `Empty`, `Inline`, `InlineOnly`, `All`; legacy `false`, `true` mean `None`, `All` |
 | `AllowShortBlocksOnASingleLine` | `Never`, `Empty`, `Always`; legacy `false`, `true` mean `Never`, `Always` |
 | `MaxEmptyLinesToKeep` | Unsigned integer |
 | `KeepEmptyLines` | Boolean fields `AtStartOfFile`, `AtEndOfFile`, `AtStartOfBlock`, `AtEndOfBlock` |
-| `ColumnLimit` | `0`, meaning no column limit |
+| `ColumnLimit` | Unsigned integer; `0` means no column limit |
+| `ContinuationIndentWidth`, `ConstructorInitializerIndentWidth` | Unsigned integers |
+| `AlignAfterOpenBracket` | Boolean; legacy `Align`, `DontAlign` mean `true`, `false` |
+| `AlignOperands` | `DontAlign`, `Align`, or legacy boolean |
+| `AlignConsecutiveMacros`, `AlignConsecutiveAssignments`, `AlignConsecutiveDeclarations` | Boolean; consecutive groups stop at scope, blank-line and protected boundaries |
+| `AlignTrailingComments` | `Leave`, `Never`, `Always`, or legacy boolean |
+| `AlignEscapedNewlines` | `DontAlign`, `Left`, `Right` |
+| `BinPackArguments` | Boolean |
+| `BinPackParameters` | `BinPack`, `OnePerLine`, `AlwaysOnePerLine` |
+| `AllowAllParametersOfDeclarationOnNextLine` | Boolean |
+| `PointerAlignment` | `Left`, `Right`, `Middle` |
+| `SpacesInAngles` | `Never`, `Leave`, or legacy `false` |
+| `Cpp11BracedListStyle` | `Block`, `FunctionCall`, `AlignFirstComment`; legacy `false`, `true` mean `Block`, `FunctionCall` |
+| `SpacesInSquareBrackets`, `SpaceAfterCStyleCast`, `SpaceAfterLogicalNot`, `SpaceAfterTemplateKeyword` | Boolean |
+| `SpaceBeforeCpp11BracedList`, `SpaceBeforeCtorInitializerColon`, `SpaceBeforeInheritanceColon`, `SpaceBeforeRangeBasedForLoopColon` | Boolean |
+| `IndentCaseLabels`, `IndentWrappedFunctionNames` | Boolean |
+| `BreakTemplateDeclarations` | `Leave`, `No`, `MultiLine`, `Yes`; legacy `AlwaysBreakTemplateDeclarations` remains accepted |
+| `BreakAfterReturnType` | `Automatic`, `All`; legacy `AlwaysBreakAfterReturnType: None` means `Automatic` |
+| `BreakAfterAttributes` | `Leave`, `Never`, `Always` |
+| `PackConstructorInitializers` | `Never`, `BinPack`, `CurrentLine`, `NextLine`; legacy `ConstructorInitializerAllOnOneLineOrOnePerLine` remains accepted |
+| `AllowShortIfStatementsOnASingleLine` | `Never`, `WithoutElse`, `OnlyFirstIf`, `AllIfsAndElse`; legacy `true` means `WithoutElse` |
+| `AllowShortLoopsOnASingleLine`, `AllowShortCaseLabelsOnASingleLine` | Boolean |
+| `AllowShortLambdasOnASingleLine` | `None`, `Empty`, `Inline`, `All`, or legacy boolean |
+| `CompactNamespaces`, `ReflowComments`, `SpacesInContainerLiterals` | Only `false` |
+| `SortIncludes`, `SortUsingDeclarations` | Only `Never` |
+| `IndentPPDirectives` | Only `None` |
+| `Standard` | Only `Latest` |
 | `Language` | `Cpp` |
 | `BasedOnStyle` | `LLVM`, `InheritParentConfig` |
 
 `KeepEmptyLines.AtEndOfBlock` is a supported addition from newer Clang versions, outside the
 22.1 baseline. Lito's four-space fallback and the partial LLVM preset remain explicit differences
 from a complete clang-format style.
+
+The current repository configuration is supported as a whole. Support remains a subset of the
+reference: fixed policies preserve include/using order, comment contents and separate namespace
+lines. Other values of the fixed-policy options produce an error. `SpacesInContainerLiterals`
+is a C++ language constraint here; C++ initializer spacing uses `Cpp11BracedListStyle`.
+
+Column limits use legal token boundaries and list strategies. A long token, comment, raw string
+or protected region may exceed the limit. Inline-only functions are definitions directly inside
+a class, struct or union. Short-code rules also respect the column limit. Consecutive declaration
+and assignment alignment applies to statements that fit on one planned line.
+
+Macro alignment only edits recognized header separators and existing horizontal whitespace
+before continuations. Macro replacement tokens, stringization, token paste and format-off
+regions retain their bytes. `IndentPPDirectives: None` normalizes safe directive prefixes to
+column zero. Formatting does not evaluate conditional branches or expand macros.
 
 Supported `BraceWrapping` fields are:
 
@@ -169,7 +211,7 @@ KeepEmptyLines:
 
 Brace and spacing options apply to recognized structures. Short functions and control blocks
 are merged only when their simple bodies contain at most one statement, without comments,
-protected text, or nested blocks. Macro and disabled regions retain their original bytes.
+protected text, or nested blocks. Macro replacement text and disabled regions retain their original bytes.
 
 Use `// lito-format off` and `// lito-format on` comments to preserve a region byte for byte;
 `clang-format off/on` comments are also recognized. Unknown function-like macros from external

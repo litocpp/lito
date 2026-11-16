@@ -15,6 +15,10 @@ using PathBuf = rstd::path::PathBuf;
 
 class FormatCommand : public ProjectFixture {};
 
+auto test_repository_style_configuration() -> ref<str>;
+auto test_repository_style_source() -> ref<str>;
+auto test_repository_style_expected() -> ref<str>;
+
 TEST(FormatExecution, BoundsWorkersAndFallsBack) {
     EXPECT_EQ(lito::format_execution::worker_count(usize(20), Some(usize(64))), usize(4));
     EXPECT_EQ(lito::format_execution::worker_count(usize(2), Some(usize(64))), usize(2));
@@ -410,13 +414,20 @@ link-stdlib = false
         ref<str> key;
     };
     const Case cases[] = {
-        { "AlignConsecutiveAssignments: true\n"_str, "AlignConsecutiveAssignments"_str },
+        { "LitoUnsupportedOption: true\n"_str, "LitoUnsupportedOption"_str },
         { "UseTab: Always\n"_str, "UseTab"_str },
         { "TabWidth: 0\n"_str, "TabWidth"_str },
-        { "ColumnLimit: 80\n"_str, "ColumnLimit"_str },
+        { "ColumnLimit: -1\n"_str, "ColumnLimit"_str },
         { "IndentWidth: \"\"\n"_str, "IndentWidth"_str },
         { "BraceWrapping:\n  AfterCaseLabel: true\n"_str, "AfterCaseLabel"_str },
         { "IndentAccessModifiers: Always\n"_str, "IndentAccessModifiers"_str },
+        { "CompactNamespaces: true\n"_str, "CompactNamespaces"_str },
+        { "ReflowComments: true\n"_str, "ReflowComments"_str },
+        { "SortIncludes: CaseSensitive\n"_str, "SortIncludes"_str },
+        { "SortUsingDeclarations: Lexicographic\n"_str, "SortUsingDeclarations"_str },
+        { "SpacesInContainerLiterals: true\n"_str, "SpacesInContainerLiterals"_str },
+        { "Standard: Cpp11\n"_str, "Standard"_str },
+        { "IndentPPDirectives: AfterHash\n"_str, "IndentPPDirectives"_str },
         { "KeepEmptyLines:\n  AtStartOfBlock: false\n  AtStartOfBlock: true\n"_str,
           "AtStartOfBlock"_str },
     };
@@ -507,6 +518,44 @@ link-stdlib = false
         auto path = project->root.join(PathBuf::from(expected.path).as_path());
         EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), expected.expected);
     }
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
+}
+
+TEST_F(FormatCommand, BuiltinChecksAndWritesTheCompleteRepositoryStyle) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-repository-style"
+version = "0.1.0"
+[[bin]]
+name = "builtin-repository-style"
+sources = ["src/main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str, test_repository_style_configuration() },
+        { "src/main.cpp"_str, test_repository_style_source() },
+    };
+    auto project = materialize("builtin-repository-style"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto source  = project->root.join(PathBuf::from("src/main.cpp"_str).as_path());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .mode    = lito::FormatMode::Check,
+        .backend = lito::FormatBackend::Builtin,
+    };
+    request.tools.clang_format = PathBuf::from("lito-format-missing-formatter"_str);
+    auto checked               = lito::format(request);
+    ASSERT_TRUE(checked.is_ok());
+    EXPECT_EQ(checked->unformatted_files.len(), usize(1));
+    EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(),
+              test_repository_style_source());
+    request.mode = lito::FormatMode::Write;
+    auto written = lito::format(request);
+    ASSERT_TRUE(written.is_ok());
+    EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(),
+              test_repository_style_expected());
     request.mode = lito::FormatMode::Check;
     auto clean   = lito::format(request);
     ASSERT_TRUE(clean.is_ok());

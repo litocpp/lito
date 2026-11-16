@@ -21,7 +21,10 @@ target_sources(
          src/lexical/mod.cppm
          src/format/style.cppm
          src/format/config.cppm
+         src/format/model.cppm
          src/format/syntax.cppm
+         src/format/lines.cppm
+         src/format/alignment.cppm
          src/format/layout.cppm
          src/format/mod.cppm
          src/preprocessor/builtin.cppm

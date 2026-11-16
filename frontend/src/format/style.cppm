@@ -51,7 +51,95 @@ enum class ShortFunctionStyle
 {
     None,
     Empty,
+    Inline,
+    InlineOnly,
     All,
+};
+
+enum class ParameterPacking
+{
+    BinPack,
+    OnePerLine,
+    AlwaysOnePerLine
+};
+enum class OperandAlignment
+{
+    DontAlign,
+    Align
+};
+enum class EscapedNewlineAlignment
+{
+    DontAlign,
+    Left,
+    Right
+};
+enum class TrailingCommentAlignment
+{
+    Leave,
+    Never,
+    Always
+};
+enum class PointerAlignment
+{
+    Left,
+    Right,
+    Middle
+};
+enum class AnglesSpacing
+{
+    Never,
+    Always,
+    Leave
+};
+enum class BracedListStyle
+{
+    Block,
+    FunctionCall,
+    AlignFirstComment
+};
+enum class TemplateBreakStyle
+{
+    Leave,
+    No,
+    MultiLine,
+    Yes
+};
+enum class ReturnTypeBreakStyle
+{
+    Automatic,
+    All
+};
+enum class AttributeBreakStyle
+{
+    Leave,
+    Never,
+    Always
+};
+enum class ConstructorPacking
+{
+    Never,
+    BinPack,
+    CurrentLine,
+    NextLine
+};
+enum class ShortIfStyle
+{
+    Never,
+    WithoutElse,
+    OnlyFirstIf,
+    AllIfsAndElse
+};
+enum class ShortLambdaStyle
+{
+    None,
+    Empty,
+    Inline,
+    All
+};
+enum class PreprocessorIndent
+{
+    Preserve,
+    None
 };
 
 enum class ShortBlockStyle
@@ -93,22 +181,57 @@ struct BraceWrapping {
 };
 
 struct FormatStyle {
-    unsigned              indent_width { 4 };
-    unsigned              tab_width { 4 };
-    UseTab                use_tab { UseTab::Never };
-    NamespaceIndentation  namespace_indentation { NamespaceIndentation::All };
-    BraceStyle            break_before_braces { BraceStyle::Attach };
-    BraceWrapping         brace_wrapping;
-    SpaceBeforeParens     space_before_parens { SpaceBeforeParens::ControlStatements };
-    bool                  space_before_assignment_operators { true };
-    SpacesInParens        spaces_in_parens { SpacesInParens::Never };
-    SpacesInParensOptions spaces_in_parens_options;
-    int                   access_modifier_offset { -2 };
-    bool                  indent_access_modifiers {};
-    ShortFunctionStyle    short_functions { ShortFunctionStyle::None };
-    ShortBlockStyle       short_blocks { ShortBlockStyle::Never };
-    unsigned              max_empty_lines_to_keep { unsigned(-1) };
-    KeepEmptyLines        keep_empty_lines;
+    unsigned                 indent_width { 4 };
+    unsigned                 tab_width { 4 };
+    UseTab                   use_tab { UseTab::Never };
+    NamespaceIndentation     namespace_indentation { NamespaceIndentation::All };
+    BraceStyle               break_before_braces { BraceStyle::Attach };
+    BraceWrapping            brace_wrapping;
+    SpaceBeforeParens        space_before_parens { SpaceBeforeParens::ControlStatements };
+    bool                     space_before_assignment_operators { true };
+    SpacesInParens           spaces_in_parens { SpacesInParens::Never };
+    SpacesInParensOptions    spaces_in_parens_options;
+    int                      access_modifier_offset { -2 };
+    bool                     indent_access_modifiers {};
+    ShortFunctionStyle       short_functions { ShortFunctionStyle::None };
+    ShortBlockStyle          short_blocks { ShortBlockStyle::Never };
+    ShortIfStyle             short_if { ShortIfStyle::Never };
+    ShortLambdaStyle         short_lambdas { ShortLambdaStyle::None };
+    bool                     short_loops {};
+    bool                     short_case_labels {};
+    unsigned                 column_limit {};
+    unsigned                 continuation_indent_width { 4 };
+    unsigned                 constructor_initializer_indent_width { 4 };
+    bool                     align_after_open_bracket {};
+    bool                     bin_pack_arguments { true };
+    ParameterPacking         bin_pack_parameters { ParameterPacking::BinPack };
+    bool                     allow_all_parameters_of_declaration_on_next_line { true };
+    OperandAlignment         align_operands { OperandAlignment::DontAlign };
+    bool                     align_consecutive_macros {};
+    bool                     align_consecutive_assignments {};
+    bool                     align_consecutive_declarations {};
+    EscapedNewlineAlignment  align_escaped_newlines { EscapedNewlineAlignment::DontAlign };
+    TrailingCommentAlignment align_trailing_comments { TrailingCommentAlignment::Leave };
+    PointerAlignment         pointer_alignment { PointerAlignment::Right };
+    AnglesSpacing            spaces_in_angles { AnglesSpacing::Never };
+    BracedListStyle          braced_list_style { BracedListStyle::FunctionCall };
+    bool                     spaces_in_square_brackets {};
+    bool                     space_after_c_style_cast {};
+    bool                     space_after_logical_not {};
+    bool                     space_after_template_keyword { true };
+    bool                     space_before_cpp11_braced_list {};
+    bool                     space_before_ctor_initializer_colon { true };
+    bool                     space_before_inheritance_colon { true };
+    bool                     space_before_range_based_for_loop_colon { true };
+    bool                     indent_case_labels {};
+    bool                     indent_wrapped_function_names {};
+    TemplateBreakStyle       break_template_declarations { TemplateBreakStyle::Leave };
+    ReturnTypeBreakStyle     break_after_return_type { ReturnTypeBreakStyle::Automatic };
+    AttributeBreakStyle      break_after_attributes { AttributeBreakStyle::Leave };
+    ConstructorPacking       pack_constructor_initializers { ConstructorPacking::BinPack };
+    PreprocessorIndent       indent_pp_directives { PreprocessorIndent::Preserve };
+    unsigned                 max_empty_lines_to_keep { unsigned(-1) };
+    KeepEmptyLines           keep_empty_lines;
 
     auto effective_parens_options() const -> SpacesInParensOptions {
         return spaces_in_parens == SpacesInParens::Custom ? spaces_in_parens_options
@@ -138,6 +261,15 @@ struct FormatStyle {
         style.tab_width                         = 8;
         style.namespace_indentation             = NamespaceIndentation::None;
         style.short_functions                   = ShortFunctionStyle::All;
+        style.short_lambdas                     = ShortLambdaStyle::All;
+        style.column_limit                      = 80;
+        style.align_after_open_bracket          = true;
+        style.align_operands                    = OperandAlignment::Align;
+        style.align_escaped_newlines            = EscapedNewlineAlignment::Right;
+        style.align_trailing_comments           = TrailingCommentAlignment::Always;
+        style.braced_list_style                 = BracedListStyle::AlignFirstComment;
+        style.break_template_declarations       = TemplateBreakStyle::MultiLine;
+        style.indent_pp_directives              = PreprocessorIndent::None;
         style.max_empty_lines_to_keep           = 1;
         style.keep_empty_lines.at_start_of_file = true;
         style.keep_empty_lines.at_end_of_block  = false;

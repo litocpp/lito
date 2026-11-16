@@ -70,33 +70,71 @@ export namespace lito::frontend::format
 {
 
 class StyleConfiguration {
-    bool                         llvm_ {};
-    bool                         inherit_parent_ {};
-    Option<unsigned>             indent_width_;
-    Option<unsigned>             tab_width_;
-    Option<UseTab>               use_tab_;
-    Option<NamespaceIndentation> namespace_indentation_;
-    Option<BraceStyle>           break_before_braces_;
-    BraceWrappingPatch           brace_wrapping_;
-    Option<SpaceBeforeParens>    space_before_parens_;
-    Option<bool>                 space_before_assignment_operators_;
-    Option<SpacesInParens>       spaces_in_parens_;
-    ParensOptionsPatch           parens_options_;
-    Option<bool>                 spaces_in_parentheses_;
-    Option<bool>                 space_in_empty_parentheses_;
-    Option<bool>                 spaces_in_c_style_cast_parentheses_;
-    Option<bool>                 spaces_in_conditional_statement_;
-    Option<int>                  access_modifier_offset_;
-    Option<bool>                 indent_access_modifiers_;
-    Option<ShortFunctionStyle>   short_functions_;
-    Option<ShortBlockStyle>      short_blocks_;
-    Option<unsigned>             max_empty_lines_to_keep_;
-    Option<bool>                 keep_start_of_file_;
-    Option<bool>                 keep_end_of_file_;
-    Option<bool>                 keep_start_of_block_;
-    Option<bool>                 keep_end_of_block_;
-    Option<bool>                 legacy_keep_start_of_block_;
-    Option<bool>                 legacy_keep_end_of_file_;
+    bool                             llvm_ {};
+    bool                             inherit_parent_ {};
+    Option<unsigned>                 indent_width_;
+    Option<unsigned>                 tab_width_;
+    Option<UseTab>                   use_tab_;
+    Option<NamespaceIndentation>     namespace_indentation_;
+    Option<BraceStyle>               break_before_braces_;
+    BraceWrappingPatch               brace_wrapping_;
+    Option<SpaceBeforeParens>        space_before_parens_;
+    Option<bool>                     space_before_assignment_operators_;
+    Option<SpacesInParens>           spaces_in_parens_;
+    ParensOptionsPatch               parens_options_;
+    Option<bool>                     spaces_in_parentheses_;
+    Option<bool>                     space_in_empty_parentheses_;
+    Option<bool>                     spaces_in_c_style_cast_parentheses_;
+    Option<bool>                     spaces_in_conditional_statement_;
+    Option<int>                      access_modifier_offset_;
+    Option<bool>                     indent_access_modifiers_;
+    Option<ShortFunctionStyle>       short_functions_;
+    Option<ShortBlockStyle>          short_blocks_;
+    Option<unsigned>                 column_limit_;
+    Option<unsigned>                 continuation_indent_width_;
+    Option<unsigned>                 constructor_initializer_indent_width_;
+    Option<bool>                     align_after_open_bracket_;
+    Option<bool>                     bin_pack_arguments_;
+    Option<ParameterPacking>         bin_pack_parameters_;
+    Option<bool>                     allow_all_parameters_of_declaration_on_next_line_;
+    Option<OperandAlignment>         align_operands_;
+    Option<bool>                     align_consecutive_macros_;
+    Option<bool>                     align_consecutive_assignments_;
+    Option<bool>                     align_consecutive_declarations_;
+    Option<EscapedNewlineAlignment>  align_escaped_newlines_;
+    Option<TrailingCommentAlignment> align_trailing_comments_;
+    Option<PointerAlignment>         pointer_alignment_;
+    Option<AnglesSpacing>            spaces_in_angles_;
+    Option<BracedListStyle>          braced_list_style_;
+    Option<bool>                     spaces_in_square_brackets_;
+    Option<bool>                     space_after_c_style_cast_;
+    Option<bool>                     space_after_logical_not_;
+    Option<bool>                     space_after_template_keyword_;
+    Option<bool>                     space_before_cpp11_braced_list_;
+    Option<bool>                     space_before_ctor_initializer_colon_;
+    Option<bool>                     space_before_inheritance_colon_;
+    Option<bool>                     space_before_range_based_for_loop_colon_;
+    Option<bool>                     indent_case_labels_;
+    Option<bool>                     indent_wrapped_function_names_;
+    Option<TemplateBreakStyle>       break_template_declarations_;
+    Option<ReturnTypeBreakStyle>     break_after_return_type_;
+    Option<AttributeBreakStyle>      break_after_attributes_;
+    Option<ConstructorPacking>       pack_constructor_initializers_;
+    Option<ShortIfStyle>             short_if_;
+    Option<ShortLambdaStyle>         short_lambdas_;
+    Option<bool>                     short_loops_;
+    Option<bool>                     short_case_labels_;
+    Option<PreprocessorIndent>       indent_pp_directives_;
+    Option<TemplateBreakStyle>       legacy_break_template_declarations_;
+    Option<ReturnTypeBreakStyle>     legacy_break_after_return_type_;
+    Option<bool>                     legacy_constructor_initializers_;
+    Option<unsigned>                 max_empty_lines_to_keep_;
+    Option<bool>                     keep_start_of_file_;
+    Option<bool>                     keep_end_of_file_;
+    Option<bool>                     keep_start_of_block_;
+    Option<bool>                     keep_end_of_block_;
+    Option<bool>                     legacy_keep_start_of_block_;
+    Option<bool>                     legacy_keep_end_of_file_;
 
     friend class StyleConfigurationParser;
 
@@ -138,6 +176,72 @@ public:
             base.indent_access_modifiers = *indent_access_modifiers_;
         if (short_functions_.is_some()) base.short_functions = *short_functions_;
         if (short_blocks_.is_some()) base.short_blocks = *short_blocks_;
+        if (legacy_break_template_declarations_.is_some())
+            base.break_template_declarations = *legacy_break_template_declarations_;
+        if (legacy_break_after_return_type_.is_some())
+            base.break_after_return_type = *legacy_break_after_return_type_;
+        if (column_limit_.is_some()) base.column_limit = *column_limit_;
+        if (continuation_indent_width_.is_some())
+            base.continuation_indent_width = *continuation_indent_width_;
+        if (constructor_initializer_indent_width_.is_some())
+            base.constructor_initializer_indent_width = *constructor_initializer_indent_width_;
+        if (align_after_open_bracket_.is_some())
+            base.align_after_open_bracket = *align_after_open_bracket_;
+        if (bin_pack_arguments_.is_some()) base.bin_pack_arguments = *bin_pack_arguments_;
+        if (bin_pack_parameters_.is_some()) base.bin_pack_parameters = *bin_pack_parameters_;
+        if (allow_all_parameters_of_declaration_on_next_line_.is_some())
+            base.allow_all_parameters_of_declaration_on_next_line =
+                *allow_all_parameters_of_declaration_on_next_line_;
+        if (align_operands_.is_some()) base.align_operands = *align_operands_;
+        if (align_consecutive_macros_.is_some())
+            base.align_consecutive_macros = *align_consecutive_macros_;
+        if (align_consecutive_assignments_.is_some())
+            base.align_consecutive_assignments = *align_consecutive_assignments_;
+        if (align_consecutive_declarations_.is_some())
+            base.align_consecutive_declarations = *align_consecutive_declarations_;
+        if (align_escaped_newlines_.is_some())
+            base.align_escaped_newlines = *align_escaped_newlines_;
+        if (align_trailing_comments_.is_some())
+            base.align_trailing_comments = *align_trailing_comments_;
+        if (pointer_alignment_.is_some()) base.pointer_alignment = *pointer_alignment_;
+        if (spaces_in_angles_.is_some()) base.spaces_in_angles = *spaces_in_angles_;
+        if (braced_list_style_.is_some()) base.braced_list_style = *braced_list_style_;
+        if (spaces_in_square_brackets_.is_some())
+            base.spaces_in_square_brackets = *spaces_in_square_brackets_;
+        if (space_after_c_style_cast_.is_some())
+            base.space_after_c_style_cast = *space_after_c_style_cast_;
+        if (space_after_logical_not_.is_some())
+            base.space_after_logical_not = *space_after_logical_not_;
+        if (space_after_template_keyword_.is_some())
+            base.space_after_template_keyword = *space_after_template_keyword_;
+        if (space_before_cpp11_braced_list_.is_some())
+            base.space_before_cpp11_braced_list = *space_before_cpp11_braced_list_;
+        if (space_before_ctor_initializer_colon_.is_some())
+            base.space_before_ctor_initializer_colon = *space_before_ctor_initializer_colon_;
+        if (space_before_inheritance_colon_.is_some())
+            base.space_before_inheritance_colon = *space_before_inheritance_colon_;
+        if (space_before_range_based_for_loop_colon_.is_some())
+            base.space_before_range_based_for_loop_colon =
+                *space_before_range_based_for_loop_colon_;
+        if (indent_case_labels_.is_some()) base.indent_case_labels = *indent_case_labels_;
+        if (indent_wrapped_function_names_.is_some())
+            base.indent_wrapped_function_names = *indent_wrapped_function_names_;
+        if (break_template_declarations_.is_some())
+            base.break_template_declarations = *break_template_declarations_;
+        if (break_after_return_type_.is_some())
+            base.break_after_return_type = *break_after_return_type_;
+        if (break_after_attributes_.is_some())
+            base.break_after_attributes = *break_after_attributes_;
+        if (pack_constructor_initializers_.is_some())
+            base.pack_constructor_initializers = *pack_constructor_initializers_;
+        if (short_if_.is_some()) base.short_if = *short_if_;
+        if (short_lambdas_.is_some()) base.short_lambdas = *short_lambdas_;
+        if (short_loops_.is_some()) base.short_loops = *short_loops_;
+        if (short_case_labels_.is_some()) base.short_case_labels = *short_case_labels_;
+        if (indent_pp_directives_.is_some()) base.indent_pp_directives = *indent_pp_directives_;
+        if (legacy_constructor_initializers_.is_some() && *legacy_constructor_initializers_ &&
+            base.pack_constructor_initializers == ConstructorPacking::BinPack)
+            base.pack_constructor_initializers = ConstructorPacking::NextLine;
         if (max_empty_lines_to_keep_.is_some())
             base.max_empty_lines_to_keep = *max_empty_lines_to_keep_;
         if (legacy_keep_start_of_block_.is_some())
@@ -168,6 +272,12 @@ enum class StyleGroup
     KeepEmptyLines,
     SpacesInParensOptions,
     BraceWrapping,
+};
+
+template<typename T>
+struct EnumSpelling {
+    ref<str> name;
+    T        value;
 };
 
 auto style_group_name(StyleGroup group) -> ref<str> {
@@ -355,6 +465,40 @@ class StyleConfigurationParser {
             if (key == "SplitEmptyNamespace"_str)
                 return rstd::addressof(wrapping.split_empty_namespace);
         } else {
+            if (key == "BinPackArguments"_str) return rstd::addressof(result.bin_pack_arguments_);
+            if (key == "AllowAllParametersOfDeclarationOnNextLine"_str)
+                return rstd::addressof(result.allow_all_parameters_of_declaration_on_next_line_);
+            if (key == "AlignConsecutiveMacros"_str)
+                return rstd::addressof(result.align_consecutive_macros_);
+            if (key == "AlignConsecutiveAssignments"_str)
+                return rstd::addressof(result.align_consecutive_assignments_);
+            if (key == "AlignConsecutiveDeclarations"_str)
+                return rstd::addressof(result.align_consecutive_declarations_);
+            if (key == "SpacesInSquareBrackets"_str)
+                return rstd::addressof(result.spaces_in_square_brackets_);
+            if (key == "SpaceAfterCStyleCast"_str)
+                return rstd::addressof(result.space_after_c_style_cast_);
+            if (key == "SpaceAfterLogicalNot"_str)
+                return rstd::addressof(result.space_after_logical_not_);
+            if (key == "SpaceAfterTemplateKeyword"_str)
+                return rstd::addressof(result.space_after_template_keyword_);
+            if (key == "SpaceBeforeCpp11BracedList"_str)
+                return rstd::addressof(result.space_before_cpp11_braced_list_);
+            if (key == "SpaceBeforeCtorInitializerColon"_str)
+                return rstd::addressof(result.space_before_ctor_initializer_colon_);
+            if (key == "SpaceBeforeInheritanceColon"_str)
+                return rstd::addressof(result.space_before_inheritance_colon_);
+            if (key == "SpaceBeforeRangeBasedForLoopColon"_str)
+                return rstd::addressof(result.space_before_range_based_for_loop_colon_);
+            if (key == "IndentCaseLabels"_str) return rstd::addressof(result.indent_case_labels_);
+            if (key == "IndentWrappedFunctionNames"_str)
+                return rstd::addressof(result.indent_wrapped_function_names_);
+            if (key == "AllowShortLoopsOnASingleLine"_str)
+                return rstd::addressof(result.short_loops_);
+            if (key == "AllowShortCaseLabelsOnASingleLine"_str)
+                return rstd::addressof(result.short_case_labels_);
+            if (key == "ConstructorInitializerAllOnOneLineOrOnePerLine"_str)
+                return rstd::addressof(result.legacy_constructor_initializers_);
             if (key == "SpaceBeforeAssignmentOperators"_str)
                 return rstd::addressof(result.space_before_assignment_operators_);
             if (key == "SpacesInParentheses"_str)
@@ -401,7 +545,9 @@ class StyleConfigurationParser {
         } else if (group != StyleGroup::Root) {
             return Err(failure(rstd::format("unsupported format option '{}'", canonical.as_str())));
         } else if (key == "IndentWidth"_str || key == "TabWidth"_str ||
-                   key == "MaxEmptyLinesToKeep"_str || key == "ColumnLimit"_str) {
+                   key == "MaxEmptyLinesToKeep"_str || key == "ColumnLimit"_str ||
+                   key == "ContinuationIndentWidth"_str ||
+                   key == "ConstructorInitializerIndentWidth"_str) {
             auto parsed = number(text, key);
             if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
             if (key == "IndentWidth"_str)
@@ -411,8 +557,12 @@ class StyleConfigurationParser {
                 result.tab_width_ = Some(*parsed);
             } else if (key == "MaxEmptyLinesToKeep"_str)
                 result.max_empty_lines_to_keep_ = Some(*parsed);
-            else if (*parsed != 0)
-                return Err(failure("builtin format only supports ColumnLimit: 0"_str));
+            else if (key == "ColumnLimit"_str)
+                result.column_limit_ = Some(*parsed);
+            else if (key == "ContinuationIndentWidth"_str)
+                result.continuation_indent_width_ = Some(*parsed);
+            else
+                result.constructor_initializer_indent_width_ = Some(*parsed);
         } else if (key == "AccessModifierOffset"_str) {
             auto parsed = signed_number(text, key);
             if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -465,6 +615,10 @@ class StyleConfigurationParser {
                 result.short_functions_ = Some(ShortFunctionStyle::Empty);
             else if (text == "All"_str || text == "true"_str)
                 result.short_functions_ = Some(ShortFunctionStyle::All);
+            else if (text == "InlineOnly"_str)
+                result.short_functions_ = Some(ShortFunctionStyle::InlineOnly);
+            else if (text == "Inline"_str)
+                result.short_functions_ = Some(ShortFunctionStyle::Inline);
             else
                 return unsupported_value(key, text);
         } else if (key == "AllowShortBlocksOnASingleLine"_str) {
@@ -476,6 +630,166 @@ class StyleConfigurationParser {
                 result.short_blocks_ = Some(ShortBlockStyle::Always);
             else
                 return unsupported_value(key, text);
+        } else if (key == "AlignAfterOpenBracket"_str) {
+            return enumeration_field<bool>(result.align_after_open_bracket_,
+                                           text,
+                                           key,
+                                           { { "true"_str, true },
+                                             { "false"_str, false },
+                                             { "Align"_str, true },
+                                             { "DontAlign"_str, false } });
+        } else if (key == "BinPackParameters"_str) {
+            return enumeration_field<ParameterPacking>(
+                result.bin_pack_parameters_,
+                text,
+                key,
+                { { "BinPack"_str, ParameterPacking::BinPack },
+                  { "OnePerLine"_str, ParameterPacking::OnePerLine },
+                  { "AlwaysOnePerLine"_str, ParameterPacking::AlwaysOnePerLine } });
+        } else if (key == "AlignOperands"_str) {
+            return enumeration_field<OperandAlignment>(
+                result.align_operands_,
+                text,
+                key,
+                { { "DontAlign"_str, OperandAlignment::DontAlign },
+                  { "Align"_str, OperandAlignment::Align },
+                  { "false"_str, OperandAlignment::DontAlign },
+                  { "true"_str, OperandAlignment::Align } });
+        } else if (key == "AlignEscapedNewlines"_str) {
+            return enumeration_field<EscapedNewlineAlignment>(
+                result.align_escaped_newlines_,
+                text,
+                key,
+                { { "DontAlign"_str, EscapedNewlineAlignment::DontAlign },
+                  { "Left"_str, EscapedNewlineAlignment::Left },
+                  { "Right"_str, EscapedNewlineAlignment::Right } });
+        } else if (key == "AlignTrailingComments"_str) {
+            return enumeration_field<TrailingCommentAlignment>(
+                result.align_trailing_comments_,
+                text,
+                key,
+                { { "Leave"_str, TrailingCommentAlignment::Leave },
+                  { "Never"_str, TrailingCommentAlignment::Never },
+                  { "Always"_str, TrailingCommentAlignment::Always },
+                  { "false"_str, TrailingCommentAlignment::Never },
+                  { "true"_str, TrailingCommentAlignment::Always } });
+        } else if (key == "PointerAlignment"_str) {
+            return enumeration_field<PointerAlignment>(
+                result.pointer_alignment_,
+                text,
+                key,
+                { { "Left"_str, PointerAlignment::Left },
+                  { "Right"_str, PointerAlignment::Right },
+                  { "Middle"_str, PointerAlignment::Middle } });
+        } else if (key == "SpacesInAngles"_str) {
+            return enumeration_field<AnglesSpacing>(result.spaces_in_angles_,
+                                                    text,
+                                                    key,
+                                                    { { "Never"_str, AnglesSpacing::Never },
+                                                      { "Leave"_str, AnglesSpacing::Leave },
+                                                      { "false"_str, AnglesSpacing::Never } });
+        } else if (key == "Cpp11BracedListStyle"_str) {
+            return enumeration_field<BracedListStyle>(
+                result.braced_list_style_,
+                text,
+                key,
+                { { "Block"_str, BracedListStyle::Block },
+                  { "FunctionCall"_str, BracedListStyle::FunctionCall },
+                  { "AlignFirstComment"_str, BracedListStyle::AlignFirstComment },
+                  { "false"_str, BracedListStyle::Block },
+                  { "true"_str, BracedListStyle::FunctionCall } });
+        } else if (key == "AlwaysBreakTemplateDeclarations"_str) {
+            return enumeration_field<TemplateBreakStyle>(
+                result.legacy_break_template_declarations_,
+                text,
+                key,
+                { { "Leave"_str, TemplateBreakStyle::Leave },
+                  { "No"_str, TemplateBreakStyle::No },
+                  { "MultiLine"_str, TemplateBreakStyle::MultiLine },
+                  { "Yes"_str, TemplateBreakStyle::Yes },
+                  { "false"_str, TemplateBreakStyle::MultiLine },
+                  { "true"_str, TemplateBreakStyle::Yes } });
+        } else if (key == "BreakTemplateDeclarations"_str) {
+            return enumeration_field<TemplateBreakStyle>(
+                result.break_template_declarations_,
+                text,
+                key,
+                { { "Leave"_str, TemplateBreakStyle::Leave },
+                  { "No"_str, TemplateBreakStyle::No },
+                  { "MultiLine"_str, TemplateBreakStyle::MultiLine },
+                  { "Yes"_str, TemplateBreakStyle::Yes },
+                  { "false"_str, TemplateBreakStyle::MultiLine },
+                  { "true"_str, TemplateBreakStyle::Yes } });
+        } else if (key == "AlwaysBreakAfterReturnType"_str) {
+            return enumeration_field<ReturnTypeBreakStyle>(
+                result.legacy_break_after_return_type_,
+                text,
+                key,
+                { { "Automatic"_str, ReturnTypeBreakStyle::Automatic },
+                  { "All"_str, ReturnTypeBreakStyle::All },
+                  { "None"_str, ReturnTypeBreakStyle::Automatic } });
+        } else if (key == "BreakAfterReturnType"_str) {
+            return enumeration_field<ReturnTypeBreakStyle>(
+                result.break_after_return_type_,
+                text,
+                key,
+                { { "Automatic"_str, ReturnTypeBreakStyle::Automatic },
+                  { "All"_str, ReturnTypeBreakStyle::All },
+                  { "None"_str, ReturnTypeBreakStyle::Automatic } });
+        } else if (key == "BreakAfterAttributes"_str) {
+            return enumeration_field<AttributeBreakStyle>(
+                result.break_after_attributes_,
+                text,
+                key,
+                { { "Leave"_str, AttributeBreakStyle::Leave },
+                  { "Never"_str, AttributeBreakStyle::Never },
+                  { "Always"_str, AttributeBreakStyle::Always } });
+        } else if (key == "PackConstructorInitializers"_str) {
+            return enumeration_field<ConstructorPacking>(
+                result.pack_constructor_initializers_,
+                text,
+                key,
+                { { "Never"_str, ConstructorPacking::Never },
+                  { "BinPack"_str, ConstructorPacking::BinPack },
+                  { "CurrentLine"_str, ConstructorPacking::CurrentLine },
+                  { "NextLine"_str, ConstructorPacking::NextLine } });
+        } else if (key == "AllowShortIfStatementsOnASingleLine"_str) {
+            return enumeration_field<ShortIfStyle>(
+                result.short_if_,
+                text,
+                key,
+                { { "Never"_str, ShortIfStyle::Never },
+                  { "WithoutElse"_str, ShortIfStyle::WithoutElse },
+                  { "OnlyFirstIf"_str, ShortIfStyle::OnlyFirstIf },
+                  { "AllIfsAndElse"_str, ShortIfStyle::AllIfsAndElse },
+                  { "false"_str, ShortIfStyle::Never },
+                  { "true"_str, ShortIfStyle::WithoutElse },
+                  { "Always"_str, ShortIfStyle::OnlyFirstIf } });
+        } else if (key == "AllowShortLambdasOnASingleLine"_str) {
+            return enumeration_field<ShortLambdaStyle>(result.short_lambdas_,
+                                                       text,
+                                                       key,
+                                                       { { "None"_str, ShortLambdaStyle::None },
+                                                         { "Empty"_str, ShortLambdaStyle::Empty },
+                                                         { "Inline"_str, ShortLambdaStyle::Inline },
+                                                         { "All"_str, ShortLambdaStyle::All },
+                                                         { "false"_str, ShortLambdaStyle::None },
+                                                         { "true"_str, ShortLambdaStyle::All } });
+        } else if (key == "IndentPPDirectives"_str) {
+            return enumeration_field<PreprocessorIndent>(
+                result.indent_pp_directives_,
+                text,
+                key,
+                { { "None"_str, PreprocessorIndent::None } });
+        } else if (key == "CompactNamespaces"_str || key == "ReflowComments"_str ||
+                   key == "SpacesInContainerLiterals"_str) {
+            auto parsed = boolean(text, key);
+            if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+            if (*parsed) return unsupported_value(key, text);
+        } else if (key == "SortIncludes"_str || key == "SortUsingDeclarations"_str) {
+            if (text != "Never"_str) return unsupported_value(key, text);
+        } else if (key == "Standard"_str) {
+            if (text != "Latest"_str) return unsupported_value(key, text);
         } else if (key == "Language"_str) {
             if (text != "Cpp"_str) return unsupported_value(key, text);
         } else if (key == "BasedOnStyle"_str) {
@@ -494,6 +808,20 @@ class StyleConfigurationParser {
     auto unsupported_value(ref<str> key, ref<str> value) const -> lexical::Result<empty> {
         return Err(
             failure(rstd::format("unsupported value '{}' for format option '{}'", value, key)));
+    }
+
+    template<typename T, rstd::size_t N>
+    auto enumeration_field(Option<T>& field,
+                           ref<str>   value,
+                           ref<str>   key,
+                           const EnumSpelling<T> (&spellings)[N]) const -> lexical::Result<empty> {
+        for (const auto& spelling : spellings) {
+            if (value == spelling.name) {
+                field = Some(T(spelling.value));
+                return Ok(empty {});
+            }
+        }
+        return unsupported_value(key, value);
     }
 
     auto finish_mapping() -> lexical::Result<empty> {
