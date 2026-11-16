@@ -10,6 +10,8 @@ import :command.format_execution;
 import :build.discovery;
 import lito.tools;
 import lito.system;
+import lito.frontend.lexical;
+import lito.frontend.format;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -19,16 +21,38 @@ using StringSet = rstd::collections::BTreeMap<String, empty>;
 namespace lito
 {
 
+auto format_builtin_source(ref<rstd::path::Path> path, FormatMode mode) -> CommandResult<bool> {
+    auto contents = rstd::fs::read(path);
+    if (contents.is_err()) {
+        return Err(CommandError::System(SystemError::Io(
+            "read format source"_Str, PathBuf::from(path), rstd::move(contents).unwrap_err())));
+    }
+    auto source = frontend::lexical::SourceFile {
+        .snapshot = frontend::lexical::make_source_snapshot(
+            PathBuf::from(path),
+            frontend::lexical::SourceText::from_bytes(rstd::move(contents).unwrap())),
+    };
+    auto formatted = frontend::format::format_source(source);
+    if (formatted.is_err()) {
+        auto error = rstd::move(formatted).unwrap_err();
+        if (error.path.is_none()) error.path = Some(PathBuf::from(path));
+        return Err(CommandError::Message(rstd::format("{}", error)));
+    }
+    auto unchanged = source.contents() == formatted->as_str().as_bytes();
+    if (mode == FormatMode::Check) return Ok(unchanged);
+    if (unchanged) return Ok(true);
+    auto written = rstd::fs::write_atomic(path, formatted->as_str().as_bytes());
+    if (written.is_err()) {
+        return Err(CommandError::System(SystemError::Io(
+            "write formatted source"_Str, PathBuf::from(path), rstd::move(written).unwrap_err())));
+    }
+    return Ok(true);
+}
+
 auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     if (request.root.is_empty()) {
         return Err(CommandError::Message("format directory is required"_Str));
     }
-    auto environment = ResolvedProcessEnvironment::resolve(request.environment);
-    if (environment.is_err()) {
-        return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
-    }
-    auto tool_resolver =
-        lito::tools::ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
     auto resolved = lito::workspace::resolve_local_project(request.root.as_path());
     if (resolved.is_err()) {
         auto package_error =
@@ -70,19 +94,30 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
         return Err(CommandError::Message("project has no selected format package"_Str));
     }
 
-    const auto tool_requirement = lito::tools::command_tool_requirement(
-        lito::tools::HostToolCapability::SourceFormatting, "lito format"_str);
-    auto resolved_formatter =
-        tool_resolver.require(lito::tools::Tool::ClangFormat, tool_requirement);
-    if (resolved_formatter.is_err()) {
-        return Err(rstd::into<CommandError>(rstd::move(resolved_formatter).unwrap_err()));
+    auto environment = Option<ResolvedProcessEnvironment> {};
+    auto formatter   = Option<tools::ClangFormat> {};
+    if (request.backend == FormatBackend::ClangFormat) {
+        auto resolved_environment = ResolvedProcessEnvironment::resolve(request.environment);
+        if (resolved_environment.is_err()) {
+            return Err(rstd::into<CommandError>(rstd::move(resolved_environment).unwrap_err()));
+        }
+        environment = Some(rstd::move(resolved_environment).unwrap());
+        auto tool_resolver =
+            lito::tools::ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
+        const auto tool_requirement = lito::tools::command_tool_requirement(
+            lito::tools::HostToolCapability::SourceFormatting, "lito format"_str);
+        auto resolved_formatter =
+            tool_resolver.require(lito::tools::Tool::ClangFormat, tool_requirement);
+        if (resolved_formatter.is_err()) {
+            return Err(rstd::into<CommandError>(rstd::move(resolved_formatter).unwrap_err()));
+        }
+        auto created =
+            tools::ClangFormat::create(resolved_formatter->executable.as_path(), *environment);
+        if (created.is_err()) {
+            return Err(rstd::into<CommandError>(rstd::move(created).unwrap_err()));
+        }
+        formatter = Some(rstd::move(created).unwrap());
     }
-    auto created =
-        tools::ClangFormat::create(resolved_formatter->executable.as_path(), *environment);
-    if (created.is_err()) {
-        return Err(rstd::into<CommandError>(rstd::move(created).unwrap_err()));
-    }
-    auto formatter = rstd::move(created).unwrap();
 
     auto       summary = FormatSummary {};
     auto       paths   = Vec<PathBuf>::make();
@@ -134,13 +169,15 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
         paths.len(), parallelism.is_ok() ? Some(parallelism->get()) : None());
     auto executed =
         format_execution::run(paths.len(), jobs, [&](usize index) -> CommandResult<bool> {
+            if (request.backend == FormatBackend::Builtin)
+                return format_builtin_source(paths[index].as_path(), request.mode);
             if (request.mode == FormatMode::Check) {
-                auto result = formatter.is_formatted(paths[index].as_path());
+                auto result = formatter->is_formatted(paths[index].as_path());
                 if (result.is_err())
                     return Err(rstd::into<CommandError>(rstd::move(result).unwrap_err()));
                 return Ok(*result);
             }
-            auto result = formatter.format(paths[index].as_path());
+            auto result = formatter->format(paths[index].as_path());
             if (result.is_err())
                 return Err(rstd::into<CommandError>(rstd::move(result).unwrap_err()));
             return Ok(true);

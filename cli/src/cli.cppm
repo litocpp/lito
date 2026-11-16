@@ -133,8 +133,9 @@ struct BenchOptions {
 };
 
 struct FormatOptions {
-    Vec<String> packages;
-    bool        check {};
+    Vec<String>         packages;
+    bool                check {};
+    lito::FormatBackend backend { lito::FormatBackend::ClangFormat };
 };
 
 struct UpdateOptions {
@@ -358,6 +359,25 @@ public:
     auto possible_values() const -> Vec<String> { return lito::lock::lock_export_format_names(); }
 };
 
+class FormatBackendParser {
+public:
+    auto parse(ref<OsStr> value) const -> Result<lito::FormatBackend, ValueError> {
+        auto text = value.to_str();
+        if (text.is_none()) return Err(ValueError::InvalidUtf8());
+        if (*text == "clang-format"_str) return Ok(lito::FormatBackend::ClangFormat);
+        if (*text == "builtin"_str) return Ok(lito::FormatBackend::Builtin);
+        return Err(ValueError::Message(rstd::format(
+            "unsupported format backend '{}'; expected 'clang-format' or 'builtin'", *text)));
+    }
+
+    auto possible_values() const -> Vec<String> {
+        auto values = Vec<String>::with_capacity(usize(2));
+        values.push("clang-format"_Str);
+        values.push("builtin"_Str);
+        return values;
+    }
+};
+
 class CliDecodeError {
     RSTD_ENUM(CliDecodeError,
               (MatchAccess, (MatchAccessError error;)),
@@ -489,9 +509,10 @@ struct DocSchema {
 };
 
 struct FormatSchema {
-    CommandKey     command;
-    ArgKey<String> package;
-    ArgKey<bool>   check;
+    CommandKey                  command;
+    ArgKey<String>              package;
+    ArgKey<bool>                check;
+    ArgKey<lito::FormatBackend> backend;
 
     auto decode(const Matches& matches) const -> Result<FormatOptions, CliDecodeError>;
 };
@@ -1157,8 +1178,13 @@ auto make_format_definition() -> CommandDefinition<FormatSchema> {
     auto check   = command.add_arg(Arg<bool>::flag("check"_str)
                                        .long_name("check"_str)
                                        .help("Check formatting without changing files"_str));
+    auto backend =
+        command.add_arg(Arg<lito::FormatBackend>::value("backend"_str, FormatBackendParser {})
+                            .long_name("backend"_str)
+                            .value_name("BACKEND"_str)
+                            .help("Select the formatter backend (default: clang-format)"_str));
     return {
-        FormatSchema { .command = key, .package = package, .check = check },
+        FormatSchema { .command = key, .package = package, .check = check, .backend = backend },
         rstd::move(command),
     };
 }
@@ -2032,9 +2058,12 @@ auto DocSchema::decode(const Matches& matches) const -> Result<DocOptions, CliDe
 }
 
 auto FormatSchema::decode(const Matches& matches) const -> Result<FormatOptions, CliDecodeError> {
+    auto selected_backend = rstd_try(optional_value(matches, backend));
     return Ok(FormatOptions {
         .packages = rstd_try(string_values(matches, package)),
         .check    = rstd_try(flag_value(matches, check)),
+        .backend =
+            selected_backend.is_some() ? **selected_backend : lito::FormatBackend::ClangFormat,
     });
 }
 

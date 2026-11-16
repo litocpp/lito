@@ -19,12 +19,19 @@ enum class FormatMode
     Check,
 };
 
+enum class FormatBackend
+{
+    ClangFormat,
+    Builtin,
+};
+
 struct FormatRequest {
     PathBuf                                     root;
     Vec<String>                                 packages;
     ProcessEnvironmentSpec                      environment;
     lito::tools::ToolSpec                       tools;
     FormatMode                                  mode { FormatMode::Write };
+    FormatBackend                               backend { FormatBackend::ClangFormat };
     Option<lito::tools::HostToolResolutionSink> tool_reporter;
 };
 

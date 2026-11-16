@@ -18,6 +18,9 @@ target_sources(
          src/lexical/scanner.cppm
          src/lexical/lexer.cppm
          src/lexical/mod.cppm
+         src/format/syntax.cppm
+         src/format/layout.cppm
+         src/format/mod.cppm
          src/preprocessor/builtin.cppm
          src/preprocessor/traits.cppm
          src/preprocessor/macro.cppm

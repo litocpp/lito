@@ -1656,6 +1656,7 @@ extern "C++" int main() {
         request.tools         = rstd::move(project.tools);
         request.packages      = rstd::move(options.packages);
         request.mode          = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
+        request.backend       = options.backend;
         auto event_context    = EventContext {};
         request.tool_reporter = Some(lito::tools::HostToolResolutionSink {
             .context = rstd::addressof(event_context),

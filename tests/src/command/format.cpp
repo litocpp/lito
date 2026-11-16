@@ -4,6 +4,7 @@ import rstd;
 import rstd.test;
 import lito.driver;
 import lito.core;
+import lito.tools;
 import lito.test.support;
 
 using namespace rstd::prelude;
@@ -246,4 +247,81 @@ sources = ["src/main.cpp", "tests/main.cpp"]
     auto not_written = rstd::fs::read_to_string(source.as_path());
     ASSERT_TRUE(not_written.is_ok());
     EXPECT_EQ(not_written->as_str(), unformatted);
+}
+
+TEST_F(FormatCommand, BuiltinChecksAndWritesWithoutExternalTools) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-format"
+version = "0.1.0"
+[[bin]]
+name = "builtin-format"
+sources = ["main.cpp"]
+link-stdlib = false
+[dependencies.unavailable]
+git = "https://example.invalid/unavailable.git"
+)toml"_str },
+        { "main.cpp"_str, "auto main()->int{return 0;}\n"_str },
+    };
+    auto project = materialize("builtin-format"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto source   = project->root.join(PathBuf::from("main.cpp"_str).as_path());
+    auto original = rstd::fs::read(source.as_path());
+    ASSERT_TRUE(original.is_ok());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .mode    = lito::FormatMode::Check,
+        .backend = lito::FormatBackend::Builtin,
+    };
+    request.tools.clang_format = PathBuf::from("lito-format-missing-formatter"_str);
+    request.tools.git          = PathBuf::from("lito-format-missing-git"_str);
+    auto resolutions           = usize {};
+    request.tool_reporter      = Some(lito::tools::HostToolResolutionSink {
+        .context = rstd::addressof(resolutions),
+        .notify =
+            [](void* context, const lito::tools::HostToolResolution&) noexcept {
+                ++*static_cast<usize*>(context);
+            },
+    });
+    auto checked               = lito::format(request);
+    ASSERT_TRUE(checked.is_ok());
+    EXPECT_EQ(checked->files, usize(1));
+    EXPECT_FALSE(checked->success());
+    EXPECT_EQ(rstd::fs::read(source.as_path()).unwrap().as_slice(), original->as_slice());
+    request.mode = lito::FormatMode::Write;
+    auto written = lito::format(request);
+    ASSERT_TRUE(written.is_ok());
+    EXPECT_TRUE(written->success());
+    EXPECT_NE(rstd::fs::read(source.as_path()).unwrap().as_slice(), original->as_slice());
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
+    EXPECT_EQ(resolutions, usize {});
+}
+
+TEST_F(FormatCommand, BuiltinFailureDoesNotOverwriteSource) {
+    constexpr auto    invalid = "const char* value = \"unterminated;\n"_str;
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-format-error"
+version = "0.1.0"
+[[bin]]
+name = "builtin-format-error"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "main.cpp"_str, invalid },
+    };
+    auto project = materialize("builtin-format-error"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto result = lito::format(lito::FormatRequest {
+        .root    = project->root.clone(),
+        .backend = lito::FormatBackend::Builtin,
+    });
+    EXPECT_TRUE(result.is_err());
+    auto source   = project->root.join(PathBuf::from("main.cpp"_str).as_path());
+    auto contents = rstd::fs::read_to_string(source.as_path());
+    ASSERT_TRUE(contents.is_ok());
+    EXPECT_EQ(contents->as_str(), invalid);
 }
