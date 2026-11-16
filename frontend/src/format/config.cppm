@@ -86,6 +86,7 @@ struct ParensOptionsPatch {
 };
 
 struct BraceWrappingPatch {
+    Option<bool>              after_case_label;
     Option<bool>              after_class;
     Option<bool>              after_struct;
     Option<bool>              after_union;
@@ -95,12 +96,15 @@ struct BraceWrappingPatch {
     Option<ControlBraceStyle> after_control_statement;
     Option<bool>              before_else;
     Option<bool>              before_catch;
+    Option<bool>              before_lambda_body;
+    Option<bool>              before_while;
     Option<bool>              indent_braces;
     Option<bool>              split_empty_function;
     Option<bool>              split_empty_record;
     Option<bool>              split_empty_namespace;
 
     auto apply(BraceWrapping base) const -> BraceWrapping {
+        if (after_case_label.is_some()) base.after_case_label = *after_case_label;
         if (after_class.is_some()) base.after_class = *after_class;
         if (after_struct.is_some()) base.after_struct = *after_struct;
         if (after_union.is_some()) base.after_union = *after_union;
@@ -111,6 +115,8 @@ struct BraceWrappingPatch {
             base.after_control_statement = *after_control_statement;
         if (before_else.is_some()) base.before_else = *before_else;
         if (before_catch.is_some()) base.before_catch = *before_catch;
+        if (before_lambda_body.is_some()) base.before_lambda_body = *before_lambda_body;
+        if (before_while.is_some()) base.before_while = *before_while;
         if (indent_braces.is_some()) base.indent_braces = *indent_braces;
         if (split_empty_function.is_some()) base.split_empty_function = *split_empty_function;
         if (split_empty_record.is_some()) base.split_empty_record = *split_empty_record;
@@ -189,6 +195,12 @@ class StyleConfiguration {
     Option<ConstructorPacking>       pack_constructor_initializers_;
     Option<ShortIfStyle>             short_if_;
     Option<ShortLambdaStyle>         short_lambdas_;
+    Option<bool>                     short_enums_;
+    Option<LambdaIndentation>        lambda_body_indentation_;
+    Option<EmptyBraceSpacing>        space_in_empty_braces_;
+    Option<ConstructorBreak>         break_constructor_initializers_;
+    Option<InheritanceBreak>         break_inheritance_list_;
+    Option<bool>                     legacy_space_in_empty_block_;
     Option<bool>                     short_loops_;
     Option<bool>                     short_case_labels_;
     Option<PreprocessorIndent>       indent_pp_directives_;
@@ -326,6 +338,17 @@ public:
             base.pack_constructor_initializers = *pack_constructor_initializers_;
         if (short_if_.is_some()) base.short_if = *short_if_;
         if (short_lambdas_.is_some()) base.short_lambdas = *short_lambdas_;
+        if (short_enums_.is_some()) base.short_enums = *short_enums_;
+        if (lambda_body_indentation_.is_some())
+            base.lambda_body_indentation = *lambda_body_indentation_;
+        if (space_in_empty_braces_.is_some()) base.space_in_empty_braces = *space_in_empty_braces_;
+        if (legacy_space_in_empty_block_.is_some() && *legacy_space_in_empty_block_ &&
+            base.space_in_empty_braces == EmptyBraceSpacing::Never)
+            base.space_in_empty_braces = EmptyBraceSpacing::Block;
+        if (break_constructor_initializers_.is_some())
+            base.break_constructor_initializers = *break_constructor_initializers_;
+        if (break_inheritance_list_.is_some())
+            base.break_inheritance_list = *break_inheritance_list_;
         if (short_loops_.is_some()) base.short_loops = *short_loops_;
         if (short_case_labels_.is_some()) base.short_case_labels = *short_case_labels_;
         if (indent_pp_directives_.is_some()) base.indent_pp_directives = *indent_pp_directives_;
@@ -540,6 +563,7 @@ class StyleConfigurationParser {
             if (key == "Other"_str) return rstd::addressof(result.parens_options_.other);
         } else if (group == StyleGroup::BraceWrapping) {
             auto& wrapping = result.brace_wrapping_;
+            if (key == "AfterCaseLabel"_str) return rstd::addressof(wrapping.after_case_label);
             if (key == "AfterClass"_str) return rstd::addressof(wrapping.after_class);
             if (key == "AfterStruct"_str) return rstd::addressof(wrapping.after_struct);
             if (key == "AfterUnion"_str) return rstd::addressof(wrapping.after_union);
@@ -548,6 +572,8 @@ class StyleConfigurationParser {
             if (key == "AfterFunction"_str) return rstd::addressof(wrapping.after_function);
             if (key == "BeforeElse"_str) return rstd::addressof(wrapping.before_else);
             if (key == "BeforeCatch"_str) return rstd::addressof(wrapping.before_catch);
+            if (key == "BeforeLambdaBody"_str) return rstd::addressof(wrapping.before_lambda_body);
+            if (key == "BeforeWhile"_str) return rstd::addressof(wrapping.before_while);
             if (key == "IndentBraces"_str) return rstd::addressof(wrapping.indent_braces);
             if (key == "SplitEmptyFunction"_str)
                 return rstd::addressof(wrapping.split_empty_function);
@@ -616,6 +642,10 @@ class StyleConfigurationParser {
                 return rstd::addressof(result.short_loops_);
             if (key == "AllowShortCaseLabelsOnASingleLine"_str)
                 return rstd::addressof(result.short_case_labels_);
+            if (key == "AllowShortEnumsOnASingleLine"_str)
+                return rstd::addressof(result.short_enums_);
+            if (key == "SpaceInEmptyBlock"_str)
+                return rstd::addressof(result.legacy_space_in_empty_block_);
             if (key == "ConstructorInitializerAllOnOneLineOrOnePerLine"_str)
                 return rstd::addressof(result.legacy_constructor_initializers_);
             if (key == "SpaceBeforeAssignmentOperators"_str)
@@ -926,7 +956,40 @@ class StyleConfigurationParser {
                 { { "Never"_str, ConstructorPacking::Never },
                   { "BinPack"_str, ConstructorPacking::BinPack },
                   { "CurrentLine"_str, ConstructorPacking::CurrentLine },
-                  { "NextLine"_str, ConstructorPacking::NextLine } });
+                  { "NextLine"_str, ConstructorPacking::NextLine },
+                  { "NextLineOnly"_str, ConstructorPacking::NextLineOnly } });
+        } else if (key == "BreakConstructorInitializers"_str) {
+            return enumeration_field<ConstructorBreak>(
+                result.break_constructor_initializers_,
+                text,
+                key,
+                { { "BeforeColon"_str, ConstructorBreak::BeforeColon },
+                  { "BeforeComma"_str, ConstructorBreak::BeforeComma },
+                  { "AfterColon"_str, ConstructorBreak::AfterColon } });
+        } else if (key == "BreakInheritanceList"_str) {
+            return enumeration_field<InheritanceBreak>(
+                result.break_inheritance_list_,
+                text,
+                key,
+                { { "BeforeColon"_str, InheritanceBreak::BeforeColon },
+                  { "BeforeComma"_str, InheritanceBreak::BeforeComma },
+                  { "AfterColon"_str, InheritanceBreak::AfterColon },
+                  { "AfterComma"_str, InheritanceBreak::AfterComma } });
+        } else if (key == "LambdaBodyIndentation"_str) {
+            return enumeration_field<LambdaIndentation>(
+                result.lambda_body_indentation_,
+                text,
+                key,
+                { { "Signature"_str, LambdaIndentation::Signature },
+                  { "OuterScope"_str, LambdaIndentation::OuterScope } });
+        } else if (key == "SpaceInEmptyBraces"_str) {
+            return enumeration_field<EmptyBraceSpacing>(
+                result.space_in_empty_braces_,
+                text,
+                key,
+                { { "Always"_str, EmptyBraceSpacing::Always },
+                  { "Block"_str, EmptyBraceSpacing::Block },
+                  { "Never"_str, EmptyBraceSpacing::Never } });
         } else if (key == "AllowShortIfStatementsOnASingleLine"_str) {
             return enumeration_field<ShortIfStyle>(
                 result.short_if_,

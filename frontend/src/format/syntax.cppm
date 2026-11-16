@@ -209,6 +209,8 @@ auto add_group(FormatSyntax& syntax, GroupKind kind, usize open, usize close) ->
     auto begin = open + usize(1);
     for (auto index = begin; index < close; ++index) {
         const auto& token = syntax.tokens[index];
+        if (token.source.comment || syntax.overlaps(token.source.begin, token.source.end))
+            group.safe = false;
         if (token.source.comment) continue;
         if (syntax.is(index, ","_str)) {
             if (begin < index) group.items.push({ begin, index });
@@ -347,6 +349,25 @@ auto annotate_delimiters(FormatSyntax& syntax) -> void {
             continue;
         }
         if (expression || (! declaration && ! type_argument)) {
+            auto simple = ! expression;
+            for (auto scan = index + usize(1); simple && scan < end; ++scan) {
+                const auto& part = syntax.tokens[scan];
+                if (part.source.comment ||
+                    (part.source.kind != lexical::TokenKind::Identifier &&
+                     part.source.kind != lexical::TokenKind::PpNumber &&
+                     ! syntax.is(scan, ","_str) && ! syntax.is(scan, "::"_str) &&
+                     ! syntax.is(scan, "*"_str) && ! syntax.is(scan, "&"_str) &&
+                     ! syntax.is(scan, "<"_str) && ! syntax.is(scan, ">"_str) &&
+                     ! syntax.is(scan, ">>"_str) && ! syntax.is(scan, "..."_str)))
+                    simple = false;
+            }
+            if (simple) {
+                for (const auto& pair : pairs) {
+                    auto open = pair.template get<0>(), close = pair.template get<1>();
+                    syntax.tokens[open].syntax.ambiguous_angle = true;
+                    syntax.tokens[open].syntax.pair            = close;
+                }
+            }
             syntax.protected_ranges.push({ token.source.begin, syntax.tokens[end].source.end });
             index = end;
             continue;
@@ -537,6 +558,36 @@ auto label_head(FormatSyntax& syntax, usize index) -> Option<usize> {
     return Some(usize(colon));
 }
 
+auto case_head(FormatSyntax& syntax, usize begin, usize limit) -> Option<usize> {
+    auto cached = syntax.tokens[begin].syntax.case_colon;
+    if (cached != usize::MAX) return cached < limit ? Some(usize(cached)) : None();
+    auto scope = syntax.tokens[begin].syntax.scope_id;
+    while (scope != usize::MAX && syntax.tokens[scope].syntax.control != ControlKind::Switch) {
+        if (syntax.tokens[scope].syntax.block == BlockKind::Function ||
+            syntax.tokens[scope].syntax.block == BlockKind::Lambda)
+            return None();
+        scope = syntax.tokens[scope].syntax.scope_id;
+    }
+    if (scope == usize::MAX) return None();
+    unsigned questions {};
+    for (auto index = begin + usize(1); index < limit; ++index) {
+        if (syntax.tokens[index].source.comment) continue;
+        if (syntax.is(index, ";"_str) || syntax.is(index, "}"_str)) return None();
+        if (syntax.is(index, "?"_str)) ++questions;
+        if (syntax.is(index, ":"_str)) {
+            if (questions == 0) {
+                syntax.tokens[begin].syntax.case_colon = index;
+                syntax.tokens[index].syntax.colon_role = ColonRole::Case;
+                return Some(usize(index));
+            }
+            --questions;
+        }
+        auto pair = syntax.tokens[index].syntax.pair;
+        if (pair != usize::MAX && pair > index) index = pair;
+    }
+    return None();
+}
+
 auto contains_newline(ref<str> text) -> bool {
     for (auto byte : text.as_bytes())
         if (byte == u8('\r') || byte == u8('\n')) return true;
@@ -711,6 +762,36 @@ auto annotate_casts(FormatSyntax& syntax) -> void {
     }
 }
 
+auto inheritance_angles(FormatSyntax& syntax, usize begin, usize end) -> void {
+    for (auto index = begin; index < end; ++index) {
+        auto& candidate = syntax.tokens[index];
+        auto  close     = candidate.syntax.pair;
+        if (! candidate.syntax.ambiguous_angle || close == usize::MAX || close >= end) continue;
+        auto ranges = Vec<TextRange>::make();
+        for (const auto& range : syntax.protected_ranges)
+            if (range.begin != candidate.source.begin ||
+                range.end != syntax.tokens[close].source.end)
+                ranges.push(TextRange { range.begin, range.end });
+        syntax.protected_ranges = rstd::move(ranges);
+        for (auto nested = index; nested <= close; ++nested) {
+            auto& token = syntax.tokens[nested];
+            if (! token.syntax.ambiguous_angle) continue;
+            token.syntax.ambiguous_angle = false;
+            token.syntax.template_open   = true;
+            auto matching                = token.syntax.pair;
+            ++syntax.tokens[matching].syntax.template_closes;
+            syntax.tokens[matching].syntax.pair = nested;
+        }
+        for (auto nested = index; nested <= close; ++nested)
+            if (syntax.tokens[nested].syntax.template_open)
+                (void)add_group(syntax,
+                                GroupKind::TemplateArguments,
+                                nested,
+                                syntax.tokens[nested].syntax.pair);
+        index = close;
+    }
+}
+
 auto classify_blocks(FormatSyntax& syntax) -> void {
     auto       head = usize {};
     Vec<usize> scopes;
@@ -752,6 +833,14 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                 syntax.overlaps(syntax.tokens[head].source.begin, syntax.tokens[head].source.end)))
             ++head;
         if (head == index) {
+            if (text == "case"_str || text == "default"_str) {
+                auto colon = case_head(syntax, index, syntax.tokens.len());
+                if (colon.is_some()) {
+                    head  = *colon + usize(1);
+                    index = *colon;
+                    continue;
+                }
+            }
             auto label = label_head(syntax, index);
             if (label.is_some()) {
                 head  = *label + usize(1);
@@ -907,11 +996,14 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                                            record(syntax.tokens[owner].syntax.block);
         if (ctor_colon != usize::MAX && kind == BlockKind::Function) {
             syntax.tokens[ctor_colon].syntax.colon_role = ColonRole::Constructor;
-            (void)add_group(syntax, GroupKind::ConstructorInitializers, ctor_colon, index);
+            auto group = add_group(syntax, GroupKind::ConstructorInitializers, ctor_colon, index);
+            syntax.groups[group].header_begin = header;
         }
         if (inheritance_colon != usize::MAX && record(kind)) {
+            inheritance_angles(syntax, inheritance_colon + usize(1), index);
             syntax.tokens[inheritance_colon].syntax.colon_role = ColonRole::Inheritance;
-            (void)add_group(syntax, GroupKind::Inheritance, inheritance_colon, index);
+            auto group = add_group(syntax, GroupKind::Inheritance, inheritance_colon, index);
+            syntax.groups[group].header_begin = header;
         }
         auto last_header = syntax.previous_token(index);
         token.syntax.header_multiline =
@@ -1003,10 +1095,12 @@ auto annotate_lambda_blocks(FormatSyntax& syntax) -> void {
             if (syntax.is(index, "{"_str)) {
                 auto close = syntax.tokens[index].syntax.pair;
                 if (close == usize::MAX) break;
-                syntax.tokens[index].syntax.block        = BlockKind::Lambda;
-                syntax.tokens[index].syntax.header_begin = group.open;
-                syntax.tokens[close].syntax.block        = BlockKind::Lambda;
-                syntax.tokens[close].syntax.header_begin = group.open;
+                syntax.tokens[index].syntax.block                  = BlockKind::Lambda;
+                syntax.tokens[index].syntax.header_begin           = group.open;
+                syntax.tokens[index].syntax.lambda_signature_begin = group.open;
+                syntax.tokens[close].syntax.block                  = BlockKind::Lambda;
+                syntax.tokens[close].syntax.header_begin           = group.open;
+                syntax.tokens[close].syntax.lambda_signature_begin = group.open;
                 break;
             }
             auto pair = syntax.tokens[index].syntax.pair;
@@ -1332,6 +1426,7 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
                     auto terminator = syntax.next_token(syntax.tokens[paren].syntax.pair);
                     if (terminator < limit && syntax.is(terminator, ";"_str)) {
                         syntax.tokens[following].syntax.block_continuation = true;
+                        syntax.tokens[following].syntax.do_while_tail      = true;
                         end                                                = terminator + usize(1);
                     }
                 }
@@ -1344,21 +1439,10 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
         }
     }
     if (syntax.is(begin, "case"_str) || syntax.is(begin, "default"_str)) {
-        auto     colon = begin + usize(1);
-        unsigned questions {};
-        while (colon < limit) {
-            if (syntax.is(colon, "?"_str)) ++questions;
-            if (syntax.is(colon, ":"_str)) {
-                if (questions == 0) break;
-                --questions;
-            }
-            auto pair = syntax.tokens[colon].syntax.pair;
-            if (pair != usize::MAX && pair > colon) colon = pair;
-            ++colon;
-        }
-        if (colon < limit) {
-            syntax.tokens[colon].syntax.colon_role = ColonRole::Case;
-            auto end                               = colon + usize(1);
+        auto label = case_head(syntax, begin, limit);
+        if (label.is_some()) {
+            auto colon = *label;
+            auto end   = colon + usize(1);
             while (end < limit && ! syntax.is(end, "case"_str) && ! syntax.is(end, "default"_str)) {
                 auto pair = syntax.tokens[end].syntax.pair;
                 if (pair != usize::MAX && pair > end) end = pair;
@@ -1368,7 +1452,19 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
             syntax.statements[id].extent.end = colon + usize(1);
             syntax.statements[id].body_begin = colon + usize(1);
             syntax.statements[id].body_end   = end;
-            syntax.statements[id].simple     = statement_simple(syntax, colon + usize(1), end);
+            auto direct                      = colon + usize(1);
+            if (direct < end && ! syntax.tokens[direct].source.comment &&
+                syntax.is(direct, "{"_str) &&
+                syntax.tokens[direct].syntax.block == BlockKind::Control &&
+                syntax.tokens[direct].syntax.pair < end) {
+                syntax.statements[id].body_open         = direct;
+                syntax.tokens[direct].syntax.case_body  = true;
+                syntax.tokens[direct].syntax.case_label = id;
+                auto close                              = syntax.tokens[direct].syntax.pair;
+                syntax.tokens[close].syntax.case_body   = true;
+                syntax.tokens[close].syntax.case_label  = id;
+            }
+            syntax.statements[id].simple = statement_simple(syntax, colon + usize(1), end);
             for (auto index = begin; index <= colon; ++index)
                 syntax.tokens[index].syntax.statement_id = id;
             parse_statements(syntax, colon + usize(1), end, depth + 1);
@@ -1585,7 +1681,8 @@ class ExpressionParser {
         parsed_groups_[id] = true;
         const auto& group  = syntax_.groups[id];
         if (group.kind != GroupKind::Arguments && group.kind != GroupKind::Parameters &&
-            group.kind != GroupKind::Initializer && group.kind != GroupKind::Control)
+            group.kind != GroupKind::Initializer && group.kind != GroupKind::Control &&
+            group.kind != GroupKind::Enumerators)
             return;
         for (const auto& item : group.items) parse(item.begin, item.end, parent, depth, true);
     }
@@ -1742,6 +1839,9 @@ public:
                 statement.kind == StatementKind::BitField ||
                 statement.kind == StatementKind::Function)
                 continue;
+            if (statement.scope_id != usize::MAX &&
+                syntax_.tokens[statement.scope_id].syntax.block == BlockKind::Enum)
+                continue;
             auto begin = statement.kind == StatementKind::Return
                              ? syntax_.next_token(statement.extent.begin)
                              : statement.extent.begin;
@@ -1841,6 +1941,60 @@ auto annotate_access_labels(FormatSyntax& syntax) -> void {
     }
 }
 
+auto annotate_block_bodies(FormatSyntax& syntax) -> void {
+    Vec<usize> parents;
+    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
+        const auto& token = syntax.tokens[index];
+        if (! parents.is_empty() &&
+            syntax.lambdas[parents[parents.len() - usize(1)]].body_close == index)
+            (void)parents.pop();
+        if (! syntax.is(index, "{"_str) || token.syntax.pair == usize::MAX) continue;
+        auto close = token.syntax.pair;
+        if (token.syntax.block == BlockKind::Lambda &&
+            token.syntax.lambda_signature_begin != usize::MAX) {
+            auto parent = parents.is_empty() ? usize::MAX : parents[parents.len() - usize(1)];
+            auto id     = syntax.lambdas.len();
+            syntax.lambdas.push(
+                LambdaBody { .signature  = { token.syntax.lambda_signature_begin, index },
+                             .body_open  = index,
+                             .body_close = close,
+                             .scope      = token.syntax.scope_id,
+                             .parent     = parent });
+            parents.push(usize(id));
+        }
+        if (token.syntax.block != BlockKind::Enum) continue;
+        auto group                        = add_group(syntax, GroupKind::Enumerators, index, close);
+        syntax.groups[group].header_begin = token.syntax.header_begin;
+        auto safe = token.syntax.header_begin != usize::MAX &&
+                    ! syntax.overlaps(token.source.begin, syntax.tokens[close].source.end);
+        for (auto scan = token.syntax.header_begin; safe && scan < close; ++scan) {
+            const auto& part = syntax.tokens[scan];
+            if (part.source.comment || part.syntax.protected_text || syntax.is(scan, ";"_str) ||
+                (scan != index && (syntax.is(scan, "{"_str) || syntax.is(scan, "}"_str))))
+                safe = false;
+        }
+        for (const auto& item : syntax.groups[group].items) {
+            if (item.begin >= item.end ||
+                syntax.tokens[item.begin].source.kind != lexical::TokenKind::Identifier) {
+                safe = false;
+                break;
+            }
+            auto after = syntax.next_token(item.begin);
+            if (after < item.end &&
+                (! syntax.is(after, "="_str) || syntax.next_token(after) >= item.end)) {
+                safe = false;
+                break;
+            }
+        }
+        syntax.groups[group].safe = syntax.groups[group].safe && safe;
+        syntax.enums.push(EnumBody { .header_begin = token.syntax.header_begin,
+                                     .open         = index,
+                                     .close        = close,
+                                     .group_index  = group,
+                                     .safe         = safe });
+    }
+}
+
 auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSyntax> {
     if (rstd::str_::from_utf8(source.contents()).is_err())
         return Err(lexical::Error::make("format source is not UTF-8"_str));
@@ -1877,6 +2031,7 @@ auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSy
                 statement.simple = false;
         }
         annotate_simple_blocks(syntax);
+        annotate_block_bodies(syntax);
         ExpressionParser(syntax).run();
         normalize_ranges(syntax.protected_ranges);
         for (auto& token : syntax.tokens)

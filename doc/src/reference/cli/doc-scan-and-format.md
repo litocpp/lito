@@ -114,6 +114,8 @@ The table describes the implemented subset; tests use hand-written expected resu
 | `SpacesInParensOptions` | Boolean fields `ExceptDoubleParentheses`, `InConditionalStatements`, `InCStyleCasts`, `InEmptyParentheses`, `Other` |
 | `AllowShortFunctionsOnASingleLine` | `None`, `Empty`, `Inline`, `InlineOnly`, `All`; legacy `false`, `true` mean `None`, `All` |
 | `AllowShortBlocksOnASingleLine` | `Never`, `Empty`, `Always`; legacy `false`, `true` mean `Never`, `Always` |
+| `AllowShortEnumsOnASingleLine` | Boolean |
+| `SpaceInEmptyBraces` | `Always`, `Block`, `Never`; legacy `SpaceInEmptyBlock` remains accepted |
 | `MaxEmptyLinesToKeep` | Unsigned integer |
 | `KeepEmptyLines` | Boolean fields `AtStartOfFile`, `AtEndOfFile`, `AtStartOfBlock`, `AtEndOfBlock` |
 | `ColumnLimit` | Unsigned integer; `0` means no column limit |
@@ -145,10 +147,13 @@ The table describes the implemented subset; tests use hand-written expected resu
 | `BreakAfterAttributes` | `Leave`, `Never`, `Always` |
 | `BreakBeforeBinaryOperators` | `None`, `NonAssignment`, `All` |
 | `BreakBeforeTernaryOperators` | Boolean |
-| `PackConstructorInitializers` | `Never`, `BinPack`, `CurrentLine`, `NextLine`; legacy `ConstructorInitializerAllOnOneLineOrOnePerLine` remains accepted |
+| `BreakConstructorInitializers` | `BeforeColon`, `BeforeComma`, `AfterColon` |
+| `BreakInheritanceList` | `BeforeColon`, `BeforeComma`, `AfterColon`, `AfterComma` |
+| `PackConstructorInitializers` | `Never`, `BinPack`, `CurrentLine`, `NextLine`, `NextLineOnly`; legacy `ConstructorInitializerAllOnOneLineOrOnePerLine` remains accepted |
 | `AllowShortIfStatementsOnASingleLine` | `Never`, `WithoutElse`, `OnlyFirstIf`, `AllIfsAndElse`; legacy `true` means `WithoutElse` |
 | `AllowShortLoopsOnASingleLine`, `AllowShortCaseLabelsOnASingleLine` | Boolean |
 | `AllowShortLambdasOnASingleLine` | `None`, `Empty`, `Inline`, `All`, or legacy boolean |
+| `LambdaBodyIndentation` | `Signature`, `OuterScope` |
 | `CompactNamespaces`, `ReflowComments`, `SpacesInContainerLiterals` | Only `false` |
 | `SortIncludes`, `SortUsingDeclarations` | Only `Never` |
 | `IndentPPDirectives` | Only `None` |
@@ -182,6 +187,18 @@ line when they fit, including with `BinPackArguments: false`. Declaration parame
 The LLVM projection enables `AllowAllArgumentsOnNextLine` and `BreakBeforeTernaryOperators`.
 The fallback style leaves both disabled.
 
+Constructor and inheritance break options select where expanded lists break. `BeforeColon`
+breaks before the colon and after commas. `BeforeComma`
+breaks before the colon and commas, aligning the commas with the colon. `AfterColon` keeps the
+colon with the header and breaks before the first item and after commas. Inheritance `AfterComma`
+also keeps the first base with the header. Inheritance `BeforeComma` and `AfterComma` break
+multiple bases even when they fit. Constructor `BeforeComma` forces expansion with `Never` or
+`BinPack`; other combinations follow their packing and column policies.
+Both lists use `ConstructorInitializerIndentWidth` for their base continuation indentation.
+`NextLineOnly` first tries all constructor initializers
+on one continuation line, then one per line; unlike `NextLine`, it does not try the current line.
+This explicit packing policy also applies with `ColumnLimit: 0`.
+
 Legacy `AlwaysBreak` enables after-opening rules for functions, braced lists and `if`.
 `BlockIndent` also enables their before-closing rules. Both set bracket alignment to true;
 loop and switch rules remain separate. An explicit `AlignAfterOpenBracket` value initializes
@@ -200,15 +217,34 @@ column zero. Formatting does not evaluate conditional branches or expand macros.
 Supported `BraceWrapping` fields are:
 
 - booleans `AfterClass`, `AfterStruct`, `AfterUnion`, `AfterEnum`, `AfterNamespace`, `AfterFunction`;
+- booleans `AfterCaseLabel`, `BeforeLambdaBody`, `BeforeWhile`;
 - `AfterControlStatement`: `Never`, `MultiLine`, `Always`, or legacy `false`/`true`;
 - booleans `BeforeElse`, `BeforeCatch`, `IndentBraces`;
 - booleans `SplitEmptyFunction`, `SplitEmptyRecord`, `SplitEmptyNamespace`.
 
-`MultiLine` considers the recognized control header's final line layout. `IndentBraces` follows
-the control-block rule: wrapped control braces and their body gain an extra level. Empty-block
+`MultiLine` considers the recognized control header's final line layout. `IndentBraces` gives
+wrapped control and lambda braces and their bodies an extra level. Empty-block
 split options affect braces whose opening brace has already been wrapped. A short-function rule
 that successfully merges the whole function takes precedence. Wrapping fields remain available
 for inheritance when the current brace mode does not use them.
+
+`AfterCaseLabel` applies to a braced body directly after `case` or `default`. `BeforeWhile` applies
+only to the tail of a `do` statement. `BeforeLambdaBody` wraps expanded lambda braces; a successful
+short-lambda merge takes precedence. Allman enables `AfterCaseLabel` and `BeforeLambdaBody`,
+while keeping `BeforeWhile` disabled. `LambdaBodyIndentation: Signature` indents relative to the
+final signature line; `OuterScope` uses the enclosing lexical block.
+
+`SpaceInEmptyBraces` controls spaces inside braces already selected for a single line. For ordinary
+blocks, `Always` and `Block` insert a space; `Never` does not. For `Cpp11BracedListStyle: Block`,
+only `Always` inserts a space. Other initializer styles follow empty-parenthesis spacing instead.
+It does not merge expanded records or namespaces. Legacy `SpaceInEmptyBlock: true` converts an
+effective `Never` to `Block`, including an explicit modern `Never`; `false` leaves the value alone.
+Modern values are applied before this conversion regardless of YAML key order.
+
+`AllowShortEnumsOnASingleLine` merges recognized safe enum bodies when they fit the column limit,
+including when `AfterEnum` requests wrapping. It preserves enumerator tokens and trailing commas;
+comments and protected syntax prevent merging. The LLVM projection enables short enums; the
+fallback disables them.
 
 `ReferenceAlignment: Pointer` follows the effective pointer alignment; other values select a
 separate reference style. `DerivePointerAlignment` counts directional spacing evidence from

@@ -419,7 +419,7 @@ link-stdlib = false
         { "TabWidth: 0\n"_str, "TabWidth"_str },
         { "ColumnLimit: -1\n"_str, "ColumnLimit"_str },
         { "IndentWidth: \"\"\n"_str, "IndentWidth"_str },
-        { "BraceWrapping:\n  AfterCaseLabel: true\n"_str, "AfterCaseLabel"_str },
+        { "BraceWrapping:\n  AfterExternBlock: true\n"_str, "AfterExternBlock"_str },
         { "IndentAccessModifiers: Always\n"_str, "IndentAccessModifiers"_str },
         { "CompactNamespaces: true\n"_str, "CompactNamespaces"_str },
         { "ReflowComments: true\n"_str, "ReflowComments"_str },
@@ -441,6 +441,17 @@ link-stdlib = false
         { "EmptyLineBeforeAccessModifier: Sometimes\n"_str, "EmptyLineBeforeAccessModifier"_str },
         { "EmptyLineAfterAccessModifier: LogicalBlock\n"_str, "EmptyLineAfterAccessModifier"_str },
         { "IndentGotoLabels: Never\n"_str, "IndentGotoLabels"_str },
+        { "BreakConstructorInitializers: BeforeEverything\n"_str,
+          "BreakConstructorInitializers"_str },
+        { "BreakInheritanceList: EveryLine\n"_str, "BreakInheritanceList"_str },
+        { "PackConstructorInitializers: Only\n"_str, "PackConstructorInitializers"_str },
+        { "LambdaBodyIndentation: Body\n"_str, "LambdaBodyIndentation"_str },
+        { "SpaceInEmptyBraces: true\n"_str, "SpaceInEmptyBraces"_str },
+        { "SpaceInEmptyBlock: Always\n"_str, "SpaceInEmptyBlock"_str },
+        { "AllowShortEnumsOnASingleLine: Always\n"_str, "AllowShortEnumsOnASingleLine"_str },
+        { "BraceWrapping:\n  AfterCaseLabel: Always\n"_str, "AfterCaseLabel"_str },
+        { "BraceWrapping:\n  BeforeLambdaBody: Always\n"_str, "BeforeLambdaBody"_str },
+        { "BraceWrapping:\n  BeforeWhile: Always\n"_str, "BeforeWhile"_str },
         { "KeepEmptyLines:\n  AtStartOfBlock: false\n  AtStartOfBlock: true\n"_str,
           "AtStartOfBlock"_str },
     };
@@ -712,4 +723,84 @@ link-stdlib = false
     auto clean   = lito::format(request);
     ASSERT_TRUE(clean.is_ok());
     EXPECT_TRUE(clean->success());
+}
+
+TEST_F(FormatCommand, BuiltinInheritsBlockOptionsAndNormalizesEmptyBraceAliases) {
+    constexpr auto source = "enum E{A,B};void empty(){}void run(){do{work();}while(ready);}\n"_str;
+    constexpr auto inherited =
+        "enum E { A, B };\nvoid empty() { }\nvoid run() {\n    do {\n        work();\n    }\n"
+        "    while (ready);\n}\n"_str;
+    constexpr auto overridden =
+        "enum E {\n    A,\n    B\n};\nvoid empty() {}\nvoid run() {\n    do {\n        work();\n"
+        "    } while (ready);\n}\n"_str;
+    constexpr auto legacy =
+        "enum E { A, B };\nvoid empty() { }\nvoid run() {\n    do {\n        work();\n"
+        "    } while (ready);\n}\n"_str;
+    struct Source {
+        ref<str> path;
+        ref<str> expected;
+    };
+    const Source sources[] = {
+        { "src/root.cpp"_str, inherited },
+        { "src/child/child.cpp"_str, overridden },
+        { "src/child/grand/grand.cpp"_str, legacy },
+    };
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-block-inheritance"
+version = "0.1.0"
+[[bin]]
+name = "builtin-block-inheritance"
+sources = ["src/root.cpp", "src/child/child.cpp", "src/child/grand/grand.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str,
+          "BreakBeforeBraces: Custom\nAllowShortEnumsOnASingleLine: true\n"
+          "AllowShortFunctionsOnASingleLine: Empty\nSpaceInEmptyBraces: Always\n"
+          "BraceWrapping:\n  BeforeWhile: true\n"_str },
+        { "src/child/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nAllowShortEnumsOnASingleLine: false\n"
+          "SpaceInEmptyBraces: Never\nBraceWrapping:\n  BeforeWhile: false\n"_str },
+        { "src/child/grand/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nAllowShortEnumsOnASingleLine: true\n"
+          "SpaceInEmptyBraces: Never\nSpaceInEmptyBlock: true\n"_str },
+        { sources[0].path, source },
+        { sources[1].path, source },
+        { sources[2].path, source },
+    };
+    auto project = materialize("builtin-block-inheritance"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .mode    = lito::FormatMode::Check,
+        .backend = lito::FormatBackend::Builtin,
+    };
+    auto checked = lito::format(request);
+    ASSERT_TRUE(checked.is_ok());
+    EXPECT_EQ(checked->unformatted_files.len(), usize(3));
+    for (const auto& item : sources) {
+        auto path = project->root.join(PathBuf::from(item.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), source);
+    }
+    request.mode = lito::FormatMode::Write;
+    auto written = lito::format(request);
+    ASSERT_TRUE(written.is_ok());
+    for (const auto& item : sources) {
+        auto path = project->root.join(PathBuf::from(item.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), item.expected);
+    }
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
+    auto configuration =
+        project->root.join(PathBuf::from("src/child/grand/.clang-format"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(configuration.as_path(),
+                        "BasedOnStyle: InheritParentConfig\nAllowShortEnumsOnASingleLine: true\n"
+                        "SpaceInEmptyBlock: true\nSpaceInEmptyBraces: Never\n"_str.as_bytes())
+            .is_ok());
+    auto reordered = lito::format(request);
+    ASSERT_TRUE(reordered.is_ok());
+    EXPECT_TRUE(reordered->success());
 }

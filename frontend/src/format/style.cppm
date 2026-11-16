@@ -160,7 +160,32 @@ enum class ConstructorPacking
     Never,
     BinPack,
     CurrentLine,
-    NextLine
+    NextLine,
+    NextLineOnly
+};
+enum class ConstructorBreak
+{
+    BeforeColon,
+    BeforeComma,
+    AfterColon
+};
+enum class InheritanceBreak
+{
+    BeforeColon,
+    BeforeComma,
+    AfterColon,
+    AfterComma
+};
+enum class LambdaIndentation
+{
+    Signature,
+    OuterScope
+};
+enum class EmptyBraceSpacing
+{
+    Always,
+    Block,
+    Never
 };
 enum class ShortIfStyle
 {
@@ -205,6 +230,7 @@ struct SpacesInParensOptions {
 };
 
 struct BraceWrapping {
+    bool              after_case_label {};
     bool              after_class {};
     bool              after_struct {};
     bool              after_union {};
@@ -214,6 +240,8 @@ struct BraceWrapping {
     ControlBraceStyle after_control_statement { ControlBraceStyle::Never };
     bool              before_else {};
     bool              before_catch {};
+    bool              before_lambda_body {};
+    bool              before_while {};
     bool              indent_braces {};
     bool              split_empty_function { true };
     bool              split_empty_record { true };
@@ -237,6 +265,9 @@ struct FormatStyle {
     ShortBlockStyle          short_blocks { ShortBlockStyle::Never };
     ShortIfStyle             short_if { ShortIfStyle::Never };
     ShortLambdaStyle         short_lambdas { ShortLambdaStyle::None };
+    bool                     short_enums {};
+    LambdaIndentation        lambda_body_indentation { LambdaIndentation::Signature };
+    EmptyBraceSpacing        space_in_empty_braces { EmptyBraceSpacing::Never };
     bool                     short_loops {};
     bool                     short_case_labels {};
     unsigned                 column_limit {};
@@ -291,6 +322,8 @@ struct FormatStyle {
     ReturnTypeBreakStyle     break_after_return_type { ReturnTypeBreakStyle::Automatic };
     AttributeBreakStyle      break_after_attributes { AttributeBreakStyle::Leave };
     ConstructorPacking       pack_constructor_initializers { ConstructorPacking::BinPack };
+    ConstructorBreak         break_constructor_initializers { ConstructorBreak::BeforeColon };
+    InheritanceBreak         break_inheritance_list { InheritanceBreak::BeforeColon };
     PreprocessorIndent       indent_pp_directives { PreprocessorIndent::Preserve };
     unsigned                 max_empty_lines_to_keep { unsigned(-1) };
     KeepEmptyLines           keep_empty_lines;
@@ -304,6 +337,7 @@ struct FormatStyle {
         if (break_before_braces == BraceStyle::Custom) return brace_wrapping;
         auto wrapping = BraceWrapping {};
         if (break_before_braces == BraceStyle::Allman) {
+            wrapping.after_case_label        = true;
             wrapping.after_class             = true;
             wrapping.after_struct            = true;
             wrapping.after_union             = true;
@@ -313,6 +347,7 @@ struct FormatStyle {
             wrapping.after_control_statement = ControlBraceStyle::Always;
             wrapping.before_else             = true;
             wrapping.before_catch            = true;
+            wrapping.before_lambda_body      = true;
         }
         return wrapping;
     }
@@ -324,6 +359,7 @@ struct FormatStyle {
         style.namespace_indentation             = NamespaceIndentation::None;
         style.short_functions                   = ShortFunctionStyle::All;
         style.short_lambdas                     = ShortLambdaStyle::All;
+        style.short_enums                       = true;
         style.column_limit                      = 80;
         style.align_after_open_bracket          = true;
         style.allow_all_arguments_on_next_line  = true;

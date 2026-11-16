@@ -1188,3 +1188,242 @@ TEST(BuiltinFormat, OwnsAccessModifierEmptyLinesBeforeAndAfterLabels) {
     };
     for (const auto& test : cases) expect_style_output(test);
 }
+
+TEST(BuiltinFormat, SeparatesConstructorBreakPositionsFromPacking) {
+    constexpr auto        short_list  = "struct S{S():first(1),second(2){}};\n"_str;
+    constexpr auto        long_header = "struct S{S(int value):first(111),second(222){}};\n"_str;
+    const FormatStyleCase cases[]     = {
+        { "ColumnLimit: 0\nPackConstructorInitializers: Never\n"
+          "BreakConstructorInitializers: BeforeColon\n"_str,
+          short_list,
+          "struct S {\n    S()\n        : first(1),\n          second(2) {\n    }\n};\n"_str },
+        { "ColumnLimit: 0\nPackConstructorInitializers: Never\n"
+          "BreakConstructorInitializers: BeforeComma\n"_str,
+          short_list,
+          "struct S {\n    S()\n        : first(1)\n        , second(2) {\n    }\n};\n"_str },
+        { "ColumnLimit: 0\nPackConstructorInitializers: Never\n"
+          "BreakConstructorInitializers: AfterColon\n"_str,
+          short_list,
+          "struct S {\n    S() :\n        first(1),\n        second(2) {\n    }\n};\n"_str },
+        { "ColumnLimit: 0\nPackConstructorInitializers: NextLineOnly\n"
+          "BreakConstructorInitializers: BeforeColon\n"_str,
+          short_list,
+          "struct S {\n    S()\n        : first(1), second(2) {\n    }\n};\n"_str },
+        { "ColumnLimit: 100\nPackConstructorInitializers: NextLineOnly\n"
+          "BreakConstructorInitializers: BeforeComma\n"_str,
+          short_list,
+          "struct S {\n    S()\n        : first(1), second(2) {\n    }\n};\n"_str },
+        { "ColumnLimit: 28\nPackConstructorInitializers: NextLineOnly\n"
+          "BreakConstructorInitializers: AfterColon\n"_str,
+          "struct S{S():first(11111111),second(22222222){}};\n"_str,
+          "struct S {\n    S() :\n        first(11111111),\n        second(22222222) {\n    }\n};\n"_str },
+        { "ColumnLimit: 36\nPackConstructorInitializers: NextLine\n"
+          "BreakConstructorInitializers: BeforeColon\n"_str,
+          long_header,
+          "struct S {\n    S(int value)\n        : first(111), second(222) {\n    }\n};\n"_str },
+        { "ColumnLimit: 36\nPackConstructorInitializers: CurrentLine\n"
+          "BreakConstructorInitializers: BeforeColon\n"_str,
+          long_header,
+          "struct S {\n    S(int value)\n        : first(111),\n          second(222) {\n    }\n};\n"_str },
+        { "ColumnLimit: 100\nPackConstructorInitializers: BinPack\n"
+          "BreakConstructorInitializers: AfterColon\n"_str,
+          short_list,
+          "struct S {\n    S() : first(1), second(2) {\n    }\n};\n"_str },
+        { "ColumnLimit: 100\nPackConstructorInitializers: BinPack\n"
+          "BreakConstructorInitializers: BeforeComma\n"_str,
+          short_list,
+          "struct S {\n    S()\n        : first(1)\n        , second(2) {\n    }\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, SelectsInheritanceColonAndCommaBreaksWithoutRewritingBases) {
+    constexpr auto        source  = "class Derived:public First,public Second{int value;};\n"_str;
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 32\nBreakInheritanceList: BeforeColon\n"_str,
+          "class Derived:public Base<int>,public Second{int value;};\n"_str,
+          "class Derived\n    : public Base<int>,\n      public Second {\n    int value;\n};\n"_str },
+        { "ColumnLimit: 32\nBreakInheritanceList: BeforeComma\n"_str,
+          source,
+          "class Derived\n    : public First\n    , public Second {\n    int value;\n};\n"_str },
+        { "ColumnLimit: 100\nBreakInheritanceList: BeforeComma\n"_str,
+          source,
+          "class Derived\n    : public First\n    , public Second {\n    int value;\n};\n"_str },
+        { "ColumnLimit: 32\nBreakInheritanceList: AfterColon\n"_str,
+          source,
+          "class Derived :\n    public First,\n    public Second {\n    int value;\n};\n"_str },
+        { "ColumnLimit: 32\nBreakInheritanceList: BeforeColon\n"
+          "ConstructorInitializerIndentWidth: 2\nContinuationIndentWidth: 8\n"_str,
+          source,
+          "class Derived\n  : public First,\n    public Second {\n    int value;\n};\n"_str },
+        { "ColumnLimit: 100\nBreakInheritanceList: AfterComma\n"_str,
+          source,
+          "class Derived : public First,\n                public Second {\n    int value;\n};\n"_str },
+        { "ColumnLimit: 0\nBreakInheritanceList: BeforeColon\n"_str,
+          "// lito-format off\nclass Raw:public A,public B{};\n// lito-format on\n"
+          "class Short:public Base<int>{};\n"_str,
+          "// lito-format off\nclass Raw:public A,public B{};\n// lito-format on\n"
+          "class Short : public Base<int> {\n};\n"_str },
+        { "ColumnLimit: 40\nBreakInheritanceList: BeforeColon\n"_str,
+          "class Derived:public Base<int,Value>,public Second{int value;};\n"_str,
+          "class Derived\n    : public Base<int, Value>,\n      public Second {\n"
+          "    int value;\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, SpacesOnlyEmptyBracesAlreadySelectedForTheSameLine) {
+    constexpr auto source =
+        "void f(){}class C{};namespace n{};auto action=[](){};int value{};\n"_str;
+    const FormatStyleCase cases[] = {
+        { "SpaceInEmptyBraces: Always\nAllowShortFunctionsOnASingleLine: All\n"
+          "AllowShortLambdasOnASingleLine: All\nCpp11BracedListStyle: false\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakBeforeBraces: Custom\nBraceWrapping:\n"
+          "  AfterClass: true\n  AfterNamespace: true\n  SplitEmptyRecord: false\n"
+          "  SplitEmptyNamespace: false\n"_str,
+          source,
+          "void f() { }\nclass C\n{ };\nnamespace n\n{ };\nauto action = []() { };\n"
+          "int value { };\n"_str },
+        { "SpaceInEmptyBraces: Block\nAllowShortFunctionsOnASingleLine: All\n"
+          "AllowShortLambdasOnASingleLine: All\nCpp11BracedListStyle: false\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakBeforeBraces: Custom\nBraceWrapping:\n"
+          "  AfterClass: true\n  AfterNamespace: true\n  SplitEmptyRecord: false\n"
+          "  SplitEmptyNamespace: false\n"_str,
+          source,
+          "void f() { }\nclass C\n{ };\nnamespace n\n{ };\nauto action = []() { };\n"
+          "int value {};\n"_str },
+        { "SpaceInEmptyBraces: Never\nAllowShortFunctionsOnASingleLine: All\n"
+          "AllowShortLambdasOnASingleLine: All\nCpp11BracedListStyle: false\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakBeforeBraces: Custom\nBraceWrapping:\n"
+          "  AfterClass: true\n  AfterNamespace: true\n  SplitEmptyRecord: false\n"
+          "  SplitEmptyNamespace: false\n"_str,
+          source,
+          "void f() {}\nclass C\n{};\nnamespace n\n{};\nauto action = []() {};\n"
+          "int value {};\n"_str },
+        { "SpaceInEmptyBraces: Always\nSpaceInEmptyBlock: false\n"
+          "Cpp11BracedListStyle: true\nSpaceInEmptyParentheses: false\n"
+          "AllowShortFunctionsOnASingleLine: All\n"_str,
+          "void f(){}int value{};\n"_str,
+          "void f() { }\nint value{};\n"_str },
+        { "SpaceInEmptyBraces: Never\nCpp11BracedListStyle: true\n"
+          "SpaceInEmptyParentheses: true\n"_str,
+          "int value{};\n"_str,
+          "int value{ };\n"_str },
+        { "SpaceInEmptyBraces: Never\nSpaceInEmptyBlock: true\n"
+          "AllowShortFunctionsOnASingleLine: All\nCpp11BracedListStyle: false\n"_str,
+          "void f(){}int value{};\n"_str,
+          "void f() { }\nint value{};\n"_str },
+        { "SpaceInEmptyBlock: true\nSpaceInEmptyBraces: Never\n"
+          "AllowShortFunctionsOnASingleLine: All\nCpp11BracedListStyle: false\n"_str,
+          "void f(){}int value{};\n"_str,
+          "void f() { }\nint value{};\n"_str },
+        { "SpaceInEmptyBraces: Always\n"_str,
+          "void f(){}class C{};namespace n{};auto action=[](){};\n"_str,
+          "void f() {\n}\nclass C {\n};\nnamespace n {\n};\nauto action = []() {\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, KeepsShortEnumsBoundedByCommentsProtectionAndColumns) {
+    constexpr auto        enumerators = "enum E{A=1,B=2,};enum Empty{};\n"_str;
+    const FormatStyleCase cases[]     = {
+        { "AllowShortEnumsOnASingleLine: true\nBreakBeforeBraces: Custom\n"
+          "BraceWrapping:\n  AfterEnum: true\n"_str,
+          enumerators,
+          "enum E { A = 1, B = 2, };\nenum Empty {};\n"_str },
+        { "AllowShortEnumsOnASingleLine: false\nBreakBeforeBraces: Custom\n"
+          "BraceWrapping:\n  AfterEnum: true\n"_str,
+          enumerators,
+          "enum E\n{\n    A = 1,\n    B = 2,\n};\nenum Empty\n{\n};\n"_str },
+        { "AllowShortEnumsOnASingleLine: true\nColumnLimit: 24\n"_str,
+          "enum Long{FirstLongValue,SecondLongValue,ThirdLongValue};\n"_str,
+          "enum Long {\n    FirstLongValue,\n    SecondLongValue,\n    ThirdLongValue\n};\n"_str },
+        { "AllowShortEnumsOnASingleLine: true\n"_str,
+          "// lito-format off\nenum Raw{A,B};\n// lito-format on\n"
+          "enum E{\nA,\n// keep separator\nB,\n};\n"_str,
+          "// lito-format off\nenum Raw{A,B};\n// lito-format on\n"
+          "enum E {\n    A,\n    // keep separator\n    B,\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, AnchorsLambdaBodiesToPlannedSignaturesOrLexicalScopes) {
+    constexpr auto nested =
+        "void f(){consume_long_argument_list(invoke_long_callback_name([](){run();}),"
+        "third_argument);}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 40\nAlignAfterOpenBracket: DontAlign\nBinPackArguments: false\n"
+          "BreakAfterOpenBracketFunction: true\nBreakBeforeCloseBracketFunction: true\n"
+          "AllowShortLambdasOnASingleLine: None\nLambdaBodyIndentation: Signature\n"_str,
+          nested,
+          "void f() {\n    consume_long_argument_list(\n        invoke_long_callback_name(\n"
+          "            []() {\n                run();\n            }\n        ),\n"
+          "        third_argument\n    );\n}\n"_str },
+        { "ColumnLimit: 40\nAlignAfterOpenBracket: DontAlign\nBinPackArguments: false\n"
+          "BreakAfterOpenBracketFunction: true\nBreakBeforeCloseBracketFunction: true\n"
+          "AllowShortLambdasOnASingleLine: None\nLambdaBodyIndentation: OuterScope\n"_str,
+          nested,
+          "void f() {\n    consume_long_argument_list(\n        invoke_long_callback_name(\n"
+          "            []() {\n        run();\n    }\n        ),\n"
+          "        third_argument\n    );\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  BeforeLambdaBody: true\n"
+          "  AfterControlStatement: Always\n  IndentBraces: true\n"
+          "LambdaBodyIndentation: Signature\nAllowShortLambdasOnASingleLine: None\n"_str,
+          "void f(){auto action=[](){if(true){run();}};}\n"_str,
+          "void f() {\n    auto action = []()\n        {\n            if (true)\n                "
+          "{\n"
+          "                    run();\n                }\n        };\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  BeforeLambdaBody: true\n"
+          "  IndentBraces: true\nLambdaBodyIndentation: OuterScope\n"
+          "AllowShortLambdasOnASingleLine: None\n"_str,
+          "void f(){auto action=[](){run();};}\n"_str,
+          "void f() {\n    auto action = []()\n        {\n            run();\n        };\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  BeforeLambdaBody: true\n"
+          "LambdaBodyIndentation: OuterScope\nAllowShortLambdasOnASingleLine: All\n"_str,
+          "void f(){auto action=[](){return 1;};}\n"_str,
+          "void f() {\n    auto action = []() { return 1; };\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, KeepsCaseLambdaAndDoWhileBraceFlagsInTheirOwnRoles) {
+    constexpr auto source = "void f(){switch(kind){case 1:{run();}default:stop();}"
+                            "do{run();}while(ready);while(ready){stop();}"
+                            "auto action=[](){run();};label:{run();}}\n"_str;
+    constexpr auto attached =
+        "void f() {\n    switch (kind) {\n    case 1: {\n        run();\n    }\n"
+        "    default:\n        stop();\n    }\n    do {\n        run();\n    } while (ready);\n"
+        "    while (ready) {\n        stop();\n    }\n    auto action = []() {\n        run();\n"
+        "    };\nlabel:\n    {\n        run();\n    }\n}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterCaseLabel: true\n"
+          "  BeforeLambdaBody: true\n  BeforeWhile: true\n"_str,
+          source,
+          "void f() {\n    switch (kind) {\n    case 1:\n    {\n        run();\n    }\n"
+          "    default:\n        stop();\n    }\n    do {\n        run();\n    }\n"
+          "    while (ready);\n    while (ready) {\n        stop();\n    }\n"
+          "    auto action = []()\n    {\n        run();\n    };\nlabel:\n    {\n"
+          "        run();\n    }\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterCaseLabel: false\n"
+          "  BeforeLambdaBody: false\n  BeforeWhile: false\n"_str,
+          source,
+          attached },
+        { "BreakBeforeBraces: Attach\nBraceWrapping:\n  AfterCaseLabel: true\n"
+          "  BeforeLambdaBody: true\n  BeforeWhile: true\n"_str,
+          source,
+          attached },
+        { "BreakBeforeBraces: Allman\nBraceWrapping:\n  AfterCaseLabel: false\n"
+          "  BeforeLambdaBody: false\n  BeforeWhile: true\n"_str,
+          "void f(){switch(kind){case 1:{run();}}do{run();}while(ready);"
+          "auto action=[](){run();};}\n"_str,
+          "void f()\n{\n    switch (kind)\n    {\n    case 1:\n    {\n        run();\n    }\n"
+          "    }\n    do\n    {\n        run();\n    } while (ready);\n"
+          "    auto action = []()\n    {\n        run();\n    };\n}\n"_str },
+        { "IndentCaseLabels: true\nBreakBeforeBraces: Custom\nBraceWrapping:\n"
+          "  AfterCaseLabel: true\n"_str,
+          "void f(){switch(kind){case 1:{run();}default:{stop();}}}\n"_str,
+          "void f() {\n    switch (kind) {\n        case 1:\n        {\n            run();\n"
+          "        }\n        default:\n        {\n            stop();\n        }\n    }\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}

@@ -105,7 +105,8 @@ enum class GroupKind
     Inheritance,
     Attribute,
     LambdaCapture,
-    Control
+    Control,
+    Enumerators
 };
 enum class StatementKind
 {
@@ -156,6 +157,7 @@ struct TokenSyntax {
     usize        group_id { usize::MAX };
     usize        conditional_pair { usize::MAX };
     usize        record_name_index { usize::MAX };
+    usize        lambda_signature_begin { usize::MAX };
     BlockKind    block { BlockKind::None };
     ControlKind  control { ControlKind::None };
     OperatorRole operator_role { OperatorRole::Unknown };
@@ -193,6 +195,11 @@ struct TokenSyntax {
     bool         square_chain_first {};
     bool         label_name {};
     bool         label_end {};
+    bool         case_body {};
+    usize        case_label { usize::MAX };
+    bool         do_while_tail {};
+    bool         ambiguous_angle {};
+    usize        case_colon { usize::MAX };
 };
 
 struct FormatToken {
@@ -206,6 +213,7 @@ struct FormatGroup {
     usize           close { usize::MAX };
     usize           scope_id { usize::MAX };
     ControlKind     control { ControlKind::None };
+    usize           header_begin { usize::MAX };
     Vec<TokenRange> items;
     Vec<usize>      separators;
     bool            safe { true };
@@ -277,6 +285,22 @@ struct AccessLabel {
     bool       comment_after {};
 };
 
+struct LambdaBody {
+    TokenRange signature;
+    usize      body_open { usize::MAX };
+    usize      body_close { usize::MAX };
+    usize      scope { usize::MAX };
+    usize      parent { usize::MAX };
+};
+
+struct EnumBody {
+    usize header_begin { usize::MAX };
+    usize open { usize::MAX };
+    usize close { usize::MAX };
+    usize group_index { usize::MAX };
+    bool  safe {};
+};
+
 struct WhitespaceSlot {
     WhitespaceSlotKind kind { WhitespaceSlotKind::Leading };
     TextRange          span;
@@ -314,6 +338,8 @@ struct FormatSyntax {
     Vec<PointerChain>             pointer_chains;
     Vec<BitField>                 bit_fields;
     Vec<AccessLabel>              access_labels;
+    Vec<LambdaBody>               lambdas;
+    Vec<EnumBody>                 enums;
     bool                          preserve_all {};
 
     auto bytes() const -> slice<u8> { return snapshot->contents.as_bytes(); }

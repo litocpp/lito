@@ -55,6 +55,14 @@ struct PlannedGroup {
     bool  tried_next_line {};
 };
 
+struct PlannedLambda {
+    usize signature { usize::MAX };
+    usize open { usize::MAX };
+    usize close { usize::MAX };
+    usize scope { usize::MAX };
+    usize outer_offset {};
+};
+
 struct LayoutPlan {
     Vec<PlannedGap>     gaps;
     Vec<PlannedLine>    lines;
@@ -62,6 +70,7 @@ struct LayoutPlan {
     Vec<usize>          token_lines;
     Vec<WhitespaceEdit> extra_edits;
     Vec<PlannedGroup>   groups;
+    Vec<PlannedLambda>  lambdas;
     ref<str>            newline { "\n"_str };
 };
 
@@ -172,12 +181,14 @@ auto continuation_column(const LayoutPlan& plan, usize index) -> usize {
 }
 
 auto group_one_per_line(const FormatGroup& group, const FormatStyle& style) -> bool {
+    if (group.kind == GroupKind::Inheritance) return true;
     if (group.kind == GroupKind::Control && group.control == ControlKind::For) return true;
     if (group.kind == GroupKind::Arguments) return ! style.bin_pack_arguments;
     if (group.kind == GroupKind::Parameters)
         return style.bin_pack_parameters != ParameterPacking::BinPack;
     if (group.kind == GroupKind::ConstructorInitializers)
-        return style.pack_constructor_initializers != ConstructorPacking::BinPack;
+        return style.pack_constructor_initializers != ConstructorPacking::BinPack ||
+               style.break_constructor_initializers == ConstructorBreak::BeforeComma;
     return group.kind == GroupKind::Initializer &&
            (style.braced_list_style == BracedListStyle::Block || ! style.bin_pack_arguments);
 }
@@ -187,16 +198,18 @@ auto group_next_line(const FormatGroup& group, const FormatStyle& style) -> bool
         return style.allow_all_parameters_of_declaration_on_next_line &&
                style.bin_pack_parameters != ParameterPacking::AlwaysOnePerLine;
     if (group.kind == GroupKind::ConstructorInitializers)
-        return style.pack_constructor_initializers == ConstructorPacking::NextLine;
+        return style.pack_constructor_initializers == ConstructorPacking::NextLine ||
+               style.pack_constructor_initializers == ConstructorPacking::NextLineOnly;
     return (group.kind == GroupKind::Arguments || group.kind == GroupKind::Initializer) &&
            style.allow_all_arguments_on_next_line;
 }
 
-auto group_flat_width(const FormatSyntax& syntax,
-                      const LayoutPlan&   plan,
-                      const FormatGroup&  group,
-                      const FormatStyle&  style,
-                      bool                include_close = true) -> Option<usize> {
+auto group_content_width(const FormatSyntax& syntax,
+                         const LayoutPlan&   plan,
+                         const FormatGroup&  group,
+                         const FormatStyle&  style,
+                         bool                include_close,
+                         bool                require_flat) -> Option<usize> {
     if (group.items.is_empty() || group.close >= syntax.tokens.len()) return None();
     auto first = group.items[usize {}].begin;
     if (first >= group.close) return None();
@@ -204,13 +217,28 @@ auto group_flat_width(const FormatSyntax& syntax,
     auto end   = group.close + usize(include_close ? 1 : 0);
     for (auto index = first; index < end; ++index) {
         if (syntax.tokens[index].source.comment || layout_newlines(syntax.text(index)) != 0 ||
-            (index != first &&
-             (plan.gaps[index].breaking == GapBreak::Hard || ! plan.gaps[index].editable)))
+            (index != first && ((require_flat && plan.gaps[index].breaking == GapBreak::Hard) ||
+                                ! plan.gaps[index].editable)))
             return None();
         if (index != first) width += usize(plan.gaps[index].flat_spaces);
         width = advance_columns(syntax.text(index), width, style.tab_width);
     }
     return Some(width);
+}
+
+auto group_flat_width(const FormatSyntax& syntax,
+                      const LayoutPlan&   plan,
+                      const FormatGroup&  group,
+                      const FormatStyle&  style,
+                      bool                include_close = true) -> Option<usize> {
+    return group_content_width(syntax, plan, group, style, include_close, true);
+}
+
+auto group_unwrapped_width(const FormatSyntax& syntax,
+                           const LayoutPlan&   plan,
+                           const FormatGroup&  group,
+                           const FormatStyle&  style) -> Option<usize> {
+    return group_content_width(syntax, plan, group, style, true, false);
 }
 
 auto group_next_line_width(const FormatSyntax& syntax,
@@ -221,6 +249,73 @@ auto group_next_line_width(const FormatSyntax& syntax,
     auto separate_close = plan.groups[group_index].before_close &&
                           group.close < syntax.tokens.len() && plan.gaps[group.close].editable;
     return group_flat_width(syntax, plan, group, style, ! separate_close);
+}
+
+auto before_list_comma(const FormatGroup& group, const FormatStyle& style) -> bool {
+    return group.kind == GroupKind::ConstructorInitializers
+               ? style.break_constructor_initializers == ConstructorBreak::BeforeComma
+               : group.kind == GroupKind::Inheritance &&
+                     style.break_inheritance_list == InheritanceBreak::BeforeComma;
+}
+
+auto after_list_colon(const FormatGroup& group, const FormatStyle& style) -> bool {
+    return group.kind == GroupKind::ConstructorInitializers
+               ? style.break_constructor_initializers == ConstructorBreak::AfterColon
+               : group.kind == GroupKind::Inheritance &&
+                     style.break_inheritance_list == InheritanceBreak::AfterColon;
+}
+
+auto break_list_leading(const FormatSyntax& syntax,
+                        LayoutPlan&         plan,
+                        usize               group_index,
+                        const FormatStyle&  style) -> void {
+    const auto& group = syntax.groups[group_index];
+    auto&       state = plan.groups[group_index];
+    if (group.kind == GroupKind::Inheritance &&
+        style.break_inheritance_list == InheritanceBreak::AfterComma) {
+        state.expanded = true;
+        return;
+    }
+    auto index = after_list_colon(group, style) ? group.items[usize {}].begin : group.open;
+    if (index < syntax.tokens.len() && plan.gaps[index].editable)
+        set_gap_break(plan, index, state.continuation_indent, style);
+    state.expanded = true;
+    rebuild_lines(syntax, plan, style);
+}
+
+auto refresh_lambda_indents(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style)
+    -> bool {
+    auto changed = false;
+    for (const auto& lambda : plan.lambdas) {
+        auto desired = lambda.outer_offset;
+        if (style.lambda_body_indentation == LambdaIndentation::Signature &&
+            lambda.signature < plan.token_lines.len()) {
+            auto line = plan.token_lines[lambda.signature];
+            desired   = plan.token_columns[plan.lines[line].extent.begin];
+        } else if (lambda.scope < syntax.tokens.len())
+            desired += plan.gaps[lambda.scope].indent;
+        auto wrapping = style.effective_brace_wrapping();
+        if (wrapping.before_lambda_body && wrapping.indent_braces && plan.gaps[lambda.open].broken)
+            desired += usize(style.indent_width);
+        auto current = plan.gaps[lambda.open].indent;
+        if (current == desired) continue;
+        auto increase = current < desired;
+        auto delta    = increase ? desired - current : current - desired;
+        for (auto index = lambda.open; index <= lambda.close; ++index) {
+            auto& gap  = plan.gaps[index];
+            gap.indent = increase              ? gap.indent + delta
+                         : gap.indent >= delta ? gap.indent - delta
+                                               : usize {};
+            if (! gap.editable || ! gap.broken) continue;
+            auto original = gap_text(syntax, gap);
+            auto column   = advance_columns(original, usize {}, style.tab_width);
+            auto target   = increase ? column + delta : column >= delta ? column - delta : usize {};
+            set_gap_break(plan, index, target, style, layout_newlines(original));
+        }
+        changed = true;
+        rebuild_lines(syntax, plan, style);
+    }
+    return changed;
 }
 
 auto refresh_group_indents(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style)
@@ -294,11 +389,12 @@ auto sync_group_closes(const FormatSyntax& syntax, LayoutPlan& plan, const Forma
 
 auto refresh_layout_indents(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style)
     -> void {
-    auto passes =
-        syntax.groups.len() + syntax.expressions.len() + syntax.conditionals.len() + usize(1);
+    auto passes = syntax.groups.len() + syntax.expressions.len() + syntax.conditionals.len() +
+                  plan.lambdas.len() + usize(1);
     for (auto pass = usize {}; pass < passes; ++pass) {
         rebuild_lines(syntax, plan, style);
-        auto changed = refresh_group_indents(syntax, plan, style);
+        auto changed = refresh_lambda_indents(syntax, plan, style);
+        changed |= refresh_group_indents(syntax, plan, style);
         rebuild_lines(syntax, plan, style);
         changed |= refresh_expression_indents(syntax, plan, style);
         sync_group_closes(syntax, plan, style);
@@ -333,10 +429,9 @@ auto break_group(const FormatSyntax& syntax,
     if (group_index >= syntax.groups.len()) return;
     const auto& group = syntax.groups[group_index];
     if (! group.safe || group.items.is_empty()) return;
-    if (group.kind == GroupKind::ConstructorInitializers && plan.gaps[group.open].editable) {
-        set_gap_break(plan, group.open, plan.gaps[group.open].indent, style);
-        rebuild_lines(syntax, plan, style);
-    }
+    auto list =
+        group.kind == GroupKind::ConstructorInitializers || group.kind == GroupKind::Inheritance;
+    if (list) break_list_leading(syntax, plan, group_index, style);
     auto& state    = plan.groups[group_index];
     auto  all_next = group_next_line(group, style) && ! state.tried_next_line;
     if (all_next && group.items[usize {}].begin < plan.gaps.len()) {
@@ -346,14 +441,17 @@ auto break_group(const FormatSyntax& syntax,
         auto constructor      = group.kind == GroupKind::ConstructorInitializers;
         auto indent =
             constructor ? plan.token_columns[first] : plan.groups[group_index].continuation_indent;
-        if (width.is_some() && style.column_limit != 0 &&
-            indent + *width <= usize(style.column_limit)) {
+        if (width.is_some() &&
+            (style.column_limit == 0 || indent + *width <= usize(style.column_limit))) {
             if (plan.gaps[first].editable) {
-                if (constructor)
+                if (constructor && ! after_list_colon(group, style))
                     set_gap_spaces(plan, first, 1);
-                else
+                else if (! constructor)
                     break_after_group_open(syntax, plan, group_index, style);
             }
+            for (auto separator : group.separators)
+                if (before_list_comma(group, style) && plan.gaps[separator].editable)
+                    set_gap_spaces(plan, separator, 0);
             for (auto item = usize(1); item < group.items.len(); ++item) {
                 auto index = group.items[item].begin;
                 if (plan.gaps[index].editable && plan.gaps[index].breaking != GapBreak::Hard)
@@ -368,7 +466,9 @@ auto break_group(const FormatSyntax& syntax,
         if (plan.gaps[first].editable) set_gap_break(plan, first, plan.gaps[first].indent, style);
     }
     for (auto item = usize(1); item < group.items.len(); ++item) {
-        auto index = group.items[item].begin;
+        auto index = before_list_comma(group, style) && item - usize(1) < group.separators.len()
+                         ? group.separators[item - usize(1)]
+                         : group.items[item].begin;
         if (plan.gaps[index].editable)
             set_gap_break(plan, index, continuation_column(plan, index), style);
     }
@@ -379,20 +479,50 @@ auto break_group(const FormatSyntax& syntax,
     (void)chosen;
 }
 
-auto pending_constructor(const FormatSyntax& syntax,
-                         const LayoutPlan&   plan,
-                         usize               token,
-                         const FormatStyle&  style) -> usize {
+auto pending_list(const FormatSyntax& syntax,
+                  const LayoutPlan&   plan,
+                  usize               token,
+                  const FormatStyle&  style) -> usize {
     auto result = usize::MAX;
-    if (style.pack_constructor_initializers != ConstructorPacking::BinPack)
-        for (auto index = usize {}; index < syntax.groups.len(); ++index) {
-            const auto& group = syntax.groups[index];
-            if (group.safe && group.kind == GroupKind::ConstructorInitializers &&
-                group.open <= token && token < group.close && plan.gaps[group.open].editable &&
-                ! plan.gaps[group.open].broken)
-                result = index;
-        }
+    for (auto index = usize {}; index < syntax.groups.len(); ++index) {
+        const auto& group    = syntax.groups[index];
+        auto        selected = group.kind == GroupKind::Inheritance ||
+                               (group.kind == GroupKind::ConstructorInitializers &&
+                                style.pack_constructor_initializers != ConstructorPacking::BinPack);
+        if (group.safe && selected && group.open <= token && token < group.close &&
+            plan.gaps[group.open].editable && ! plan.groups[index].expanded)
+            result = index;
+    }
     return result;
+}
+
+auto expand_long_lambda(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style)
+    -> bool {
+    for (const auto& lambda : plan.lambdas) {
+        if (plan.gaps[lambda.close].broken ||
+            plan.token_lines[lambda.signature] != plan.token_lines[lambda.close] ||
+            plan.token_columns[lambda.close] +
+                    advance_columns(syntax.text(lambda.close), usize {}, style.tab_width) <=
+                usize(style.column_limit))
+            continue;
+        auto base = plan.gaps[lambda.open].indent;
+        if (style.effective_brace_wrapping().before_lambda_body &&
+            plan.gaps[lambda.open].editable) {
+            set_gap_break(plan, lambda.open, base, style);
+            plan.gaps[lambda.open].breaking = GapBreak::Hard;
+        }
+        auto first = lambda.open + usize(1);
+        if (first < lambda.close && plan.gaps[first].editable) {
+            set_gap_break(plan, first, base + usize(style.indent_width), style);
+            plan.gaps[first].breaking = GapBreak::Hard;
+        }
+        if (plan.gaps[lambda.close].editable) {
+            set_gap_break(plan, lambda.close, base, style);
+            plan.gaps[lambda.close].breaking = GapBreak::Hard;
+            return true;
+        }
+    }
+    return false;
 }
 
 auto wrap_lines(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style) -> void {
@@ -407,17 +537,17 @@ auto wrap_lines(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle&
                     set_gap_break(plan, index, continuation_column(plan, index), style);
             }
         }
-        if (group.safe && group.kind == GroupKind::ConstructorInitializers &&
-            style.pack_constructor_initializers == ConstructorPacking::Never) {
-            if (plan.gaps[group.open].editable)
-                set_gap_break(plan, group.open, plan.gaps[group.open].indent, style);
-            rebuild_lines(syntax, plan, style);
-            for (auto item = usize(1); item < group.items.len(); ++item) {
-                auto index = group.items[item].begin;
-                if (plan.gaps[index].editable)
-                    set_gap_break(plan, index, continuation_column(plan, index), style);
-            }
-        }
+        auto force_constructor =
+            group.kind == GroupKind::ConstructorInitializers &&
+            (style.pack_constructor_initializers == ConstructorPacking::Never ||
+             style.pack_constructor_initializers == ConstructorPacking::NextLineOnly ||
+             (style.pack_constructor_initializers == ConstructorPacking::BinPack &&
+              style.break_constructor_initializers == ConstructorBreak::BeforeComma));
+        auto force_inheritance = group.kind == GroupKind::Inheritance &&
+                                 (style.break_inheritance_list == InheritanceBreak::BeforeComma ||
+                                  style.break_inheritance_list == InheritanceBreak::AfterComma);
+        if (group.safe && (force_constructor || force_inheritance))
+            break_group(syntax, plan, group_index, usize::MAX, style);
     }
     if (style.column_limit == 0) {
         refresh_layout_indents(syntax, plan, style);
@@ -435,14 +565,13 @@ auto wrap_lines(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle&
             auto first = group.items[usize {}].begin;
             if (first >= group.close || ! plan.gaps[first].editable || plan.gaps[first].broken)
                 continue;
-            auto width = group_flat_width(syntax, plan, group, style);
+            auto width = group_unwrapped_width(syntax, plan, group, style);
             if (width.is_some() && plan.token_columns[first] + *width > usize(style.column_limit) &&
                 (opening == usize::MAX || group.open < syntax.groups[opening].open))
                 opening = index;
         }
         if (opening != usize::MAX) {
-            auto constructor =
-                pending_constructor(syntax, plan, syntax.groups[opening].open, style);
+            auto constructor = pending_list(syntax, plan, syntax.groups[opening].open, style);
             if (constructor != usize::MAX) {
                 break_group(syntax, plan, constructor, usize::MAX, style);
                 continue;
@@ -474,8 +603,11 @@ auto wrap_lines(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle&
             }
             ++line_index;
         }
-        if (chosen == usize::MAX) break;
-        auto constructor = pending_constructor(syntax, plan, chosen, style);
+        if (chosen == usize::MAX) {
+            if (expand_long_lambda(syntax, plan, style)) continue;
+            break;
+        }
+        auto constructor = pending_list(syntax, plan, chosen, style);
         if (constructor != usize::MAX) {
             break_group(syntax, plan, constructor, chosen, style);
             continue;
