@@ -4,7 +4,7 @@ members = ["third-party/zstd", "frontend", "core", "pack", "cpp", "tools", "tool
 default-members = ["cli"]
 
 [workspace.package]
-version = "0.8.8"
+version = "0.8.9"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
@@ -16,19 +16,19 @@ lito-tools = { path = "tools" }
 lito-toolchain = { path = "toolchain" }
 lito-driver = { path = "driver" }
 lito-zstd = { path = "third-party/zstd" }
-licrypto = "0.2.0"
+licrypto = "0.2.2"
 liresto = "0.1.0"
-ligraph = { version = "0.1.0" }
-rstd-std = "0.1.10"
-rstd-nostd = "0.1.10"
-rstd-json = "0.1.10"
-rstd-serde = "0.1.10"
-rstd-bench = "0.1.10"
-rstd-toml = "0.1.10"
-rstd-argparse = "0.1.10"
-rstd-parse = "0.1.10"
-rstd-test = "0.1.10"
-luato = { git = "https://github.com/litocpp/luato.git" }
+ligraph = { version = "0.1.1" }
+rstd-std = "0.1.13"
+rstd-nostd = "0.1.13"
+rstd-json = "0.1.13"
+rstd-serde = "0.1.13"
+rstd-bench = "0.1.13"
+rstd-toml = "0.1.13"
+rstd-argparse = "0.1.13"
+rstd-parse = "0.1.13"
+rstd-test = "0.1.13"
+luato = "0.1.3"
 
 [workspace.external-sources.zstd]
 git = "https://github.com/facebook/zstd.git"

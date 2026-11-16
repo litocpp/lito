@@ -371,7 +371,8 @@ class ScanCacheSession {
             }
             auto file   = rstd::move(opened).unwrap_unchecked();
             auto digest = rstd_try(licrypto::Sha256::make().map_err([](licrypto::Error error) {
-                return rstd::sync::Arc<CacheError>::make(CacheError::Crypto(rstd::sync::Arc<licrypto::Error>::make(rstd::move(error))));
+                return rstd::sync::Arc<CacheError>::make(
+                    CacheError::Crypto(rstd::sync::Arc<licrypto::Error>::make(rstd::move(error))));
             }));
             auto buffer = array<u8, 65536> {};
             while (true) {
@@ -386,8 +387,8 @@ class ScanCacheSession {
                 if (*read == usize {}) break;
                 rstd_try(digest.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read))
                              .map_err([](licrypto::Error error) {
-                                 return rstd::sync::Arc<CacheError>::make(
-                                     CacheError::Crypto(rstd::sync::Arc<licrypto::Error>::make(rstd::move(error))));
+                                 return rstd::sync::Arc<CacheError>::make(CacheError::Crypto(
+                                     rstd::sync::Arc<licrypto::Error>::make(rstd::move(error))));
                              }));
             }
             return Ok(FileFingerprint {
@@ -395,8 +396,8 @@ class ScanCacheSession {
                 .size        = metadata->size(),
                 .fingerprint = licrypto::sha256_hex(
                     rstd_try(rstd::move(digest).finalize().map_err([](licrypto::Error error) {
-                        return rstd::sync::Arc<CacheError>::make(
-                            CacheError::Crypto(rstd::sync::Arc<licrypto::Error>::make(rstd::move(error))));
+                        return rstd::sync::Arc<CacheError>::make(CacheError::Crypto(
+                            rstd::sync::Arc<licrypto::Error>::make(rstd::move(error))));
                     }))),
             });
         });

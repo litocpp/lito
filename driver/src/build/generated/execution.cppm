@@ -369,7 +369,7 @@ auto ToolActionSession::render_process_invocation(const RegisteredAction& action
         if (argument.as_str().contains("@OUTPUT_DIR@"_str)) {
             auto staging_path = PathBuf::from(staging);
             auto staging_text = staging_path.as_path().to_string_lossy();
-            auto count = replace_all(argument, "@OUTPUT_DIR@"_str, staging_text.as_str());
+            auto count        = replace_all(argument, "@OUTPUT_DIR@"_str, staging_text.as_str());
             if (count != usize(1)) {
                 return Err(BuildScriptError::BuildToolAction(BuildToolActionError::InvalidRequest(
                     "build-tool action may use '@OUTPUT_DIR@' only once"_Str)));

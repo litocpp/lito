@@ -1,3 +1,16 @@
+<release version="0.8.9" date="2026-11-17">
+  <description>
+    <ul>
+      <li>Add builtin formatting with .clang-format options.</li>
+      <li>Extend pmacro invocation and declaration metadata.</li>
+      <li>Support package/feature selectors.</li>
+      <li>Support conditional build tools.</li>
+      <li>Support artifact directory installation.</li>
+      <li>Fix conditional source-group discovery.</li>
+      <li>Fix dependency ordering.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.8" date="2026-10-30">
   <description>
     <ul>

@@ -698,7 +698,7 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
     auto body = request_body(request);
     auto hash = licrypto::sha256_hex(body.as_str());
     if (hash.is_err()) {
-        auto error = rstd::move(hash).unwrap_err();
+        auto error   = rstd::move(hash).unwrap_err();
         auto message = rstd::format("publish identity: {}", error);
         return Err(RegistryPublishError { .crypto  = Some(rstd::move(error)),
                                           .kind    = RegistryPublishErrorKind::Infrastructure,
@@ -706,7 +706,7 @@ auto lito::registry::RegistryPublishClient::publish(const RegistryPublishRequest
                                           .message = rstd::move(message) });
     }
     auto idempotency = rstd::format("lito-{}", hash->as_str());
-    auto headers = authorization_headers(*request.token);
+    auto headers     = authorization_headers(*request.token);
     headers.push(RegistryPublishHeader {
         .name  = "Content-Type"_Str,
         .value = "application/json"_Str,

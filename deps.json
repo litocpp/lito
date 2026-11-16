@@ -2,26 +2,26 @@
   "rstd": {
     "owner": "litocpp",
     "repo": "rstd",
-    "rev": "05748d842307476dd86dfa14237838295cb5ec77",
-    "narHash": "sha256-e5bE9b420mymOLJo5N5yltKTtRUQXeyRyURS5Xdje0g="
+    "rev": "0d2e9c19f318ea4cb920623eda2358dc2f75e63a",
+    "narHash": "sha256-AZmkKXAgANBkZrX9Cs8wJSjVD/cwyg1wfSa+yaO/Lb4="
   },
   "ligraph": {
     "owner": "litocpp",
     "repo": "ligraph",
-    "rev": "774173d9f537b28db4d5f81a2a96bf306b3d86e9",
-    "narHash": "sha256-2v7oP17de4INxFAGIsmzQe9d+bBMz3PskS88h8Ho40g="
+    "rev": "26cfca9b2306f1de389487cabfe37f16363ee24f",
+    "narHash": "sha256-6k8wdc54+LD8JSQYiVxyxoH7fy/2ysdHXL3+UMGPRJw="
   },
   "luato": {
     "owner": "litocpp",
     "repo": "luato",
-    "rev": "df0c6f2d1cce2051b4711d36067619eda7933683",
-    "narHash": "sha256-XL1evcZbZJ2LfTi5T9UQ+4YBEw5YnDsGeY3IBS+Fs5U="
+    "rev": "34b0d9b6a64f23a54b7c158853a1b127f25a0056",
+    "narHash": "sha256-7aWHsIiqf88Ju9Oqrb+T/ghTumOQjoZ6GmPtZk0+130="
   },
   "licrypto": {
     "owner": "litocpp",
     "repo": "licrypto",
-    "rev": "1199a8fe2b119774a85adbd33043fc5ef7b20d3c",
-    "narHash": "sha256-9aeEoT7M3hIXWylKLy4wKXnomSQII+Bftd94kWNm5pw="
+    "rev": "4f5f0432d4566d66745b448d617f6b1b36ae6db9",
+    "narHash": "sha256-qvXyZqGNc+yC6CmTN6puGB8LKivzEWffBPbDG/6orjA="
   },
   "liresto": {
     "owner": "litocpp",
