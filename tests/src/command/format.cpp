@@ -428,6 +428,19 @@ link-stdlib = false
         { "SpacesInContainerLiterals: true\n"_str, "SpacesInContainerLiterals"_str },
         { "Standard: Cpp11\n"_str, "Standard"_str },
         { "IndentPPDirectives: AfterHash\n"_str, "IndentPPDirectives"_str },
+        { "BreakAfterOpenBracketFunction: Always\n"_str, "BreakAfterOpenBracketFunction"_str },
+        { "BreakBeforeCloseBracketLoop: 1\n"_str, "BreakBeforeCloseBracketLoop"_str },
+        { "BreakBeforeBinaryOperators: Sometimes\n"_str, "BreakBeforeBinaryOperators"_str },
+        { "BreakBeforeTernaryOperators: yes\n"_str, "BreakBeforeTernaryOperators"_str },
+        { "ReferenceAlignment: Same\n"_str, "ReferenceAlignment"_str },
+        { "DerivePointerAlignment: auto\n"_str, "DerivePointerAlignment"_str },
+        { "SpaceAroundPointerQualifiers: Outside\n"_str, "SpaceAroundPointerQualifiers"_str },
+        { "BitFieldColonSpacing: Center\n"_str, "BitFieldColonSpacing"_str },
+        { "SpaceBeforeCaseColon: Always\n"_str, "SpaceBeforeCaseColon"_str },
+        { "SpaceBeforeSquareBrackets: 1\n"_str, "SpaceBeforeSquareBrackets"_str },
+        { "EmptyLineBeforeAccessModifier: Sometimes\n"_str, "EmptyLineBeforeAccessModifier"_str },
+        { "EmptyLineAfterAccessModifier: LogicalBlock\n"_str, "EmptyLineAfterAccessModifier"_str },
+        { "IndentGotoLabels: Never\n"_str, "IndentGotoLabels"_str },
         { "KeepEmptyLines:\n  AtStartOfBlock: false\n  AtStartOfBlock: true\n"_str,
           "AtStartOfBlock"_str },
     };
@@ -556,6 +569,145 @@ link-stdlib = false
     ASSERT_TRUE(written.is_ok());
     EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(),
               test_repository_style_expected());
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
+}
+
+TEST_F(FormatCommand, BuiltinInheritsBracketPresenceAndChecksBeforeWriting) {
+    constexpr auto source = "void f(){consume(first_long_value,second_long_value,third_long_value);"
+                            "while(first_condition&&second_condition){run();}}\n"_str;
+    constexpr auto wrapped =
+        "void f() {\n    consume(\n        first_long_value,\n        second_long_value,\n"
+        "        third_long_value\n    );\n    while (\n        first_condition &&\n"
+        "        second_condition\n    ) {\n        run();\n    }\n}\n"_str;
+    struct Source {
+        ref<str> path;
+        ref<str> expected;
+    };
+    const Source sources[] = {
+        { "src/parent.cpp"_str, wrapped },
+        { "src/child/child.cpp"_str,
+          "void f() {\n    consume(first_long_value,\n            second_long_value,\n"
+          "            third_long_value);\n    while (\n        first_condition &&\n"
+          "        second_condition\n    ) {\n        run();\n    }\n}\n"_str },
+        { "src/child/grand/grand.cpp"_str, wrapped },
+    };
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-bracket-inheritance"
+version = "0.1.0"
+[[bin]]
+name = "builtin-bracket-inheritance"
+sources = ["src/parent.cpp", "src/child/child.cpp", "src/child/grand/grand.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str,
+          "ColumnLimit: 40\nAlignAfterOpenBracket: Align\nAlignOperands: false\n"
+          "BinPackArguments: false\nBreakAfterOpenBracketFunction: true\n"
+          "BreakBeforeCloseBracketFunction: true\nBreakAfterOpenBracketLoop: true\n"
+          "BreakBeforeCloseBracketLoop: true\n"_str },
+        { "src/child/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nBreakAfterOpenBracketFunction: false\n"_str },
+        { "src/child/grand/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nBreakAfterOpenBracketFunction: true\n"_str },
+        { sources[0].path, source },
+        { sources[1].path, source },
+        { sources[2].path, source },
+    };
+    auto project = materialize("builtin-bracket-inheritance"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .mode    = lito::FormatMode::Check,
+        .backend = lito::FormatBackend::Builtin,
+    };
+    auto checked = lito::format(request);
+    ASSERT_TRUE(checked.is_ok());
+    EXPECT_EQ(checked->unformatted_files.len(), usize(3));
+    for (const auto& expected : sources) {
+        auto path = project->root.join(PathBuf::from(expected.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), source);
+    }
+    request.mode = lito::FormatMode::Write;
+    auto written = lito::format(request);
+    ASSERT_TRUE(written.is_ok());
+    for (const auto& expected : sources) {
+        auto path = project->root.join(PathBuf::from(expected.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), expected.expected);
+    }
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
+}
+
+TEST_F(FormatCommand, BuiltinDerivesEachFileWithoutChangingInheritedStyles) {
+    struct Source {
+        ref<str> path;
+        ref<str> original;
+        ref<str> expected;
+    };
+    const Source sources[] = {
+        { "src/left.cpp"_str,
+          "int* first;int* second;int* third;int &ref;\n"_str,
+          "int* first;\nint* second;\nint* third;\nint& ref;\n"_str },
+        { "src/right.cpp"_str,
+          "int *first;int *second;int *third;int& ref;\n"_str,
+          "int *first;\nint *second;\nint *third;\nint &ref;\n"_str },
+        { "src/tie.cpp"_str,
+          "int* left;int *right;int * middle;int & ref;\n"_str,
+          "int * left;\nint * right;\nint * middle;\nint & ref;\n"_str },
+        { "src/fixed/member.cpp"_str,
+          "int *first;int *second;int *third;int &ref;\n"_str,
+          "int * first;\nint * second;\nint * third;\nint& ref;\n"_str },
+        { "src/fixed/grand/member.cpp"_str,
+          "int* first;int* second;int* third;int &ref;\n"_str,
+          "int* first;\nint* second;\nint* third;\nint& ref;\n"_str },
+    };
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-declaration-styles"
+version = "0.1.0"
+[[bin]]
+name = "builtin-declaration-styles"
+sources = ["src/left.cpp", "src/right.cpp", "src/tie.cpp", "src/fixed/member.cpp", "src/fixed/grand/member.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str,
+          "PointerAlignment: Middle\nReferenceAlignment: Middle\nDerivePointerAlignment: true\n"_str },
+        { "src/fixed/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nDerivePointerAlignment: false\nReferenceAlignment: Left\n"_str },
+        { "src/fixed/grand/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nDerivePointerAlignment: true\nReferenceAlignment: Right\n"_str },
+        { sources[0].path, sources[0].original },
+        { sources[1].path, sources[1].original },
+        { sources[2].path, sources[2].original },
+        { sources[3].path, sources[3].original },
+        { sources[4].path, sources[4].original },
+    };
+    auto project = materialize("builtin-declaration-styles"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .mode    = lito::FormatMode::Check,
+        .backend = lito::FormatBackend::Builtin,
+    };
+    auto checked = lito::format(request);
+    ASSERT_TRUE(checked.is_ok());
+    EXPECT_EQ(checked->unformatted_files.len(), usize(5));
+    for (const auto& source : sources) {
+        auto path = project->root.join(PathBuf::from(source.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), source.original);
+    }
+    request.mode = lito::FormatMode::Write;
+    auto written = lito::format(request);
+    ASSERT_TRUE(written.is_ok());
+    for (const auto& source : sources) {
+        auto path = project->root.join(PathBuf::from(source.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), source.expected);
+    }
     request.mode = lito::FormatMode::Check;
     auto clean   = lito::format(request);
     ASSERT_TRUE(clean.is_ok());

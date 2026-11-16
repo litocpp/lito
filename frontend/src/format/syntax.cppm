@@ -283,9 +283,18 @@ auto annotate_delimiters(FormatSyntax& syntax) -> void {
             auto capture = expression && (syntax.is(after, "("_str) || syntax.is(after, "{"_str) ||
                                           syntax.is(after, "mutable"_str) ||
                                           syntax.is(after, "->"_str) || syntax.is(after, "<"_str));
-            token.syntax.square_role = capture                           ? SquareRole::Capture
-                                       : syntax.is(previous, "auto"_str) ? SquareRole::Binding
-                                                                         : SquareRole::Subscript;
+            auto binding = previous;
+            while (binding != usize::MAX &&
+                   (syntax.is(binding, "&"_str) || syntax.is(binding, "&&"_str) ||
+                    syntax.is(binding, "const"_str) || syntax.is(binding, "volatile"_str)))
+                binding = syntax.previous_token(binding);
+            token.syntax.square_role = capture                          ? SquareRole::Capture
+                                       : syntax.is(binding, "auto"_str) ? SquareRole::Binding
+                                                                        : SquareRole::Subscript;
+            token.syntax.square_chain_first =
+                token.syntax.square_role == SquareRole::Subscript &&
+                (! syntax.is(previous, "]"_str) ||
+                 syntax.tokens[previous].syntax.square_role != SquareRole::Subscript);
             syntax.tokens[close].syntax.square_role = token.syntax.square_role;
             if (capture) (void)add_group(syntax, GroupKind::LambdaCapture, index, close);
         }
@@ -501,6 +510,33 @@ auto record(BlockKind kind) -> bool {
     return kind == BlockKind::Class || kind == BlockKind::Struct || kind == BlockKind::Union;
 }
 
+auto label_scope(const FormatSyntax& syntax, usize scope) -> bool {
+    while (scope != usize::MAX) {
+        auto kind = syntax.tokens[scope].syntax.block;
+        if (record(kind) || kind == BlockKind::Enum || kind == BlockKind::Namespace) return false;
+        if (kind == BlockKind::Function || kind == BlockKind::Lambda) return true;
+        scope = syntax.tokens[scope].syntax.scope_id;
+    }
+    return false;
+}
+
+auto label_head(FormatSyntax& syntax, usize index) -> Option<usize> {
+    if (syntax.tokens[index].source.kind != lexical::TokenKind::Identifier ||
+        syntax.tokens[index].syntax.access_label || syntax.is(index, "case"_str) ||
+        syntax.is(index, "default"_str) ||
+        ! label_scope(syntax, syntax.tokens[index].syntax.scope_id))
+        return None();
+    auto colon = syntax.next_token(index);
+    if (! syntax.is(colon, ":"_str) ||
+        (syntax.tokens[colon].syntax.colon_role != ColonRole::Unknown &&
+         syntax.tokens[colon].syntax.colon_role != ColonRole::Label))
+        return None();
+    syntax.tokens[index].syntax.label_name = true;
+    syntax.tokens[colon].syntax.colon_role = ColonRole::Label;
+    syntax.tokens[colon].syntax.label_end  = true;
+    return Some(usize(colon));
+}
+
 auto contains_newline(ref<str> text) -> bool {
     for (auto byte : text.as_bytes())
         if (byte == u8('\r') || byte == u8('\n')) return true;
@@ -542,8 +578,7 @@ auto annotate_roles(FormatSyntax& syntax) -> void {
                                  token.source.kind == lexical::TokenKind::CharacterLiteral;
         token.syntax.expression_prefix =
             text == "return"_str || text == "co_return"_str || text == "throw"_str;
-        token.syntax.block_continuation =
-            text == "else"_str || text == "catch"_str || text == "while"_str;
+        token.syntax.block_continuation = text == "else"_str || text == "catch"_str;
         token.syntax.brace_continuation = text == "else"_str || text == "catch"_str;
         token.syntax.else_continuation  = text == "else"_str;
     }
@@ -588,7 +623,8 @@ auto annotate_simple_blocks(FormatSyntax& syntax) -> void {
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& open = syntax.tokens[index];
         if (! syntax.is(index, "{"_str) ||
-            (open.syntax.block != BlockKind::Function && open.syntax.block != BlockKind::Control) ||
+            (open.syntax.block != BlockKind::Function && open.syntax.block != BlockKind::Control &&
+             open.syntax.block != BlockKind::Lambda) ||
             open.syntax.pair == usize::MAX)
             continue;
         auto close = open.syntax.pair;
@@ -692,8 +728,12 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
             syntax.tokens[next].syntax.access_colon = true;
             syntax.tokens[next].syntax.access_end   = true;
             auto trivia                             = next + usize(1);
-            while (trivia < syntax.tokens.len() && syntax.tokens[trivia].source.comment)
+            auto row_end                            = syntax.tokens[next].source.end;
+            while (trivia < syntax.tokens.len() && syntax.tokens[trivia].source.comment &&
+                   ! contains_newline(syntax.text(row_end, syntax.tokens[trivia].source.begin))) {
+                row_end                                   = syntax.tokens[trivia].source.end;
                 syntax.tokens[trivia++].syntax.access_end = true;
+            }
             head  = next + usize(1);
             index = next;
             continue;
@@ -707,6 +747,18 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
         if (text == ","_str && owner != usize::MAX &&
             syntax.tokens[owner].syntax.block == BlockKind::Enum)
             token.syntax.enum_separator = true;
+        while (head < index &&
+               (syntax.tokens[head].source.comment ||
+                syntax.overlaps(syntax.tokens[head].source.begin, syntax.tokens[head].source.end)))
+            ++head;
+        if (head == index) {
+            auto label = label_head(syntax, index);
+            if (label.is_some()) {
+                head  = *label + usize(1);
+                index = *label;
+                continue;
+            }
+        }
         if (text == "import"_str && next < syntax.tokens.len() &&
             (syntax.is(next, "<"_str) ||
              syntax.tokens[next].source.kind == lexical::TokenKind::StringLiteral)) {
@@ -729,12 +781,14 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
             continue;
         }
         if (text != "{"_str || token.syntax.pair == usize::MAX) continue;
-        auto kind              = BlockKind::None;
-        auto function_paren    = usize::MAX;
-        bool unsafe            = false;
-        bool assignment        = false;
-        bool namespace_seen    = false;
-        auto record_seen       = BlockKind::None;
+        auto kind           = BlockKind::None;
+        auto function_paren = usize::MAX;
+        bool unsafe         = false;
+        bool assignment     = false;
+        bool namespace_seen = false;
+        auto record_seen    = BlockKind::None;
+        auto record_name    = usize::MAX;
+        bool record_name_pending {};
         auto control_seen      = ControlKind::None;
         auto ctor_colon        = usize::MAX;
         auto inheritance_colon = usize::MAX;
@@ -757,12 +811,27 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                 continue;
             }
             if (value == "namespace"_str) namespace_seen = true;
-            if (value == "enum"_str)
-                record_seen = BlockKind::Enum;
-            else if (record_seen != BlockKind::Enum) {
-                if (value == "class"_str) record_seen = BlockKind::Class;
-                if (value == "struct"_str) record_seen = BlockKind::Struct;
-                if (value == "union"_str) record_seen = BlockKind::Union;
+            if (value == "enum"_str) {
+                record_seen         = BlockKind::Enum;
+                record_name_pending = false;
+            } else if (record_seen != BlockKind::Enum) {
+                if (value == "class"_str || value == "struct"_str || value == "union"_str) {
+                    record_seen         = value == "class"_str    ? BlockKind::Class
+                                          : value == "struct"_str ? BlockKind::Struct
+                                                                  : BlockKind::Union;
+                    record_name_pending = true;
+                } else if (record_name_pending) {
+                    auto next = syntax.next_token(scan);
+                    if (value == "alignas"_str && syntax.is(next, "("_str) &&
+                        syntax.tokens[next].syntax.pair != usize::MAX) {
+                        scan = syntax.tokens[next].syntax.pair;
+                        continue;
+                    }
+                    if (syntax.tokens[scan].source.kind == lexical::TokenKind::Identifier) {
+                        record_name         = scan;
+                        record_name_pending = false;
+                    }
+                }
             }
             if (value == "requires"_str) unsafe = true;
             if (value == "="_str) assignment = true;
@@ -831,6 +900,7 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                                                   syntax.tokens[header].source.end)))
             ++header;
         token.syntax.block               = kind;
+        token.syntax.record_name_index   = record_name;
         token.syntax.header_begin        = header;
         token.syntax.control             = control_seen;
         token.syntax.inline_record_scope = kind == BlockKind::Function && owner != usize::MAX &&
@@ -848,28 +918,43 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
             last_header != usize::MAX && header <= last_header &&
             contains_newline(syntax.text(syntax.tokens[header].source.begin,
                                          syntax.tokens[last_header].source.end));
-        syntax.tokens[token.syntax.pair].syntax.block            = kind;
-        syntax.tokens[token.syntax.pair].syntax.header_begin     = header;
-        syntax.tokens[token.syntax.pair].syntax.header_multiline = token.syntax.header_multiline;
-        syntax.tokens[token.syntax.pair].syntax.control          = control_seen;
+        syntax.tokens[token.syntax.pair].syntax.block             = kind;
+        syntax.tokens[token.syntax.pair].syntax.record_name_index = record_name;
+        syntax.tokens[token.syntax.pair].syntax.header_begin      = header;
+        syntax.tokens[token.syntax.pair].syntax.header_multiline  = token.syntax.header_multiline;
+        syntax.tokens[token.syntax.pair].syntax.control           = control_seen;
         scopes.push(usize(index));
         head = index + usize(1);
     }
 }
 
-auto protect_constructs(FormatSyntax& syntax) -> void {
+auto declaration_name(const FormatSyntax& syntax, usize index) -> bool {
+    auto id = syntax.tokens[index].syntax.statement_id;
+    if (id >= syntax.statements.len()) return false;
+    const auto& statement = syntax.statements[id];
+    if (statement.kind != StatementKind::Function || statement.name_index != index) return false;
+    if (statement.return_type_end > statement.extent.begin) return true;
+    auto scope = statement.scope_id;
+    if (scope == usize::MAX || ! record(syntax.tokens[scope].syntax.block)) return false;
+    auto name = syntax.tokens[scope].syntax.record_name_index;
+    return name != usize::MAX && syntax.text(name) == syntax.text(index);
+}
+
+auto protect_constructs(FormatSyntax& syntax, bool inferred) -> void {
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         const auto& token = syntax.tokens[index];
         if (token.source.comment || syntax.directive(token.source.begin)) continue;
         auto text  = syntax.text(index);
         auto next  = syntax.next_token(index);
         bool macro = false;
-        for (const auto& name : syntax.macros)
-            if (name == text) {
-                macro = true;
-                break;
-            }
-        if (! macro && syntax.is(next, "("_str)) {
+        if (! inferred) {
+            for (const auto& name : syntax.macros)
+                if (name == text) {
+                    macro = true;
+                    break;
+                }
+        }
+        if (inferred && syntax.is(next, "("_str) && ! declaration_name(syntax, index)) {
             bool upper = false;
             macro      = true;
             for (auto value : text.as_bytes()) {
@@ -977,6 +1062,27 @@ auto storage_word(ref<str> text) -> bool {
            text == "virtual"_str || text == "friend"_str || text == "typename"_str;
 }
 
+auto pointer_declarator(FormatSyntax& syntax, usize begin, usize end) -> void {
+    for (auto index = begin; index < end; ++index) {
+        auto& token = syntax.tokens[index];
+        if (token.source.comment || syntax.overlaps(token.source.begin, token.source.end)) continue;
+        if (token.syntax.pair != usize::MAX && token.syntax.pair > index) {
+            index = token.syntax.pair;
+            continue;
+        }
+        auto text = syntax.text(index);
+        if (text == "const"_str || text == "volatile"_str) token.syntax.pointer_qualifier = true;
+        auto kind = text == "*"_str    ? PointerKind::Pointer
+                    : text == "&"_str  ? PointerKind::LValueReference
+                    : text == "&&"_str ? PointerKind::RValueReference
+                                       : PointerKind::None;
+        if (kind != PointerKind::None) {
+            token.syntax.operator_role = OperatorRole::PointerReference;
+            token.syntax.pointer_kind  = kind;
+        }
+    }
+}
+
 auto declaration_facts(FormatSyntax&    syntax,
                        FormatStatement& statement,
                        usize            end,
@@ -1063,15 +1169,15 @@ auto declaration_facts(FormatSyntax&    syntax,
     } else if (statement.assignment_index != usize::MAX &&
                statement.kind == StatementKind::Expression)
         statement.kind = StatementKind::Assignment;
-    if (confirmed || parameter) {
-        for (auto index = begin; index < boundary; ++index) {
-            if (syntax.tokens[index].syntax.template_open) {
-                index = syntax.tokens[index].syntax.pair;
-                continue;
+    if (confirmed || parameter) pointer_declarator(syntax, begin, boundary);
+    if (function && paren != usize::MAX) {
+        for (auto index = syntax.tokens[paren].syntax.pair + usize(1); index < end; ++index) {
+            if (syntax.tokens[index].syntax.arrow_role == ArrowRole::TrailingReturn) {
+                pointer_declarator(syntax, index + usize(1), end);
+                break;
             }
-            if (syntax.is(index, "*"_str) || syntax.is(index, "&"_str) ||
-                syntax.is(index, "&&"_str))
-                syntax.tokens[index].syntax.operator_role = OperatorRole::PointerReference;
+            auto pair = syntax.tokens[index].syntax.pair;
+            if (pair != usize::MAX && pair > index) index = pair;
         }
     }
 }
@@ -1080,12 +1186,63 @@ auto statement_simple(const FormatSyntax& syntax, usize begin, usize end) -> boo
     if (begin >= end) return false;
     for (auto index = begin; index < end; ++index) {
         const auto& token = syntax.tokens[index];
-        if (token.source.comment || token.syntax.protected_text ||
+        if (token.source.comment || token.syntax.protected_text || token.syntax.label_name ||
+            token.syntax.label_end ||
             (syntax.is(index, "{"_str) && ! token.syntax.initializer_open) ||
             control(syntax.text(index)))
             return false;
     }
     return true;
+}
+
+auto bit_field_facts(FormatSyntax& syntax, FormatStatement& statement, usize end) -> bool {
+    auto scope = statement.scope_id;
+    if (scope == usize::MAX || ! record(syntax.tokens[scope].syntax.block)) return false;
+    auto begin = statement.extent.begin;
+    for (auto colon = begin; colon < end; ++colon) {
+        const auto& token = syntax.tokens[colon];
+        if (token.source.comment) continue;
+        if (assignment_operator(syntax.text(colon)) || syntax.is(colon, "?"_str)) return false;
+        if (token.syntax.pair != usize::MAX && token.syntax.pair > colon) {
+            colon = token.syntax.pair;
+            continue;
+        }
+        if (! syntax.is(colon, ":"_str) || token.syntax.colon_role != ColonRole::Unknown) continue;
+        auto declaration = FormatStatement { .kind     = StatementKind::Expression,
+                                             .extent   = { begin, colon },
+                                             .scope_id = scope };
+        declaration_facts(syntax, declaration, colon);
+        auto anonymous = declaration.name_index == usize::MAX;
+        bool builtin {};
+        if (declaration.kind != StatementKind::Declaration) {
+            for (auto index = begin; index < colon; ++index) {
+                if (syntax.tokens[index].source.comment) continue;
+                auto text = syntax.text(index);
+                if (builtin_type(text))
+                    builtin = true;
+                else if (! storage_word(text)) {
+                    anonymous = false;
+                    break;
+                }
+            }
+            if (! anonymous || ! builtin) return false;
+        }
+        auto width     = syntax.next_token(colon);
+        auto width_end = end;
+        if (width_end > width && syntax.is(width_end - usize(1), ";"_str)) --width_end;
+        if (width >= width_end) return false;
+        syntax.tokens[colon].syntax.colon_role = ColonRole::BitField;
+        statement.kind                         = StatementKind::BitField;
+        statement.name_index                   = declaration.name_index;
+        statement.type_end                     = anonymous ? colon : declaration.type_end;
+        syntax.bit_fields.push(BitField { .extent     = statement.extent,
+                                          .type       = { begin, statement.type_end },
+                                          .name_index = statement.name_index,
+                                          .colon      = colon,
+                                          .width      = { width, width_end } });
+        return true;
+    }
+    return false;
 }
 
 auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned depth) -> usize;
@@ -1103,7 +1260,8 @@ auto parse_statements(FormatSyntax& syntax, usize begin, usize end, unsigned dep
         }
         auto id   = parse_statement(syntax, begin, end, depth + 1);
         auto next = syntax.statements[id].extent.end;
-        if (syntax.statements[id].kind == StatementKind::CaseLabel)
+        if (syntax.statements[id].kind == StatementKind::CaseLabel ||
+            syntax.statements[id].kind == StatementKind::Label)
             next = syntax.statements[id].body_end;
         begin = next > begin ? next : begin + usize(1);
     }
@@ -1153,8 +1311,10 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
                 end                              = close + usize(1);
                 parse_statements(syntax, body + usize(1), close, depth + 1);
             } else {
-                auto child                       = parse_statement(syntax, body, limit, depth + 1);
-                end                              = syntax.statements[child].extent.end;
+                auto child = parse_statement(syntax, body, limit, depth + 1);
+                end        = syntax.statements[child].extent.end;
+                if (syntax.statements[child].kind == StatementKind::Label)
+                    end = syntax.statements[child].body_end;
                 syntax.statements[id].body_begin = body;
                 syntax.statements[id].body_end   = end;
                 syntax.statements[id].simple     = syntax.statements[child].simple;
@@ -1166,6 +1326,15 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
                 syntax.statements[id].else_statement = otherwise;
                 syntax.statements[id].has_else       = true;
                 end                                  = syntax.statements[otherwise].extent.end;
+            } else if (kind == ControlKind::Do && syntax.is(following, "while"_str)) {
+                auto paren = syntax.next_token(following);
+                if (syntax.is(paren, "("_str) && syntax.tokens[paren].syntax.pair != usize::MAX) {
+                    auto terminator = syntax.next_token(syntax.tokens[paren].syntax.pair);
+                    if (terminator < limit && syntax.is(terminator, ";"_str)) {
+                        syntax.tokens[following].syntax.block_continuation = true;
+                        end                                                = terminator + usize(1);
+                    }
+                }
             }
             syntax.statements[id].extent.end = end;
             for (auto index = begin; index < end; ++index)
@@ -1206,6 +1375,24 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
             return id;
         }
     }
+    if (auto label = label_head(syntax, begin); label.is_some()) {
+        auto colon                       = *label;
+        auto body                        = syntax.next_token(colon);
+        syntax.statements[id].kind       = StatementKind::Label;
+        syntax.statements[id].extent.end = colon + usize(1);
+        syntax.statements[id].name_index = begin;
+        syntax.statements[id].body_begin = body;
+        syntax.statements[id].body_end   = colon + usize(1);
+        for (auto index = begin; index <= colon; ++index)
+            syntax.tokens[index].syntax.statement_id = id;
+        if (body < limit && depth < 128) {
+            auto child                     = parse_statement(syntax, body, limit, depth + 1);
+            syntax.statements[id].body_end = syntax.statements[child].kind == StatementKind::Label
+                                                 ? syntax.statements[child].body_end
+                                                 : syntax.statements[child].extent.end;
+        }
+        return id;
+    }
     auto end  = begin;
     auto body = usize::MAX;
     while (end < limit) {
@@ -1238,7 +1425,8 @@ auto parse_statement(FormatSyntax& syntax, usize begin, usize limit, unsigned de
         syntax.statements[id].body_end   = syntax.tokens[body].syntax.pair;
         syntax.statements[id].inline_record_scope = syntax.tokens[body].syntax.inline_record_scope;
     }
-    declaration_facts(syntax, syntax.statements[id], body == usize::MAX ? end : body);
+    if (body != usize::MAX || ! bit_field_facts(syntax, syntax.statements[id], end))
+        declaration_facts(syntax, syntax.statements[id], body == usize::MAX ? end : body);
     syntax.statements[id].simple = body == usize::MAX && statement_simple(syntax, begin, end);
     auto header_end              = body == usize::MAX ? end : body + usize(1);
     for (auto index = begin; index < header_end; ++index)
@@ -1282,6 +1470,33 @@ auto annotate_groups_and_expressions(FormatSyntax& syntax) -> void {
         auto& token = syntax.tokens[index];
         if (token.source.comment || token.syntax.protected_text) continue;
         if (syntax.is(index, "("_str) && token.syntax.pair != usize::MAX &&
+            token.syntax.group_id == usize::MAX && token.syntax.paren_role == ParenRole::Control) {
+            auto keyword = syntax.previous_token(index);
+            if (syntax.is(keyword, "constexpr"_str)) keyword = syntax.previous_token(keyword);
+            auto kind  = control_kind(syntax.text(keyword));
+            auto group = FormatGroup { .kind     = GroupKind::Control,
+                                       .open     = index,
+                                       .close    = token.syntax.pair,
+                                       .scope_id = token.syntax.scope_id,
+                                       .control  = kind };
+            auto begin = index + usize(1);
+            for (auto scan = begin; scan < group.close; ++scan) {
+                if (syntax.tokens[scan].source.comment || syntax.tokens[scan].syntax.protected_text)
+                    group.safe = false;
+                if (kind == ControlKind::For && syntax.is(scan, ";"_str)) {
+                    group.items.push({ begin, scan });
+                    group.separators.push(usize(scan));
+                    begin = scan + usize(1);
+                }
+                auto pair = syntax.tokens[scan].syntax.pair;
+                if (pair != usize::MAX && pair > scan) scan = pair;
+            }
+            if (begin < group.close || ! group.separators.is_empty())
+                group.items.push({ begin, group.close });
+            token.syntax.group_id = syntax.groups.len();
+            syntax.groups.push(rstd::move(group));
+        }
+        if (syntax.is(index, "("_str) && token.syntax.pair != usize::MAX &&
             token.syntax.group_id == usize::MAX && token.syntax.paren_role == ParenRole::Call)
             (void)add_group(syntax, GroupKind::Arguments, index, token.syntax.pair);
         if (syntax.is(index, "!"_str) &&
@@ -1303,7 +1518,40 @@ auto annotate_groups_and_expressions(FormatSyntax& syntax) -> void {
     }
     count = syntax.groups.len();
     for (auto group_id = usize {}; group_id < count; ++group_id) {
-        if (syntax.groups[group_id].kind != GroupKind::Parameters) continue;
+        auto kind = syntax.groups[group_id].kind;
+        if (kind == GroupKind::Control && ! syntax.groups[group_id].items.is_empty()) {
+            const auto& group = syntax.groups[group_id];
+            auto        item  = group.items[usize {}];
+            auto        end   = item.end;
+            auto        range = false;
+            for (auto index = item.begin; index < item.end; ++index) {
+                if (syntax.tokens[index].syntax.colon_role == ColonRole::RangeFor) {
+                    end   = index;
+                    range = true;
+                    break;
+                }
+                auto pair = syntax.tokens[index].syntax.pair;
+                if (pair != usize::MAX && pair > index) index = pair;
+            }
+            auto declaration = FormatStatement { .kind     = StatementKind::Expression,
+                                                 .extent   = { item.begin, end },
+                                                 .scope_id = group.scope_id };
+            declaration_facts(
+                syntax, declaration, end, range || group.control == ControlKind::Catch);
+            if (declaration.kind != StatementKind::Declaration &&
+                declaration.assignment_index != usize::MAX) {
+                for (auto index = item.begin; index < declaration.assignment_index; ++index)
+                    if ((syntax.is(index, "*"_str) || syntax.is(index, "&"_str) ||
+                         syntax.is(index, "&&"_str)) &&
+                        syntax.tokens[index].syntax.operator_role == OperatorRole::Unknown) {
+                        syntax.protected_ranges.push(
+                            { syntax.tokens[item.begin].source.begin,
+                              syntax.tokens[declaration.assignment_index].source.begin });
+                        break;
+                    }
+            }
+        }
+        if (kind != GroupKind::Parameters) continue;
         auto item_count = syntax.groups[group_id].items.len();
         for (auto item_id = usize {}; item_id < item_count; ++item_id) {
             auto item      = syntax.groups[group_id].items[item_id];
@@ -1312,51 +1560,284 @@ auto annotate_groups_and_expressions(FormatSyntax& syntax) -> void {
             declaration_facts(syntax, parameter, item.end, true);
         }
     }
-    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
-        auto& token = syntax.tokens[index];
-        if (token.source.comment || token.syntax.protected_text ||
-            token.syntax.operator_role != OperatorRole::Unknown ||
-            (syntax.text(index) != "*"_str && syntax.text(index) != "&"_str &&
-             syntax.text(index) != "&&"_str))
-            continue;
-        auto previous = syntax.previous_token(index);
-        auto next     = syntax.next_token(index);
-        if (previous == usize::MAX || next == syntax.tokens.len()) continue;
-        auto id         = token.syntax.statement_id;
-        auto expression = id < syntax.statements.len() &&
-                          (syntax.statements[id].kind == StatementKind::Return ||
-                           syntax.statements[id].kind == StatementKind::Assignment ||
-                           syntax.statements[id].kind == StatementKind::Control ||
-                           (syntax.statements[id].assignment_index != usize::MAX &&
-                            index > syntax.statements[id].assignment_index));
-        auto scope      = token.syntax.scope_id;
-        expression |=
-            scope < syntax.tokens.len() && syntax.tokens[scope].syntax.block == BlockKind::Control;
-        if (! expression) continue;
-        auto left_operand  = (syntax.tokens[previous].syntax.word_like &&
-                              ! syntax.tokens[previous].syntax.expression_prefix) ||
-                             syntax.is(previous, ")"_str) || syntax.is(previous, "]"_str);
-        auto right_operand = syntax.tokens[next].syntax.word_like || syntax.is(next, "("_str);
-        token.syntax.operator_role =
-            left_operand && right_operand ? OperatorRole::Binary : OperatorRole::Unary;
+}
+
+auto expression_binary(ref<str> text) -> bool {
+    return text == "+"_str || text == "-"_str || text == "*"_str || text == "/"_str ||
+           text == "%"_str || text == "&"_str || text == "|"_str || text == "^"_str ||
+           text == "&&"_str || text == "||"_str || text == "=="_str || text == "!="_str ||
+           text == "<"_str || text == ">"_str || text == "<="_str || text == ">="_str ||
+           text == "<<"_str || text == ">>"_str;
+}
+
+class ExpressionParser {
+    FormatSyntax& syntax_;
+    Vec<bool>     parsed_groups_;
+
+    auto protect(usize begin, usize end) -> void {
+        if (begin < end)
+            syntax_.protected_ranges.push(
+                { syntax_.tokens[begin].source.begin, syntax_.tokens[end - usize(1)].source.end });
     }
-    for (const auto& statement : syntax.statements) {
-        if (! statement.simple) continue;
-        auto chain =
-            ExpressionChain { .extent        = statement.extent,
-                              .scope_id      = statement.scope_id,
-                              .first_operand = statement.assignment_index == usize::MAX
-                                                   ? statement.extent.begin
-                                                   : statement.assignment_index + usize(1) };
-        if (statement.kind == StatementKind::Return)
-            chain.first_operand = syntax.next_token(statement.extent.begin);
-        for (auto index = chain.first_operand; index < chain.extent.end; ++index) {
-            if (syntax.tokens[index].syntax.operator_role == OperatorRole::Binary)
-                chain.operators.push(usize(index));
-            auto pair = syntax.tokens[index].syntax.pair;
-            if (pair != usize::MAX && pair > index) index = pair;
+
+    auto parse_group(usize id, usize parent, unsigned depth) -> void {
+        if (depth >= 128 || id >= parsed_groups_.len() || parsed_groups_[id]) return;
+        parsed_groups_[id] = true;
+        const auto& group  = syntax_.groups[id];
+        if (group.kind != GroupKind::Arguments && group.kind != GroupKind::Parameters &&
+            group.kind != GroupKind::Initializer && group.kind != GroupKind::Control)
+            return;
+        for (const auto& item : group.items) parse(item.begin, item.end, parent, depth, true);
+    }
+
+    auto nested(usize index, usize parent, unsigned depth) -> usize {
+        const auto& token = syntax_.tokens[index];
+        auto        close = token.syntax.pair;
+        if (close == usize::MAX || close <= index) return index;
+        if (token.syntax.group_id != usize::MAX)
+            parse_group(token.syntax.group_id, parent, depth + 1);
+        else if ((syntax_.is(index, "("_str) && token.syntax.paren_spacing != ParenSpacing::Cast) ||
+                 (syntax_.is(index, "["_str) && token.syntax.square_role == SquareRole::Subscript))
+            parse(index + usize(1), close, parent, depth + 1, true);
+        return close;
+    }
+
+    auto chains(usize begin, usize end, usize parent, unsigned depth, bool expression) -> void {
+        auto assignments = ExpressionChain { .extent        = { begin, end },
+                                             .scope_id      = syntax_.tokens[begin].syntax.scope_id,
+                                             .first_operand = begin };
+        auto binary      = ExpressionChain { .extent        = { begin, end },
+                                             .scope_id      = assignments.scope_id,
+                                             .first_operand = begin };
+        bool operand     = true;
+        for (auto index = begin; index < end; ++index) {
+            auto& token = syntax_.tokens[index];
+            auto  text  = syntax_.text(index);
+            if (token.syntax.pair != usize::MAX && token.syntax.pair > index) {
+                auto cast = token.syntax.paren_spacing == ParenSpacing::Cast;
+                index     = nested(index, parent, depth);
+                operand   = cast;
+                continue;
+            }
+            if (token.syntax.operator_role == OperatorRole::PointerReference) continue;
+            if (assignment_operator(text)) {
+                token.syntax.operator_role = OperatorRole::Assignment;
+                assignments.operators.push(usize(index));
+                if (! binary.operators.is_empty()) {
+                    binary.extent.end = index;
+                    syntax_.expressions.push(rstd::move(binary));
+                }
+                auto next = syntax_.next_token(index);
+                binary    = ExpressionChain { .extent        = { next, end },
+                                              .scope_id      = assignments.scope_id,
+                                              .first_operand = next };
+                operand   = true;
+                continue;
+            }
+            if (expression_binary(text)) {
+                auto ambiguous = text == "*"_str || text == "&"_str || text == "&&"_str;
+                if (operand) {
+                    auto next = syntax_.next_token(index);
+                    if ((text == "+"_str || text == "-"_str || text == "*"_str ||
+                         text == "&"_str) &&
+                        (simple_atom(syntax_, next) || syntax_.is(next, "("_str)))
+                        token.syntax.operator_role = OperatorRole::Unary;
+                    continue;
+                }
+                if (ambiguous && ! expression && token.syntax.operator_role != OperatorRole::Binary)
+                    continue;
+                token.syntax.operator_role = OperatorRole::Binary;
+                binary.operators.push(usize(index));
+                operand = true;
+            } else if (token.syntax.word_like || text == ")"_str || text == "]"_str)
+                operand = false;
         }
-        if (! chain.operators.is_empty()) syntax.expressions.push(rstd::move(chain));
+        if (! assignments.operators.is_empty()) syntax_.expressions.push(rstd::move(assignments));
+        if (! binary.operators.is_empty()) syntax_.expressions.push(rstd::move(binary));
+    }
+
+    auto parse(usize begin, usize end, usize parent, unsigned depth, bool expression) -> void {
+        if (depth >= 128) return;
+        while (begin < end && syntax_.tokens[begin].source.comment) ++begin;
+        while (begin < end && (syntax_.tokens[end - usize(1)].source.comment ||
+                               syntax_.is(end - usize(1), ";"_str)))
+            --end;
+        if (begin >= end || syntax_.overlaps(syntax_.tokens[begin].source.begin,
+                                             syntax_.tokens[end - usize(1)].source.end))
+            return;
+        for (auto index = begin; index < end; ++index)
+            if (syntax_.tokens[index].source.comment) return;
+        auto     question = usize::MAX, colon = usize::MAX, condition = begin;
+        unsigned questions {};
+        for (auto index = begin; index < end; ++index) {
+            const auto& token = syntax_.tokens[index];
+            auto        pair  = token.syntax.pair;
+            if (pair != usize::MAX && pair > index) {
+                index = pair;
+                continue;
+            }
+            if (syntax_.is(index, ","_str) && questions == 0) {
+                parse(begin, index, parent, depth + 1, expression);
+                parse(index + usize(1), end, parent, depth + 1, expression);
+                return;
+            }
+            if (token.syntax.colon_role == ColonRole::RangeFor) {
+                parse(index + usize(1), end, parent, depth + 1, true);
+                return;
+            }
+            if (question == usize::MAX && token.syntax.operator_role == OperatorRole::Assignment)
+                condition = syntax_.next_token(index);
+            if (syntax_.is(index, "?"_str)) {
+                if (question == usize::MAX) question = index;
+                ++questions;
+            } else if (syntax_.is(index, ":"_str) &&
+                       (token.syntax.colon_role == ColonRole::Unknown ||
+                        token.syntax.colon_role == ColonRole::Conditional) &&
+                       questions != 0) {
+                if (--questions == 0 && colon == usize::MAX) colon = index;
+            }
+        }
+        if (question == usize::MAX) {
+            chains(begin, end, parent, depth, expression);
+            return;
+        }
+        auto yes = syntax_.next_token(question), no = syntax_.next_token(colon);
+        if (colon == usize::MAX || questions != 0 || condition >= question || yes >= colon ||
+            no >= end) {
+            protect(begin, end);
+            return;
+        }
+        auto id = syntax_.conditionals.len();
+        syntax_.conditionals.push(ConditionalExpression {
+            .extent          = { condition, end },
+            .question        = question,
+            .colon           = colon,
+            .condition_begin = condition,
+            .true_begin      = yes,
+            .false_begin     = no,
+            .parent          = parent,
+            .depth = parent == usize::MAX ? 0u : syntax_.conditionals[parent].depth + 1u });
+        syntax_.tokens[question].syntax.operator_role    = OperatorRole::Conditional;
+        syntax_.tokens[question].syntax.conditional_pair = colon;
+        syntax_.tokens[colon].syntax.operator_role       = OperatorRole::Conditional;
+        syntax_.tokens[colon].syntax.colon_role          = ColonRole::Conditional;
+        syntax_.tokens[colon].syntax.conditional_pair    = question;
+        parse(begin, question, id, depth + 1, expression);
+        parse(yes, colon, id, depth + 1, true);
+        parse(no, end, id, depth + 1, true);
+    }
+
+public:
+    explicit ExpressionParser(FormatSyntax& syntax): syntax_(syntax) {
+        for (auto index = usize {}; index < syntax.groups.len(); ++index)
+            parsed_groups_.push(false);
+    }
+
+    auto run() -> void {
+        for (const auto& statement : syntax_.statements) {
+            if (! statement.simple || statement.body_open != usize::MAX ||
+                statement.kind == StatementKind::Control ||
+                statement.kind == StatementKind::CaseLabel ||
+                statement.kind == StatementKind::Label ||
+                statement.kind == StatementKind::BitField ||
+                statement.kind == StatementKind::Function)
+                continue;
+            auto begin = statement.kind == StatementKind::Return
+                             ? syntax_.next_token(statement.extent.begin)
+                             : statement.extent.begin;
+            parse(begin,
+                  statement.extent.end,
+                  usize::MAX,
+                  0,
+                  statement.kind != StatementKind::Expression);
+        }
+        for (const auto& field : syntax_.bit_fields)
+            parse(field.width.begin, field.width.end, usize::MAX, 0, true);
+        for (auto index = usize {}; index < syntax_.groups.len(); ++index)
+            parse_group(index, usize::MAX, 0);
+    }
+};
+
+auto annotate_pointer_evidence(FormatSyntax& syntax) -> void {
+    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
+        if (syntax.tokens[index].syntax.pointer_kind == PointerKind::None) continue;
+        auto last = index;
+        while (last + usize(1) < syntax.tokens.len() &&
+               syntax.tokens[last + usize(1)].syntax.pointer_kind != PointerKind::None)
+            ++last;
+        auto evidence = PointerEvidence::None;
+        auto before_name =
+            index != usize {} &&
+            syntax.tokens[index - usize(1)].source.kind == lexical::TokenKind::Identifier &&
+            ! syntax.tokens[index - usize(1)].source.comment;
+        auto after_name =
+            last + usize(1) < syntax.tokens.len() &&
+            syntax.tokens[last + usize(1)].source.kind == lexical::TokenKind::Identifier &&
+            ! syntax.tokens[last + usize(1)].source.comment;
+        auto before_space = index != usize {} && syntax.tokens[index - usize(1)].source.end !=
+                                                     syntax.tokens[index].source.begin;
+        auto after_space =
+            last + usize(1) < syntax.tokens.len() &&
+            syntax.tokens[last].source.end != syntax.tokens[last + usize(1)].source.begin;
+        if (! syntax.overlaps(syntax.tokens[index].source.begin, syntax.tokens[last].source.end) &&
+            (before_name || after_name) &&
+            (! (before_name && after_name) || before_space != after_space))
+            evidence = (before_name && before_space) || (after_name && ! after_space)
+                           ? PointerEvidence::Right
+                           : PointerEvidence::Left;
+        syntax.pointer_chains.push(
+            PointerChain { .extent = { index, last + usize(1) }, .alignment = evidence });
+        index = last;
+    }
+}
+
+auto annotate_access_labels(FormatSyntax& syntax) -> void {
+    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
+        const auto& token = syntax.tokens[index];
+        auto        scope = token.syntax.scope_id;
+        if (! token.syntax.access_label || scope == usize::MAX ||
+            ! record(syntax.tokens[scope].syntax.block))
+            continue;
+        auto colon   = syntax.next_token(index);
+        auto after   = colon + usize(1);
+        auto row_end = syntax.tokens[colon].source.end;
+        while (after < syntax.tokens.len() && syntax.tokens[after].source.comment &&
+               ! contains_newline(syntax.text(row_end, syntax.tokens[after].source.begin))) {
+            row_end = syntax.tokens[after].source.end;
+            ++after;
+        }
+        auto label = AccessLabel {
+            .extent        = { index, after },
+            .record        = scope,
+            .name_index    = index,
+            .colon_index   = colon,
+            .after_index   = after,
+            .at_record_end = after == syntax.tokens[scope].syntax.pair,
+            .next_access = after < syntax.tokens.len() && syntax.tokens[after].syntax.access_label,
+            .comment_before = index != usize {} && syntax.tokens[index - usize(1)].source.comment,
+            .comment_after  = after < syntax.tokens.len() && syntax.tokens[after].source.comment
+        };
+        for (auto previous = syntax.access_labels.len(); previous != usize {};) {
+            const auto& candidate = syntax.access_labels[--previous];
+            if (candidate.record != scope) continue;
+            label.previous_access = candidate.extent.end == index;
+            break;
+        }
+        auto prior = scope;
+        while (prior + usize(1) < index && syntax.tokens[prior + usize(1)].source.comment &&
+               ! contains_newline(syntax.text(syntax.tokens[prior].source.end,
+                                              syntax.tokens[prior + usize(1)].source.begin)))
+            ++prior;
+        label.at_record_start = prior + usize(1) == index;
+        if (index != usize {} && ! label.comment_before) {
+            auto        previous   = index - usize(1);
+            const auto& ended      = syntax.tokens[previous];
+            label.completed_member = syntax.is(previous, ";"_str) && ended.syntax.scope_id == scope;
+            if (syntax.is(previous, "}"_str) && ended.syntax.pair != usize::MAX &&
+                syntax.tokens[ended.syntax.pair].syntax.scope_id == scope)
+                label.completed_member = true;
+        }
+        syntax.access_labels.push(rstd::move(label));
     }
 }
 
@@ -1370,7 +1851,7 @@ auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSy
     collect_protection(syntax);
     pair_tokens(syntax);
     if (! syntax.preserve_all) {
-        protect_constructs(syntax);
+        protect_constructs(syntax, false);
         annotate_delimiters(syntax);
         annotate_lambda_blocks(syntax);
         classify_blocks(syntax);
@@ -1381,10 +1862,27 @@ auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSy
         annotate_module_statements(syntax);
         annotate_initializer_groups(syntax);
         annotate_scopes(syntax);
-        annotate_simple_blocks(syntax);
         parse_statements(syntax, usize {}, syntax.tokens.len(), 0);
         annotate_nested_lambdas(syntax);
         annotate_groups_and_expressions(syntax);
+        protect_constructs(syntax, true);
+        for (auto& token : syntax.tokens)
+            token.syntax.protected_text = syntax.overlaps(token.source.begin, token.source.end);
+        for (auto& statement : syntax.statements) {
+            auto end = statement.kind == StatementKind::CaseLabel ? statement.body_end
+                                                                  : statement.extent.end;
+            if (statement.simple && end > statement.extent.begin &&
+                syntax.overlaps(syntax.tokens[statement.extent.begin].source.begin,
+                                syntax.tokens[end - usize(1)].source.end))
+                statement.simple = false;
+        }
+        annotate_simple_blocks(syntax);
+        ExpressionParser(syntax).run();
+        normalize_ranges(syntax.protected_ranges);
+        for (auto& token : syntax.tokens)
+            token.syntax.protected_text = syntax.overlaps(token.source.begin, token.source.end);
+        annotate_pointer_evidence(syntax);
+        annotate_access_labels(syntax);
     }
     annotate_directives(syntax);
     return Ok(rstd::move(syntax));

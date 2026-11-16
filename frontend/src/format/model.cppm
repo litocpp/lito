@@ -27,7 +27,21 @@ enum class OperatorRole
     Binary,
     Assignment,
     PointerReference,
-    Unary
+    Unary,
+    Conditional
+};
+enum class PointerKind
+{
+    None,
+    Pointer,
+    LValueReference,
+    RValueReference
+};
+enum class PointerEvidence
+{
+    None,
+    Left,
+    Right
 };
 enum class ParenRole
 {
@@ -68,7 +82,9 @@ enum class ColonRole
     Inheritance,
     RangeFor,
     Case,
-    Conditional
+    Conditional,
+    BitField,
+    Label
 };
 enum class SquareRole
 {
@@ -88,7 +104,8 @@ enum class GroupKind
     ConstructorInitializers,
     Inheritance,
     Attribute,
-    LambdaCapture
+    LambdaCapture,
+    Control
 };
 enum class StatementKind
 {
@@ -100,7 +117,9 @@ enum class StatementKind
     Control,
     CaseLabel,
     Return,
-    Expression
+    Expression,
+    BitField,
+    Label
 };
 enum class WhitespaceSlotKind
 {
@@ -135,9 +154,12 @@ struct TokenSyntax {
     usize        scope_id { usize::MAX };
     usize        statement_id { usize::MAX };
     usize        group_id { usize::MAX };
+    usize        conditional_pair { usize::MAX };
+    usize        record_name_index { usize::MAX };
     BlockKind    block { BlockKind::None };
     ControlKind  control { ControlKind::None };
     OperatorRole operator_role { OperatorRole::Unknown };
+    PointerKind  pointer_kind { PointerKind::None };
     ParenRole    paren_role { ParenRole::Unknown };
     ParenSpacing paren_spacing { ParenSpacing::Unknown };
     ArrowRole    arrow_role { ArrowRole::None };
@@ -167,6 +189,10 @@ struct TokenSyntax {
     bool         inline_record_scope {};
     bool         initializer_open {};
     bool         initializer_close {};
+    bool         pointer_qualifier {};
+    bool         square_chain_first {};
+    bool         label_name {};
+    bool         label_end {};
 };
 
 struct FormatToken {
@@ -179,6 +205,7 @@ struct FormatGroup {
     usize           open { usize::MAX };
     usize           close { usize::MAX };
     usize           scope_id { usize::MAX };
+    ControlKind     control { ControlKind::None };
     Vec<TokenRange> items;
     Vec<usize>      separators;
     bool            safe { true };
@@ -209,6 +236,45 @@ struct ExpressionChain {
     usize      scope_id { usize::MAX };
     usize      first_operand { usize::MAX };
     Vec<usize> operators;
+};
+
+struct ConditionalExpression {
+    TokenRange extent;
+    usize      question { usize::MAX };
+    usize      colon { usize::MAX };
+    usize      condition_begin { usize::MAX };
+    usize      true_begin { usize::MAX };
+    usize      false_begin { usize::MAX };
+    usize      parent { usize::MAX };
+    unsigned   depth {};
+};
+
+struct PointerChain {
+    TokenRange      extent;
+    PointerEvidence alignment { PointerEvidence::None };
+};
+
+struct BitField {
+    TokenRange extent;
+    TokenRange type;
+    usize      name_index { usize::MAX };
+    usize      colon { usize::MAX };
+    TokenRange width;
+};
+
+struct AccessLabel {
+    TokenRange extent;
+    usize      record { usize::MAX };
+    usize      name_index { usize::MAX };
+    usize      colon_index { usize::MAX };
+    usize      after_index { usize::MAX };
+    bool       at_record_start {};
+    bool       at_record_end {};
+    bool       previous_access {};
+    bool       next_access {};
+    bool       completed_member {};
+    bool       comment_before {};
+    bool       comment_after {};
 };
 
 struct WhitespaceSlot {
@@ -244,6 +310,10 @@ struct FormatSyntax {
     Vec<FormatStatement>          statements;
     Vec<FormatGroup>              groups;
     Vec<ExpressionChain>          expressions;
+    Vec<ConditionalExpression>    conditionals;
+    Vec<PointerChain>             pointer_chains;
+    Vec<BitField>                 bit_fields;
+    Vec<AccessLabel>              access_labels;
     bool                          preserve_all {};
 
     auto bytes() const -> slice<u8> { return snapshot->contents.as_bytes(); }

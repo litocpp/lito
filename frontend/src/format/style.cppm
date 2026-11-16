@@ -67,6 +67,12 @@ enum class OperandAlignment
     DontAlign,
     Align
 };
+enum class BinaryOperatorBreak
+{
+    None,
+    NonAssignment,
+    All
+};
 enum class EscapedNewlineAlignment
 {
     DontAlign,
@@ -84,6 +90,40 @@ enum class PointerAlignment
     Left,
     Right,
     Middle
+};
+enum class ReferenceAlignment
+{
+    Pointer,
+    Left,
+    Right,
+    Middle
+};
+enum class PointerQualifierSpacing
+{
+    Default,
+    Before,
+    After,
+    Both
+};
+enum class BitFieldColonSpacing
+{
+    Both,
+    None,
+    Before,
+    After
+};
+enum class EmptyLineBeforeAccess
+{
+    Never,
+    Leave,
+    LogicalBlock,
+    Always
+};
+enum class EmptyLineAfterAccess
+{
+    Never,
+    Leave,
+    Always
 };
 enum class AnglesSpacing
 {
@@ -203,16 +243,33 @@ struct FormatStyle {
     unsigned                 continuation_indent_width { 4 };
     unsigned                 constructor_initializer_indent_width { 4 };
     bool                     align_after_open_bracket {};
+    bool                     break_after_open_bracket_function {};
+    bool                     break_after_open_bracket_braced_list {};
+    bool                     break_after_open_bracket_if {};
+    bool                     break_after_open_bracket_loop {};
+    bool                     break_after_open_bracket_switch {};
+    bool                     break_before_close_bracket_function {};
+    bool                     break_before_close_bracket_braced_list {};
+    bool                     break_before_close_bracket_if {};
+    bool                     break_before_close_bracket_loop {};
+    bool                     break_before_close_bracket_switch {};
     bool                     bin_pack_arguments { true };
+    bool                     allow_all_arguments_on_next_line {};
     ParameterPacking         bin_pack_parameters { ParameterPacking::BinPack };
     bool                     allow_all_parameters_of_declaration_on_next_line { true };
     OperandAlignment         align_operands { OperandAlignment::DontAlign };
+    BinaryOperatorBreak      break_before_binary_operators { BinaryOperatorBreak::None };
+    bool                     break_before_ternary_operators {};
     bool                     align_consecutive_macros {};
     bool                     align_consecutive_assignments {};
     bool                     align_consecutive_declarations {};
     EscapedNewlineAlignment  align_escaped_newlines { EscapedNewlineAlignment::DontAlign };
     TrailingCommentAlignment align_trailing_comments { TrailingCommentAlignment::Leave };
     PointerAlignment         pointer_alignment { PointerAlignment::Right };
+    ReferenceAlignment       reference_alignment { ReferenceAlignment::Pointer };
+    bool                     derive_pointer_alignment {};
+    PointerQualifierSpacing  space_around_pointer_qualifiers { PointerQualifierSpacing::Default };
+    BitFieldColonSpacing     bit_field_colon_spacing { BitFieldColonSpacing::Both };
     AnglesSpacing            spaces_in_angles { AnglesSpacing::Never };
     BracedListStyle          braced_list_style { BracedListStyle::FunctionCall };
     bool                     spaces_in_square_brackets {};
@@ -223,7 +280,12 @@ struct FormatStyle {
     bool                     space_before_ctor_initializer_colon { true };
     bool                     space_before_inheritance_colon { true };
     bool                     space_before_range_based_for_loop_colon { true };
+    bool                     space_before_case_colon {};
+    bool                     space_before_square_brackets {};
     bool                     indent_case_labels {};
+    bool                     indent_goto_labels { true };
+    EmptyLineBeforeAccess    empty_line_before_access_modifier { EmptyLineBeforeAccess::Leave };
+    EmptyLineAfterAccess     empty_line_after_access_modifier { EmptyLineAfterAccess::Leave };
     bool                     indent_wrapped_function_names {};
     TemplateBreakStyle       break_template_declarations { TemplateBreakStyle::Leave };
     ReturnTypeBreakStyle     break_after_return_type { ReturnTypeBreakStyle::Automatic };
@@ -264,12 +326,16 @@ struct FormatStyle {
         style.short_lambdas                     = ShortLambdaStyle::All;
         style.column_limit                      = 80;
         style.align_after_open_bracket          = true;
+        style.allow_all_arguments_on_next_line  = true;
         style.align_operands                    = OperandAlignment::Align;
+        style.break_before_ternary_operators    = true;
         style.align_escaped_newlines            = EscapedNewlineAlignment::Right;
         style.align_trailing_comments           = TrailingCommentAlignment::Always;
         style.braced_list_style                 = BracedListStyle::AlignFirstComment;
         style.break_template_declarations       = TemplateBreakStyle::MultiLine;
         style.indent_pp_directives              = PreprocessorIndent::None;
+        style.empty_line_before_access_modifier = EmptyLineBeforeAccess::LogicalBlock;
+        style.empty_line_after_access_modifier  = EmptyLineAfterAccess::Never;
         style.max_empty_lines_to_keep           = 1;
         style.keep_empty_lines.at_start_of_file = true;
         style.keep_empty_lines.at_end_of_block  = false;

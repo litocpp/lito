@@ -12,6 +12,60 @@ namespace lito::frontend::format
 {
 class StyleConfigurationParser;
 
+enum class BracketAlignmentMode
+{
+    Align,
+    DontAlign,
+    AlwaysBreak,
+    BlockIndent
+};
+
+struct BracketBreakingPatch {
+    Option<bool> after_function;
+    Option<bool> after_braced_list;
+    Option<bool> after_if;
+    Option<bool> after_loop;
+    Option<bool> after_switch;
+    Option<bool> before_function;
+    Option<bool> before_braced_list;
+    Option<bool> before_if;
+    Option<bool> before_loop;
+    Option<bool> before_switch;
+
+    auto apply(FormatStyle base) const -> FormatStyle {
+        if (after_function.is_some()) base.break_after_open_bracket_function = *after_function;
+        if (after_braced_list.is_some())
+            base.break_after_open_bracket_braced_list = *after_braced_list;
+        if (after_if.is_some()) base.break_after_open_bracket_if = *after_if;
+        if (after_loop.is_some()) base.break_after_open_bracket_loop = *after_loop;
+        if (after_switch.is_some()) base.break_after_open_bracket_switch = *after_switch;
+        if (before_function.is_some()) base.break_before_close_bracket_function = *before_function;
+        if (before_braced_list.is_some())
+            base.break_before_close_bracket_braced_list = *before_braced_list;
+        if (before_if.is_some()) base.break_before_close_bracket_if = *before_if;
+        if (before_loop.is_some()) base.break_before_close_bracket_loop = *before_loop;
+        if (before_switch.is_some()) base.break_before_close_bracket_switch = *before_switch;
+        return base;
+    }
+};
+
+auto apply_bracket_alignment(FormatStyle& base, BracketAlignmentMode mode) -> void {
+    auto after =
+        mode == BracketAlignmentMode::AlwaysBreak || mode == BracketAlignmentMode::BlockIndent;
+    auto before                                 = mode == BracketAlignmentMode::BlockIndent;
+    base.align_after_open_bracket               = mode != BracketAlignmentMode::DontAlign;
+    base.break_after_open_bracket_function      = after;
+    base.break_after_open_bracket_braced_list   = after;
+    base.break_after_open_bracket_if            = after;
+    base.break_after_open_bracket_loop          = false;
+    base.break_after_open_bracket_switch        = false;
+    base.break_before_close_bracket_function    = before;
+    base.break_before_close_bracket_braced_list = before;
+    base.break_before_close_bracket_if          = before;
+    base.break_before_close_bracket_loop        = false;
+    base.break_before_close_bracket_switch      = false;
+}
+
 struct ParensOptionsPatch {
     Option<bool> except_double_parentheses;
     Option<bool> in_conditional_statements;
@@ -93,17 +147,25 @@ class StyleConfiguration {
     Option<unsigned>                 column_limit_;
     Option<unsigned>                 continuation_indent_width_;
     Option<unsigned>                 constructor_initializer_indent_width_;
-    Option<bool>                     align_after_open_bracket_;
+    Option<BracketAlignmentMode>     align_after_open_bracket_;
+    BracketBreakingPatch             bracket_breaking_;
     Option<bool>                     bin_pack_arguments_;
+    Option<bool>                     allow_all_arguments_on_next_line_;
     Option<ParameterPacking>         bin_pack_parameters_;
     Option<bool>                     allow_all_parameters_of_declaration_on_next_line_;
     Option<OperandAlignment>         align_operands_;
+    Option<BinaryOperatorBreak>      break_before_binary_operators_;
+    Option<bool>                     break_before_ternary_operators_;
     Option<bool>                     align_consecutive_macros_;
     Option<bool>                     align_consecutive_assignments_;
     Option<bool>                     align_consecutive_declarations_;
     Option<EscapedNewlineAlignment>  align_escaped_newlines_;
     Option<TrailingCommentAlignment> align_trailing_comments_;
     Option<PointerAlignment>         pointer_alignment_;
+    Option<ReferenceAlignment>       reference_alignment_;
+    Option<bool>                     derive_pointer_alignment_;
+    Option<PointerQualifierSpacing>  space_around_pointer_qualifiers_;
+    Option<BitFieldColonSpacing>     bit_field_colon_spacing_;
     Option<AnglesSpacing>            spaces_in_angles_;
     Option<BracedListStyle>          braced_list_style_;
     Option<bool>                     spaces_in_square_brackets_;
@@ -114,7 +176,12 @@ class StyleConfiguration {
     Option<bool>                     space_before_ctor_initializer_colon_;
     Option<bool>                     space_before_inheritance_colon_;
     Option<bool>                     space_before_range_based_for_loop_colon_;
+    Option<bool>                     space_before_case_colon_;
+    Option<bool>                     space_before_square_brackets_;
     Option<bool>                     indent_case_labels_;
+    Option<bool>                     indent_goto_labels_;
+    Option<EmptyLineBeforeAccess>    empty_line_before_access_modifier_;
+    Option<EmptyLineAfterAccess>     empty_line_after_access_modifier_;
     Option<bool>                     indent_wrapped_function_names_;
     Option<TemplateBreakStyle>       break_template_declarations_;
     Option<ReturnTypeBreakStyle>     break_after_return_type_;
@@ -186,13 +253,20 @@ public:
         if (constructor_initializer_indent_width_.is_some())
             base.constructor_initializer_indent_width = *constructor_initializer_indent_width_;
         if (align_after_open_bracket_.is_some())
-            base.align_after_open_bracket = *align_after_open_bracket_;
+            apply_bracket_alignment(base, *align_after_open_bracket_);
+        base = bracket_breaking_.apply(base);
         if (bin_pack_arguments_.is_some()) base.bin_pack_arguments = *bin_pack_arguments_;
+        if (allow_all_arguments_on_next_line_.is_some())
+            base.allow_all_arguments_on_next_line = *allow_all_arguments_on_next_line_;
         if (bin_pack_parameters_.is_some()) base.bin_pack_parameters = *bin_pack_parameters_;
         if (allow_all_parameters_of_declaration_on_next_line_.is_some())
             base.allow_all_parameters_of_declaration_on_next_line =
                 *allow_all_parameters_of_declaration_on_next_line_;
         if (align_operands_.is_some()) base.align_operands = *align_operands_;
+        if (break_before_binary_operators_.is_some())
+            base.break_before_binary_operators = *break_before_binary_operators_;
+        if (break_before_ternary_operators_.is_some())
+            base.break_before_ternary_operators = *break_before_ternary_operators_;
         if (align_consecutive_macros_.is_some())
             base.align_consecutive_macros = *align_consecutive_macros_;
         if (align_consecutive_assignments_.is_some())
@@ -204,6 +278,13 @@ public:
         if (align_trailing_comments_.is_some())
             base.align_trailing_comments = *align_trailing_comments_;
         if (pointer_alignment_.is_some()) base.pointer_alignment = *pointer_alignment_;
+        if (reference_alignment_.is_some()) base.reference_alignment = *reference_alignment_;
+        if (derive_pointer_alignment_.is_some())
+            base.derive_pointer_alignment = *derive_pointer_alignment_;
+        if (space_around_pointer_qualifiers_.is_some())
+            base.space_around_pointer_qualifiers = *space_around_pointer_qualifiers_;
+        if (bit_field_colon_spacing_.is_some())
+            base.bit_field_colon_spacing = *bit_field_colon_spacing_;
         if (spaces_in_angles_.is_some()) base.spaces_in_angles = *spaces_in_angles_;
         if (braced_list_style_.is_some()) base.braced_list_style = *braced_list_style_;
         if (spaces_in_square_brackets_.is_some())
@@ -223,7 +304,16 @@ public:
         if (space_before_range_based_for_loop_colon_.is_some())
             base.space_before_range_based_for_loop_colon =
                 *space_before_range_based_for_loop_colon_;
+        if (space_before_case_colon_.is_some())
+            base.space_before_case_colon = *space_before_case_colon_;
+        if (space_before_square_brackets_.is_some())
+            base.space_before_square_brackets = *space_before_square_brackets_;
         if (indent_case_labels_.is_some()) base.indent_case_labels = *indent_case_labels_;
+        if (indent_goto_labels_.is_some()) base.indent_goto_labels = *indent_goto_labels_;
+        if (empty_line_before_access_modifier_.is_some())
+            base.empty_line_before_access_modifier = *empty_line_before_access_modifier_;
+        if (empty_line_after_access_modifier_.is_some())
+            base.empty_line_after_access_modifier = *empty_line_after_access_modifier_;
         if (indent_wrapped_function_names_.is_some())
             base.indent_wrapped_function_names = *indent_wrapped_function_names_;
         if (break_template_declarations_.is_some())
@@ -465,15 +555,39 @@ class StyleConfigurationParser {
             if (key == "SplitEmptyNamespace"_str)
                 return rstd::addressof(wrapping.split_empty_namespace);
         } else {
+            auto& brackets = result.bracket_breaking_;
+            if (key == "BreakAfterOpenBracketFunction"_str)
+                return rstd::addressof(brackets.after_function);
+            if (key == "BreakAfterOpenBracketBracedList"_str)
+                return rstd::addressof(brackets.after_braced_list);
+            if (key == "BreakAfterOpenBracketIf"_str) return rstd::addressof(brackets.after_if);
+            if (key == "BreakAfterOpenBracketLoop"_str) return rstd::addressof(brackets.after_loop);
+            if (key == "BreakAfterOpenBracketSwitch"_str)
+                return rstd::addressof(brackets.after_switch);
+            if (key == "BreakBeforeCloseBracketFunction"_str)
+                return rstd::addressof(brackets.before_function);
+            if (key == "BreakBeforeCloseBracketBracedList"_str)
+                return rstd::addressof(brackets.before_braced_list);
+            if (key == "BreakBeforeCloseBracketIf"_str) return rstd::addressof(brackets.before_if);
+            if (key == "BreakBeforeCloseBracketLoop"_str)
+                return rstd::addressof(brackets.before_loop);
+            if (key == "BreakBeforeCloseBracketSwitch"_str)
+                return rstd::addressof(brackets.before_switch);
             if (key == "BinPackArguments"_str) return rstd::addressof(result.bin_pack_arguments_);
+            if (key == "AllowAllArgumentsOnNextLine"_str)
+                return rstd::addressof(result.allow_all_arguments_on_next_line_);
             if (key == "AllowAllParametersOfDeclarationOnNextLine"_str)
                 return rstd::addressof(result.allow_all_parameters_of_declaration_on_next_line_);
+            if (key == "BreakBeforeTernaryOperators"_str)
+                return rstd::addressof(result.break_before_ternary_operators_);
             if (key == "AlignConsecutiveMacros"_str)
                 return rstd::addressof(result.align_consecutive_macros_);
             if (key == "AlignConsecutiveAssignments"_str)
                 return rstd::addressof(result.align_consecutive_assignments_);
             if (key == "AlignConsecutiveDeclarations"_str)
                 return rstd::addressof(result.align_consecutive_declarations_);
+            if (key == "DerivePointerAlignment"_str)
+                return rstd::addressof(result.derive_pointer_alignment_);
             if (key == "SpacesInSquareBrackets"_str)
                 return rstd::addressof(result.spaces_in_square_brackets_);
             if (key == "SpaceAfterCStyleCast"_str)
@@ -490,7 +604,12 @@ class StyleConfigurationParser {
                 return rstd::addressof(result.space_before_inheritance_colon_);
             if (key == "SpaceBeforeRangeBasedForLoopColon"_str)
                 return rstd::addressof(result.space_before_range_based_for_loop_colon_);
+            if (key == "SpaceBeforeCaseColon"_str)
+                return rstd::addressof(result.space_before_case_colon_);
+            if (key == "SpaceBeforeSquareBrackets"_str)
+                return rstd::addressof(result.space_before_square_brackets_);
             if (key == "IndentCaseLabels"_str) return rstd::addressof(result.indent_case_labels_);
+            if (key == "IndentGotoLabels"_str) return rstd::addressof(result.indent_goto_labels_);
             if (key == "IndentWrappedFunctionNames"_str)
                 return rstd::addressof(result.indent_wrapped_function_names_);
             if (key == "AllowShortLoopsOnASingleLine"_str)
@@ -631,13 +750,24 @@ class StyleConfigurationParser {
             else
                 return unsupported_value(key, text);
         } else if (key == "AlignAfterOpenBracket"_str) {
-            return enumeration_field<bool>(result.align_after_open_bracket_,
-                                           text,
-                                           key,
-                                           { { "true"_str, true },
-                                             { "false"_str, false },
-                                             { "Align"_str, true },
-                                             { "DontAlign"_str, false } });
+            return enumeration_field<BracketAlignmentMode>(
+                result.align_after_open_bracket_,
+                text,
+                key,
+                { { "true"_str, BracketAlignmentMode::Align },
+                  { "false"_str, BracketAlignmentMode::DontAlign },
+                  { "Align"_str, BracketAlignmentMode::Align },
+                  { "DontAlign"_str, BracketAlignmentMode::DontAlign },
+                  { "AlwaysBreak"_str, BracketAlignmentMode::AlwaysBreak },
+                  { "BlockIndent"_str, BracketAlignmentMode::BlockIndent } });
+        } else if (key == "BreakBeforeBinaryOperators"_str) {
+            return enumeration_field<BinaryOperatorBreak>(
+                result.break_before_binary_operators_,
+                text,
+                key,
+                { { "None"_str, BinaryOperatorBreak::None },
+                  { "NonAssignment"_str, BinaryOperatorBreak::NonAssignment },
+                  { "All"_str, BinaryOperatorBreak::All } });
         } else if (key == "BinPackParameters"_str) {
             return enumeration_field<ParameterPacking>(
                 result.bin_pack_parameters_,
@@ -681,6 +811,50 @@ class StyleConfigurationParser {
                 { { "Left"_str, PointerAlignment::Left },
                   { "Right"_str, PointerAlignment::Right },
                   { "Middle"_str, PointerAlignment::Middle } });
+        } else if (key == "ReferenceAlignment"_str) {
+            return enumeration_field<ReferenceAlignment>(
+                result.reference_alignment_,
+                text,
+                key,
+                { { "Pointer"_str, ReferenceAlignment::Pointer },
+                  { "Left"_str, ReferenceAlignment::Left },
+                  { "Right"_str, ReferenceAlignment::Right },
+                  { "Middle"_str, ReferenceAlignment::Middle } });
+        } else if (key == "SpaceAroundPointerQualifiers"_str) {
+            return enumeration_field<PointerQualifierSpacing>(
+                result.space_around_pointer_qualifiers_,
+                text,
+                key,
+                { { "Default"_str, PointerQualifierSpacing::Default },
+                  { "Before"_str, PointerQualifierSpacing::Before },
+                  { "After"_str, PointerQualifierSpacing::After },
+                  { "Both"_str, PointerQualifierSpacing::Both } });
+        } else if (key == "BitFieldColonSpacing"_str) {
+            return enumeration_field<BitFieldColonSpacing>(
+                result.bit_field_colon_spacing_,
+                text,
+                key,
+                { { "Both"_str, BitFieldColonSpacing::Both },
+                  { "None"_str, BitFieldColonSpacing::None },
+                  { "Before"_str, BitFieldColonSpacing::Before },
+                  { "After"_str, BitFieldColonSpacing::After } });
+        } else if (key == "EmptyLineBeforeAccessModifier"_str) {
+            return enumeration_field<EmptyLineBeforeAccess>(
+                result.empty_line_before_access_modifier_,
+                text,
+                key,
+                { { "Never"_str, EmptyLineBeforeAccess::Never },
+                  { "Leave"_str, EmptyLineBeforeAccess::Leave },
+                  { "LogicalBlock"_str, EmptyLineBeforeAccess::LogicalBlock },
+                  { "Always"_str, EmptyLineBeforeAccess::Always } });
+        } else if (key == "EmptyLineAfterAccessModifier"_str) {
+            return enumeration_field<EmptyLineAfterAccess>(
+                result.empty_line_after_access_modifier_,
+                text,
+                key,
+                { { "Never"_str, EmptyLineAfterAccess::Never },
+                  { "Leave"_str, EmptyLineAfterAccess::Leave },
+                  { "Always"_str, EmptyLineAfterAccess::Always } });
         } else if (key == "SpacesInAngles"_str) {
             return enumeration_field<AnglesSpacing>(result.spaces_in_angles_,
                                                     text,

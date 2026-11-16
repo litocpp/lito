@@ -80,6 +80,12 @@ public:
                 if (distance <= current.columns) current.columns -= distance;
             }
         }
+        if (token.syntax.label_name) {
+            current.columns =
+                style_.indent_goto_labels && current.columns >= usize(style_.indent_width)
+                    ? current.columns - usize(style_.indent_width)
+                    : usize {};
+        }
         if (text == "{"_str && token.syntax.block != BlockKind::None &&
             token.syntax.block != BlockKind::Initializer) {
             next_.columns += block_width(token.syntax);
@@ -109,6 +115,17 @@ auto block_initializer_style(const FormatSyntax& syntax, usize index, const Form
     return false;
 }
 
+auto pointer_alignment(const TokenSyntax& token, const FormatStyle& style) -> PointerAlignment {
+    if (token.pointer_kind == PointerKind::LValueReference ||
+        token.pointer_kind == PointerKind::RValueReference) {
+        if (style.reference_alignment == ReferenceAlignment::Left) return PointerAlignment::Left;
+        if (style.reference_alignment == ReferenceAlignment::Right) return PointerAlignment::Right;
+        if (style.reference_alignment == ReferenceAlignment::Middle)
+            return PointerAlignment::Middle;
+    }
+    return style.pointer_alignment;
+}
+
 auto gap_spaces(const FormatSyntax& syntax, usize index, const FormatStyle& style)
     -> Option<unsigned> {
     const auto& left  = syntax.tokens[index - usize(1)];
@@ -117,14 +134,31 @@ auto gap_spaces(const FormatSyntax& syntax, usize index, const FormatStyle& styl
     if (right.syntax.access_colon) return Some(0u);
     if (right.syntax.cast_operand) return Some(style.space_after_c_style_cast ? 1u : 0u);
     if (left.syntax.logical_not) return Some(style.space_after_logical_not ? 1u : 0u);
+    if (left.syntax.operator_role == OperatorRole::Conditional ||
+        right.syntax.operator_role == OperatorRole::Conditional)
+        return Some(1u);
     if (right.syntax.operator_role == OperatorRole::PointerReference)
-        return Some(left.syntax.operator_role == OperatorRole::PointerReference ||
-                            style.pointer_alignment == PointerAlignment::Left
-                        ? 0u
-                        : 1u);
+        return Some(
+            left.syntax.pointer_qualifier &&
+                    (style.space_around_pointer_qualifiers == PointerQualifierSpacing::After ||
+                     style.space_around_pointer_qualifiers == PointerQualifierSpacing::Both)
+                ? 1u
+            : left.syntax.operator_role == OperatorRole::PointerReference ||
+                    pointer_alignment(right.syntax, style) == PointerAlignment::Left
+                ? 0u
+                : 1u);
     if (left.syntax.operator_role == OperatorRole::PointerReference)
-        return Some(style.pointer_alignment == PointerAlignment::Right ? 0u : 1u);
+        return Some(
+            right.syntax.pointer_qualifier &&
+                    (style.space_around_pointer_qualifiers == PointerQualifierSpacing::Before ||
+                     style.space_around_pointer_qualifiers == PointerQualifierSpacing::Both)
+                ? 1u
+            : pointer_alignment(left.syntax, style) == PointerAlignment::Right ? 0u
+                                                                               : 1u);
     if (left.syntax.operator_role == OperatorRole::Unary) return Some(0u);
+    if (left.syntax.operator_role == OperatorRole::Binary &&
+        right.syntax.operator_role == OperatorRole::Unary)
+        return Some(1u);
     if (right.syntax.template_open) {
         auto group = right.syntax.group_id;
         if (group < syntax.groups.len() &&
@@ -137,7 +171,14 @@ auto gap_spaces(const FormatSyntax& syntax, usize index, const FormatStyle& styl
         return Some(style.spaces_in_angles == AnglesSpacing::Always ? 1u : 0u);
     }
     if (right.syntax.colon_role != ColonRole::Unknown) {
-        if (right.syntax.colon_role == ColonRole::Case) return Some(0u);
+        if (right.syntax.colon_role == ColonRole::Case)
+            return Some(style.space_before_case_colon ? 1u : 0u);
+        if (right.syntax.colon_role == ColonRole::Label) return Some(0u);
+        if (right.syntax.colon_role == ColonRole::BitField)
+            return Some(style.bit_field_colon_spacing == BitFieldColonSpacing::Both ||
+                                style.bit_field_colon_spacing == BitFieldColonSpacing::Before
+                            ? 1u
+                            : 0u);
         auto spaced = right.syntax.colon_role == ColonRole::Constructor
                           ? style.space_before_ctor_initializer_colon
                       : right.syntax.colon_role == ColonRole::Inheritance
@@ -147,13 +188,24 @@ auto gap_spaces(const FormatSyntax& syntax, usize index, const FormatStyle& styl
                           : true;
         return Some(spaced ? 1u : 0u);
     }
+    if (left.syntax.colon_role == ColonRole::BitField)
+        return Some(style.bit_field_colon_spacing == BitFieldColonSpacing::Both ||
+                            style.bit_field_colon_spacing == BitFieldColonSpacing::After
+                        ? 1u
+                        : 0u);
     if (left.syntax.colon_role != ColonRole::Unknown) return Some(1u);
+    if (b == "["_str && right.syntax.square_role == SquareRole::Subscript)
+        return Some(style.space_before_square_brackets && right.syntax.square_chain_first ? 1u
+                                                                                          : 0u);
     if ((a == "["_str && left.syntax.square_role == SquareRole::Subscript) ||
         (b == "]"_str && right.syntax.square_role == SquareRole::Subscript))
         return Some(a == "["_str && b == "]"_str ? 0u : style.spaces_in_square_brackets ? 1u : 0u);
     if (right.syntax.initializer_open ||
         (right.syntax.block == BlockKind::Initializer && b == "{"_str))
-        return Some(style.space_before_cpp11_braced_list ? 1u : 0u);
+        return Some(left.syntax.operator_role == OperatorRole::Assignment ||
+                            style.space_before_cpp11_braced_list
+                        ? 1u
+                        : 0u);
     if (left.syntax.initializer_open || right.syntax.initializer_close ||
         (a == "{"_str && left.syntax.block == BlockKind::Initializer) ||
         (b == "}"_str && right.syntax.block == BlockKind::Initializer))
@@ -350,8 +402,8 @@ auto make_layout_plan(const FormatSyntax& syntax, const FormatStyle& style)
                     ! left.source.line_comment;
                 auto force_newline =
                     left.source.line_comment || after_open || closing || wrap_opening ||
-                    wrap_continuation || token.syntax.access_label ||
-                    (left.syntax.access_end && ! token.source.comment) ||
+                    wrap_continuation || token.syntax.access_label || token.syntax.label_name ||
+                    left.syntax.label_end || (left.syntax.access_end && ! token.source.comment) ||
                     left.syntax.enum_separator || (a == ";"_str && previous.parens == 0) ||
                     (a == "}"_str && left.syntax.block != BlockKind::None &&
                      left.syntax.block != BlockKind::Initializer && b != ";"_str && b != ","_str &&
@@ -490,6 +542,82 @@ auto flatten_range(const FormatSyntax& syntax,
     }
 }
 
+auto bracket_breaks(const FormatGroup& group, bool block_initializer, const FormatStyle& style)
+    -> PlannedGroup {
+    PlannedGroup result;
+    if (group.kind == GroupKind::Arguments || group.kind == GroupKind::Parameters) {
+        result.after_open   = style.break_after_open_bracket_function;
+        result.before_close = style.break_before_close_bracket_function;
+    } else if (group.kind == GroupKind::Initializer && ! block_initializer) {
+        result.after_open   = style.break_after_open_bracket_braced_list;
+        result.before_close = style.break_before_close_bracket_braced_list;
+    } else if (group.kind == GroupKind::Control) {
+        if (group.control == ControlKind::If) {
+            result.after_open   = style.break_after_open_bracket_if;
+            result.before_close = style.break_before_close_bracket_if;
+        } else if (group.control == ControlKind::For || group.control == ControlKind::While ||
+                   group.control == ControlKind::Do) {
+            result.after_open   = style.break_after_open_bracket_loop;
+            result.before_close = style.break_before_close_bracket_loop;
+        } else if (group.control == ControlKind::Switch) {
+            result.after_open   = style.break_after_open_bracket_switch;
+            result.before_close = style.break_before_close_bracket_switch;
+        }
+    }
+    if (block_initializer) result.before_close = true;
+    return result;
+}
+
+auto expression_break(const FormatSyntax& syntax,
+                      LayoutPlan&         plan,
+                      usize               op,
+                      bool                before,
+                      usize               base,
+                      usize               anchor,
+                      usize               indent_anchor,
+                      usize               indent_offset,
+                      const FormatStyle&  style) -> usize {
+    auto selected = before ? op : op + usize(1);
+    auto opposite = before ? op + usize(1) : op;
+    if (selected >= syntax.tokens.len()) return usize::MAX;
+    if (opposite < syntax.tokens.len()) {
+        auto& gap = plan.gaps[opposite];
+        if (gap.editable && gap.breaking != GapBreak::Hard &&
+            (! gap.broken || style.column_limit != 0) && ! syntax.tokens[opposite].source.comment &&
+            ! syntax.tokens[opposite - usize(1)].source.line_comment) {
+            auto spaces = gap_spaces(syntax, opposite, style);
+            set_gap_spaces(plan, opposite, spaces.is_some() ? *spaces : gap.flat_spaces);
+            gap.breaking      = GapBreak::Never;
+            gap.indent_anchor = usize::MAX;
+        }
+    }
+    auto& gap = plan.gaps[selected];
+    if (! gap.editable || gap.breaking == GapBreak::Hard) return usize::MAX;
+    gap.breaking      = GapBreak::Soft;
+    gap.indent        = base;
+    gap.anchor        = anchor;
+    gap.indent_anchor = anchor == usize::MAX ? indent_anchor : usize::MAX;
+    gap.indent_offset = indent_offset;
+    return selected;
+}
+
+auto expression_indent_anchor(const FormatSyntax& syntax, TokenRange extent) -> usize {
+    auto anchor = extent.begin;
+    if (extent.begin < syntax.tokens.len()) {
+        auto statement = syntax.tokens[extent.begin].syntax.statement_id;
+        if (statement < syntax.statements.len()) anchor = syntax.statements[statement].extent.begin;
+    }
+    auto group_open = usize::MAX;
+    for (const auto& group : syntax.groups) {
+        if (! group.safe || group.open >= extent.begin || extent.end > group.close ||
+            (group.kind != GroupKind::Arguments && group.kind != GroupKind::Parameters &&
+             group.kind != GroupKind::Control && group.kind != GroupKind::Initializer))
+            continue;
+        if (group_open == usize::MAX || group.open > group_open) group_open = group.open;
+    }
+    return group_open != usize::MAX ? group_open : anchor;
+}
+
 auto annotate_plan(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style) -> void {
     for (auto statement_index = usize {}; statement_index < syntax.statements.len();
          ++statement_index) {
@@ -594,6 +722,7 @@ auto annotate_plan(const FormatSyntax& syntax, LayoutPlan& plan, const FormatSty
     }
     for (auto group_index = usize {}; group_index < syntax.groups.len(); ++group_index) {
         const auto& group = syntax.groups[group_index];
+        plan.groups.push(PlannedGroup {});
         if (! group.safe || group.items.is_empty() || group.open >= syntax.tokens.len()) continue;
         if (group.kind == GroupKind::Attribute || group.kind == GroupKind::LambdaCapture) continue;
         auto first = group.items[usize {}].begin;
@@ -605,8 +734,13 @@ auto annotate_plan(const FormatSyntax& syntax, LayoutPlan& plan, const FormatSty
               first < syntax.tokens.len() && syntax.tokens[first].source.comment));
         auto indent =
             base + usize(block_initializer ? style.indent_width : style.continuation_indent_width);
+        auto& group_plan               = plan.groups[group_index];
+        group_plan                     = bracket_breaks(group, block_initializer, style);
+        group_plan.base_indent         = base;
+        group_plan.continuation_indent = indent;
         if (group.kind == GroupKind::ConstructorInitializers) {
             indent = base + usize(style.constructor_initializer_indent_width);
+            group_plan.continuation_indent = indent;
             if (plan.gaps[group.open].editable) {
                 plan.gaps[group.open].breaking = GapBreak::Soft;
                 plan.gaps[group.open].indent   = indent;
@@ -642,20 +776,68 @@ auto annotate_plan(const FormatSyntax& syntax, LayoutPlan& plan, const FormatSty
             plan.gaps[group.close].indent = base;
             if (block_initializer && plan.gaps[group.close].broken)
                 set_gap_break(plan, group.close, base, style);
+            else if (! block_initializer && plan.gaps[group.close].breaking != GapBreak::Hard &&
+                     ! syntax.tokens[group.close - usize(1)].source.comment) {
+                auto spaces = gap_spaces(syntax, group.close, style);
+                if (spaces.is_some()) set_gap_spaces(plan, group.close, *spaces);
+            }
         }
     }
     for (const auto& expression : syntax.expressions) {
         if (expression.first_operand >= syntax.tokens.len()) continue;
         for (auto op : expression.operators) {
-            auto index = op + usize(1);
-            if (index >= syntax.tokens.len() || ! plan.gaps[index].editable ||
-                plan.gaps[index].breaking == GapBreak::Hard)
-                continue;
-            plan.gaps[index].breaking = GapBreak::Soft;
-            plan.gaps[index].indent =
-                plan.gaps[expression.extent.begin].indent + usize(style.continuation_indent_width);
-            if (style.align_operands == OperandAlignment::Align)
-                plan.gaps[index].anchor = expression.first_operand;
+            auto assignment = syntax.tokens[op].syntax.operator_role == OperatorRole::Assignment;
+            auto before     = style.break_before_binary_operators == BinaryOperatorBreak::All ||
+                              (! assignment && style.break_before_binary_operators ==
+                                                   BinaryOperatorBreak::NonAssignment);
+            expression_break(syntax,
+                             plan,
+                             op,
+                             before,
+                             plan.gaps[expression.extent.begin].indent +
+                                 usize(style.continuation_indent_width),
+                             ! assignment && style.align_operands == OperandAlignment::Align
+                                 ? expression.first_operand
+                                 : usize::MAX,
+                             expression_indent_anchor(syntax, expression.extent),
+                             usize(style.continuation_indent_width),
+                             style);
+        }
+    }
+    for (const auto& conditional : syntax.conditionals) {
+        auto base   = plan.gaps[conditional.extent.begin].indent +
+                      usize(style.continuation_indent_width) * usize(conditional.depth + 1u);
+        auto anchor = style.align_operands == OperandAlignment::Align ? conditional.condition_begin
+                                                                      : usize::MAX;
+        auto indent_extent = conditional.extent;
+        auto parent        = conditional.parent;
+        while (parent < syntax.conditionals.len()) {
+            indent_extent = syntax.conditionals[parent].extent;
+            parent        = syntax.conditionals[parent].parent;
+        }
+        auto indent_anchor = expression_indent_anchor(syntax, indent_extent);
+        auto offset        = usize(style.continuation_indent_width) * usize(conditional.depth + 1u);
+        auto question      = expression_break(syntax,
+                                              plan,
+                                              conditional.question,
+                                              style.break_before_ternary_operators,
+                                              base,
+                                              anchor,
+                                              indent_anchor,
+                                              offset,
+                                              style);
+        auto colon         = expression_break(syntax,
+                                              plan,
+                                              conditional.colon,
+                                              style.break_before_ternary_operators,
+                                              base,
+                                              anchor,
+                                              indent_anchor,
+                                              offset,
+                                              style);
+        if (question < syntax.tokens.len() && colon < syntax.tokens.len()) {
+            plan.gaps[question].paired = colon;
+            plan.gaps[colon].paired    = question;
         }
     }
     rebuild_lines(syntax, plan, style);
@@ -681,8 +863,99 @@ auto annotate_plan(const FormatSyntax& syntax, LayoutPlan& plan, const FormatSty
         }
 }
 
-auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
+auto sync_multiline_control_braces(const FormatSyntax& syntax,
+                                   LayoutPlan&         plan,
+                                   const FormatStyle&  style) -> bool {
+    if (style.effective_brace_wrapping().after_control_statement != ControlBraceStyle::MultiLine)
+        return false;
+    auto changed = false;
+    for (const auto& statement : syntax.statements) {
+        auto body = statement.body_open;
+        if (statement.kind != StatementKind::Control || body >= syntax.tokens.len() ||
+            ! plan.gaps[body].editable || statement.extent.begin >= body)
+            continue;
+        auto header_end = body - usize(1);
+        for (const auto& group : syntax.groups)
+            if (group.kind == GroupKind::Control && group.control == statement.control &&
+                group.scope_id == statement.scope_id && statement.extent.begin <= group.open &&
+                group.close < body)
+                header_end = group.close;
+        auto  wrap = plan.token_lines[statement.extent.begin] != plan.token_lines[header_end] ||
+                     syntax.tokens[body - usize(1)].source.line_comment;
+        auto& gap  = plan.gaps[body];
+        if (wrap == gap.broken) continue;
+        if (wrap) {
+            set_gap_break(plan, body, gap.indent, style);
+            gap.breaking = GapBreak::Hard;
+        } else {
+            set_gap_spaces(plan, body, 1);
+            gap.breaking = GapBreak::Never;
+        }
+        changed = true;
+    }
+    if (changed) rebuild_lines(syntax, plan, style);
+    return changed;
+}
+
+auto apply_access_spacing(const FormatSyntax& syntax, LayoutPlan& plan, const FormatStyle& style)
+    -> void {
+    for (const auto& label : syntax.access_labels) {
+        if (label.name_index < syntax.tokens.len() && plan.gaps[label.name_index].editable) {
+            auto& gap   = plan.gaps[label.name_index];
+            auto  count = layout_newlines(gap_text(syntax, gap));
+            if (count == 0) count = 1;
+            if (style.empty_line_before_access_modifier == EmptyLineBeforeAccess::Never)
+                count = 1;
+            else if (style.empty_line_before_access_modifier == EmptyLineBeforeAccess::Always &&
+                     ! label.at_record_start && count < 2)
+                count = 2;
+            else if (style.empty_line_before_access_modifier ==
+                     EmptyLineBeforeAccess::LogicalBlock) {
+                if (label.previous_access)
+                    count = 1;
+                else if (label.completed_member && ! label.comment_before && count < 2)
+                    count = 2;
+            }
+            set_gap_break(plan, label.name_index, gap.indent, style, count);
+            gap.breaking = GapBreak::Hard;
+        }
+        if (label.next_access || label.after_index >= syntax.tokens.len() ||
+            ! plan.gaps[label.after_index].editable)
+            continue;
+        auto& gap   = plan.gaps[label.after_index];
+        auto  count = layout_newlines(gap_text(syntax, gap));
+        if (count == 0) count = 1;
+        if (style.empty_line_after_access_modifier == EmptyLineAfterAccess::Never ||
+            (style.empty_line_after_access_modifier == EmptyLineAfterAccess::Always &&
+             label.at_record_end))
+            count = 1;
+        else if (style.empty_line_after_access_modifier == EmptyLineAfterAccess::Always &&
+                 count < 2)
+            count = 2;
+        set_gap_break(plan, label.after_index, gap.indent, style, count);
+        gap.breaking = GapBreak::Hard;
+    }
+    rebuild_lines(syntax, plan, style);
+}
+
+auto layout_source(const FormatSyntax& syntax, const FormatStyle& requested_style)
     -> lexical::Result<String> {
+    auto style = requested_style;
+    if (style.derive_pointer_alignment) {
+        auto left  = usize {};
+        auto right = usize {};
+        for (const auto& chain : syntax.pointer_chains) {
+            if (chain.alignment == PointerEvidence::Left)
+                ++left;
+            else if (chain.alignment == PointerEvidence::Right)
+                ++right;
+        }
+        if (left > right)
+            style.pointer_alignment = PointerAlignment::Left;
+        else if (right > left)
+            style.pointer_alignment = PointerAlignment::Right;
+        style.reference_alignment = ReferenceAlignment::Pointer;
+    }
     if (style.tab_width == 0)
         return Err(lexical::Error::make("TabWidth must be greater than zero"_str));
     if (style.spaces_in_angles == AnglesSpacing::Always)
@@ -692,7 +965,10 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
     auto plan = make_layout_plan(syntax, style);
     if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
     annotate_plan(syntax, *plan, style);
+    apply_access_spacing(syntax, *plan, style);
+    sync_multiline_control_braces(syntax, *plan, style);
     wrap_lines(syntax, *plan, style);
+    if (sync_multiline_control_braces(syntax, *plan, style)) wrap_lines(syntax, *plan, style);
     if (style.break_template_declarations == TemplateBreakStyle::MultiLine) {
         auto changed = false;
         for (auto index = usize(1); index < syntax.tokens.len(); ++index) {

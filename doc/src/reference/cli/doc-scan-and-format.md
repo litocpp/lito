@@ -105,6 +105,9 @@ The table describes the implemented subset; tests use hand-written expected resu
 | `BraceWrapping` | Supported fields listed below; effective with `Custom` |
 | `AccessModifierOffset` | Signed integer; default `-2` |
 | `IndentAccessModifiers` | Boolean |
+| `EmptyLineBeforeAccessModifier` | `Never`, `Leave`, `LogicalBlock`, `Always` |
+| `EmptyLineAfterAccessModifier` | `Never`, `Leave`, `Always` |
+| `IndentGotoLabels` | Boolean |
 | `SpaceBeforeParens` | `Never`, `ControlStatements`, `Always` |
 | `SpaceBeforeAssignmentOperators` | Boolean; controls the space before assignment operators |
 | `SpacesInParens` | `Never`, `Custom` |
@@ -115,23 +118,33 @@ The table describes the implemented subset; tests use hand-written expected resu
 | `KeepEmptyLines` | Boolean fields `AtStartOfFile`, `AtEndOfFile`, `AtStartOfBlock`, `AtEndOfBlock` |
 | `ColumnLimit` | Unsigned integer; `0` means no column limit |
 | `ContinuationIndentWidth`, `ConstructorInitializerIndentWidth` | Unsigned integers |
-| `AlignAfterOpenBracket` | Boolean; legacy `Align`, `DontAlign` mean `true`, `false` |
+| `AlignAfterOpenBracket` | Boolean; legacy `Align`, `DontAlign`, `AlwaysBreak`, `BlockIndent` |
+| `BreakAfterOpenBracketFunction`, `BreakAfterOpenBracketBracedList`, `BreakAfterOpenBracketIf`, `BreakAfterOpenBracketLoop`, `BreakAfterOpenBracketSwitch` | Boolean |
+| `BreakBeforeCloseBracketFunction`, `BreakBeforeCloseBracketBracedList`, `BreakBeforeCloseBracketIf`, `BreakBeforeCloseBracketLoop`, `BreakBeforeCloseBracketSwitch` | Boolean |
 | `AlignOperands` | `DontAlign`, `Align`, or legacy boolean |
 | `AlignConsecutiveMacros`, `AlignConsecutiveAssignments`, `AlignConsecutiveDeclarations` | Boolean; consecutive groups stop at scope, blank-line and protected boundaries |
 | `AlignTrailingComments` | `Leave`, `Never`, `Always`, or legacy boolean |
 | `AlignEscapedNewlines` | `DontAlign`, `Left`, `Right` |
 | `BinPackArguments` | Boolean |
+| `AllowAllArgumentsOnNextLine` | Boolean; applies to calls and initializer lists |
 | `BinPackParameters` | `BinPack`, `OnePerLine`, `AlwaysOnePerLine` |
 | `AllowAllParametersOfDeclarationOnNextLine` | Boolean |
 | `PointerAlignment` | `Left`, `Right`, `Middle` |
+| `ReferenceAlignment` | `Pointer`, `Left`, `Right`, `Middle` |
+| `DerivePointerAlignment` | Boolean |
+| `SpaceAroundPointerQualifiers` | `Default`, `Before`, `After`, `Both` |
+| `BitFieldColonSpacing` | `Both`, `None`, `Before`, `After` |
 | `SpacesInAngles` | `Never`, `Leave`, or legacy `false` |
 | `Cpp11BracedListStyle` | `Block`, `FunctionCall`, `AlignFirstComment`; legacy `false`, `true` mean `Block`, `FunctionCall` |
 | `SpacesInSquareBrackets`, `SpaceAfterCStyleCast`, `SpaceAfterLogicalNot`, `SpaceAfterTemplateKeyword` | Boolean |
 | `SpaceBeforeCpp11BracedList`, `SpaceBeforeCtorInitializerColon`, `SpaceBeforeInheritanceColon`, `SpaceBeforeRangeBasedForLoopColon` | Boolean |
+| `SpaceBeforeCaseColon`, `SpaceBeforeSquareBrackets` | Boolean |
 | `IndentCaseLabels`, `IndentWrappedFunctionNames` | Boolean |
 | `BreakTemplateDeclarations` | `Leave`, `No`, `MultiLine`, `Yes`; legacy `AlwaysBreakTemplateDeclarations` remains accepted |
 | `BreakAfterReturnType` | `Automatic`, `All`; legacy `AlwaysBreakAfterReturnType: None` means `Automatic` |
 | `BreakAfterAttributes` | `Leave`, `Never`, `Always` |
+| `BreakBeforeBinaryOperators` | `None`, `NonAssignment`, `All` |
+| `BreakBeforeTernaryOperators` | Boolean |
 | `PackConstructorInitializers` | `Never`, `BinPack`, `CurrentLine`, `NextLine`; legacy `ConstructorInitializerAllOnOneLineOrOnePerLine` remains accepted |
 | `AllowShortIfStatementsOnASingleLine` | `Never`, `WithoutElse`, `OnlyFirstIf`, `AllIfsAndElse`; legacy `true` means `WithoutElse` |
 | `AllowShortLoopsOnASingleLine`, `AllowShortCaseLabelsOnASingleLine` | Boolean |
@@ -157,6 +170,28 @@ or protected region may exceed the limit. Inline-only functions are definitions 
 a class, struct or union. Short-code rules also respect the column limit. Consecutive declaration
 and assignment alignment applies to statements that fit on one planned line.
 
+Bracket-opening rules apply when a recognized group exceeds the column limit. Closing-bracket
+rules require a real break immediately after the matching opening bracket. Braced-list rules
+apply to non-`Block` initializer styles. Function rules cover calls, declarations and definitions;
+control rules distinguish `if`, loops and `switch`. A zero column limit does not force these
+groups to expand.
+
+`AllowAllArgumentsOnNextLine` permits all call or initializer arguments to share a continuation
+line when they fit, including with `BinPackArguments: false`. Declaration parameters use
+`AllowAllParametersOfDeclarationOnNextLine`; constructor initializers use their own packing rule.
+The LLVM projection enables `AllowAllArgumentsOnNextLine` and `BreakBeforeTernaryOperators`.
+The fallback style leaves both disabled.
+
+Legacy `AlwaysBreak` enables after-opening rules for functions, braced lists and `if`.
+`BlockIndent` also enables their before-closing rules. Both set bracket alignment to true;
+loop and switch rules remain separate. An explicit `AlignAfterOpenBracket` value initializes
+these bracket flags, then explicit modern fields override it regardless of YAML key order.
+An inheriting configuration that omits the alignment key keeps the parent's flags.
+
+Binary `None` breaks after operators, `NonAssignment` breaks before non-assignment operators,
+and `All` includes assignment operators. Ternary `?` and `:` follow their separate boolean
+rule. These choices use recognized expression boundaries; ambiguous syntax remains protected.
+
 Macro alignment only edits recognized header separators and existing horizontal whitespace
 before continuations. Macro replacement tokens, stringization, token paste and format-off
 regions retain their bytes. `IndentPPDirectives: None` normalizes safe directive prefixes to
@@ -169,16 +204,38 @@ Supported `BraceWrapping` fields are:
 - booleans `BeforeElse`, `BeforeCatch`, `IndentBraces`;
 - booleans `SplitEmptyFunction`, `SplitEmptyRecord`, `SplitEmptyNamespace`.
 
-`MultiLine` considers line breaks within the recognized control header. `IndentBraces` follows
+`MultiLine` considers the recognized control header's final line layout. `IndentBraces` follows
 the control-block rule: wrapped control braces and their body gain an extra level. Empty-block
 split options affect braces whose opening brace has already been wrapped. A short-function rule
 that successfully merges the whole function takes precedence. Wrapping fields remain available
 for inheritance when the current brace mode does not use them.
 
+`ReferenceAlignment: Pointer` follows the effective pointer alignment; other values select a
+separate reference style. `DerivePointerAlignment` counts directional spacing evidence from
+recognized declarations in the original file. A tie keeps `PointerAlignment`. Derivation also
+resets reference alignment to `Pointer`, following the 22.1.8 behavior. Each source receives
+its own effective style; protected text and macro bodies do not contribute evidence.
+
+Pointer-qualifier spacing applies to recognized pointer declarators, without changing ordinary
+type qualifiers or expression operators. Square-bracket prefix spacing applies to the first
+bracket in an array/subscript chain; it does not affect lambda captures, attributes or structured
+bindings. Case and bit-field colons use their separate settings.
+
 Access labels are recognized in the direct scope of a class, struct, or union.
 `IndentAccessModifiers: true` gives members two indentation levels and labels one, ignoring
 `AccessModifierOffset`. Otherwise, the offset is relative to member indentation; an offset that
 would make the column negative leaves the member indentation unchanged.
+
+Access-label blank-line rules use the direct record scope and preserve comment boundaries.
+Before rules own the gap between consecutive labels. `LogicalBlock` inserts a blank line after
+a completed member block and removes one between consecutive labels. `Always` before skips the
+record opening; `Always` after skips the record closing. Existing empty lines are limited before
+these local rules supply their requested minimum. The fallback uses `Leave` for both settings;
+the LLVM projection uses `LogicalBlock` before and `Never` after.
+
+Ordinary labels are distinct from case and access labels. `IndentGotoLabels: false` places them
+at column zero; `true` outdents them by one indentation level from the enclosing code block.
+Following statements retain their block indentation, and `goto name;` remains an ordinary jump.
 
 Legacy `SpacesInParentheses`, `SpaceInEmptyParentheses`, `SpacesInConditionalStatement`, and
 `SpacesInCStyleCastParentheses` remain accepted. They follow the 22.1 conversion rules: a resolved

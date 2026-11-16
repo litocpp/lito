@@ -700,6 +700,7 @@ T* identity(T* value) {
 struct Pair : Base {
     int  first;
     long second;
+
 public:
     Pair(int a, int b): first(a), second(b) {}
     int get() { return first; }
@@ -749,6 +750,441 @@ TEST(BuiltinFormat, PreservesAmbiguousAnglesWithoutFreezingSurroundingCode) {
         { "SpacesInAngles: false\n"_str,
           "void f(){if(a<b && c>d){run();}}\n"_str,
           "void f() {\n    if (a < b && c > d) {\n        run();\n    }\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, BreaksFunctionAndInitializerBracketsOnlyWhenNeeded) {
+    constexpr auto call =
+        "void f(){consume(first_long_value,second_long_value,third_long_value);}\n"_str;
+    constexpr auto ordinary =
+        "void f() {\n    consume(first_long_value,\n            second_long_value,\n"
+        "            third_long_value);\n}\n"_str;
+    constexpr auto values =
+        "void f(){int values[]{first_long_value,second_long_value,third_long_value};}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 40\nBinPackArguments: false\nBinPackParameters: OnePerLine\n"
+          "AllowAllParametersOfDeclarationOnNextLine: false\n"
+          "BreakAfterOpenBracketFunction: true\nBreakBeforeCloseBracketFunction: true\n"_str,
+          "int combine(int first_parameter,int second_parameter,int third_parameter);"
+          "int combine(int first_parameter,int second_parameter,int third_parameter){return 0;}"
+          "void f(){consume(first_long_value,second_long_value,third_long_value);}\n"_str,
+          "int combine(\n    int first_parameter,\n    int second_parameter,\n    int "
+          "third_parameter\n);\n"
+          "int combine(\n    int first_parameter,\n    int second_parameter,\n    int "
+          "third_parameter\n) {\n"
+          "    return 0;\n}\nvoid f() {\n    consume(\n        first_long_value,\n"
+          "        second_long_value,\n        third_long_value\n    );\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nBreakAfterOpenBracketFunction: true\n"
+          "BreakBeforeCloseBracketFunction: false\n"_str,
+          call,
+          "void f() {\n    consume(\n        first_long_value,\n        second_long_value,\n"
+          "        third_long_value);\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nAlignAfterOpenBracket: Align\n"
+          "BreakAfterOpenBracketFunction: false\nBreakBeforeCloseBracketFunction: true\n"_str,
+          call,
+          ordinary },
+        { "ColumnLimit: 40\nBinPackArguments: false\nAlignAfterOpenBracket: BlockIndent\n"
+          "BreakAfterOpenBracketFunction: false\nBreakBeforeCloseBracketFunction: false\n"_str,
+          call,
+          ordinary },
+        { "BreakBeforeCloseBracketFunction: false\nBreakAfterOpenBracketFunction: false\n"
+          "AlignAfterOpenBracket: BlockIndent\nColumnLimit: 40\nBinPackArguments: false\n"_str,
+          call,
+          ordinary },
+        { "ColumnLimit: 100\nBreakAfterOpenBracketFunction: true\n"
+          "BreakBeforeCloseBracketFunction: true\n"_str,
+          call,
+          "void f() {\n    consume(first_long_value, second_long_value, third_long_value);\n}\n"_str },
+        { "ColumnLimit: 0\nBreakAfterOpenBracketFunction: true\n"
+          "BreakBeforeCloseBracketFunction: true\n"_str,
+          call,
+          "void f() {\n    consume(first_long_value, second_long_value, third_long_value);\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nBreakAfterOpenBracketFunction: true\n"
+          "BreakBeforeCloseBracketFunction: true\n"_str,
+          "void f(){outer(inner(first_long_value,second_long_value),third_long_value);}\n"_str,
+          "void f() {\n    outer(\n        inner(\n            first_long_value,\n"
+          "            second_long_value\n        ),\n        third_long_value\n    );\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nAlignOperands: false\n"
+          "BreakAfterOpenBracketFunction: true\nBreakBeforeCloseBracketFunction: true\n"_str,
+          "void f(){outer(inner(first_operand+second_operand),third_argument);}\n"_str,
+          "void f() {\n    outer(\n        inner(\n            first_operand +\n"
+          "            second_operand\n        ),\n        third_argument\n    );\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nCpp11BracedListStyle: true\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakAfterOpenBracketBracedList: true\n"
+          "BreakBeforeCloseBracketBracedList: true\n"_str,
+          values,
+          "void f() {\n    int values[] {\n        first_long_value,\n        second_long_value,\n"
+          "        third_long_value\n    };\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nCpp11BracedListStyle: true\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakAfterOpenBracketBracedList: true\n"
+          "BreakBeforeCloseBracketBracedList: false\n"_str,
+          values,
+          "void f() {\n    int values[] {\n        first_long_value,\n        second_long_value,\n"
+          "        third_long_value};\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nCpp11BracedListStyle: true\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakAfterOpenBracketBracedList: false\n"
+          "BreakBeforeCloseBracketBracedList: true\n"_str,
+          values,
+          "void f() {\n    int values[] {first_long_value,\n        second_long_value,\n"
+          "        third_long_value};\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nCpp11BracedListStyle: false\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakAfterOpenBracketBracedList: true\n"
+          "BreakBeforeCloseBracketBracedList: true\n"_str,
+          values,
+          "void f() {\n    int values[] {\n        first_long_value,\n        second_long_value,\n"
+          "        third_long_value\n    };\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nCpp11BracedListStyle: false\n"
+          "SpaceBeforeCpp11BracedList: true\nBreakAfterOpenBracketBracedList: false\n"
+          "BreakBeforeCloseBracketBracedList: false\n"_str,
+          values,
+          "void f() {\n    int values[] {\n        first_long_value,\n        second_long_value,\n"
+          "        third_long_value\n    };\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, KeepsWholeNextLineArgumentsSeparateFromParametersAndConstructors) {
+    constexpr auto call =
+        "void f(){FunctionCallWithReallyLongName(first_value,second_value);}\n"_str;
+    constexpr auto        values = "auto variable_with_long_name={first_value,second_value};\n"_str;
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 40\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: true\n"_str,
+          call,
+          "void f() {\n    FunctionCallWithReallyLongName(\n        first_value, second_value);\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: false\n"_str,
+          call,
+          "void f() {\n    FunctionCallWithReallyLongName(\n        first_value,\n        second_value);\n}\n"_str },
+        { "ColumnLimit: 34\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: true\n"_str,
+          "void f(){consume(first_value,second_value);}\n"_str,
+          "void f() {\n    consume(\n        first_value,\n        second_value);\n}\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: true\n"_str,
+          values,
+          "auto variable_with_long_name = {\n    first_value, second_value};\n"_str },
+        { "ColumnLimit: 40\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: false\n"_str,
+          values,
+          "auto variable_with_long_name = {\n    first_value,\n    second_value};\n"_str },
+        { "ColumnLimit: 40\nBinPackParameters: OnePerLine\n"
+          "AllowAllParametersOfDeclarationOnNextLine: false\nAllowAllArgumentsOnNextLine: true\n"_str,
+          "void FunctionCallWithReallyLongName(int first,int second);\n"_str,
+          "void FunctionCallWithReallyLongName(\n    int first,\n    int second);\n"_str },
+        { "ColumnLimit: 40\nPackConstructorInitializers: Never\nAllowAllArgumentsOnNextLine: true\n"_str,
+          "struct Pair{Pair():first(x),second(y){}};\n"_str,
+          "struct Pair {\n    Pair()\n        : first(x),\n          second(y) {\n    }\n};\n"_str },
+        { "ColumnLimit: 24\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: true\n"
+          "BreakBeforeCloseBracketFunction: true\n"_str,
+          "void f(){very_long_call(first,secondxxx);}\n"_str,
+          "void f() {\n    very_long_call(\n        first, secondxxx\n    );\n}\n"_str },
+        { "ColumnLimit: 24\nBinPackArguments: false\nAllowAllArgumentsOnNextLine: true\n"
+          "Cpp11BracedListStyle: false\nSpaceBeforeCpp11BracedList: true\n"_str,
+          "void f(){int values[]{first,secondxxx};}\n"_str,
+          "void f() {\n    int values[] {\n        first, secondxxx\n    };\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, KeepsControlBracketKindsAndClosingStateSeparate) {
+    constexpr auto source = "void f(){if(first_condition&&second_condition){run();}"
+                            "while(first_condition&&second_condition){run();}"
+                            "switch(first_operand+second_operand){default:run();}}\n"_str;
+    constexpr auto only_if =
+        "void f() {\n    if (\n        first_condition &&\n        second_condition\n    ) {\n"
+        "        run();\n    }\n    while (first_condition &&\n        second_condition) {\n"
+        "        run();\n    }\n    switch (first_operand +\n        second_operand) {\n"
+        "    default: run();\n    }\n}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 40\nBreakAfterOpenBracketIf: true\nBreakBeforeCloseBracketIf: true\n"
+          "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterControlStatement: MultiLine\n"_str,
+          "void f(){if(first_condition&&second_condition){run();}}\n"_str,
+          "void f() {\n    if (\n        first_condition &&\n        second_condition\n    )\n"
+          "    {\n        run();\n    }\n}\n"_str },
+        { "ColumnLimit: 100\nBreakBeforeBraces: Custom\n"
+          "BraceWrapping:\n  AfterControlStatement: MultiLine\n"_str,
+          "void f(){if(true\n && false){run();}}\n"_str,
+          "void f() {\n    if (true && false) {\n        run();\n    }\n}\n"_str },
+        { "ColumnLimit: 40\nAlignOperands: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "BreakAfterOpenBracketIf: true\nBreakBeforeCloseBracketIf: true\n"_str,
+          source,
+          only_if },
+        { "ColumnLimit: 40\nAlignOperands: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "AlignAfterOpenBracket: BlockIndent\n"_str,
+          source,
+          only_if },
+        { "ColumnLimit: 40\nAlignOperands: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "AlignAfterOpenBracket: AlwaysBreak\n"_str,
+          source,
+          "void f() {\n    if (\n        first_condition &&\n        second_condition) {\n"
+          "        run();\n    }\n    while (first_condition &&\n        second_condition) {\n"
+          "        run();\n    }\n    switch (first_operand +\n        second_operand) {\n"
+          "    default: run();\n    }\n}\n"_str },
+        { "ColumnLimit: 40\nAlignOperands: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "BreakAfterOpenBracketLoop: true\nBreakBeforeCloseBracketLoop: true\n"_str,
+          source,
+          "void f() {\n    if (first_condition &&\n        second_condition) {\n        run();\n   "
+          " }\n"
+          "    while (\n        first_condition &&\n        second_condition\n    ) {\n"
+          "        run();\n    }\n    switch (first_operand +\n        second_operand) {\n"
+          "    default: run();\n    }\n}\n"_str },
+        { "ColumnLimit: 40\nAlignOperands: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "BreakAfterOpenBracketSwitch: true\nBreakBeforeCloseBracketSwitch: true\n"_str,
+          source,
+          "void f() {\n    if (first_condition &&\n        second_condition) {\n        run();\n   "
+          " }\n"
+          "    while (first_condition &&\n        second_condition) {\n        run();\n    }\n"
+          "    switch (\n        first_operand + second_operand\n    ) {\n    default: run();\n    }\n}\n"_str },
+        { "ColumnLimit: 40\nAlignOperands: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "BreakAfterOpenBracketIf: true\nBreakAfterOpenBracketLoop: true\n"
+          "BreakAfterOpenBracketSwitch: true\nBreakBeforeCloseBracketIf: false\n"
+          "BreakBeforeCloseBracketLoop: false\nBreakBeforeCloseBracketSwitch: false\n"_str,
+          source,
+          "void f() {\n    if (\n        first_condition &&\n        second_condition) {\n"
+          "        run();\n    }\n    while (\n        first_condition &&\n        "
+          "second_condition) {\n"
+          "        run();\n    }\n    switch (\n        first_operand +\n        second_operand) "
+          "{\n"
+          "    default: run();\n    }\n}\n"_str },
+        { "ColumnLimit: 40\nAlignOperands: false\nBreakAfterOpenBracketLoop: true\n"
+          "BreakBeforeCloseBracketLoop: true\nBreakAfterOpenBracketIf: true\n"
+          "BreakBeforeCloseBracketIf: true\n"_str,
+          "void f(){for(int index=0;index<limit;++index){run();}for(auto item:items){run();}"
+          "do{run();}while(first_condition&&second_condition);"
+          "if constexpr(first_condition&&second_condition){run();}}\n"_str,
+          "void f() {\n    for (\n        int index = 0;\n        index < limit;\n        ++index\n"
+          "    ) {\n        run();\n    }\n    for (auto item : items) {\n        run();\n    }\n"
+          "    do {\n        run();\n    } while (\n        first_condition &&\n        "
+          "second_condition\n"
+          "    );\n    if constexpr (\n        first_condition &&\n        second_condition\n    ) "
+          "{\n"
+          "        run();\n    }\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, BreaksOnlyTheSelectedBinaryAndPairedTernarySides) {
+    constexpr auto binary = "int long_result_variable=first_value;"
+                            "int sum=first_value+second_value+third_value;\n"_str;
+    constexpr auto conditional =
+        "int result=long_condition?long_first_value:long_second_value;\n"_str;
+    const FormatStyleCase cases[] = {
+        { "ColumnLimit: 32\nAlignOperands: false\nBreakBeforeBinaryOperators: None\n"_str,
+          binary,
+          "int long_result_variable =\n    first_value;\nint sum = first_value +\n"
+          "    second_value + third_value;\n"_str },
+        { "ColumnLimit: 32\nAlignOperands: false\nBreakBeforeBinaryOperators: NonAssignment\n"_str,
+          binary,
+          "int long_result_variable =\n    first_value;\nint sum = first_value\n"
+          "    + second_value\n    + third_value;\n"_str },
+        { "ColumnLimit: 32\nAlignOperands: false\nBreakBeforeBinaryOperators: All\n"_str,
+          binary,
+          "int long_result_variable\n    = first_value;\nint sum = first_value\n"
+          "    + second_value\n    + third_value;\n"_str },
+        { "ColumnLimit: 32\nAlignOperands: false\nBreakBeforeBinaryOperators: All\n"
+          "PointerAlignment: Left\n"_str,
+          "void f(){long_result_variable+=first_value;int *pointer;int value=-*pointer;}\n"_str,
+          "void f() {\n    long_result_variable\n        += first_value;\n    int* pointer;\n"
+          "    int value = -*pointer;\n}\n"_str },
+        { "ColumnLimit: 32\nAlignOperands: false\nBreakBeforeTernaryOperators: true\n"_str,
+          conditional,
+          "int result = long_condition\n    ? long_first_value\n    : long_second_value;\n"_str },
+        { "ColumnLimit: 32\nAlignOperands: false\nBreakBeforeTernaryOperators: false\n"_str,
+          conditional,
+          "int result = long_condition ?\n    long_first_value :\n    long_second_value;\n"_str },
+        { "ColumnLimit: 36\nAlignOperands: false\nBreakBeforeTernaryOperators: true\n"_str,
+          "int result=outer_condition?first_value:inner_condition?second_value:third_value;\n"_str,
+          "int result = outer_condition\n    ? first_value\n    : inner_condition\n"
+          "        ? second_value\n        : third_value;\n"_str },
+        { "ColumnLimit: 0\nBreakBeforeBinaryOperators: All\nBreakBeforeTernaryOperators: true\n"
+          "PointerAlignment: Left\nBreakAfterOpenBracketLoop: true\nBreakBeforeCloseBracketLoop: true\n"_str,
+          "void f(){for(int* p=first;p!=last;++p){run(p);}int x=+ +value;}\n"_str,
+          "void f() {\n    for (int* p = first; p != last; ++p) {\n        run(p);\n    }\n"
+          "    int x = + +value;\n}\n"_str },
+        { "ColumnLimit: 0\nBreakBeforeBinaryOperators: All\nBreakBeforeTernaryOperators: true\n"
+          "AllowShortCaseLabelsOnASingleLine: true\n"_str,
+          "void f(){for(auto x:items){switch(x){case 0:break;default:run();}}}\n"_str,
+          "void f() {\n    for (auto x : items) {\n        switch (x) {\n        case 0: break;\n"
+          "        default: run();\n        }\n    }\n}\n"_str },
+        { "ColumnLimit: 20\nBreakBeforeBinaryOperators: All\nBreakBeforeTernaryOperators: true\n"
+          "PointerAlignment: Left\n"_str,
+          "#define PICK(c,a,b) ((c)?(a):(b))\n// lito-format off\n"
+          "int x=condition?first:second;\n// lito-format on\nint *pointer;\n"_str,
+          "#define PICK(c,a,b) ((c)?(a):(b))\n// lito-format off\n"
+          "int x=condition?first:second;\n// lito-format on\nint* pointer;\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, AlignsReferencesAndDerivesEachFileFromOriginalDeclarations) {
+    constexpr auto        declarations = "int *pointer;int &lref;int &&rref;\n"_str;
+    constexpr auto        left_votes   = "int* a;int* b;int* c;int *d;int &ref;\n"_str;
+    const FormatStyleCase cases[]      = {
+        { "PointerAlignment: Left\nReferenceAlignment: Pointer\n"_str,
+          declarations,
+          "int* pointer;\nint& lref;\nint&& rref;\n"_str },
+        { "PointerAlignment: Right\nReferenceAlignment: Left\n"_str,
+          declarations,
+          "int *pointer;\nint& lref;\nint&& rref;\n"_str },
+        { "PointerAlignment: Left\nReferenceAlignment: Right\n"_str,
+          declarations,
+          "int* pointer;\nint &lref;\nint &&rref;\n"_str },
+        { "PointerAlignment: Left\nReferenceAlignment: Middle\n"_str,
+          declarations,
+          "int* pointer;\nint & lref;\nint && rref;\n"_str },
+        { "PointerAlignment: Left\nReferenceAlignment: Right\n"_str,
+          "int *f(int *p,int &r,int &&rr){return p;}\n"_str,
+          "int* f(int* p, int &r, int &&rr) {\n    return p;\n}\n"_str },
+        { "DerivePointerAlignment: true\nPointerAlignment: Right\nReferenceAlignment: Right\n"_str,
+          left_votes,
+          "int* a;\nint* b;\nint* c;\nint* d;\nint& ref;\n"_str },
+        { "DerivePointerAlignment: true\nPointerAlignment: Left\nReferenceAlignment: Left\n"_str,
+          "int *a;int *b;int *c;int*d;int& ref;\n"_str,
+          "int *a;\nint *b;\nint *c;\nint *d;\nint &ref;\n"_str },
+        { "DerivePointerAlignment: true\nPointerAlignment: Right\nReferenceAlignment: Left\n"_str,
+          "int* left;int *right;int * middle;int*none;int & ref;\n"_str,
+          "int *left;\nint *right;\nint *middle;\nint *none;\nint &ref;\n"_str },
+        { "DerivePointerAlignment: false\nPointerAlignment: Right\nReferenceAlignment: Left\n"_str,
+          left_votes,
+          "int *a;\nint *b;\nint *c;\nint *d;\nint& ref;\n"_str },
+        { "DerivePointerAlignment: true\nPointerAlignment: Left\nReferenceAlignment: Left\n"_str,
+          "#define LEFT int* macro_a;int* macro_b;\n"
+          "// lito-format off\nint* off_a;int* off_b;\n// lito-format on\n"
+          "#if 1\nint* selected_a;int* selected_b;\n#endif\nint *editable;\n"_str,
+          "#define LEFT int* macro_a;int* macro_b;\n"
+          "// lito-format off\nint* off_a;int* off_b;\n// lito-format on\n"
+          "#if 1\nint* selected_a;int* selected_b;\n#endif\nint *editable;\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, SpacesPointerQualifiersWithoutChangingExpressionRoles) {
+    constexpr auto        declarations = "void * const * x;void * volatile * y;\n"_str;
+    const FormatStyleCase cases[]      = {
+        { "PointerAlignment: Left\nSpaceAroundPointerQualifiers: Default\n"_str,
+          declarations,
+          "void* const* x;\nvoid* volatile* y;\n"_str },
+        { "PointerAlignment: Left\nSpaceAroundPointerQualifiers: Before\n"_str,
+          declarations,
+          "void* const* x;\nvoid* volatile* y;\n"_str },
+        { "PointerAlignment: Left\nSpaceAroundPointerQualifiers: After\n"_str,
+          declarations,
+          "void* const * x;\nvoid* volatile * y;\n"_str },
+        { "PointerAlignment: Left\nSpaceAroundPointerQualifiers: Both\n"_str,
+          declarations,
+          "void* const * x;\nvoid* volatile * y;\n"_str },
+        { "PointerAlignment: Right\nSpaceAroundPointerQualifiers: Default\n"_str,
+          declarations,
+          "void *const *x;\nvoid *volatile *y;\n"_str },
+        { "PointerAlignment: Right\nSpaceAroundPointerQualifiers: Both\n"_str,
+          declarations,
+          "void * const *x;\nvoid * volatile *y;\n"_str },
+        { "PointerAlignment: Middle\nSpaceAroundPointerQualifiers: After\n"_str,
+          declarations,
+          "void * const * x;\nvoid * volatile * y;\n"_str },
+        { "PointerAlignment: Left\nReferenceAlignment: Middle\n"
+          "SpaceAroundPointerQualifiers: Both\n"_str,
+          "int f(int a,int b){const int x=1;int *p=&a;int &&r=make();return a*b&&*p;}\n"_str,
+          "int f(int a, int b) {\n    const int x = 1;\n    int* p = &a;\n"
+          "    int && r = make();\n    return a * b && *p;\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, SeparatesBitfieldCaseArrayAndGotoRoles) {
+    constexpr auto fields = "struct S{unsigned bits:3;unsigned :0;};\n"_str;
+    constexpr auto arrays =
+        "[[nodiscard]] int f(){int values[2][3];auto [first, second] = values;"
+        "auto pick=[](){return 0;};switch(values[0][1]){case 1:break;default:break;}"
+        "return pick();}\n"_str;
+    constexpr auto labels =
+        "void f(){top:goto done;if(true){inner:again:;goto inner;}done:;}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "BitFieldColonSpacing: Both\n"_str,
+          fields,
+          "struct S {\n    unsigned bits : 3;\n    unsigned : 0;\n};\n"_str },
+        { "BitFieldColonSpacing: None\n"_str,
+          fields,
+          "struct S {\n    unsigned bits:3;\n    unsigned:0;\n};\n"_str },
+        { "BitFieldColonSpacing: Before\n"_str,
+          fields,
+          "struct S {\n    unsigned bits :3;\n    unsigned :0;\n};\n"_str },
+        { "BitFieldColonSpacing: After\n"_str,
+          fields,
+          "struct S {\n    unsigned bits: 3;\n    unsigned: 0;\n};\n"_str },
+        { "SpaceBeforeSquareBrackets: true\nSpaceBeforeCaseColon: true\n"
+          "AllowShortCaseLabelsOnASingleLine: true\nAllowShortLambdasOnASingleLine: All\n"_str,
+          arrays,
+          "[[nodiscard]] int f() {\n    int values [2][3];\n"
+          "    auto [first, second] = values;\n    auto pick = []() { return 0; };\n"
+          "    switch (values [0][1]) {\n    case 1 : break;\n    default : break;\n    }\n"
+          "    return pick();\n}\n"_str },
+        { "SpaceBeforeSquareBrackets: false\nSpacesInSquareBrackets: true\n"
+          "SpaceBeforeCaseColon: false\nAllowShortCaseLabelsOnASingleLine: true\n"
+          "AllowShortLambdasOnASingleLine: All\n"_str,
+          "void f(){int values [2][3];switch(values [0][1]){case 1 :break;default :break;}"
+          "auto pick=[](){return 0;};}\n"_str,
+          "void f() {\n    int values[ 2 ][ 3 ];\n    switch (values[ 0 ][ 1 ]) {\n"
+          "    case 1: break;\n    default: break;\n    }\n"
+          "    auto pick = []() { return 0; };\n}\n"_str },
+        { "IndentGotoLabels: true\n"_str,
+          labels,
+          "void f() {\ntop:\n    goto done;\n    if (true) {\n    inner:\n    again:\n"
+          "        ;\n        goto inner;\n    }\ndone:\n    ;\n}\n"_str },
+        { "IndentGotoLabels: false\n"_str,
+          labels,
+          "void f() {\ntop:\n    goto done;\n    if (true) {\ninner:\nagain:\n"
+          "        ;\n        goto inner;\n    }\ndone:\n    ;\n}\n"_str },
+        { "BitFieldColonSpacing: None\nSpaceBeforeCaseColon: true\nIndentGotoLabels: false\n"
+          "AllowShortCaseLabelsOnASingleLine: true\n"_str,
+          "struct S:Base{S():value(1){}int value;};"
+          "void f(){for(auto item:items){switch(item){case 1:break;}}"
+          "int value=condition?first:second;finish:goto finish;}\n"_str,
+          "struct S : Base {\n    S() : value(1) {\n    }\n    int value;\n};\n"
+          "void f() {\n    for (auto item : items) {\n        switch (item) {\n"
+          "        case 1 : break;\n        }\n    }\n"
+          "    int value = condition ? first : second;\nfinish:\n    goto finish;\n}\n"_str },
+        { "PointerAlignment: Left\n"_str,
+          "OPAQUE_MACRO( int* raw, value+value );\nstruct UPPER{UPPER(){}};\n"_str,
+          "OPAQUE_MACRO( int* raw, value+value );\n"
+          "struct UPPER {\n    UPPER() {\n    }\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, OwnsAccessModifierEmptyLinesBeforeAndAfterLabels) {
+    constexpr auto        source  = "class C{\npublic:\n\nint a;\n\nprotected:\n\nprivate:\n\n"
+                                    "int b;\npublic:\n};\n"_str;
+    const FormatStyleCase cases[] = {
+        { "AccessModifierOffset: -4\nEmptyLineBeforeAccessModifier: Never\n"
+          "EmptyLineAfterAccessModifier: Never\n"_str,
+          source,
+          "class C {\npublic:\n    int a;\nprotected:\nprivate:\n    int b;\npublic:\n};\n"_str },
+        { "AccessModifierOffset: -4\nEmptyLineBeforeAccessModifier: Leave\n"
+          "EmptyLineAfterAccessModifier: Leave\n"_str,
+          source,
+          "class C {\npublic:\n\n    int a;\n\nprotected:\n\nprivate:\n\n"
+          "    int b;\npublic:\n};\n"_str },
+        { "AccessModifierOffset: -4\nEmptyLineBeforeAccessModifier: LogicalBlock\n"
+          "EmptyLineAfterAccessModifier: Never\nMaxEmptyLinesToKeep: 0\n"_str,
+          source,
+          "class C {\npublic:\n    int a;\n\nprotected:\nprivate:\n    int b;\n\npublic:\n};\n"_str },
+        { "AccessModifierOffset: -4\nEmptyLineBeforeAccessModifier: Always\n"
+          "EmptyLineAfterAccessModifier: Never\nMaxEmptyLinesToKeep: 0\n"_str,
+          source,
+          "class C {\npublic:\n    int a;\n\nprotected:\n\nprivate:\n    int b;\n\npublic:\n};\n"_str },
+        { "AccessModifierOffset: -4\nEmptyLineBeforeAccessModifier: Never\n"
+          "EmptyLineAfterAccessModifier: Always\nMaxEmptyLinesToKeep: 0\n"_str,
+          source,
+          "class C {\npublic:\n\n    int a;\nprotected:\nprivate:\n\n    int b;\npublic:\n};\n"_str },
+        { "AccessModifierOffset: -4\nEmptyLineBeforeAccessModifier: LogicalBlock\n"
+          "EmptyLineAfterAccessModifier: Always\n"_str,
+          "class C{public:int a;\n// keep member comment\nprotected:int b;private:};\n"_str,
+          "class C {\npublic:\n\n    int a;\n    // keep member comment\nprotected:\n\n"
+          "    int b;\n\nprivate:\n};\n"_str },
+        { "IndentAccessModifiers: true\nAccessModifierOffset: -100\n"
+          "EmptyLineBeforeAccessModifier: Always\nEmptyLineAfterAccessModifier: Always\n"
+          "MaxEmptyLinesToKeep: 0\n"_str,
+          "class C{int before;public:int after;protected:};\n"_str,
+          "class C {\n        int before;\n\n    public:\n\n        int after;\n\n"
+          "    protected:\n};\n"_str },
     };
     for (const auto& test : cases) expect_style_output(test);
 }
