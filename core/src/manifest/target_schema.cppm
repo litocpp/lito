@@ -327,12 +327,15 @@ auto parse_target_source(lito::manifest::wire::TargetSource value,
         return Err(ManifestSchemaError::Domain(
             rstd::format("{}.module must be a valid module name", context)));
     }
+    if (language == PackageLanguage::C && (value.path.is_some() || value.source_root.is_some())) {
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.path and source-root require a C++ package", context)));
+    }
     const auto has_sources = value.sources.is_some();
-    if ((value.path.is_some() || value.source_root.is_some()) &&
-        (has_sources || value.source_groups.is_some() || ! value.when.is_empty())) {
-        return Err(ManifestSchemaError::Domain(rstd::format(
-            "{}.path and source-root cannot be combined with sources, source-groups or when",
-            context)));
+    const auto has_groups  = value.source_groups.is_some();
+    if ((value.path.is_some() || value.source_root.is_some()) && has_sources) {
+        return Err(ManifestSchemaError::Domain(
+            rstd::format("{}.path and source-root cannot be combined with sources", context)));
     }
     auto layout_path = [&](Option<String> text,
                            ref<str>       key) -> ManifestSchemaResult<Option<PathBuf>> {
@@ -345,7 +348,7 @@ auto parse_target_source(lito::manifest::wire::TargetSource value,
     };
     auto entry       = rstd_try(layout_path(rstd::move(value.path), "path"_str));
     auto module_root = rstd_try(layout_path(rstd::move(value.source_root), "source-root"_str));
-    const auto module_discovery = ! has_sources && value.source_groups.is_none();
+    const auto module_discovery = language == PackageLanguage::Cpp && ! has_sources;
     auto       sources          = Vec<PathBuf>::make();
     if (has_sources) {
         for (auto& source : *value.sources) {
@@ -362,7 +365,7 @@ auto parse_target_source(lito::manifest::wire::TargetSource value,
         return Err(ManifestSchemaError::Domain(
             rstd::format("{}.module is not supported by a C package", context)));
     }
-    if (language == PackageLanguage::C && module_discovery) {
+    if (language == PackageLanguage::C && ! has_sources && ! has_groups) {
         return Err(ManifestSchemaError::Domain(
             rstd::format("{} must declare sources or source-groups for a C package", context)));
     }
@@ -488,6 +491,15 @@ auto parse_source_groups(Option<wire::SourceGroups> value)
                 rstd::serde::Error::invalid_value(item.with_field("external-source"_str),
                                                   "cannot be combined with root 'generated'"_str)));
         }
+        auto standard = Option<FixedSourceStandard> {};
+        if (specification->standard.is_some()) {
+            standard = parse_fixed_source_standard(specification->standard->as_str());
+            if (standard.is_none()) {
+                return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                    item.with_field("standard"_str),
+                    "must be a supported C standard or C++20 and later"_str)));
+            }
+        }
         if (specification->sources.is_empty()) {
             return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
                 item.with_field("sources"_str), "must not be empty"_str)));
@@ -506,6 +518,7 @@ auto parse_source_groups(Option<wire::SourceGroups> value)
             .name            = name.clone(),
             .root            = root,
             .external_source = rstd::move(external),
+            .standard        = rstd::move(standard),
             .sources         = rstd::move(sources),
         });
     }

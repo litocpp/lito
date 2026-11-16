@@ -8,6 +8,7 @@ import lito.system;
 import :dependency.usage;
 import :package.identity;
 import :condition;
+import :manifest.language;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -50,10 +51,11 @@ enum class SourceGroupRoot
 };
 
 struct SourceGroupManifest {
-    String          name;
-    SourceGroupRoot root { SourceGroupRoot::Package };
-    Option<String>  external_source;
-    Vec<PathBuf>    sources;
+    String                      name;
+    SourceGroupRoot             root { SourceGroupRoot::Package };
+    Option<String>              external_source;
+    Option<FixedSourceStandard> standard;
+    Vec<PathBuf>                sources;
 };
 
 enum class RuntimeResourceRoot

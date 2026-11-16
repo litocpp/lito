@@ -8,6 +8,7 @@ import licrypto;
 import lito.core;
 import :bmi;
 import :build.plan;
+import :compiler.binding;
 import :compiler.option;
 import :header;
 import :package.metadata;
@@ -129,6 +130,16 @@ auto append_language_arguments(LanguageArgumentLayer&       output,
         });
     }
     return Ok(empty {});
+}
+
+auto c_source_arguments(const LanguageArgumentLayer& input) -> lito::c::CArgumentLayer {
+    if (input.is_C()) return input.as_C().layer.clone();
+    auto result = lito::c::CArgumentLayer {};
+    for (const auto& occurrence : input.as_Cpp().layer.occurrences) {
+        auto projected = project_cpp_compiler_argument_to_c(occurrence);
+        if (projected.is_some()) result.occurrences.push(rstd::move(projected).unwrap());
+    }
+    return result;
 }
 
 auto append_unique(lito::link::Requirements& output, const lito::link::Requirements& input)
@@ -478,6 +489,36 @@ auto refresh_compile_context_identity(CompileContext& context) -> void {
     context.scan_id = scan_context_id(context);
 }
 
+auto source_compile_context(const CompileContext&                      base,
+                            const lito::manifest::FixedSourceStandard& standard)
+    -> lito::package::PackageResult<CompileContext> {
+    auto result = CompileContext {};
+    if (standard.is_C()) {
+        if (base.language.is_C()) {
+            result = base.clone();
+        } else {
+            if (base.c_source.is_none()) {
+                return Err(lito::package::PackageError::Message(
+                    "C source group has no prepared C compile context"_Str));
+            }
+            result.language = LanguageCompileContext::C(base.c_source->options.clone(),
+                                                        base.c_source->public_requirements.clone());
+            result.external_identities = as<Clone>(base.external_identities).clone();
+        }
+        result.language.as_C().options.standard = standard.as_C().standard;
+    } else {
+        if (! base.language.is_Cpp()) {
+            return Err(lito::package::PackageError::Message(
+                "C compile context cannot use a C++ source group standard"_Str));
+        }
+        result = base.clone();
+        result.language.as_Cpp().options.language.standard =
+            String::make(lito::manifest::cpp_standard_name(standard.as_Cpp().standard));
+    }
+    refresh_compile_context_identity(result);
+    return Ok(rstd::move(result));
+}
+
 auto preprocessor_projection(const CompileContext& context)
     -> licrypto::CryptoResult<PreprocessorProjection> {
     auto       result         = PreprocessorProjection {};
@@ -579,27 +620,24 @@ auto resolve_header_ownership(const PackageMetadata&  package,
 }
 
 auto add_private_include_directory(CompileContext& context, PathBuf path) -> bool {
-    if (context.language.is_C()) {
-        auto& includes = context.language.as_C().options.include_directories;
+    const auto append = [&]<typename Directory>(Vec<Directory>& includes) {
         for (const auto& include : includes) {
-            if (include.kind == lito::c::CIncludeDirectoryKind::User &&
+            if (include.kind == decltype(include.kind)::User &&
                 include.path.as_path() == path.as_path()) {
                 return false;
             }
         }
-        includes.push(lito::c::CIncludeDirectory { .path = rstd::move(path) });
-    } else {
-        auto& includes = context.language.as_Cpp().options.preprocessor.include_directories;
-        for (const auto& include : includes) {
-            if (include.kind == CppIncludeDirectoryKind::User &&
-                include.path.as_path() == path.as_path()) {
-                return false;
-            }
-        }
-        includes.push(CppIncludeDirectory { .path = rstd::move(path) });
+        includes.push(Directory { .path = path.clone() });
+        return true;
+    };
+    auto changed = context.language.is_C()
+                       ? append(context.language.as_C().options.include_directories)
+                       : append(context.language.as_Cpp().options.preprocessor.include_directories);
+    if (context.c_source.is_some()) {
+        changed = append(context.c_source->options.include_directories) || changed;
     }
-    refresh_compile_context_identity(context);
-    return true;
+    if (changed) refresh_compile_context_identity(context);
+    return changed;
 }
 
 auto add_private_definition(ResolvedTarget& target, CompileContext& context, String definition)
@@ -643,24 +681,43 @@ auto add_private_definition(ResolvedTarget& target, CompileContext& context, Str
                                 definition.as_str(),
                                 value));
     };
+    auto present = false;
     if (context.language.is_C()) {
         for (const auto& macro : context.language.as_C().options.macros) {
             auto checked = rstd_try(check_existing(macro.action, macro.value.as_str()));
-            if (checked.is_some()) return Ok(*checked);
+            if (checked.is_some()) present = true;
         }
-        context.language.as_C().options.macros.push(lito::c::CMacroDirective {
-            .value = definition.clone(),
-        });
     } else {
         for (const auto& macro : context.language.as_Cpp().options.preprocessor.macros) {
             auto checked = rstd_try(check_existing(macro.action, macro.value.as_str()));
-            if (checked.is_some()) return Ok(*checked);
+            if (checked.is_some()) present = true;
         }
-        context.language.as_Cpp().options.preprocessor.macros.push(CppMacroDirective {
+    }
+    auto c_present = false;
+    if (context.c_source.is_some()) {
+        for (const auto& macro : context.c_source->options.macros) {
+            auto checked = rstd_try(check_existing(macro.action, macro.value.as_str()));
+            if (checked.is_some()) c_present = true;
+        }
+    }
+    if (present && (context.c_source.is_none() || c_present)) return Ok(false);
+    if (! present) {
+        if (context.language.is_C()) {
+            context.language.as_C().options.macros.push(lito::c::CMacroDirective {
+                .value = definition.clone(),
+            });
+        } else {
+            context.language.as_Cpp().options.preprocessor.macros.push(CppMacroDirective {
+                .value = definition.clone(),
+            });
+        }
+    }
+    if (context.c_source.is_some() && ! c_present) {
+        context.c_source->options.macros.push(lito::c::CMacroDirective {
             .value = definition.clone(),
         });
     }
-    target.usage.private_definitions.push(rstd::move(definition));
+    append_unique(target.usage.private_definitions, definition.as_str());
     refresh_compile_context_identity(context);
     return Ok(true);
 }
@@ -1112,6 +1169,27 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         }
         append_unique(context.external_identities, exported_usage.external_identities);
 
+        if (spec.language == lito::manifest::PackageLanguage::Cpp &&
+            spec.source_groups.iter().any([](auto group) {
+                return group->standard.is_some() && group->standard->is_C();
+            })) {
+            auto c_layer = c_source_arguments(exported_usage.arguments);
+            append_unique(c_layer.include_directories, exported_usage.include_directories);
+            append_unique(c_layer.definitions, exported_usage.definitions);
+            auto applied =
+                lito::c::apply_c_option_layer(selected_profile.c.clone(), rstd::move(c_layer));
+            if (applied.is_err()) {
+                return Err(lito::package::PackageError::Configuration(
+                    erase_error(rstd::move(applied).unwrap_err())));
+            }
+            auto options      = rstd::move(applied).unwrap();
+            auto requirements = lito::c::c_public_requirements(options);
+            context.c_source  = Some(CSourceCompileContext {
+                .options             = rstd::move(options),
+                .public_requirements = rstd::move(requirements),
+            });
+        }
+
         auto private_include_directories = Vec<PathBuf>::make();
         auto private_definitions         = Vec<String>::make();
         auto private_arguments           = empty_language_arguments(spec.language);
@@ -1179,6 +1257,21 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                 append_unique(visible, *provider);
             }
         }
+        if (context.c_source.is_some()) {
+            auto c_layer = c_source_arguments(private_arguments);
+            append_unique(c_layer.include_directories, private_include_directories);
+            append_unique(c_layer.definitions, private_definitions);
+            auto applied = lito::c::apply_c_option_layer(rstd::move(context.c_source->options),
+                                                         rstd::move(c_layer));
+            if (applied.is_err()) {
+                return Err(lito::package::PackageError::Configuration(
+                    erase_error(rstd::move(applied).unwrap_err())));
+            }
+            context.c_source->options = rstd::move(applied).unwrap();
+            if (spec.usage.link_requirements.posix_threads) {
+                context.c_source->options.common.threading = lito::compiler::ThreadingModel::Posix;
+            }
+        }
         if (spec.language == lito::manifest::PackageLanguage::C) {
             if (! private_arguments.is_C()) {
                 return Err(lito::package::PackageError::Message(
@@ -1243,6 +1336,11 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         return Err(rstd::move(import_requirements).unwrap_err());
     }
     for (auto target : target_order) {
+        if (contexts[target].c_source.is_some() &&
+            lito::compiler::uses_posix_threads(contexts[target].language.as_Cpp().options.common)) {
+            contexts[target].c_source->options.common.threading =
+                lito::compiler::ThreadingModel::Posix;
+        }
         contexts[target].id      = context_id(contexts[target]);
         contexts[target].scan_id = scan_context_id(contexts[target]);
     }
@@ -1293,6 +1391,12 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                       contexts[target].language.is_C()
                           ? package.profiles[profile].c_link_requirements
                           : package.profiles[profile].cpp_link_requirements);
+        if (contexts[target].c_source.is_some()) {
+            append_unique(requirements, package.profiles[profile].c_link_requirements);
+            requirements.posix_threads =
+                requirements.posix_threads ||
+                lito::compiler::uses_posix_threads(contexts[target].c_source->options.common);
+        }
         append_unique(requirements, package.targets[target].usage.link_requirements);
         for (auto index = dependency_order.len(); index > usize {}; --index) {
             const auto candidate = dependency_order[index - usize(1)];
@@ -1316,6 +1420,12 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                 package.targets[candidate].artifact_kind == ArtifactKind::SharedLibrary;
             if (! shared_boundary) {
                 append_unique(requirements, package.targets[candidate].usage.link_requirements);
+                if (contexts[candidate].c_source.is_some()) {
+                    append_unique(requirements, package.profiles[profile].c_link_requirements);
+                    requirements.posix_threads = requirements.posix_threads ||
+                                                 lito::compiler::uses_posix_threads(
+                                                     contexts[candidate].c_source->options.common);
+                }
             }
             inputs.push(PlannedLinkInput::Target(candidate));
             for (const auto& external : package.targets[candidate].external_dependencies) {

@@ -906,6 +906,7 @@ auto resolve_source_groups(usize                                       package_i
             .root      = rstd::move(root),
             .identity  = rstd::move(identity),
             .sources   = as<Clone>(declaration->sources).clone(),
+            .standard  = as<Clone>(declaration->standard).clone(),
             .generated = generated,
             .external  = external,
         });
@@ -924,6 +925,44 @@ auto apply_package_configuration(lito::package::ResolvedPackage& package,
                                  const BuildPlatform&            platform,
                                  bool has_library) -> lito::package::PackageResult<empty> {
     return resolve_package_configuration(package, configuration, profile, platform, has_library);
+}
+
+struct SourceLanguages {
+    bool c {};
+    bool cpp {};
+};
+
+auto selected_source_languages(const lito::package::ResolvedPackageGraph& graph,
+                               const Vec<lito::package::PackageTargetId>& effective_targets)
+    -> SourceLanguages {
+    auto result = SourceLanguages {};
+    for (const auto& package : graph.packages) {
+        if (package.manifest.standard.is_none()) continue;
+        auto language = lito::manifest::package_standard_language(*package.manifest.standard);
+        for (const auto& target : package.manifest.targets) {
+            auto selected = effective_targets.iter().any([&](auto id) {
+                return id->package == package.manifest.name.as_str() &&
+                       id->kind == lito::manifest::package_target_kind(target) &&
+                       id->name == lito::manifest::package_target_name(target);
+            });
+            if (! selected) continue;
+            if (language == lito::manifest::PackageLanguage::C)
+                result.c = true;
+            else
+                result.cpp = true;
+            const auto& source = lito::manifest::package_target_source(target);
+            for (const auto& name : source.source_groups) {
+                for (const auto& group : package.manifest.source_groups) {
+                    if (group.name != name.as_str() || group.standard.is_none()) continue;
+                    if (group.standard->is_C())
+                        result.c = true;
+                    else
+                        result.cpp = true;
+                }
+            }
+        }
+    }
+    return result;
 }
 
 struct ExternalPackageUsage {
@@ -1719,6 +1758,7 @@ auto append_package_sources(PackageSpec& package, Vec<ResolvedTargetSources> sou
                 .origin_identity = rstd::move(source.origin_identity),
                 .external        = source.external,
                 .generated       = source.generated,
+                .standard        = rstd::move(source.standard),
                 .cpp_dialect     = source.cpp_dialect,
                 .expected_module = rstd::move(source.expected_module),
                 .scan_artifact   = rstd::move(source.scan_artifact),

@@ -619,11 +619,10 @@ auto lto_is_enabled(const Option<lito::manifest::Lto>& value) noexcept -> bool {
     return value.is_some() && *value != lito::manifest::Lto::Off;
 }
 
-auto validate_linker_profile(const ClangToolchain&                            toolchain,
-                             const cpp::ProfileSpec&                          profile,
-                             const BuildPlatform&                             platform,
-                             const lito::package::EffectiveLanguageStandards& standards)
-    -> ProjectResult<empty> {
+auto validate_linker_profile(const ClangToolchain&   toolchain,
+                             const cpp::ProfileSpec& profile,
+                             const BuildPlatform&    platform,
+                             cpp::SourceLanguages    languages) -> ProjectResult<empty> {
     const auto& linker = toolchain.linker_identity();
     if (linker.family != LinkerFamily::GnuLd) return Ok(empty {});
     const auto& target = platform.effective_target;
@@ -645,11 +644,11 @@ auto validate_linker_profile(const ClangToolchain&                            to
                          field,
                          source.is_some() ? source->as_str() : profile.name.as_str())));
     };
-    if (standards.c.is_some()) {
+    if (languages.c) {
         rstd_try(
             reject_lto("C compilation"_str, profile.c.common.codegen.lto, profile.c_sources.lto));
     }
-    if (standards.cpp.is_some()) {
+    if (languages.cpp) {
         rstd_try(reject_lto(
             "C++ compilation"_str, profile.cpp.common.codegen.lto, profile.cpp_sources.lto));
     }
@@ -898,8 +897,6 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     resolved_configuration.toolchain.ar  = PathBuf::from(toolchain.ar_path());
     auto        resolved_profile         = rstd::move(session.prepared_profile).unwrap();
     const auto& target                   = session.platform.effective_target;
-    rstd_try(
-        validate_linker_profile(toolchain, resolved_profile, session.platform, project.standards));
     if (resolved_configuration.standard_library == lito::config::StandardLibrary::Msvc &&
         ! target.is_msvc()) {
         return Err(ProjectError::Message(rstd::format(
@@ -979,16 +976,6 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         resolved_profile.cpp.abi.resolved_standard_library =
             Some(rstd::move(standard_library).unwrap());
     }
-    rstd_try(emit_build_setup_report(setup_reporter,
-                                     configuration.toolchain,
-                                     toolchain,
-                                     configuration.global_options,
-                                     project.standards,
-                                     resolved_configuration.standard_library_runtime,
-                                     resolved_profile,
-                                     session.platform,
-                                     project.graph,
-                                     project.selected_package_names));
     for (auto& package : project.graph.packages) {
         auto selected = false;
         for (const auto& name : project.selected_package_names) {
@@ -1021,6 +1008,18 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
             return Err(rstd::into<ProjectError>(rstd::move(resolved).unwrap_err()));
         }
     }
+    const auto languages = cpp::selected_source_languages(project.graph, project.effective_targets);
+    rstd_try(validate_linker_profile(toolchain, resolved_profile, session.platform, languages));
+    rstd_try(emit_build_setup_report(setup_reporter,
+                                     configuration.toolchain,
+                                     toolchain,
+                                     configuration.global_options,
+                                     languages,
+                                     resolved_configuration.standard_library_runtime,
+                                     resolved_profile,
+                                     session.platform,
+                                     project.graph,
+                                     project.selected_package_names));
     auto prepared_external_sources =
         prepare_external_dependency_sources(project.graph,
                                             project.selected_package_names,

@@ -81,16 +81,17 @@ struct TransformedSource {
 };
 
 struct TargetSource {
-    PathBuf                    relative_path;
-    PathBuf                    path;
-    PathBuf                    source_root;
-    String                     origin_identity;
-    bool                       external { false };
-    bool                       generated { false };
-    CppSourceDialect           cpp_dialect { CppSourceDialect::Cpp };
-    Option<String>             expected_module;
-    Option<SourceScanArtifact> scan_artifact;
-    Option<TransformedSource>  transformed;
+    PathBuf                                     relative_path;
+    PathBuf                                     path;
+    PathBuf                                     source_root;
+    String                                      origin_identity;
+    bool                                        external { false };
+    bool                                        generated { false };
+    Option<lito::manifest::FixedSourceStandard> standard;
+    CppSourceDialect                            cpp_dialect { CppSourceDialect::Cpp };
+    Option<String>                              expected_module;
+    Option<SourceScanArtifact>                  scan_artifact;
+    Option<TransformedSource>                   transformed;
 };
 
 struct AttachmentTarget {

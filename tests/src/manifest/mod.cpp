@@ -2316,6 +2316,7 @@ path = "vendor"
 
 [source-groups.runtime]
 external-source = "vendor"
+standard = "c99"
 sources = ["src/runtime.c"]
 
 [source-groups.linux]
@@ -2348,8 +2349,18 @@ public-include-directories = [
     ASSERT_EQ(loaded->external_sources.len(), usize(1));
     EXPECT_EQ(loaded->external_sources[usize {}].name.as_str(), "vendor"_str);
     ASSERT_EQ(loaded->source_groups.len(), usize(2));
+    auto fixed_c_group = false;
+    for (const auto& group : loaded->source_groups) {
+        if (group.name != "runtime"_str) continue;
+        ASSERT_TRUE(group.standard.is_some());
+        ASSERT_TRUE(group.standard->is_C());
+        EXPECT_EQ(group.standard->as_C().standard, lito::manifest::CStandard::C99);
+        fixed_c_group = true;
+    }
+    EXPECT_TRUE(fixed_c_group);
     ASSERT_EQ(loaded->targets.len(), usize(1));
     const auto& source = lito::manifest::package_target_source(loaded->targets[usize {}]);
+    EXPECT_EQ(source.discovery, lito::manifest::SourceDiscoveryMode::Explicit);
     ASSERT_EQ(source.source_groups.len(), usize(1));
     EXPECT_EQ(source.source_groups[usize {}].as_str(), "runtime"_str);
     ASSERT_EQ(source.conditions.len(), usize(2));
@@ -2365,6 +2376,227 @@ public-include-directories = [
     EXPECT_EQ(include.root, lito::dependency::IncludeDirectoryRoot::ExternalSource);
     ASSERT_TRUE(include.external_source.is_some());
     EXPECT_EQ(include.external_source->as_str(), "vendor"_str);
+}
+
+TEST_F(Manifest, SourceGroupStandardsSurviveStandaloneSerialization) {
+    auto project = manifest("fixed-source-standards"_str, R"toml([package]
+name = "fixed-source-standards"
+version = "0.1.0"
+standard = "c++26"
+
+[lib]
+name = "fixed-source-standards"
+module = "fixed.source.standards"
+archive = "fixed-source-standards"
+source-groups = ["c-runtime", "cpp-runtime"]
+
+[source-groups.c-runtime]
+standard = "c99"
+sources = ["runtime.c"]
+
+[source-groups.cpp-runtime]
+standard = "c++20"
+sources = ["legacy.cpp"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->source_groups.len(), usize(2));
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    auto roundtrip = manifest("fixed-source-standards-restored"_str, serialized->as_str());
+    ASSERT_TRUE(roundtrip.is_ok());
+    auto restored = lito::manifest::load_package_manifest(roundtrip->root.as_path());
+    ASSERT_TRUE(restored.is_ok());
+    ASSERT_TRUE(restored->standard.is_some());
+    ASSERT_TRUE(restored->standard->is_Cpp());
+    EXPECT_EQ(restored->standard->as_Cpp().minimum, lito::manifest::CppStandard::Cpp26);
+    ASSERT_EQ(restored->source_groups.len(), usize(2));
+    const auto& c_group = restored->source_groups[usize {}];
+    EXPECT_EQ(c_group.name.as_str(), "c-runtime"_str);
+    ASSERT_TRUE(c_group.standard.is_some());
+    ASSERT_TRUE(c_group.standard->is_C());
+    EXPECT_EQ(c_group.standard->as_C().standard, lito::manifest::CStandard::C99);
+    const auto& cpp_group = restored->source_groups[usize(1)];
+    EXPECT_EQ(cpp_group.name.as_str(), "cpp-runtime"_str);
+    ASSERT_TRUE(cpp_group.standard.is_some());
+    ASSERT_TRUE(cpp_group.standard->is_Cpp());
+    EXPECT_EQ(cpp_group.standard->as_Cpp().standard, lito::manifest::CppStandard::Cpp20);
+    const auto& source = lito::manifest::package_target_source(restored->targets[usize {}]);
+    EXPECT_EQ(source.discovery, lito::manifest::SourceDiscoveryMode::Module);
+    EXPECT_EQ(source.source_groups.len(), usize(2));
+}
+
+TEST_F(Manifest, SourceGroupStandardErrorsRetainTheGroupField) {
+    constexpr ref<str> standards[] = { "\"c18\""_str, "\"c++17\""_str, "17"_str };
+    auto               index       = usize {};
+    for (auto standard : standards) {
+        SCOPED_TRACE(standard);
+        auto contents = rstd::format(R"toml([package]
+name = "invalid-group-standard"
+version = "0.1.0"
+
+[lib]
+name = "invalid-group-standard"
+module = "invalid.group.standard"
+archive = "invalid-group-standard"
+source-groups = ["runtime"]
+
+[source-groups.runtime]
+standard = {}
+sources = ["runtime.cpp"]
+)toml",
+                                     standard);
+        auto project  = manifest(rstd::format("invalid-group-standard-{}", index++).as_str(),
+                                 contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        auto message = error_chain_text(rstd::move(loaded).unwrap_err());
+        EXPECT_TRUE(message.as_str().contains("runtime"_str));
+        EXPECT_TRUE(message.as_str().contains("standard"_str));
+    }
+}
+
+TEST_F(Manifest, CPackagesRejectUnusedCppSourceGroups) {
+    constexpr ref<str> standards[] = { "c99"_str, "c11"_str, "c17"_str, "c23"_str };
+    for (auto standard : standards) {
+        SCOPED_TRACE(standard);
+        auto contents = rstd::format(R"toml([package]
+name = "c-package-cpp-group"
+version = "0.1.0"
+standard = "{}"
+
+[lib]
+name = "c-package-cpp-group"
+archive = "c-package-cpp-group"
+source-groups = ["runtime"]
+
+[source-groups.runtime]
+sources = ["runtime.c"]
+
+[source-groups.unused]
+standard = "c++20"
+sources = ["unused.cpp"]
+)toml",
+                                     standard);
+        auto project =
+            manifest(rstd::format("c-package-cpp-group-{}", standard).as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        auto message = error_chain_text(rstd::move(loaded).unwrap_err());
+        EXPECT_TRUE(message.as_str().contains("unused"_str));
+        EXPECT_TRUE(message.as_str().contains("C packages"_str));
+    }
+}
+
+TEST_F(Manifest, ModuleLayoutsAllowDirectAndConditionalSourceGroups) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "group-layout"
+version = "0.1.0"
+
+[lib]
+name = "group-layout"
+module = "group.layout"
+archive = "group-layout"
+path = "custom/entry.cppm"
+source-root = "custom"
+source-groups = ["native"]
+when = [{ condition = 'target.os == "linux"', source-groups = ["optional"] }]
+
+[source-groups.native]
+standard = "c99"
+sources = ["native.c"]
+
+[source-groups.optional]
+sources = ["optional.cpp"]
+)toml"_str },
+        { "custom/entry.cppm"_str, "export module group.layout;\n"_str },
+    };
+    auto project = materialize("group-layout"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    const auto& source = lito::manifest::package_target_source(loaded->targets[usize {}]);
+    EXPECT_EQ(source.discovery, lito::manifest::SourceDiscoveryMode::Module);
+    ASSERT_TRUE(source.entry.is_some());
+    EXPECT_EQ(source.entry->as_path(), PathBuf::from("custom/entry.cppm"_str).as_path());
+    ASSERT_TRUE(source.module_root.is_some());
+    EXPECT_EQ(source.module_root->as_path(), PathBuf::from("custom"_str).as_path());
+    EXPECT_TRUE(source.declared_sources.is_empty());
+    ASSERT_EQ(source.source_groups.len(), usize(1));
+    EXPECT_EQ(source.source_groups[usize {}].as_str(), "native"_str);
+    ASSERT_EQ(source.conditions.len(), usize(1));
+    EXPECT_EQ(source.conditions[usize {}].source_groups[usize {}].as_str(), "optional"_str);
+}
+
+TEST_F(Manifest, ExplicitSourcesStillRejectModuleLayouts) {
+    constexpr ref<str> layouts[] = {
+        "path = \"custom/entry.cppm\""_str,
+        "source-root = \"custom\""_str,
+    };
+    auto index = usize {};
+    for (auto layout : layouts) {
+        auto contents = rstd::format(R"toml([package]
+name = "explicit-layout"
+version = "0.1.0"
+
+[lib]
+name = "explicit-layout"
+module = "explicit.layout"
+archive = "explicit-layout"
+sources = ["explicit.cppm"]
+{}
+)toml",
+                                     layout);
+        auto project =
+            manifest(rstd::format("explicit-layout-{}", index++).as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        auto message = error_chain_text(rstd::move(loaded).unwrap_err());
+        EXPECT_TRUE(message.as_str().contains("cannot be combined with sources"_str));
+    }
+}
+
+TEST_F(Manifest, CSourceGroupsRejectModuleLayouts) {
+    constexpr ref<str> layouts[] = {
+        "path = \"runtime.c\""_str,
+        "source-root = \"native\""_str,
+    };
+    auto index = usize {};
+    for (auto layout : layouts) {
+        auto contents = rstd::format(R"toml([package]
+name = "c-group-layout"
+version = "0.1.0"
+standard = "c17"
+
+[lib]
+name = "c-group-layout"
+archive = "c-group-layout"
+source-groups = ["runtime"]
+{}
+
+[source-groups.runtime]
+standard = "c99"
+sources = ["runtime.c"]
+)toml",
+                                     layout);
+        auto project =
+            manifest(rstd::format("c-group-layout-{}", index++).as_str(), contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        auto message = error_chain_text(rstd::move(loaded).unwrap_err());
+        EXPECT_TRUE(message.as_str().contains("require a C++ package"_str));
+    }
 }
 
 TEST_F(Manifest, TargetConditionsPreserveFirstFailureAndIndex) {

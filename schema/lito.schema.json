@@ -302,8 +302,12 @@
     "targetSources": {
       "allOf": [
         {
-          "if": { "anyOf": [{ "required": ["path"] }, { "required": ["source-root"] }] },
-          "then": { "not": { "anyOf": [{ "required": ["sources"] }, { "required": ["source-groups"] }, { "required": ["when"] }] } }
+          "not": {
+            "allOf": [
+              { "anyOf": [{ "required": ["path"] }, { "required": ["source-root"] }] },
+              { "required": ["sources"] }
+            ]
+          }
         }
       ],
       "oneOf": [
@@ -328,6 +332,14 @@
       },
       "additionalProperties": false
     },
+    "cTargetLayout": {
+      "not": {
+        "anyOf": [
+          { "required": ["path"] },
+          { "required": ["source-root"] }
+        ]
+      }
+    },
     "targetSourceConditions": {
       "type": "array",
       "minItems": 1,
@@ -345,6 +357,9 @@
         },
         "external-source": {
           "$ref": "#/definitions/packageName"
+        },
+        "standard": {
+          "$ref": "#/definitions/packageStandard"
         },
         "sources": {
           "$ref": "#/definitions/nonEmptyPathArray"
@@ -2411,6 +2426,35 @@
         }
       },
       "allOf": [
+        {
+          "anyOf": [
+            {
+              "properties": {
+                "package": {
+                  "properties": {
+                    "standard": { "not": { "enum": ["c99", "c11", "c17", "c23"] } }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "source-groups": {
+                  "additionalProperties": {
+                    "properties": {
+                      "standard": { "enum": ["c99", "c11", "c17", "c23"] }
+                    }
+                  }
+                },
+                "lib": { "$ref": "#/definitions/cTargetLayout" },
+                "bin": { "items": { "$ref": "#/definitions/cTargetLayout" } },
+                "test": { "items": { "$ref": "#/definitions/cTargetLayout" } },
+                "bench": { "items": { "$ref": "#/definitions/cTargetLayout" } },
+                "example": { "items": { "$ref": "#/definitions/cTargetLayout" } }
+              }
+            }
+          ]
+        },
         {
           "anyOf": [
             {

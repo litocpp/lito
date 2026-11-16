@@ -25,18 +25,19 @@ enum class CppSourceDialect
 };
 
 struct ResolvedSource {
-    PathBuf                    relative_path;
-    PathBuf                    canonical_path;
-    PathBuf                    source_root;
-    String                     origin_identity;
-    bool                       external { false };
-    bool                       generated { false };
-    SourceOrigin               origin { SourceOrigin::Explicit };
-    bool                       module_companion { false };
-    bool                       module_context_required { false };
-    CppSourceDialect           cpp_dialect { CppSourceDialect::Cpp };
-    Option<String>             expected_module;
-    Option<SourceScanArtifact> scan_artifact;
+    PathBuf                                     relative_path;
+    PathBuf                                     canonical_path;
+    PathBuf                                     source_root;
+    String                                      origin_identity;
+    bool                                        external { false };
+    bool                                        generated { false };
+    SourceOrigin                                origin { SourceOrigin::Explicit };
+    bool                                        module_companion { false };
+    bool                                        module_context_required { false };
+    Option<lito::manifest::FixedSourceStandard> standard;
+    CppSourceDialect                            cpp_dialect { CppSourceDialect::Cpp };
+    Option<String>                              expected_module;
+    Option<SourceScanArtifact>                  scan_artifact;
 };
 
 struct ResolvedSourceSet {

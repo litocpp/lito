@@ -41,6 +41,15 @@ public:
     }
 };
 
+class FixedSourceStandard : public DefaultInClass<FixedSourceStandard, Clone> {
+    RSTD_ENUM(FixedSourceStandard, (C, (CStandard standard;)), (Cpp, (CppStandard standard;)))
+
+public:
+    auto clone() const -> FixedSourceStandard {
+        return is_C() ? C(as_C().standard) : Cpp(as_Cpp().standard);
+    }
+};
+
 constexpr auto package_language_name(PackageLanguage language) noexcept -> ref<str> {
     return language == PackageLanguage::C ? "c"_str : "cpp"_str;
 }
@@ -96,6 +105,25 @@ auto parse_cpp_standard(ref<str> value) noexcept -> Option<CppStandard> {
     if (value == "c++23"_str) return Some(CppStandard::Cpp23);
     if (value == "c++26"_str) return Some(CppStandard::Cpp26);
     return None();
+}
+
+auto parse_fixed_source_standard(ref<str> value) noexcept -> Option<FixedSourceStandard> {
+    if (auto standard = parse_c_standard(value); standard.is_some())
+        return Some(FixedSourceStandard::C(*standard));
+    if (auto standard = parse_cpp_standard(value); standard.is_some())
+        return Some(FixedSourceStandard::Cpp(*standard));
+    return None();
+}
+
+constexpr auto fixed_source_standard_language(const FixedSourceStandard& standard) noexcept
+    -> PackageLanguage {
+    return standard.is_C() ? PackageLanguage::C : PackageLanguage::Cpp;
+}
+
+constexpr auto fixed_source_standard_name(const FixedSourceStandard& standard) noexcept
+    -> ref<str> {
+    return standard.is_C() ? c_standard_name(standard.as_C().standard)
+                           : cpp_standard_name(standard.as_Cpp().standard);
 }
 
 constexpr auto package_standard_language(const PackageStandardRequirement& requirement) noexcept

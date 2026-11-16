@@ -274,6 +274,399 @@ extern "C" int bridge_value() { return 35; }
     EXPECT_EQ(warm->compiled, usize());
 }
 
+TEST_F(BuildCommand, FixedSourceGroupStandardsDoNotFollowPackageUpgrades) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixed-group-standards"
+version = "0.1.0"
+
+[lib]
+name = "fixed-group-standards"
+module = "fixed.groups"
+archive = "fixed-groups"
+path = "src/lib.cppm"
+source-root = "src"
+source-groups = ["c-runtime", "cpp-runtime"]
+
+[source-groups.c-runtime]
+standard = "c99"
+sources = ["vendor/value.c"]
+
+[source-groups.cpp-runtime]
+standard = "c++20"
+sources = ["vendor/value.cpp"]
+
+[usage]
+private-include-directories = ["include"]
+public-definitions = ["GROUP_PUBLIC=1"]
+private-definitions = ["GROUP_PRIVATE=1"]
+
+[[bin]]
+name = "fixed-group-standards"
+sources = ["main.cpp"]
+link-stdlib = false
+
+[dependencies]
+raise-c = { path = "raise-c" }
+raise-cpp = { path = "raise-cpp", pub = true }
+)toml"_str },
+        { "include/shared.h"_str, "#define GROUP_HEADER_VALUE 7\n"_str },
+        { "src/lib.cppm"_str, R"cpp(module;
+#if __cplusplus < 202400L
+#error default sources must follow the selected C++ package requirement
+#endif
+#ifndef CPP_DOMAIN
+#error C++ options must reach default sources
+#endif
+#ifdef C_DOMAIN
+#error C options must not enter C++ sources
+#endif
+extern "C" int fixed_c_value();
+extern "C" int fixed_cpp_value();
+extern "C" int raised_c_value();
+export module fixed.groups;
+import raised.cpp;
+export int answer() {
+    return fixed_c_value() + fixed_cpp_value() + raised_c_value() + raised_cpp_value();
+}
+)cpp"_str },
+        { "vendor/value.c"_str, R"c(#include "shared.h"
+#if __STDC_VERSION__ != 199901L
+#error source group must remain C99
+#endif
+#if !defined(C_DOMAIN) || defined(CPP_DOMAIN)
+#error source group must use the C option domain
+#endif
+#if !defined(GROUP_PUBLIC) || !defined(GROUP_PRIVATE)
+#error source group must retain target usage
+#endif
+int fixed_c_value(void) { return GROUP_HEADER_VALUE; }
+)c"_str },
+        { "vendor/value.cpp"_str, R"cpp(#include "shared.h"
+#if __cplusplus != 202002L
+#error source group must remain C++20
+#endif
+#if !defined(CPP_DOMAIN) || defined(C_DOMAIN)
+#error source group must use the C++ option domain
+#endif
+#if !defined(GROUP_PUBLIC) || !defined(GROUP_PRIVATE)
+#error source group must retain target usage
+#endif
+extern "C" int fixed_cpp_value() { return GROUP_HEADER_VALUE + 1; }
+)cpp"_str },
+        { "main.cpp"_str,
+          "import fixed.groups; int main() { return answer() == 42 ? 0 : 1; }\n"_str },
+        { "raise-c/lito.toml"_str, R"toml([package]
+name = "raise-c"
+version = "0.1.0"
+standard = "c23"
+[lib]
+name = "raise-c"
+archive = "raise-c"
+sources = ["raised.c"]
+)toml"_str },
+        { "raise-c/raised.c"_str, R"c(#if __STDC_VERSION__ < 202311L
+#error package sources must follow the C23 requirement
+#endif
+int raised_c_value(void) { return 9; }
+)c"_str },
+        { "raise-cpp/lito.toml"_str, R"toml([package]
+name = "raise-cpp"
+version = "0.1.0"
+standard = "c++26"
+[lib]
+name = "raise-cpp"
+module = "raised.cpp"
+archive = "raise-cpp"
+)toml"_str },
+        { "raise-cpp/src/lib.cppm"_str,
+          "export module raised.cpp; export int raised_cpp_value() { return 18; }\n"_str },
+    };
+    auto project = materialize("fixed-group-standards"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        "fixed-group-standards"_str, project->root.as_path(), strings("fixed-group-standards"_str));
+    request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DCPP_DOMAIN=1"_str),
+        .source    = "CXXFLAGS"_Str,
+    });
+    request.configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DC_DOMAIN=1"_str),
+        .source    = "CFLAGS"_Str,
+    });
+    auto built = lito::build(request);
+    if (built.is_err())
+        rstd::test::fail_current(
+            error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(built.is_ok());
+    auto executable_path = executable(*built);
+    ASSERT_TRUE(executable_path.is_some());
+    auto status = rstd::process::Command::make((*executable_path).as_os_str()).status();
+    ASSERT_TRUE(status.is_ok());
+    EXPECT_TRUE(status->success());
+
+    auto commands = rstd::fs::read_to_string(built->compilation_database.as_path()).unwrap();
+    auto database = rstd::json::from_str(commands.as_str()).unwrap();
+    for (const auto& entry : *database.as_array().unwrap()) {
+        auto source    = entry["file"_str].as_str().unwrap();
+        auto expected  = source.ends_with("value.c"_str)     ? "-std=c99"_str
+                         : source.ends_with("value.cpp"_str) ? "-std=c++20"_str
+                         : source.ends_with("raised.c"_str)  ? "-std=c23"_str
+                                                             : "-std=c++26"_str;
+        auto standards = usize {};
+        for (const auto& argument : *entry["arguments"_str].as_array().unwrap()) {
+            auto text = argument.as_str().unwrap();
+            if (! text.starts_with("-std="_str)) continue;
+            EXPECT_EQ(text, expected);
+            ++standards;
+        }
+        EXPECT_EQ(standards, usize(1));
+    }
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+}
+
+TEST_F(BuildCommand, SourceGroupsRejectPhysicalOverlapWithDiscoveredSources) {
+    struct Case {
+        ref<str> name;
+        ref<str> selection;
+        ref<str> groups;
+        ref<str> source;
+        ref<str> second_group;
+        bool     upgraded {};
+    };
+    constexpr Case cases[] = {
+        { "entry"_str,
+          "source-groups = ['first']\n"_str,
+          "[source-groups.first]\nstandard = 'c++20'\nsources = ['src/lib.cppm']\n"_str,
+          "lib.cppm"_str,
+          ""_str },
+        { "companion"_str,
+          "when = [{ condition = 'feature.native', source-groups = ['first'] }]\n"_str,
+          "[source-groups.first]\nstandard = 'c++20'\nsources = ['src/value.cpp']\n"_str,
+          "value.cpp"_str,
+          ""_str },
+        { "groups"_str,
+          "source-groups = ['first']\n"
+          "when = [{ condition = 'feature.native', source-groups = ['second'] }]\n"_str,
+          "[source-groups.first]\nstandard = 'c++20'\nsources = ['native.cpp']\n"
+          "[source-groups.second]\nstandard = 'c++20'\nsources = ['native.cpp']\n"_str,
+          "native.cpp"_str,
+          "second"_str },
+        { "partition"_str,
+          "source-groups = ['first']\n"_str,
+          "[source-groups.first]\nstandard = 'c++20'\nsources = ['src/value.cppm']\n"_str,
+          "value.cppm"_str,
+          ""_str,
+          true },
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.name);
+        auto              manifest = rstd::format(R"toml([package]
+name = "group-source-overlap"
+version = "0.1.0"
+{}
+[lib]
+name = "group-source-overlap"
+module = "group.overlap"
+archive = "group-overlap"
+{}
+[features.native]
+default = true
+{}
+)toml",
+                                                  item.upgraded ? "standard = 'c++23'"_str : ""_str,
+                                                  item.selection,
+                                                  item.groups);
+        const ProjectFile files[]  = {
+            { "lito.toml"_str, manifest.as_str() },
+            { "src/lib.cppm"_str, "export module group.overlap; export import :value;\n"_str },
+            { "src/value.cppm"_str,
+              item.upgraded ? R"cpp(#if __cplusplus != 202002L
+#error group scan facts must retain the fixed standard
+#endif
+export module group.overlap:value;
+export int value();
+)cpp"_str
+                            : "export module group.overlap:value; export int value();\n"_str },
+            { "src/value.cpp"_str, "module group.overlap; int value() { return 42; }\n"_str },
+            { "native.cpp"_str, "int native_value() { return 0; }\n"_str },
+        };
+        auto project = materialize(item.name, files);
+        ASSERT_TRUE(project.is_ok());
+        auto built = lito::build(project_build_request(
+            item.name, project->root.as_path(), strings("group-source-overlap"_str)));
+        ASSERT_TRUE(built.is_err());
+        auto message = error_chain_text(built.unwrap_err());
+        if (! message.as_str().contains("physical source"_str) ||
+            ! message.as_str().contains(item.source) || ! message.as_str().contains("first"_str) ||
+            (! item.second_group.is_empty() && ! message.as_str().contains(item.second_group)))
+            rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, false);
+        EXPECT_TRUE(message.as_str().contains("physical source"_str));
+        EXPECT_TRUE(message.as_str().contains(item.source));
+        EXPECT_TRUE(message.as_str().contains("first"_str));
+        if (! item.second_group.is_empty())
+            EXPECT_TRUE(message.as_str().contains(item.second_group));
+    }
+}
+
+TEST_F(BuildCommand, SourceGroupOnlyLibraryDoesNotRequireConventionalEntry) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "group-only-library"
+version = "0.1.0"
+[lib]
+name = "group-only-library"
+module = "group.only"
+archive = "group-only"
+source-groups = ["provided", "runtime"]
+[source-groups.provided]
+standard = "c++20"
+sources = ["vendor/provided.cppm"]
+[source-groups.runtime]
+standard = "c99"
+sources = ["vendor/value.c"]
+[[bin]]
+name = "group-only-library"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "vendor/provided.cppm"_str, R"cpp(module;
+extern "C" int runtime_value(void);
+export module group.only;
+export int answer() { return runtime_value(); }
+)cpp"_str },
+        { "vendor/value.c"_str, R"c(#if __STDC_VERSION__ != 199901L
+#error source group must remain C99 without a C package
+#endif
+int runtime_value(void) { return 42; }
+)c"_str },
+        { "main.cpp"_str,
+          "import group.only; int main() { return answer() == 42 ? 0 : 1; }\n"_str },
+    };
+    auto project = materialize("group-only-library"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(project_build_request(
+        "group-only-library"_str, project->root.as_path(), strings("group-only-library"_str)));
+    if (built.is_err())
+        rstd::test::fail_current(
+            error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(built.is_ok());
+    auto executable_path = executable(*built);
+    ASSERT_TRUE(executable_path.is_some());
+    auto status = rstd::process::Command::make((*executable_path).as_os_str()).status();
+    ASSERT_TRUE(status.is_ok());
+    EXPECT_TRUE(status->success());
+}
+
+TEST_F(BuildCommand, FixedSourceGroupRejectsIncompatibleImportedBmiStandard) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixed-group-bmi"
+version = "0.1.0"
+standard = "c++23"
+[lib]
+name = "fixed-group-bmi"
+module = "fixed.bmi"
+archive = "fixed-bmi"
+source-groups = ["consumer"]
+[source-groups.consumer]
+standard = "c++20"
+sources = ["consumer.cpp"]
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixed.bmi; export int answer() { return 42; }\n"_str },
+        { "consumer.cpp"_str, R"cpp(#if __cplusplus != 202002L
+#error fixed group standard must not be upgraded for its import
+#endif
+import fixed.bmi;
+int consumer_value() { return answer(); }
+)cpp"_str },
+    };
+    auto project = materialize("fixed-group-bmi"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(project_build_request(
+        "fixed-group-bmi"_str, project->root.as_path(), strings("fixed-group-bmi"_str)));
+    ASSERT_TRUE(built.is_err());
+    auto message = error_chain_text(built.unwrap_err());
+    if (! message.as_str().contains("C++ language standard"_str) ||
+        ! message.as_str().contains("c++20"_str) || ! message.as_str().contains("c++23"_str))
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, false);
+    EXPECT_TRUE(message.as_str().contains("C++ language standard"_str));
+    EXPECT_TRUE(message.as_str().contains("c++20"_str));
+    EXPECT_TRUE(message.as_str().contains("c++23"_str));
+}
+
+TEST_F(BuildCommand, SourceGroupsDoNotOverrideHigherPriorityModuleOwners) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "group-owner-priority"
+version = "0.1.0"
+standard = "c++23"
+[[bin]]
+name = "group-owner-priority"
+sources = ["main.cpp"]
+link-stdlib = false
+[dependencies]
+foo = { path = "foo" }
+foo-bar = { path = "foo-bar" }
+)toml"_str },
+        { "main.cpp"_str, R"cpp(#if __cplusplus != 202302L
+#error the selected owner must use the default C++23 context
+#endif
+import foo.bar.value;
+int main() { return answer() == 42 ? 0 : 1; }
+)cpp"_str },
+        { "foo/lito.toml"_str, R"toml([package]
+name = "foo"
+version = "0.1.0"
+[lib]
+name = "foo"
+module = "foo"
+archive = "foo"
+source-groups = ["primary", "aux"]
+[source-groups.primary]
+standard = "c++20"
+sources = ["vendor/root.cppm"]
+[source-groups.aux]
+standard = "c++20"
+sources = ["src/bar/value.cppm"]
+)toml"_str },
+        { "foo/vendor/root.cppm"_str, "export module foo;\n"_str },
+        { "foo/src/bar/value.cppm"_str, R"cpp(module;
+#if __cplusplus != 202002L
+#error an unselected owner candidate must not be rescanned with a different standard
+#endif
+export module foo:aux;
+export int unused_value() { return 0; }
+)cpp"_str },
+        { "foo-bar/lito.toml"_str, R"toml([package]
+name = "foo-bar"
+version = "0.1.0"
+[lib]
+name = "foo-bar"
+module = "foo.bar"
+archive = "foo-bar"
+)toml"_str },
+        { "foo-bar/src/lib.cppm"_str, "export module foo.bar;\n"_str },
+        { "foo-bar/src/value.cppm"_str,
+          "export module foo.bar.value; export int answer() { return 42; }\n"_str },
+    };
+    auto project = materialize("group-owner-priority"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(project_build_request(
+        "group-owner-priority"_str, project->root.as_path(), strings("group-owner-priority"_str)));
+    if (built.is_err())
+        rstd::test::fail_current(
+            error_chain_text(built.unwrap_err()).as_str(), __FILE__, __LINE__, false);
+    ASSERT_TRUE(built.is_ok());
+    auto executable_path = executable(*built);
+    ASSERT_TRUE(executable_path.is_some());
+    auto status = rstd::process::Command::make((*executable_path).as_os_str()).status();
+    ASSERT_TRUE(status.is_ok());
+    EXPECT_TRUE(status->success());
+}
+
 struct CMakeOverrideEvents {
     usize fetch {};
     usize source_operations {};

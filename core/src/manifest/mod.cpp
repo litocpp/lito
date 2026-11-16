@@ -598,6 +598,15 @@ auto assemble_manifest_document(PathBuf                               root,
             "conditional usage.private-include-directories"_str));
     }
     for (const auto& group : parsed_source_groups) {
+        if (target_language == PackageLanguage::C && group.standard.is_some() &&
+            group.standard->is_Cpp()) {
+            return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                rstd::serde::DataPath()
+                    .with_field("source-groups"_str)
+                    .with_map_key(group.name.as_str())
+                    .with_field("standard"_str),
+                "C packages cannot use a C++ source group standard"_str)));
+        }
         if (group.external_source.is_some() &&
             ! has_external_source(group.external_source->as_str())) {
             return Err(ManifestSchemaError::Domain(

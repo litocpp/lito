@@ -123,7 +123,8 @@ For an entry declaring `export module demo.game;`, `import :view;` resolves to `
 or `2048/view/mod.cppm`. Keep shared support in a library; game-specific partitions must belong to
 the game's module rather than the shared library's primary module.
 
-`path` and `source-root` cannot be combined with explicit `sources`, `source-groups`, or `when`.
+`path` and `source-root` cannot be combined with explicit `sources`. They can be combined with
+direct `source-groups` and conditional `when` groups, which supplement module discovery.
 Paths must stay within the package source root and must not cross nested package boundaries.
 
 ## Named modules and partitions
@@ -247,7 +248,32 @@ sources = ["tool/main.cpp", "tool/decoder.cpp"]
 ```
 
 The explicit list owns that target's sources; Lito does not fall back to directory discovery for
-missing entries. Use `source-groups` and target `when` entries for named or conditional sets.
+missing entries. Explicit `sources` and module discovery are separate modes.
+
+Use `source-groups` to add named sets without disabling module discovery; target `when` entries
+can add conditional groups in the same way:
+
+```toml
+[lib]
+module = "geometry"
+archive = "geometry"
+source-groups = ["native"]
+
+[source-groups.native]
+standard = "c99"
+sources = ["native/value.c"]
+```
+
+The module entry, active imports, and their companions are discovered normally. The native source
+is compiled as C99, even if another package requires a newer C standard. A group's `standard` fixes
+its actual standard rather than contributing a package minimum. Omit it to inherit the package's
+effective language and standard. C++ packages may add C-standard groups; C packages cannot declare
+C++-standard groups, including inactive ones.
+
+A selected group must not repeat a physical file reached by discovery or another selected group.
+Lito reports the conflicting sources instead of deduplicating them or choosing one standard, even
+if both standards match. Files not reached through the entry, active imports, or companions are
+not discovered simply because they share the module directory.
 
 C targets are supported as an explicit-source compatibility path. They cannot declare modules and
 do not enter the BMI graph.

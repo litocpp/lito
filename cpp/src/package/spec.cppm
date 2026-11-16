@@ -78,17 +78,31 @@ public:
     }
 };
 
+struct CSourceCompileContext : DefaultInClass<CSourceCompileContext, Clone> {
+    lito::c::CCompileOptions     options;
+    lito::c::CPublicRequirements public_requirements;
+
+    auto clone() const -> CSourceCompileContext {
+        return CSourceCompileContext {
+            .options             = options.clone(),
+            .public_requirements = public_requirements.clone(),
+        };
+    }
+};
+
 struct CompileContext {
-    String                 id;
-    String                 scan_id;
-    LanguageCompileContext language;
-    Vec<String>            external_identities;
+    String                        id;
+    String                        scan_id;
+    LanguageCompileContext        language;
+    Option<CSourceCompileContext> c_source;
+    Vec<String>                   external_identities;
 
     auto clone() const -> CompileContext {
         return CompileContext {
             .id                  = id.clone(),
             .scan_id             = scan_id.clone(),
             .language            = as<Clone>(language).clone(),
+            .c_source            = as<Clone>(c_source).clone(),
             .external_identities = as<Clone>(external_identities).clone(),
         };
     }

@@ -23,6 +23,66 @@ struct CppCompilerArgumentBinding {
     bool                        ignored { false };
 };
 
+auto project_cpp_compiler_argument_to_c(const CppCompilerArgumentOccurrence& occurrence)
+    -> Option<lito::c::CCompilerArgumentOccurrence> {
+    auto        argument = Option<lito::c::CCompilerArgument> {};
+    const auto& source   = occurrence.argument;
+    const auto  vendor   = [&](String value, lito::c::CVendorOptionEffect effect) {
+        return Some(lito::c::CCompilerArgument::Vendor(lito::c::CVendorOption {
+            .value      = rstd::move(value),
+            .raw_tokens = as<Clone>(occurrence.raw_tokens).clone(),
+            .effect     = effect,
+        }));
+    };
+    if (source.is_Common()) {
+        argument = Some(
+            lito::c::CCompilerArgument::Common(as<Clone>(source.as_Common().argument).clone()));
+    } else if (source.is_Macro()) {
+        const auto& macro = source.as_Macro().directive;
+        argument          = Some(lito::c::CCompilerArgument::Macro(lito::c::CMacroDirective {
+            .action = macro.action == CppMacroAction::Define ? lito::c::CMacroAction::Define
+                                                             : lito::c::CMacroAction::Undefine,
+            .value  = macro.value.clone(),
+        }));
+    } else if (source.is_IncludeDirectory()) {
+        const auto& include = source.as_IncludeDirectory().directory;
+        argument = Some(lito::c::CCompilerArgument::IncludeDirectory(lito::c::CIncludeDirectory {
+            .path = include.path.clone(),
+            .kind = include.kind == CppIncludeDirectoryKind::System
+                        ? lito::c::CIncludeDirectoryKind::System
+                        : lito::c::CIncludeDirectoryKind::User,
+        }));
+    } else if (source.is_CodegenSetting()) {
+        argument = Some(lito::c::CCompilerArgument::CodegenSetting(
+            as<Clone>(source.as_CodegenSetting().setting).clone()));
+    } else if (source.is_Diagnostic()) {
+        argument =
+            Some(lito::c::CCompilerArgument::Diagnostic(source.as_Diagnostic().value.clone()));
+    } else if (source.is_Family()) {
+        const auto& family = source.as_Family();
+        if (family.domain == CppOptionFamilyDomain::Target) {
+            argument = vendor(family.value.clone(), lito::c::CVendorOptionEffect::Target);
+        } else if (family.domain == CppOptionFamilyDomain::Codegen) {
+            argument = vendor(family.value.clone(), lito::c::CVendorOptionEffect::Codegen);
+        }
+    } else if (source.is_Instrumentation()) {
+        argument = vendor(source.as_Instrumentation().value.clone(),
+                          lito::c::CVendorOptionEffect::Codegen);
+    } else if (source.is_SymbolVisibility()) {
+        argument =
+            vendor(rstd::format("-fvisibility={}",
+                                cpp_symbol_visibility_name(source.as_SymbolVisibility().value)),
+                   lito::c::CVendorOptionEffect::Codegen);
+    }
+    if (argument.is_none()) return None();
+    return Some(lito::c::CCompilerArgumentOccurrence {
+        .argument   = rstd::move(argument).unwrap(),
+        .raw_tokens = as<Clone>(occurrence.raw_tokens).clone(),
+        .range      = occurrence.range,
+        .source     = occurrence.source.clone(),
+    });
+}
+
 } // namespace lito::cpp
 
 export namespace rstd

@@ -62,12 +62,13 @@ enum class GeneratedSourceAvailability
 };
 
 struct ResolvedSourceGroup {
-    String                      name;
-    PathBuf                     root;
-    String                      identity;
-    Vec<PathBuf>                sources;
-    bool                        generated { false };
-    bool                        external { false };
+    String                                      name;
+    PathBuf                                     root;
+    String                                      identity;
+    Vec<PathBuf>                                sources;
+    Option<lito::manifest::FixedSourceStandard> standard;
+    bool                                        generated { false };
+    bool                                        external { false };
     GeneratedSourceAvailability availability { GeneratedSourceAvailability::BeforeHostTools };
 };
 

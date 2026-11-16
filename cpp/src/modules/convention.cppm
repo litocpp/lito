@@ -322,11 +322,34 @@ auto module_entry_source(const ResolvedTarget& target) -> ModuleResult<ResolvedS
     return root_module_source(target);
 }
 
+auto optional_module_entry_source(const ResolvedTarget& target)
+    -> ModuleResult<Option<ResolvedSource>> {
+    if (! runnable_target(target.id.kind) && target.source.entry.is_none() &&
+        target.source.module_root.is_none() && ! target.source_groups.is_empty()) {
+        auto requested = target.source_root.join(PathBuf::from("src/lib.cppm"_str).as_path());
+        auto exists    = file_exists(requested.as_path());
+        if (exists.is_err()) return Err(rstd::move(exists).unwrap_err());
+        if (! *exists) return Ok(None());
+    }
+    auto entry = module_entry_source(target);
+    if (entry.is_err()) return Err(rstd::move(entry).unwrap_err());
+    return Ok(Some(rstd::move(entry).unwrap()));
+}
+
 auto module_source_exists(const ResolvedTarget& target,
                           ref<str>              logical_name,
                           Option<ref<str>>      inferred = None()) -> ModuleResult<bool> {
     auto module = target.source.module.is_some() ? Some(target.source.module->as_str()) : inferred;
     if (module.is_none()) return Ok(false);
+    if (target.source.entry.is_none() && target.source.module_root.is_none() &&
+        ! target.source_groups.is_empty()) {
+        auto requested = target.source_root.join(PathBuf::from("src"_str).as_path());
+        auto exists    = rstd::fs::exists(requested.as_path());
+        if (exists.is_err())
+            return Err(ModuleError::Io(
+                "inspect source root"_Str, rstd::move(requested), rstd::move(exists).unwrap_err()));
+        if (! *exists) return Ok(false);
+    }
     auto source_root_result = canonical_source_root(target);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();

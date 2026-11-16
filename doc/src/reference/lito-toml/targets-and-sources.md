@@ -14,8 +14,13 @@ A package has at most one library target.
   source ownership.
 - `source-groups` is an optional non-empty array naming `[source-groups.NAME]` entries.
 - `when` is an optional non-empty array of target source conditions.
+- `path` and `source-root` override the discovery entry and module directory. They can be combined
+  with `source-groups` and `when`, but not with explicit `sources`.
 
 With discovery, the library entry is `src/lib.cppm` and provides `module`.
+Direct `source-groups` and active `when` groups supplement discovery without disabling it. Discovery
+still follows active imports and companion implementations, rather than compiling every file in
+the module directory. Setting `sources` selects explicit mode instead.
 
 For a C package selected by `[package].standard`, `module` is forbidden and either `sources` or
 `source-groups` is required. The same restriction applies to C runnable targets.
@@ -272,6 +277,16 @@ Choose one root form:
 - set `external-source = "NAME"` for a package external source.
 
 `external-source` cannot be combined with a generated root.
+
+An optional `standard` fixes the group's actual language and standard, such as `"c99"` or
+`"c++20"`. Unlike the package's minimum standard, this value is not raised by dependency package
+requirements. Without it, the group inherits the package's effective language and standard.
+A C++ package can use a C-standard group, whose sources compile as C. A C package cannot declare a
+C++-standard group, even when that group is not selected.
+
+The same physical file cannot belong to both discovery and a selected source group, or to two
+selected groups. Lito reports the conflicting sources even when their standards match. A file
+outside the actual discovery closure does not conflict merely because it is in the module directory.
 
 ## Target source conditions
 

@@ -106,6 +106,14 @@ auto append_build_units(PreparedBuildUnits&       result,
                     Box<cpp::CompileContext>::make(rstd::move(selected_context).unwrap()));
                 context = result.owned_contexts[result.owned_contexts.len() - usize(1)].get();
             }
+            if (source.standard.is_some()) {
+                auto selected_context = cpp::source_compile_context(*context, *source.standard);
+                if (selected_context.is_err())
+                    return Err(rstd::into<BuildError>(rstd::move(selected_context).unwrap_err()));
+                result.owned_contexts.push(
+                    Box<cpp::CompileContext>::make(rstd::move(selected_context).unwrap()));
+                context = result.owned_contexts[result.owned_contexts.len() - usize(1)].get();
+            }
             auto object       = layout.object(target_spec.id, source.relative_path.as_path());
             auto cache_record = layout.cache_unit(target_spec.id, source.relative_path.as_path());
             if (object.is_err()) {

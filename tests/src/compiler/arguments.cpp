@@ -13,6 +13,63 @@ using namespace lito;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
+TEST(CompilerArguments, ProjectsSharedTargetUsageToCWithoutCppOrOpaqueOptions) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto parsed = parser->parse(strings("-msse2"_str,
+                                        "-fvisibility=default"_str,
+                                        "-Wall"_str,
+                                        "-Wno-unused-variable"_str,
+                                        "-fsanitize=undefined"_str,
+                                        "-std=c++23"_str,
+                                        "-ftype-visibility=hidden"_str,
+                                        "-fvisibility-inlines-hidden"_str,
+                                        "-unknown-driver-option"_str),
+                                "compiler.c-projection"_str);
+    ASSERT_TRUE(parsed.is_ok());
+    auto layer = c::CArgumentLayer {};
+    for (usize index {}; index < parsed->occurrences.len(); ++index) {
+        const auto& occurrence = parsed->occurrences[index];
+        auto        projected  = cpp::project_cpp_compiler_argument_to_c(occurrence);
+        EXPECT_EQ(projected.is_some(), index < usize(5));
+        if (projected.is_none()) continue;
+        EXPECT_EQ(projected->range.begin, occurrence.range.begin);
+        EXPECT_EQ(projected->range.end, occurrence.range.end);
+        EXPECT_EQ(projected->source.as_str(), "compiler.c-projection"_str);
+        layer.occurrences.push(rstd::move(projected).unwrap());
+    }
+    cpp::CppCompilerArgumentOccurrence codegen {
+        .argument   = cpp::CppCompilerArgument::Family(cpp::CppOptionFamilyDomain::Codegen,
+                                                       "function-sections"_Str,
+                                                       "-ffunction-sections"_Str),
+        .raw_tokens = strings("-ffunction-sections"_str),
+        .source     = "compiler.c-projection"_Str,
+    };
+    auto projected = cpp::project_cpp_compiler_argument_to_c(codegen);
+    ASSERT_TRUE(projected.is_some());
+    EXPECT_EQ(projected->argument.as_Vendor().option.effect, c::CVendorOptionEffect::Codegen);
+    layer.occurrences.push(rstd::move(projected).unwrap());
+    auto options =
+        c::apply_c_option_layer(c::make_c_options({}, manifest::CStandard::C99), rstd::move(layer));
+    ASSERT_TRUE(options.is_ok());
+    EXPECT_TRUE(options->vendor.iter().any([](auto option) {
+        return option->value == "-msse2"_str && option->effect == c::CVendorOptionEffect::Target;
+    }));
+    EXPECT_TRUE(options->vendor.iter().any([](auto option) {
+        return option->value == "-fvisibility=default"_str &&
+               option->effect == c::CVendorOptionEffect::Codegen;
+    }));
+    EXPECT_TRUE(options->vendor.iter().any([](auto option) {
+        return option->value == "-fsanitize=undefined"_str;
+    }));
+    EXPECT_TRUE(options->diagnostics.warnings.iter().any([](auto warning) {
+        return warning->warning == compiler::CompilerWarning::All && warning->enabled;
+    }));
+    EXPECT_TRUE(options->diagnostics.options.iter().any([](auto diagnostic) {
+        return *diagnostic == "-Wno-unused-variable"_str;
+    }));
+}
+
 TEST(CompilerArguments, PreservesTokenRangesAndDoesNotGuessUnknownArity) {
     auto parser = make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

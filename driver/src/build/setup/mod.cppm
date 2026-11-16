@@ -104,11 +104,11 @@ struct BuildSetupReportSink {
 namespace lito
 {
 
-auto emit_build_setup_report(const Option<BuildSetupReportSink>&              reporter,
-                             const lito::config::ToolchainSpec&               requested,
-                             const ClangToolchain&                            resolved,
-                             const lito::config::ProjectBuildOptions&         options,
-                             const lito::package::EffectiveLanguageStandards& standards,
+auto emit_build_setup_report(const Option<BuildSetupReportSink>&        reporter,
+                             const lito::config::ToolchainSpec&         requested,
+                             const ClangToolchain&                      resolved,
+                             const lito::config::ProjectBuildOptions&   options,
+                             cpp::SourceLanguages                       languages,
                              lito::config::StandardLibraryRuntime       standard_library_runtime,
                              const lito::cpp::ProfileSpec&              profile,
                              const BuildPlatform&                       platform,
@@ -242,7 +242,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
         }
         append_value("NDEBUG"_str, ndebug_value, native.sources.ndebug);
     };
-    if (standards.cpp.is_some()) {
+    if (languages.cpp) {
         append_codegen(
             BuildOptionReportDomain::Cpp,
             lito::cpp::effective_native_profile(profile, lito::manifest::PackageLanguage::Cpp));
@@ -259,7 +259,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
             .source = profile.cpp_language_sources.rtti.clone(),
         });
     }
-    if (standards.c.is_some()) {
+    if (languages.c) {
         append_codegen(
             BuildOptionReportDomain::C,
             lito::cpp::effective_native_profile(profile, lito::manifest::PackageLanguage::C));
@@ -277,7 +277,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                 .source = "effective toolchain policy"_Str,
             });
         };
-    if (standards.cpp.is_some()) {
+    if (languages.cpp) {
         append_microsoft_runtime(BuildOptionReportDomain::Cpp,
                                  profile.cpp.common.microsoft_runtime_library);
         report.profile_values.push(BuildProfileValueReport {
@@ -295,7 +295,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
             .source = "toolchain.stdlib-runtime"_Str,
         });
     }
-    if (standards.c.is_some()) {
+    if (languages.c) {
         append_microsoft_runtime(BuildOptionReportDomain::C,
                                  profile.c.common.microsoft_runtime_library);
     }
@@ -307,15 +307,14 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                       : "per-language"_Str,
         .source = profile.link_lto_source.is_some()
                       ? profile.link_lto_source->clone()
-                      : String::make(standards.c.is_some() && standards.cpp.is_some()
+                      : String::make(languages.c && languages.cpp
                                          ? "C/C++ compile settings"_str
-                                         : (standards.c.is_some() ? "C compile settings"_str
-                                                                  : "C++ compile settings"_str)),
+                                         : (languages.c ? "C compile settings"_str
+                                                        : "C++ compile settings"_str)),
     });
     auto native_link = lito::cpp::effective_native_profile(
         profile,
-        standards.cpp.is_some() ? lito::manifest::PackageLanguage::Cpp
-                                : lito::manifest::PackageLanguage::C);
+        languages.cpp ? lito::manifest::PackageLanguage::Cpp : lito::manifest::PackageLanguage::C);
     auto strip_value = "compiler default"_Str;
     if (native_link.strip.is_some()) {
         switch (*native_link.strip) {

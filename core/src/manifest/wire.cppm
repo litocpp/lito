@@ -44,6 +44,7 @@ struct TargetAttachment {
 struct SourceGroup {
     Option<String> root;
     Option<String> external_source;
+    Option<String> standard;
     Vec<String>    sources;
 };
 
@@ -183,12 +184,18 @@ struct Impl<serde::Deserialize, lito::manifest::wire::SourceGroup> {
         -> Result<lito::manifest::wire::SourceGroup, typename Deserializer::error_type> {
         auto root            = serde::OptionalField<String>("root"_str);
         auto external_source = serde::OptionalField<String>("external-source"_str);
+        auto standard        = serde::OptionalField<String>("standard"_str);
         auto sources         = serde::RequiredField<Vec<String>>("sources"_str);
-        rstd_try(serde::deserialize_record(
-            deserializer, serde::UnknownFieldPolicy::Reject, root, external_source, sources));
+        rstd_try(serde::deserialize_record(deserializer,
+                                           serde::UnknownFieldPolicy::Reject,
+                                           root,
+                                           external_source,
+                                           standard,
+                                           sources));
         return Ok(lito::manifest::wire::SourceGroup {
             .root            = root.take(),
             .external_source = external_source.take(),
+            .standard        = standard.take(),
             .sources         = rstd_try(sources.take(deserializer)),
         });
     }

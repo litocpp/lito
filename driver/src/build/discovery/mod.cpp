@@ -13,8 +13,9 @@ import :build.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using StringSet = rstd::collections::BTreeMap<String, empty>;
-using StringMap = rstd::collections::BTreeMap<String, String>;
+using StringSet         = rstd::collections::BTreeMap<String, empty>;
+using StringMap         = rstd::collections::BTreeMap<String, String>;
+using ExplicitModuleMap = rstd::collections::BTreeMap<String, Option<String>>;
 
 namespace lito
 {
@@ -183,13 +184,35 @@ auto source_key(ref<rstd::path::Path> path) -> cpp::SourceDiscoveryResult<String
     return Ok(String::make(*text));
 }
 
+auto validate_source_selection(cpp::TargetId              target,
+                               const cpp::ResolvedSource& source,
+                               ref<str>                   selection,
+                               const StringMap& queued) -> cpp::SourceDiscoveryResult<empty> {
+    auto path = source_key(source.canonical_path.as_path());
+    if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+    auto work_key = rstd::format("{}:{}", target, path->as_str());
+    auto previous = queued.get(work_key.as_str());
+    if (previous.is_none() || ((**previous).as_str() == "automatic discovery"_str &&
+                               selection == "automatic discovery"_str))
+        return Ok(empty {});
+    return Err(cpp::SourceDiscoveryError::Message(
+        rstd::format("source selections '{}' and '{}' repeat physical source '{}'",
+                     (**previous).as_str(),
+                     selection,
+                     source.canonical_path.as_path())));
+}
+
 auto enqueue_candidate(cpp::TargetId            target,
                        cpp::ResolvedSource      source,
                        bool                     discover_companion,
                        StringMap&               path_names,
                        StringMap&               name_paths,
-                       StringSet&               queued,
-                       Vec<DiscoveryCandidate>& queue) -> cpp::SourceDiscoveryResult<empty> {
+                       StringMap&               queued,
+                       Vec<DiscoveryCandidate>& queue,
+                       ref<str>                 selection = "automatic discovery"_str)
+    -> cpp::SourceDiscoveryResult<empty> {
+    auto valid = validate_source_selection(target, source, selection, queued);
+    if (valid.is_err()) return valid;
     auto path_result = source_key(source.canonical_path.as_path());
     if (path_result.is_err()) return Err(rstd::move(path_result).unwrap_err());
     auto path = rstd::move(path_result).unwrap();
@@ -216,7 +239,7 @@ auto enqueue_candidate(cpp::TargetId            target,
     }
     auto work_key = rstd::format("{}:{}", target, path.as_str());
     if (queued.contains_key(work_key.as_str())) return Ok(empty {});
-    queued.insert(rstd::move(work_key), empty {});
+    queued.insert(rstd::move(work_key), String::make(selection));
     queue.push(DiscoveryCandidate {
         .target             = target,
         .key                = rstd::move(path),
@@ -241,13 +264,18 @@ template<typename Plan>
 auto discovery_compile_context(const cpp::PackageMetadata& package,
                                const Plan&                 plan,
                                cpp::TargetId               target,
-                               ref<rstd::path::Path>       relative_source)
+                               const cpp::ResolvedSource&  source)
     -> BuildResult<Option<cpp::CompileContext>> {
     const auto& resolved_target = package.targets[target];
-    if (resolved_target.artifact_kind != cpp::ArtifactKind::CompileTest) return Ok(None());
+    if (resolved_target.artifact_kind != cpp::ArtifactKind::CompileTest) {
+        if (source.standard.is_none()) return Ok(None());
+        auto fixed = cpp::source_compile_context(plan.contexts[target], *source.standard);
+        if (fixed.is_err()) return Err(rstd::into<BuildError>(rstd::move(fixed).unwrap_err()));
+        return Ok(Some(rstd::move(fixed).unwrap()));
+    }
     const cpp::ResolvedCompileTestCase* selected = nullptr;
     for (const auto& test : resolved_target.compile_tests) {
-        if (test.source.as_path() == relative_source) {
+        if (test.source.as_path() == source.relative_path.as_path()) {
             selected = rstd::addressof(test);
             break;
         }
@@ -256,10 +284,15 @@ auto discovery_compile_context(const cpp::PackageMetadata& package,
         return Err(BuildError::Discovery(cpp::SourceDiscoveryError::Message(
             rstd::format("compile-test package '{}' has no case for source '{}'",
                          resolved_target.id.package.as_str(),
-                         relative_source))));
+                         source.relative_path.as_path()))));
     }
     auto context = compile_test_context(plan.contexts[target], *selected);
     if (context.is_err()) return Err(rstd::into<BuildError>(rstd::move(context).unwrap_err()));
+    if (source.standard.is_some()) {
+        auto fixed = cpp::source_compile_context(*context, *source.standard);
+        if (fixed.is_err()) return Err(rstd::into<BuildError>(rstd::move(fixed).unwrap_err()));
+        return Ok(Some(rstd::move(fixed).unwrap()));
+    }
     return Ok(Some(rstd::move(context).unwrap()));
 }
 
@@ -269,7 +302,9 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
                              cpp::TargetId               importer,
                              const Vec<Option<String>>&  inferred_modules,
                              ref<str>                    logical_name,
-                             FrontendAnalysisService&    analysis_service)
+                             FrontendAnalysisService&    analysis_service,
+                             const StringMap&            queued,
+                             const ExplicitModuleMap&    explicit_modules)
     -> BuildResult<Option<ImportOwner>> {
     auto candidates = Vec<ImportOwnerCandidate>::make();
     for (auto visible : plan.visible_targets[importer]) {
@@ -312,30 +347,42 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
     for (usize index {}; index < candidates.len(); ++index) {
         auto& candidate = candidates[index];
         if (selected.is_some() && candidate.priority < candidates[*selected].priority) break;
-        auto context = discovery_compile_context(
-            package, plan, candidate.target, candidate.source.relative_path.as_path());
-        if (context.is_err()) return Err(rstd::move(context).unwrap_err());
-        const auto& compile_context =
-            context->is_some() ? **context : plan.contexts[candidate.target];
-        auto analysis = analysis_service.analyze(package.targets[candidate.target].id,
-                                                 candidate.source.relative_path.as_path(),
-                                                 candidate.source.origin_identity.as_str(),
-                                                 candidate.source.canonical_path.as_path(),
-                                                 compile_context,
-                                                 package.targets[candidate.target].compile_metadata,
-                                                 candidate.source.cpp_dialect,
-                                                 candidate.source.source_root.as_path());
-        if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
-        auto projected = analysis_service.project(rstd::move(analysis).unwrap(),
-                                                  package.targets[candidate.target].language);
-        if (projected.is_err()) {
-            return Err(BuildError::Discovery(
-                cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
-        }
-        if (! projected->language.is_Cpp() ||
-            projected->language.as_Cpp().facts.provided.is_none() ||
-            projected->language.as_Cpp().facts.provided->logical_name.as_str() != logical_name) {
-            continue;
+        auto path = source_key(candidate.source.canonical_path.as_path());
+        if (path.is_err()) return Err(rstd::into<BuildError>(rstd::move(path).unwrap_err()));
+        auto work_key        = rstd::format("{}:{}", candidate.target, path->as_str());
+        auto explicit_module = explicit_modules.get(work_key.as_str());
+        if (explicit_module.is_some()) {
+            const auto& provided = **explicit_module;
+            if (provided.is_none() || provided->as_str() != logical_name) continue;
+        } else {
+            auto context =
+                discovery_compile_context(package, plan, candidate.target, candidate.source);
+            if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+            const auto& compile_context =
+                context->is_some() ? **context : plan.contexts[candidate.target];
+            auto analysis =
+                analysis_service.analyze(package.targets[candidate.target].id,
+                                         candidate.source.relative_path.as_path(),
+                                         candidate.source.origin_identity.as_str(),
+                                         candidate.source.canonical_path.as_path(),
+                                         compile_context,
+                                         package.targets[candidate.target].compile_metadata,
+                                         candidate.source.cpp_dialect,
+                                         candidate.source.source_root.as_path());
+            if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
+            auto projected = analysis_service.project(rstd::move(analysis).unwrap(),
+                                                      package.targets[candidate.target].language);
+            if (projected.is_err()) {
+                return Err(BuildError::Discovery(
+                    cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
+            }
+            if (! projected->language.is_Cpp() ||
+                projected->language.as_Cpp().facts.provided.is_none() ||
+                projected->language.as_Cpp().facts.provided->logical_name.as_str() !=
+                    logical_name) {
+                continue;
+            }
+            candidate.source.scan_artifact = Some(rstd::move(projected).unwrap());
         }
         if (selected.is_some()) {
             return Err(BuildError::Discovery(cpp::SourceDiscoveryError::Message(rstd::format(
@@ -347,11 +394,13 @@ auto convention_import_owner(const cpp::PackageMetadata& package,
                 lito::package::package_target_id_text(package.targets[candidate.target].id)
                     .as_str()))));
         }
-        candidate.source.scan_artifact = Some(rstd::move(projected).unwrap());
-        selected                       = Some(index);
+        selected = Some(index);
     }
     if (selected.is_none()) return Ok(None());
     auto index = *selected;
+    auto valid = validate_source_selection(
+        candidates[index].target, candidates[index].source, "automatic discovery"_str, queued);
+    if (valid.is_err()) return Err(rstd::into<BuildError>(rstd::move(valid).unwrap_err()));
     return Ok(Some(ImportOwner {
         .target = candidates[index].target,
         .source = rstd::move(candidates[index].source),
@@ -370,27 +419,31 @@ constexpr auto includes_generated(const cpp::ResolvedSourceGroup& group,
            group.availability == cpp::GeneratedSourceAvailability::BeforeHostTools;
 }
 
-auto resolve_target_source(const cpp::ResolvedTarget& target,
-                           ref<rstd::path::Path>      root,
-                           const PathBuf&             declared,
-                           ref<str>                   group,
-                           ref<str>                   identity,
-                           bool                       external,
-                           bool generated) -> cpp::SourceDiscoveryResult<cpp::ResolvedSource> {
+auto resolve_target_source(const cpp::ResolvedTarget&                         target,
+                           ref<rstd::path::Path>                              root,
+                           const PathBuf&                                     declared,
+                           ref<str>                                           group,
+                           ref<str>                                           identity,
+                           bool                                               external,
+                           bool                                               generated,
+                           const Option<lito::manifest::FixedSourceStandard>& standard)
+    -> cpp::SourceDiscoveryResult<cpp::ResolvedSource> {
     auto resolved = resolve_declared_source(root, declared.as_path(), ! generated);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-    auto       source = rstd::move(resolved).unwrap();
+    auto       source   = rstd::move(resolved).unwrap();
+    const auto language = standard.is_some()
+                              ? lito::manifest::fixed_source_standard_language(*standard)
+                              : target.language;
     const auto language_matches =
-        generated ? target.language == lito::manifest::PackageLanguage::Cpp
-        : target.language == lito::manifest::PackageLanguage::C
-            ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
-            : lito::manifest::cpp_manifest_source(source.canonical_path.as_path());
+        generated || (language == lito::manifest::PackageLanguage::C
+                          ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
+                          : lito::manifest::cpp_manifest_source(source.canonical_path.as_path()));
     if (! language_matches) {
         return Err(cpp::SourceDiscoveryError::Message(
             rstd::format("target '{}::{}' is a {} target and cannot compile source '{}'",
                          target.id.package.as_str(),
                          target.id.name.as_str(),
-                         lito::manifest::package_language_name(target.language),
+                         lito::manifest::package_language_name(language),
                          source.canonical_path.as_path())));
     }
     if (! group.is_empty()) {
@@ -403,6 +456,7 @@ auto resolve_target_source(const cpp::ResolvedTarget& target,
     source.origin_identity = String::make(identity);
     source.external        = external;
     source.generated       = generated;
+    source.standard        = standard.clone();
     return Ok(rstd::move(source));
 }
 
@@ -411,14 +465,16 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
     auto       owners  = StringMap::make();
     auto       entries = Vec<SourceEntry>::make();
-    const auto append  = [&](ref<rstd::path::Path> root,
-                             const PathBuf&        declared,
-                             ref<str>              group,
-                             ref<str>              identity,
-                             bool                  external,
-                             bool                  generated) -> cpp::SourceDiscoveryResult<empty> {
-        auto resolved =
-            resolve_target_source(target, root, declared, group, identity, external, generated);
+    const auto append  = [&](ref<rstd::path::Path>                              root,
+                             const PathBuf&                                     declared,
+                             ref<str>                                           group,
+                             ref<str>                                           identity,
+                             bool                                               external,
+                             bool                                               generated,
+                             const Option<lito::manifest::FixedSourceStandard>& standard)
+        -> cpp::SourceDiscoveryResult<empty> {
+        auto resolved = resolve_target_source(
+            target, root, declared, group, identity, external, generated, standard);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
         auto key    = path_text(source.canonical_path.as_path());
@@ -451,7 +507,8 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
                                    ""_str,
                                    local_identity.as_str(),
                                    false,
-                                   false);
+                                   false,
+                                   {});
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
@@ -465,7 +522,8 @@ static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target,
                                    group.name.as_str(),
                                    group.identity.as_str(),
                                    group.external,
-                                   group.generated);
+                                   group.generated,
+                                   group.standard);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
@@ -497,7 +555,16 @@ auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
         auto relative =
             source.module_root.is_some() ? source.module_root->clone() : PathBuf::from("src"_str);
         auto source_directory = manifest.source_root.join(relative.as_path());
-        auto collected        = collect_format_directory(
+        if (source.module_root.is_none() &&
+            (! source.source_groups.is_empty() || ! source.conditions.is_empty())) {
+            auto exists = rstd::fs::exists(source_directory.as_path());
+            if (exists.is_err())
+                return Err(cpp::SourceDiscoveryError::Io("inspect source root"_Str,
+                                                         source_directory.clone(),
+                                                         rstd::move(exists).unwrap_err()));
+            if (! *exists) continue;
+        }
+        auto collected = collect_format_directory(
             manifest.source_root.as_path(), source_directory.as_path(), entries);
         if (collected.is_err()) return Err(rstd::move(collected).unwrap_err());
     }
@@ -732,10 +799,11 @@ auto discover_sources(const cpp::PackageMetadata&    package,
         discovered.emplace_back();
         inferred_modules.emplace_back();
     }
-    auto queue      = Vec<DiscoveryCandidate>::make();
-    auto path_names = StringMap::make();
-    auto name_paths = StringMap::make();
-    auto queued     = StringSet::make();
+    auto queue            = Vec<DiscoveryCandidate>::make();
+    auto path_names       = StringMap::make();
+    auto name_paths       = StringMap::make();
+    auto queued           = StringMap::make();
+    auto explicit_modules = ExplicitModuleMap::make();
 
     for (auto target : selected_targets) {
         const auto& resolved_target = package.targets[target];
@@ -746,8 +814,14 @@ auto discover_sources(const cpp::PackageMetadata&    package,
             }
             auto sources = rstd::move(explicit_sources).unwrap().sources;
             for (auto& source : sources) {
-                auto enqueued = enqueue_candidate(
-                    target, rstd::move(source), false, path_names, name_paths, queued, queue);
+                auto enqueued = enqueue_candidate(target,
+                                                  rstd::move(source),
+                                                  false,
+                                                  path_names,
+                                                  name_paths,
+                                                  queued,
+                                                  queue,
+                                                  "explicit sources"_str);
                 if (enqueued.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
                 }
@@ -755,14 +829,16 @@ auto discover_sources(const cpp::PackageMetadata&    package,
             continue;
         }
         {
-            auto entry = cpp::module_entry_source(resolved_target);
+            auto entry = cpp::optional_module_entry_source(resolved_target);
             if (entry.is_err()) {
                 return Err(rstd::into<BuildError>(rstd::move(entry).unwrap_err()));
             }
-            auto enqueued = enqueue_candidate(
-                target, rstd::move(entry).unwrap(), true, path_names, name_paths, queued, queue);
-            if (enqueued.is_err()) {
-                return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+            if (entry->is_some()) {
+                auto enqueued = enqueue_candidate(
+                    target, rstd::move(**entry), true, path_names, name_paths, queued, queue);
+                if (enqueued.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                }
             }
             for (const auto& declared : resolved_target.source.declared_sources) {
                 auto resolved = resolve_declared_source(resolved_target.source_root.as_path(),
@@ -770,13 +846,13 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                 if (resolved.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
                 }
-                enqueued = enqueue_candidate(target,
-                                             rstd::move(resolved).unwrap(),
-                                             true,
-                                             path_names,
-                                             name_paths,
-                                             queued,
-                                             queue);
+                auto enqueued = enqueue_candidate(target,
+                                                  rstd::move(resolved).unwrap(),
+                                                  true,
+                                                  path_names,
+                                                  name_paths,
+                                                  queued,
+                                                  queue);
                 if (enqueued.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
                 }
@@ -791,13 +867,21 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                                       group.name.as_str(),
                                                       group.identity.as_str(),
                                                       group.external,
-                                                      group.generated);
+                                                      group.generated,
+                                                      group.standard);
                 if (resolved.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
                 }
-                auto source   = rstd::move(resolved).unwrap();
-                auto enqueued = enqueue_candidate(
-                    target, rstd::move(source), false, path_names, name_paths, queued, queue);
+                auto source = rstd::move(resolved).unwrap();
+                auto enqueued =
+                    enqueue_candidate(target,
+                                      rstd::move(source),
+                                      false,
+                                      path_names,
+                                      name_paths,
+                                      queued,
+                                      queue,
+                                      rstd::format("source group '{}'", group.name).as_str());
                 if (enqueued.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
                 }
@@ -822,9 +906,9 @@ auto discover_sources(const cpp::PackageMetadata&    package,
         auto prepared = Vec<Option<FrontendAnalysisTask>>::with_capacity(queue.len());
         auto pending  = usize {};
         for (auto& candidate : queue) {
-            const auto& target           = package.targets[candidate.target];
-            auto        resolved_context = discovery_compile_context(
-                package, plan, candidate.target, candidate.source.relative_path.as_path());
+            const auto& target = package.targets[candidate.target];
+            auto        resolved_context =
+                discovery_compile_context(package, plan, candidate.target, candidate.source);
             if (resolved_context.is_err()) return Err(rstd::move(resolved_context).unwrap_err());
             const auto& context =
                 resolved_context->is_some() ? **resolved_context : plan.contexts[candidate.target];
@@ -919,7 +1003,10 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                 if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
                 auto projected = analysis_service.project(
                     rstd::move(analysis).unwrap(),
-                    package.targets[queue[completion.node].target].language);
+                    queue[completion.node].source.standard.is_some()
+                        ? lito::manifest::fixed_source_standard_language(
+                              *queue[completion.node].source.standard)
+                        : package.targets[queue[completion.node].target].language);
                 if (projected.is_err()) {
                     return Err(BuildError::Discovery(
                         cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
@@ -940,6 +1027,22 @@ auto discover_sources(const cpp::PackageMetadata&    package,
         }
 
         auto next = Vec<DiscoveryCandidate>::make();
+        for (auto index = usize {}; index < queue.len(); ++index) {
+            const auto& candidate = queue[index];
+            if (candidate.source.origin != cpp::SourceOrigin::Explicit) continue;
+            const cpp::SourceScanArtifact* artifact = nullptr;
+            if (candidate.source.scan_artifact.is_some()) {
+                artifact = rstd::addressof(*candidate.source.scan_artifact);
+            } else if (outcomes[index].is_some() && outcomes[index]->is_ok()) {
+                artifact = rstd::addressof(**outcomes[index]);
+            }
+            auto work_key = rstd::format("{}:{}", candidate.target, candidate.key);
+            auto name     = Option<String> {};
+            if (artifact != nullptr && artifact->language.is_Cpp() &&
+                artifact->language.as_Cpp().facts.provided.is_some())
+                name = Some(artifact->language.as_Cpp().facts.provided->logical_name.clone());
+            explicit_modules.insert(rstd::move(work_key), rstd::move(name));
+        }
         for (auto index = usize {}; index < queue.len(); ++index) {
             auto        candidate = rstd::move(queue[index]);
             const auto& target    = package.targets[candidate.target];
@@ -1013,7 +1116,9 @@ auto discover_sources(const cpp::PackageMetadata&    package,
                                                          candidate.target,
                                                          inferred_modules,
                                                          imported.logical_name.as_str(),
-                                                         analysis_service);
+                                                         analysis_service,
+                                                         queued,
+                                                         explicit_modules);
                     if (owner.is_err()) {
                         return Err(rstd::move(owner).unwrap_err());
                     }
@@ -1058,8 +1163,8 @@ auto discover_sources(const cpp::PackageMetadata&    package,
         }
 
         for (auto& candidate : next) {
-            auto resolved_context = discovery_compile_context(
-                package, plan, candidate.target, candidate.source.relative_path.as_path());
+            auto resolved_context =
+                discovery_compile_context(package, plan, candidate.target, candidate.source);
             if (resolved_context.is_err()) return Err(rstd::move(resolved_context).unwrap_err());
             const auto& context =
                 resolved_context->is_some() ? **resolved_context : plan.contexts[candidate.target];
