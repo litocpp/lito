@@ -12,6 +12,52 @@ import :manifest.conditional;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
+struct CommandLineFeature {
+    String         selector;
+    Option<String> package;
+    String         feature;
+};
+
+auto parse_command_line_features(const Vec<String>& values)
+    -> lito::package::PackageResult<Vec<CommandLineFeature>> {
+    auto       result    = Vec<CommandLineFeature>::make();
+    const auto separator = [](u8 byte) {
+        return byte == u8(',') || byte == u8(' ') || byte == u8('\t') || byte == u8('\n') ||
+               byte == u8('\r') || byte == u8('\v') || byte == u8('\f');
+    };
+    for (const auto& value : values) {
+        auto begin = usize {};
+        for (usize cursor {}; cursor <= value.len(); ++cursor) {
+            if (cursor != value.len() && ! separator(value.as_str().as_bytes()[cursor])) continue;
+            const auto start = begin;
+            begin            = cursor + usize(1);
+            if (start == cursor) continue;
+            auto item = value.as_str().get(start, cursor).unwrap();
+            if (item.starts_with("dep:"_str) || item.contains("?"_str))
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "unsupported command line feature '{}'; expected feature or package/feature",
+                    item)));
+            auto duplicate = false;
+            for (const auto& existing : result)
+                if (existing.selector == item) duplicate = true;
+            if (duplicate) continue;
+            auto entry = CommandLineFeature { .selector = item.into(), .feature = item.into() };
+            if (auto parts = item.split_once("/"_str); parts.is_some()) {
+                auto package = parts->get<0>();
+                auto feature = parts->get<1>();
+                if (package.is_empty() || feature.is_empty() || feature.contains("/"_str))
+                    return Err(lito::package::PackageError::Message(rstd::format(
+                        "invalid command line feature '{}'; expected package/feature with one '/'",
+                        item)));
+                entry.package = Some(String::make(package));
+                entry.feature = feature.into();
+            }
+            result.push(rstd::move(entry));
+        }
+    }
+    return Ok(rstd::move(result));
+}
+
 export namespace lito::package
 {
 
@@ -33,6 +79,11 @@ class FeatureRequests {
     };
     Vec<Request> requests_;
     Vec<Request> defaults_;
+    struct DependencyRequest {
+        String  owner;
+        Request value;
+    };
+    Vec<DependencyRequest> dependency_requests_;
 
 public:
     auto request(ref<str> package, ref<str> feature, ref<str> source) -> void {
@@ -50,13 +101,66 @@ public:
         defaults_.push(Request { package.into(), String::make(), source.into() });
     }
 
-    auto root(ref<str> package, const FeatureSelection& selection) -> void {
-        auto source = rstd::format("command line for root package '{}'", package);
-        for (const auto& name : selection.enabled) request(package, name.as_str(), source.as_str());
-        if (selection.default_features) {
-            auto reason = rstd::format("root package '{}' default features", package);
-            defaults(package, reason.as_str());
+    auto select_roots(const ResolvedPackageGraph& graph,
+                      const Vec<String>&          selected_roots,
+                      const FeatureSelection&     selection) -> PackageResult<empty> {
+        auto selectors = rstd_try(parse_command_line_features(selection.enabled));
+        auto matched   = Vec<bool>::make();
+        for (usize index {}; index < selectors.len(); ++index) matched.push(false);
+        for (const auto& root : selected_roots) {
+            const ResolvedPackage* package = nullptr;
+            for (const auto& candidate : graph.packages)
+                if (candidate.manifest.name == root) package = rstd::addressof(candidate);
+            if (package == nullptr)
+                return Err(PackageError::Message(
+                    rstd::format("selected root package '{}' is missing", root.as_str())));
+            if (selection.default_features) {
+                auto reason = rstd::format("root package '{}' default features", root.as_str());
+                defaults(root.as_str(), reason.as_str());
+            }
+            for (usize index {}; index < selectors.len(); ++index) {
+                const auto& selector = selectors[index];
+                auto        source = rstd::format("command line feature '{}' for root package '{}'",
+                                                  selector.selector.as_str(),
+                                                  root.as_str());
+                if (selector.package.is_some()) {
+                    auto       dependency = false;
+                    const auto bind       = [&](const auto& edges) {
+                        for (const auto& edge : edges) {
+                            if (edge.is_Script() ||
+                                resolved_dependency_name(edge) != selector.package->as_str())
+                                continue;
+                            dependency = true;
+                        }
+                    };
+                    bind(package->dependencies);
+                    bind(package->dev_dependencies);
+                    if (dependency) {
+                        dependency_requests_.push({ root.clone(),
+                                                    { selector.package->clone(),
+                                                      selector.feature.clone(),
+                                                      rstd::move(source) } });
+                        matched[index] = true;
+                    } else if (*selector.package == root) {
+                        request(root.as_str(), selector.feature.as_str(), source.as_str());
+                        matched[index] = true;
+                    }
+                } else {
+                    for (const auto& declaration : package->manifest.features) {
+                        if (declaration.name != selector.feature) continue;
+                        request(root.as_str(), selector.feature.as_str(), source.as_str());
+                        matched[index] = true;
+                    }
+                }
+            }
         }
+        for (usize index {}; index < selectors.len(); ++index)
+            if (! matched[index])
+                return Err(PackageError::Message(
+                    rstd::format("command line feature '{}' does not match a selected root package "
+                                 "feature or direct dependency",
+                                 selectors[index].selector.as_str())));
+        return Ok(empty {});
     }
 
     auto dependency(ref<str> owner, const ResolvedRequiredDependency& edge) -> void {
@@ -66,6 +170,12 @@ public:
             for (const auto& feature : value.features)
                 request(value.name.as_str(), feature.as_str(), source.as_str());
             if (value.default_features) defaults(value.name.as_str(), source.as_str());
+            for (const auto& entry : dependency_requests_) {
+                if (entry.owner == owner && entry.value.package == value.name)
+                    request(value.name.as_str(),
+                            entry.value.feature.as_str(),
+                            entry.value.source.as_str());
+            }
         };
         if (edge.is_Cpp())
             collect(edge.as_Cpp().value);
@@ -131,15 +241,7 @@ auto resolve_features(ResolvedPackageGraph&       graph,
                 if (value == name) return true;
         return false;
     };
-    for (const auto& root : selected_roots) {
-        auto found = false;
-        for (const auto& package : graph.packages)
-            if (package.manifest.name == root.as_str()) found = true;
-        if (! found)
-            return Err(PackageError::Message(
-                rstd::format("selected root package '{}' is missing", root.as_str())));
-        requests.root(root.as_str(), selection);
-    }
+    rstd_try(requests.select_roots(graph, selected_roots, selection));
     for (const auto& package : graph.packages) {
         if (! selected(package.manifest.name.as_str())) continue;
         for (const auto& edge : package.active_dependencies())

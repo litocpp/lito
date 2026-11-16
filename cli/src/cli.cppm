@@ -769,7 +769,7 @@ auto features_arg() -> Arg<String> {
     return Arg<String>::value("features"_str, string_parser())
         .long_name("features"_str)
         .value_name("FEATURES"_str)
-        .help("Enable comma-separated package features"_str)
+        .help("Enable features or package/feature, separated by commas or spaces"_str)
         .append();
 }
 
@@ -1815,29 +1815,8 @@ auto decode_features(const Matches&        matches,
                      bool                  all_features = false)
     -> Result<lito::package::FeatureSelection, CliDecodeError> {
     auto declared = rstd_try(string_values(matches, features));
-    auto enabled  = Vec<String>::make();
-    for (const auto& value : declared) {
-        auto begin = usize {};
-        for (usize cursor {}; cursor <= value.len(); ++cursor) {
-            if (cursor != value.len() && value.as_str().as_bytes()[cursor] != u8(',')) continue;
-            auto item = value.as_str().get(begin, cursor);
-            if (item.is_none() || item->is_empty()) {
-                return Err(
-                    CliDecodeError::InvalidUsage("--features contains an empty feature name"_Str));
-            }
-            auto duplicate = false;
-            for (const auto& existing : enabled) {
-                if (existing.as_str() == *item) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (! duplicate) enabled.push(String::make(*item));
-            begin = cursor + usize(1);
-        }
-    }
     return Ok(lito::package::FeatureSelection {
-        .enabled          = rstd::move(enabled),
+        .enabled          = rstd::move(declared),
         .default_features = ! rstd_try(flag_value(matches, no_default_features)),
         .all_features     = all_features,
     });

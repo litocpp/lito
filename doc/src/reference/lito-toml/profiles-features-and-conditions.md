@@ -54,6 +54,15 @@ changed to `_`. Two features that normalize to the same macro are rejected.
 Feature macro names are not configurable. The manifest parser and JSON Schema both accept only
 `default` in a feature declaration and derive the macro from the feature name.
 
+Command-line `--features` accepts repeated arguments, comma-separated names, and quoted ASCII
+whitespace-separated names. Empty separator items are ignored and repeated selectors are deduplicated.
+A bare feature name matches every selected root declaring it; at least one must match.
+`package/feature` selects a selected root's feature or a direct C++/plugin/pmacro dependency's feature.
+Dependency requests are applied only through active edges, including development edges only when
+their targets are selected. A qualifier does not add roots, search transitive dependencies, or
+bypass dependency conditions. Unknown selectors and malformed or repeated slashes are errors.
+`dep:` and weak dependency `?/feature` syntax are not supported.
+
 ## `[[when]]`
 
 Each conditional configuration requires:

@@ -6,7 +6,8 @@ Both commands accept:
 
 - repeated `-p/--package NAME`;
 - `--profile PROFILE`;
-- repeated `--features FEATURES`, with comma-separated names;
+- repeated `--features FEATURES`, with comma/quoted whitespace-separated names or `package/feature`
+  selectors (see [feature selection](../lito-toml/profiles-features-and-conditions.md#featuresname));
 - `--no-default-features`.
 
 Both accept source acquisition policy:

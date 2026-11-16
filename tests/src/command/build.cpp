@@ -3547,7 +3547,6 @@ default = false
 
 [dependencies.fixture-feature-provider]
 path = "../provider"
-features = ["api"]
 default-features = false
 )toml"_str },
         { "consumer/src/main.cpp"_str, R"cpp(import fixture.feature.provider.api;
@@ -3555,6 +3554,8 @@ default-features = false
 #ifdef LITO_FEAT_API
 #error dependency feature macro escaped its package
 #endif
+
+static_assert(fixture_feature_value() == 1);
 
 auto main() -> int {
     return fixture_feature_value() == 1 ? 0 : 1;
@@ -3566,7 +3567,8 @@ auto main() -> int {
     auto request = project_build_request("dependency-features"_str,
                                          project->root.as_path(),
                                          strings("fixture-feature-consumer"_str));
-    auto result  = lito::build(request);
+    request.selection.features.enabled.push("fixture-feature-provider/api"_Str);
+    auto result = lito::build(request);
     if (result.is_err()) {
         auto message = error_chain_text(result.unwrap_err());
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);

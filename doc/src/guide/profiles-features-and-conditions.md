@@ -91,8 +91,23 @@ Declare features in a package:
 default = false
 ```
 
-Enable them with `--features tracing`; repeat the option or use a comma-separated value. Disable all
-root default features with `--no-default-features`.
+Enable them with `--features tracing`; repeat the option or separate names with commas or quoted
+whitespace. A bare name enables that feature only on selected root packages declaring it. It is an
+error if none of the selected roots declares the requested feature.
+
+Use `--features media/tracing` to select one root package's feature, or to request a feature of a
+direct dependency of a selected root. This does not select additional roots or search arbitrary
+transitive dependencies. Dependency requests apply only through active edges; an inactive condition
+or an unused development dependency stays inactive. Requests for a shared dependency are unified
+with its manifest feature requests.
+
+```sh
+lito build -p player -p media --features media/tracing
+lito build --features luato/vendored
+```
+
+The second command requires `luato` to be a direct dependency of a selected root. Disable all root
+default features with `--no-default-features`; this does not disable defaults requested by dependencies.
 
 For each declared feature, Lito owns a package-local integer macro. The default spelling uppercases
 the feature, changes `-` to `_`, and prefixes `LITO_FEAT_`, so `fast-path` becomes

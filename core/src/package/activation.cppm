@@ -64,11 +64,11 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
     auto providers        = StringSet::make();
     auto processors       = StringSet::make();
     auto tools            = StringSet::make();
+    rstd_try(requests.select_roots(graph, selected_roots, features));
     for (const auto& root : selected_roots) {
         if (! indices.contains_key(root.as_str()))
             return Err(PackageError::Message(
                 rstd::format("selected root package '{}' is missing", root.as_str())));
-        requests.root(root.as_str(), features);
         if (install) installing.insert(root.clone(), empty {});
         auto has_target   = false;
         auto has_plugin   = false;
