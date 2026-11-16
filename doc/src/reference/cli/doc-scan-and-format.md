@@ -90,27 +90,68 @@ column wrapping or other unimplemented LLVM style rules.
 
 Supported options and values:
 
+Builtin uses the [Clang 22.1 configuration reference](https://releases.llvm.org/22.1.0/tools/clang/docs/ClangFormatStyleOptions.html)
+as its semantic baseline. Defaults, compatibility spellings, and option interactions are checked
+against [LLVM 22.1.8](https://github.com/llvm/llvm-project/tree/llvmorg-22.1.8/clang).
+The table describes the implemented subset; tests use hand-written expected results.
+
 | Option | Values |
 | --- | --- |
 | `IndentWidth`, `TabWidth` | Unsigned integers; `TabWidth` must be nonzero |
 | `UseTab` | `Never`, `ForIndentation` |
 | `NamespaceIndentation` | `None`, `Inner`, `All` |
-| `BreakBeforeBraces` | `Attach`, `Allman` |
+| `BreakBeforeBraces` | `Attach`, `Allman`, `Custom` |
+| `BraceWrapping` | Supported fields listed below; effective with `Custom` |
+| `AccessModifierOffset` | Signed integer; default `-2` |
+| `IndentAccessModifiers` | Boolean |
 | `SpaceBeforeParens` | `Never`, `ControlStatements`, `Always` |
 | `SpaceBeforeAssignmentOperators` | Boolean; controls the space before assignment operators |
-| `SpacesInParentheses`, `SpaceInEmptyParentheses` | Boolean |
-| `AllowShortFunctionsOnASingleLine` | `None`, `Empty`, `All` |
-| `AllowShortBlocksOnASingleLine` | `Never`, `Empty`, `Always` |
+| `SpacesInParens` | `Never`, `Custom` |
+| `SpacesInParensOptions` | Boolean fields `ExceptDoubleParentheses`, `InConditionalStatements`, `InCStyleCasts`, `InEmptyParentheses`, `Other` |
+| `AllowShortFunctionsOnASingleLine` | `None`, `Empty`, `All`; legacy `false`, `true` mean `None`, `All` |
+| `AllowShortBlocksOnASingleLine` | `Never`, `Empty`, `Always`; legacy `false`, `true` mean `Never`, `Always` |
 | `MaxEmptyLinesToKeep` | Unsigned integer |
 | `KeepEmptyLines` | Boolean fields `AtStartOfFile`, `AtEndOfFile`, `AtStartOfBlock`, `AtEndOfBlock` |
-| `KeepEmptyLinesAtTheStartOfBlocks` | Alias for `KeepEmptyLines.AtStartOfBlock` |
 | `ColumnLimit` | `0`, meaning no column limit |
 | `Language` | `Cpp` |
 | `BasedOnStyle` | `LLVM`, `InheritParentConfig` |
 
+`KeepEmptyLines.AtEndOfBlock` is a supported addition from newer Clang versions, outside the
+22.1 baseline. Lito's four-space fallback and the partial LLVM preset remain explicit differences
+from a complete clang-format style.
+
+Supported `BraceWrapping` fields are:
+
+- booleans `AfterClass`, `AfterStruct`, `AfterUnion`, `AfterEnum`, `AfterNamespace`, `AfterFunction`;
+- `AfterControlStatement`: `Never`, `MultiLine`, `Always`, or legacy `false`/`true`;
+- booleans `BeforeElse`, `BeforeCatch`, `IndentBraces`;
+- booleans `SplitEmptyFunction`, `SplitEmptyRecord`, `SplitEmptyNamespace`.
+
+`MultiLine` considers line breaks within the recognized control header. `IndentBraces` follows
+the control-block rule: wrapped control braces and their body gain an extra level. Empty-block
+split options affect braces whose opening brace has already been wrapped. A short-function rule
+that successfully merges the whole function takes precedence. Wrapping fields remain available
+for inheritance when the current brace mode does not use them.
+
+Access labels are recognized in the direct scope of a class, struct, or union.
+`IndentAccessModifiers: true` gives members two indentation levels and labels one, ignoring
+`AccessModifierOffset`. Otherwise, the offset is relative to member indentation; an offset that
+would make the column negative leaves the member indentation unchanged.
+
+Legacy `SpacesInParentheses`, `SpaceInEmptyParentheses`, `SpacesInConditionalStatement`, and
+`SpacesInCStyleCastParentheses` remain accepted. They follow the 22.1 conversion rules: a resolved
+`SpacesInParens: Custom` uses the modern options; otherwise, any true legacy flag activates their
+conversion to `Custom`. This includes the mode inherited from a parent. YAML key order does not
+change this priority. Cast spacing applies to recognized simple type conversions; ambiguous
+forms preserve their original spacing.
+
+`KeepEmptyLinesAtEOF` and `KeepEmptyLinesAtTheStartOfBlocks` remain accepted compatibility names.
+If both a legacy name and its modern `KeepEmptyLines` field occur in the same document, the modern
+field wins. Each child configuration applies to its fully resolved parent style.
+
 Builtin accepts a single YAML document with scalar values, comments, and the supported nested
 mapping. Quoted scalar values and an optional document start/end marker are accepted. Unsupported
-options, enum values, YAML constructs, and duplicate settings produce an error with configuration
+options, enum values, YAML constructs, and repeated occurrences of the same key produce an error with configuration
 location. They are never silently ignored. Full clang-format configurations can continue to use
 the default external backend.
 

@@ -219,3 +219,210 @@ TEST(BuiltinFormat, AppliesSupportedStyleOptionsToFinalOutput) {
         EXPECT_EQ(repeated->as_str(), formatted->as_str()) << test.configuration;
     }
 }
+
+struct FormatStyleCase {
+    ref<str> configuration;
+    ref<str> source;
+    ref<str> expected;
+};
+
+auto expect_style_output(const FormatStyleCase& test) -> void {
+    auto configuration = parse_style_configuration(test.configuration);
+    ASSERT_TRUE(configuration.is_ok()) << test.configuration;
+    auto style     = configuration->apply();
+    auto formatted = format_source(format_test_source(test.source), style);
+    ASSERT_TRUE(formatted.is_ok()) << test.configuration;
+    EXPECT_EQ(formatted->as_str(), test.expected) << test.configuration;
+    auto repeated = format_source(format_test_source(formatted->as_str()), style);
+    ASSERT_TRUE(repeated.is_ok());
+    EXPECT_EQ(repeated->as_str(), formatted->as_str()) << test.configuration;
+}
+
+TEST(BuiltinFormat, NormalizesReferenceAliasesAndParenthesisRoles) {
+    constexpr auto        source  = "using Value=int;int f(int x){int a=(int)x;int b=(Value)x;"
+                                    "if(x>0){return ((x));}return (x);}void empty(){}\n"_str;
+    constexpr auto        never   = "using Value = int;\nint f(int x) {\n    int a = (int)x;\n"
+                                    "    int b = (Value)x;\n    if (x > 0) {\n        return ((x));\n"
+                                    "    }\n    return (x);\n}\nvoid empty() {\n}\n"_str;
+    constexpr auto        all     = "using Value = int;\nint f( int x ) {\n    int a = ( int )x;\n"
+                                    "    int b = ( Value )x;\n    if ( x > 0 ) {\n        return ( ( x ) );\n"
+                                    "    }\n    return ( x );\n}\nvoid empty( ) {\n}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "SpacesInParens: Custom\nSpacesInParensOptions:\n  Other: true\n"
+          "  InConditionalStatements: true\n  InCStyleCasts: true\n"
+          "  InEmptyParentheses: true\n  ExceptDoubleParentheses: false\n"_str,
+          source,
+          all },
+        { "SpacesInParens: Custom\nSpacesInParensOptions:\n  Other: true\n"
+          "  InConditionalStatements: true\n  InCStyleCasts: true\n"
+          "  InEmptyParentheses: true\n  ExceptDoubleParentheses: true\n"_str,
+          source,
+          "using Value = int;\nint f( int x ) {\n    int a = ( int )x;\n"
+          "    int b = ( Value )x;\n    if ( x > 0 ) {\n        return (( x ));\n"
+          "    }\n    return ( x );\n}\nvoid empty( ) {\n}\n"_str },
+        { "SpacesInParentheses: true\nSpaceInEmptyParentheses: true\n"
+          "SpacesInCStyleCastParentheses: true\nSpacesInConditionalStatement: true\n"
+          "SpacesInParens: Custom\n"_str,
+          source,
+          never },
+        { "SpacesInParens: Custom\nSpacesInConditionalStatement: true\n"
+          "SpacesInCStyleCastParentheses: true\nSpaceInEmptyParentheses: true\n"
+          "SpacesInParentheses: true\n"_str,
+          source,
+          never },
+        { "SpacesInParens: Never\nSpacesInParentheses: true\n"
+          "SpaceInEmptyParentheses: true\nSpacesInCStyleCastParentheses: true\n"_str,
+          source,
+          all },
+        { "SpacesInCStyleCastParentheses: true\nSpaceInEmptyParentheses: true\n"
+          "SpacesInParentheses: true\nSpacesInParens: Never\n"_str,
+          source,
+          all },
+        { "SpacesInParens: Never\nSpacesInParensOptions:\n  Other: true\n"
+          "  InCStyleCasts: true\n  InEmptyParentheses: true\n"_str,
+          source,
+          never },
+        { "SpacesInConditionalStatement: true\n"_str,
+          "int f(int x){if(x){return x;}return 0;}\n"_str,
+          "int f(int x) {\n    if ( x ) {\n        return x;\n    }\n    return 0;\n}\n"_str },
+        { "SpacesInCStyleCastParentheses: true\n"_str,
+          "int f(double x){return (int)x;}\n"_str,
+          "int f(double x) {\n    return ( int )x;\n}\n"_str },
+        { "AllowShortFunctionsOnASingleLine: true\nAllowShortBlocksOnASingleLine: true\n"_str,
+          "int f(){return 1;}void g(){if(true){run();}}\n"_str,
+          "int f() { return 1; }\nvoid g() {\n    if (true) { run(); }\n}\n"_str },
+        { "AllowShortFunctionsOnASingleLine: false\nAllowShortBlocksOnASingleLine: false\n"_str,
+          "int f(){return 1;}void g(){if(true){run();}}\n"_str,
+          "int f() {\n    return 1;\n}\nvoid g() {\n    if (true) {\n        run();\n    }\n}\n"_str },
+        { "KeepEmptyLinesAtEOF: false\nKeepEmptyLinesAtTheStartOfBlocks: true\n"
+          "KeepEmptyLines:\n  AtEndOfFile: true\n  AtStartOfBlock: false\n"_str,
+          "int f(){\n\nreturn 1;}\n\n\n"_str,
+          "int f() {\n    return 1;\n}\n\n\n"_str },
+        { "KeepEmptyLines:\n  AtEndOfFile: true\n  AtStartOfBlock: false\n"
+          "KeepEmptyLinesAtTheStartOfBlocks: true\nKeepEmptyLinesAtEOF: false\n"_str,
+          "int f(){\n\nreturn 1;}\n\n\n"_str,
+          "int f() {\n    return 1;\n}\n\n\n"_str },
+        { "KeepEmptyLinesAtEOF: true\n"_str,
+          "int f(){return 1;}\n\n\n"_str,
+          "int f() {\n    return 1;\n}\n\n\n"_str },
+        { "KeepEmptyLinesAtEOF: true\nKeepEmptyLinesAtTheStartOfBlocks: false\n"
+          "KeepEmptyLines:\n  AtEndOfFile: false\n  AtStartOfBlock: true\n"_str,
+          "int f(){\n\nreturn 1;}\n\n\n"_str,
+          "int f() {\n\n    return 1;\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, AppliesCustomWrappingWithoutLeakingInactiveFields) {
+    constexpr auto records  = "class C{int c;};struct S{int s;};union U{int u;};"
+                              "enum E{Value};namespace N{int n;}int f(){return 1;}\n"_str;
+    constexpr auto wrapped  = "class C\n{\n    int c;\n};\nstruct S\n{\n    int s;\n};\n"
+                              "union U\n{\n    int u;\n};\nenum E\n{\n    Value\n};\n"
+                              "namespace N\n{\n    int n;\n}\nint f()\n{\n    return 1;\n}\n"_str;
+    constexpr auto attached = "class C {\n    int c;\n};\nstruct S {\n    int s;\n};\n"
+                              "union U {\n    int u;\n};\nenum E {\n    Value\n};\n"
+                              "namespace N {\n    int n;\n}\nint f() {\n    return 1;\n}\n"_str;
+    constexpr auto controls = "void f(){if(true){run();}else{stop();}"
+                              "try{run();}catch(...){stop();}}\n"_str;
+    constexpr auto indented_controls =
+        "void f() {\n    if (true)\n        {\n            run();\n        }\n"
+        "    else\n        {\n            stop();\n        }\n"
+        "    try\n        {\n            run();\n        }\n"
+        "    catch (...)\n        {\n            stop();\n        }\n}\n"_str;
+    constexpr auto attached_controls =
+        "void f() {\n    if (true) {\n        run();\n    } else {\n        stop();\n    }\n"
+        "    try {\n        run();\n    } catch (...) {\n        stop();\n    }\n}\n"_str;
+    constexpr auto        empty   = "class C{};struct S{};union U{};namespace N{};void f(){}\n"_str;
+    const FormatStyleCase cases[] = {
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterClass: true\n"
+          "  AfterStruct: true\n  AfterUnion: true\n  AfterEnum: true\n"
+          "  AfterNamespace: true\n  AfterFunction: true\n  IndentBraces: true\n"_str,
+          records,
+          wrapped },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterClass: false\n"
+          "  AfterStruct: false\n  AfterUnion: false\n  AfterEnum: false\n"
+          "  AfterNamespace: false\n  AfterFunction: false\n"_str,
+          wrapped,
+          attached },
+        { "BreakBeforeBraces: Attach\nBraceWrapping:\n  AfterClass: true\n"
+          "  AfterStruct: true\n  AfterUnion: true\n  AfterEnum: true\n"
+          "  AfterNamespace: true\n  AfterFunction: true\n  IndentBraces: true\n"_str,
+          records,
+          attached },
+        { "BreakBeforeBraces: Allman\nBraceWrapping:\n  AfterClass: false\n"
+          "  AfterStruct: false\n  AfterUnion: false\n  AfterEnum: false\n"
+          "  AfterNamespace: false\n  AfterFunction: false\n"_str,
+          records,
+          wrapped },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterControlStatement: Always\n"
+          "  BeforeElse: true\n  BeforeCatch: true\n  IndentBraces: true\n"_str,
+          controls,
+          indented_controls },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterControlStatement: true\n"
+          "  BeforeElse: true\n  BeforeCatch: true\n  IndentBraces: true\n"_str,
+          controls,
+          indented_controls },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterControlStatement: false\n"
+          "  BeforeElse: false\n  BeforeCatch: false\n"_str,
+          controls,
+          attached_controls },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterControlStatement: Never\n"
+          "  BeforeElse: false\n  BeforeCatch: false\n"_str,
+          controls,
+          attached_controls },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterControlStatement: MultiLine\n"_str,
+          "void f(){if(true\n        && false){run();}if(true)\n{stop();}"
+          "if constexpr(true){run();}}\n"_str,
+          "void f() {\n    if (true\n        && false)\n    {\n        run();\n    }\n"
+          "    if (true) {\n        stop();\n    }\n    if constexpr (true) {\n        run();\n    }\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterClass: true\n"
+          "  AfterStruct: true\n  AfterUnion: true\n  AfterNamespace: true\n  AfterFunction: true\n"
+          "  SplitEmptyFunction: false\n  SplitEmptyRecord: false\n  SplitEmptyNamespace: false\n"_str,
+          empty,
+          "class C\n{};\nstruct S\n{};\nunion U\n{};\nnamespace N\n{};\nvoid f()\n{}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterClass: true\n"
+          "  AfterStruct: true\n  AfterUnion: true\n  AfterNamespace: true\n  AfterFunction: true\n"
+          "  SplitEmptyFunction: true\n  SplitEmptyRecord: true\n  SplitEmptyNamespace: true\n"_str,
+          empty,
+          "class C\n{\n};\nstruct S\n{\n};\nunion U\n{\n};\nnamespace N\n{\n};\nvoid f()\n{\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nBraceWrapping:\n  AfterClass: false\n"
+          "  AfterNamespace: false\n  AfterFunction: false\n  SplitEmptyFunction: true\n"
+          "  SplitEmptyRecord: true\n  SplitEmptyNamespace: true\n"_str,
+          "class C{};namespace N{};void f(){}\n"_str,
+          "class C {\n};\nnamespace N {\n};\nvoid f() {\n}\n"_str },
+        { "BreakBeforeBraces: Custom\nAllowShortFunctionsOnASingleLine: Empty\n"
+          "BraceWrapping:\n  AfterFunction: true\n  SplitEmptyFunction: true\n"_str,
+          "void empty(){}int full(){return 1;}void comment(){/* keep */}\n"_str,
+          "void empty() {}\nint full()\n{\n    return 1;\n}\n"
+          "void comment()\n{\n    /* keep */\n}\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}
+
+TEST(BuiltinFormat, FormatsDirectRecordLabelsAndMembers) {
+    constexpr auto        source  = "class C{public:int a;protected:int b;private:int c;};\n"_str;
+    const FormatStyleCase cases[] = {
+        { "IndentWidth: 4\n"_str,
+          source,
+          "class C {\n  public:\n    int a;\n  protected:\n    int b;\n  private:\n    int c;\n};\n"_str },
+        { "AccessModifierOffset: 2\n"_str,
+          "class C{public:int value;};\n"_str,
+          "class C {\n      public:\n    int value;\n};\n"_str },
+        { "AccessModifierOffset: -8\n"_str,
+          "class C{public:int value;};\n"_str,
+          "class C {\n    public:\n    int value;\n};\n"_str },
+        { "IndentAccessModifiers: true\nAccessModifierOffset: 1000\n"_str,
+          "class C{int before;public:int after;};struct S{int value;};enum class E{Value};\n"_str,
+          "class C {\n        int before;\n    public:\n        int after;\n};\n"
+          "struct S {\n        int value;\n};\nenum class E {\n    Value\n};\n"_str },
+        { "IndentAccessModifiers: true\nAccessModifierOffset: -8\n"
+          "UseTab: ForIndentation\nTabWidth: 4\n"_str,
+          "class C{public:int value;};struct S{int value;};\n"_str,
+          "class C {\n\tpublic:\n\t\tint value;\n};\nstruct S {\n\t\tint value;\n};\n"_str },
+        { "IndentAccessModifiers: false\nAccessModifierOffset: -2\n"_str,
+          "struct Base{int base;};class C : public Base{public:class Inner{public:int value;};};\n"_str,
+          "struct Base {\n    int base;\n};\nclass C : public Base {\n  public:\n"
+          "    class Inner {\n      public:\n        int value;\n    };\n};\n"_str },
+    };
+    for (const auto& test : cases) expect_style_output(test);
+}

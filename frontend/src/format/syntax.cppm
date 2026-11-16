@@ -15,7 +15,10 @@ enum class BlockKind
     Function,
     Control,
     Namespace,
-    Record
+    Class,
+    Struct,
+    Union,
+    Enum
 };
 
 enum class OperatorRole
@@ -40,6 +43,27 @@ enum class ArrowRole
     TrailingReturn
 };
 
+enum class ParenSpacing
+{
+    Unknown,
+    Other,
+    Conditional,
+    Cast
+};
+
+enum class ControlKind
+{
+    None,
+    If,
+    For,
+    While,
+    Switch,
+    Catch,
+    Else,
+    Do,
+    Try
+};
+
 struct TextRange {
     usize begin;
     usize end;
@@ -58,8 +82,10 @@ struct TokenSyntax {
     usize        pair { usize::MAX };
     usize        header_begin { usize::MAX };
     BlockKind    block { BlockKind::None };
+    ControlKind  control { ControlKind::None };
     OperatorRole operator_role { OperatorRole::Unknown };
     ParenRole    paren_role { ParenRole::Unknown };
+    ParenSpacing paren_spacing { ParenSpacing::Unknown };
     ArrowRole    arrow_role { ArrowRole::None };
     bool         protected_text {};
     bool         module_statement {};
@@ -67,6 +93,14 @@ struct TokenSyntax {
     bool         expression_prefix {};
     bool         block_continuation {};
     bool         brace_continuation {};
+    bool         else_continuation {};
+    bool         header_multiline {};
+    bool         access_label {};
+    bool         access_colon {};
+    bool         access_end {};
+    bool         enum_separator {};
+    bool         double_paren {};
+    bool         cast_operand {};
     bool         simple_block {};
     unsigned     block_statements {};
 };
@@ -348,6 +382,28 @@ auto control(ref<str> text) -> bool {
            text == "catch"_str;
 }
 
+auto control_kind(ref<str> text) -> ControlKind {
+    if (text == "if"_str) return ControlKind::If;
+    if (text == "for"_str) return ControlKind::For;
+    if (text == "while"_str) return ControlKind::While;
+    if (text == "switch"_str) return ControlKind::Switch;
+    if (text == "catch"_str) return ControlKind::Catch;
+    if (text == "else"_str) return ControlKind::Else;
+    if (text == "do"_str) return ControlKind::Do;
+    if (text == "try"_str) return ControlKind::Try;
+    return ControlKind::None;
+}
+
+auto record(BlockKind kind) -> bool {
+    return kind == BlockKind::Class || kind == BlockKind::Struct || kind == BlockKind::Union;
+}
+
+auto contains_newline(ref<str> text) -> bool {
+    for (auto byte : text.as_bytes())
+        if (byte == u8('\r') || byte == u8('\n')) return true;
+    return false;
+}
+
 auto binary_operator(const FormatSyntax& syntax, usize index) -> bool {
     if (index == usize {} || index + usize(1) >= syntax.tokens.len()) return false;
     auto text = syntax.text(index);
@@ -386,6 +442,7 @@ auto annotate_roles(FormatSyntax& syntax) -> void {
         token.syntax.block_continuation =
             text == "else"_str || text == "catch"_str || text == "while"_str;
         token.syntax.brace_continuation = text == "else"_str || text == "catch"_str;
+        token.syntax.else_continuation  = text == "else"_str;
     }
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token = syntax.tokens[index];
@@ -398,16 +455,29 @@ auto annotate_roles(FormatSyntax& syntax) -> void {
                                           ? ArrowRole::TrailingReturn
                                           : ArrowRole::Member;
         }
-        if (index == usize {} || ! syntax.is(index, "("_str)) continue;
-        const auto& previous = syntax.tokens[index - usize(1)];
-        auto        text     = syntax.text(index - usize(1));
+        if (! syntax.is(index, "("_str) || token.syntax.pair == usize::MAX) continue;
+        auto before = syntax.previous_token(index);
+        auto role   = ParenRole::Unknown;
+        auto text   = before == usize::MAX ? ""_str : syntax.text(before);
         if (control(text) || text == "constexpr"_str)
-            token.syntax.paren_role = ParenRole::Control;
-        else if (previous.syntax.expression_prefix)
-            token.syntax.paren_role = ParenRole::Expression;
-        else if (previous.source.kind == lexical::TokenKind::Identifier || text == ")"_str ||
-                 text == "]"_str)
-            token.syntax.paren_role = ParenRole::Call;
+            role = ParenRole::Control;
+        else if (before != usize::MAX && syntax.tokens[before].syntax.expression_prefix)
+            role = ParenRole::Expression;
+        else if ((before != usize::MAX &&
+                  syntax.tokens[before].source.kind == lexical::TokenKind::Identifier) ||
+                 text == ")"_str || text == "]"_str)
+            role = ParenRole::Call;
+        token.syntax.paren_role = role;
+        auto close              = token.syntax.pair;
+        token.syntax.paren_spacing =
+            role == ParenRole::Control ? ParenSpacing::Conditional : ParenSpacing::Other;
+        syntax.tokens[close].syntax.paren_spacing = token.syntax.paren_spacing;
+        auto inner                                = index + usize(1);
+        if (syntax.is(inner, "("_str) && syntax.tokens[inner].syntax.pair != usize::MAX &&
+            syntax.tokens[inner].syntax.pair + usize(1) == close) {
+            token.syntax.double_paren                = true;
+            syntax.tokens[close].syntax.double_paren = true;
+        }
     }
 }
 
@@ -445,13 +515,94 @@ auto annotate_simple_blocks(FormatSyntax& syntax) -> void {
     }
 }
 
+auto builtin_type(ref<str> text) -> bool {
+    return text == "void"_str || text == "bool"_str || text == "char"_str ||
+           text == "char8_t"_str || text == "char16_t"_str || text == "char32_t"_str ||
+           text == "wchar_t"_str || text == "short"_str || text == "int"_str ||
+           text == "long"_str || text == "float"_str || text == "double"_str ||
+           text == "signed"_str || text == "unsigned"_str || text == "__int128"_str;
+}
+
+auto annotate_casts(FormatSyntax& syntax) -> void {
+    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
+        auto& token = syntax.tokens[index];
+        if (! syntax.is(index, "("_str) || token.syntax.pair == usize::MAX ||
+            token.syntax.paren_role == ParenRole::Control ||
+            token.syntax.paren_role == ParenRole::Call)
+            continue;
+        auto close = token.syntax.pair;
+        auto after = syntax.next_token(close);
+        if (after == syntax.tokens.len()) continue;
+        auto following = syntax.text(after);
+        auto word      = syntax.tokens[after].syntax.word_like && following != "const"_str &&
+                         following != "noexcept"_str && following != "override"_str &&
+                         following != "final"_str;
+        auto unary     = following == "*"_str || following == "&"_str || following == "+"_str ||
+                         following == "-"_str || following == "!"_str || following == "~"_str;
+        if (! word && ! unary && following != "("_str) continue;
+        auto     simple = index + usize(1) < close;
+        bool     builtin {};
+        unsigned names {};
+        for (auto scan = index + usize(1); scan < close; ++scan) {
+            const auto& item = syntax.tokens[scan];
+            if (item.source.comment) continue;
+            auto text = syntax.text(scan);
+            if (text == "const"_str || text == "volatile"_str) continue;
+            if (builtin_type(text)) {
+                builtin = true;
+                continue;
+            }
+            if (text == "*"_str || text == "&"_str || text == "&&"_str || text == "::"_str)
+                continue;
+            if (item.source.kind == lexical::TokenKind::Identifier && text != "this"_str &&
+                text != "true"_str && text != "false"_str && text != "nullptr"_str) {
+                auto previous = syntax.previous_token(scan);
+                if (! syntax.is(previous, "::"_str)) ++names;
+            } else
+                simple = false;
+        }
+        simple       = simple && (builtin || names != 0) && names <= 1 && ! (builtin && names != 0);
+        auto cast    = simple && (word || builtin);
+        auto spacing = cast ? ParenSpacing::Cast : ParenSpacing::Unknown;
+        token.syntax.paren_spacing                = spacing;
+        syntax.tokens[close].syntax.paren_spacing = spacing;
+        if (cast) syntax.tokens[after].syntax.cast_operand = true;
+        if (! cast)
+            syntax.protected_ranges.push({ token.source.begin, syntax.tokens[close].source.end });
+    }
+}
+
 auto classify_blocks(FormatSyntax& syntax) -> void {
-    auto head = usize {};
+    auto       head = usize {};
+    Vec<usize> scopes;
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token = syntax.tokens[index];
         if (token.source.comment || syntax.overlaps(token.source.begin, token.source.end)) continue;
-        auto text = syntax.text(index);
-        auto next = syntax.next_token(index);
+        auto text  = syntax.text(index);
+        auto next  = syntax.next_token(index);
+        auto owner = scopes.is_empty() ? usize::MAX : scopes[scopes.len() - usize(1)];
+        if ((text == "public"_str || text == "protected"_str || text == "private"_str) &&
+            owner != usize::MAX && record(syntax.tokens[owner].syntax.block) &&
+            syntax.is(next, ":"_str)) {
+            token.syntax.access_label               = true;
+            syntax.tokens[next].syntax.access_colon = true;
+            syntax.tokens[next].syntax.access_end   = true;
+            auto trivia                             = next + usize(1);
+            while (trivia < syntax.tokens.len() && syntax.tokens[trivia].source.comment)
+                syntax.tokens[trivia++].syntax.access_end = true;
+            head  = next + usize(1);
+            index = next;
+            continue;
+        }
+        if ((text == "public"_str || text == "protected"_str || text == "private"_str) &&
+            owner != usize::MAX && record(syntax.tokens[owner].syntax.block) && index == head) {
+            syntax.protected_ranges.push(
+                { syntax.line_begin(token.source.begin), syntax.line_end(token.source.end) });
+            continue;
+        }
+        if (text == ","_str && owner != usize::MAX &&
+            syntax.tokens[owner].syntax.block == BlockKind::Enum)
+            token.syntax.enum_separator = true;
         if (text == "import"_str && next < syntax.tokens.len() &&
             (syntax.is(next, "<"_str) ||
              syntax.tokens[next].source.kind == lexical::TokenKind::StringLiteral)) {
@@ -468,6 +619,8 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
             continue;
         }
         if (text == ";"_str || text == "}"_str) {
+            if (text == "}"_str && owner != usize::MAX && syntax.tokens[owner].syntax.pair == index)
+                (void)scopes.pop();
             head = index + usize(1);
             continue;
         }
@@ -477,17 +630,23 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
         bool unsafe         = false;
         bool assignment     = false;
         bool namespace_seen = false;
-        bool record_seen    = false;
+        auto record_seen    = BlockKind::None;
+        auto control_seen   = ControlKind::None;
         for (auto scan = head; scan < index; ++scan) {
             if (syntax.tokens[scan].source.comment ||
                 syntax.directive(syntax.tokens[scan].source.begin))
                 continue;
             auto value = syntax.text(scan);
             if (value == "namespace"_str) namespace_seen = true;
-            if (value == "struct"_str || value == "class"_str || value == "union"_str)
-                record_seen = true;
+            if (value == "enum"_str)
+                record_seen = BlockKind::Enum;
+            else if (record_seen != BlockKind::Enum) {
+                if (value == "class"_str) record_seen = BlockKind::Class;
+                if (value == "struct"_str) record_seen = BlockKind::Struct;
+                if (value == "union"_str) record_seen = BlockKind::Union;
+            }
             if (value == "requires"_str || value == "template"_str || value == "["_str ||
-                value == "enum"_str || value == "operator"_str)
+                value == "operator"_str)
                 unsafe = true;
             if (value == "="_str) assignment = true;
             if (value == "("_str && syntax.tokens[scan].syntax.pair < index) {
@@ -499,21 +658,23 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
         if (! unsafe && ! assignment) {
             if (namespace_seen)
                 kind = BlockKind::Namespace;
-            else if (record_seen)
-                kind = BlockKind::Record;
+            else if (record_seen != BlockKind::None)
+                kind = record_seen;
             else if (function_paren != usize::MAX && function_paren != usize {}) {
                 auto before = syntax.previous_token(function_paren);
                 if (syntax.is(before, "constexpr"_str)) before = syntax.previous_token(before);
-                if (before != usize::MAX && control(syntax.text(before)))
-                    kind = BlockKind::Control;
-                else if (before != usize::MAX &&
-                         syntax.tokens[before].source.kind == lexical::TokenKind::Identifier)
+                if (before != usize::MAX && control(syntax.text(before))) {
+                    kind         = BlockKind::Control;
+                    control_seen = control_kind(syntax.text(before));
+                } else if (before != usize::MAX &&
+                           syntax.tokens[before].source.kind == lexical::TokenKind::Identifier)
                     kind = BlockKind::Function;
             } else if (auto before = syntax.previous_token(index); syntax.is(before, "else"_str) ||
                                                                    syntax.is(before, "do"_str) ||
-                                                                   syntax.is(before, "try"_str))
-                kind = BlockKind::Control;
-            else if (index == head)
+                                                                   syntax.is(before, "try"_str)) {
+                kind         = BlockKind::Control;
+                control_seen = control_kind(syntax.text(before));
+            } else if (index == head)
                 kind = BlockKind::Control;
         }
         if (kind == BlockKind::None) {
@@ -528,11 +689,36 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                                   syntax.overlaps(syntax.tokens[header].source.begin,
                                                   syntax.tokens[header].source.end)))
             ++header;
-        token.syntax.block                                   = kind;
-        token.syntax.header_begin                            = header;
-        syntax.tokens[token.syntax.pair].syntax.block        = kind;
-        syntax.tokens[token.syntax.pair].syntax.header_begin = header;
-        head                                                 = index + usize(1);
+        token.syntax.block        = kind;
+        token.syntax.header_begin = header;
+        token.syntax.control      = control_seen;
+        auto last_header          = syntax.previous_token(index);
+        token.syntax.header_multiline =
+            last_header != usize::MAX && header <= last_header &&
+            contains_newline(syntax.text(syntax.tokens[header].source.begin,
+                                         syntax.tokens[last_header].source.end));
+        syntax.tokens[token.syntax.pair].syntax.block            = kind;
+        syntax.tokens[token.syntax.pair].syntax.header_begin     = header;
+        syntax.tokens[token.syntax.pair].syntax.header_multiline = token.syntax.header_multiline;
+        syntax.tokens[token.syntax.pair].syntax.control          = control_seen;
+        scopes.push(usize(index));
+        head = index + usize(1);
+    }
+}
+
+auto protect_complex_enums(FormatSyntax& syntax) -> void {
+    for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
+        const auto& open = syntax.tokens[index];
+        if (! syntax.is(index, "{"_str) || open.syntax.block != BlockKind::Enum) continue;
+        auto close = open.syntax.pair;
+        for (auto scan = index + usize(1); scan < close; ++scan) {
+            if (syntax.is(scan, "<"_str) || syntax.is(scan, ">"_str) || syntax.is(scan, "<<"_str) ||
+                syntax.is(scan, ">>"_str)) {
+                syntax.protected_ranges.push(
+                    { open.source.end, syntax.tokens[close].source.begin });
+                break;
+            }
+        }
     }
 }
 
@@ -580,8 +766,7 @@ auto protect_constructs(FormatSyntax& syntax) -> void {
                         { token.source.begin, syntax.tokens[end].source.end });
             }
         }
-        if (text == "case"_str || text == "default"_str || text == "public"_str ||
-            text == "private"_str || text == "protected"_str || text == "else"_str) {
+        if (text == "case"_str || text == "default"_str || text == "else"_str) {
             if (text == "else"_str && (syntax.is(next, "{"_str) || syntax.is(next, "if"_str)))
                 continue;
             auto end = syntax.line_end(token.source.end);
@@ -621,8 +806,11 @@ auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSy
     if (! syntax.preserve_all) {
         protect_constructs(syntax);
         classify_blocks(syntax);
+        protect_complex_enums(syntax);
         normalize_ranges(syntax.protected_ranges);
         annotate_roles(syntax);
+        annotate_casts(syntax);
+        normalize_ranges(syntax.protected_ranges);
         annotate_module_statements(syntax);
         annotate_simple_blocks(syntax);
     }

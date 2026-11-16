@@ -12,17 +12,44 @@ export namespace lito::frontend::format
 {
 
 struct TokenLayout {
-    unsigned indent {};
+    usize    columns {};
     unsigned parens {};
 };
+
+auto wrap_before(const TokenSyntax& token, const BraceWrapping& wrapping) -> bool {
+    if (token.block == BlockKind::Function) return wrapping.after_function;
+    if (token.block == BlockKind::Class) return wrapping.after_class;
+    if (token.block == BlockKind::Struct) return wrapping.after_struct;
+    if (token.block == BlockKind::Union) return wrapping.after_union;
+    if (token.block == BlockKind::Enum) return wrapping.after_enum;
+    if (token.block == BlockKind::Namespace) return wrapping.after_namespace;
+    if (token.block == BlockKind::Control)
+        return wrapping.after_control_statement == ControlBraceStyle::Always ||
+               (wrapping.after_control_statement == ControlBraceStyle::MultiLine &&
+                token.header_multiline);
+    return false;
+}
 
 class LayoutCursor {
     TokenLayout        next_;
     unsigned           namespaces_ {};
     const FormatStyle& style_;
+    BraceWrapping      wrapping_;
+
+    auto block_width(const TokenSyntax& token) const -> usize {
+        auto levels = 1u;
+        if (record(token.block) && style_.indent_access_modifiers) levels = 2;
+        if (token.block == BlockKind::Control && wrapping_.indent_braces) ++levels;
+        if (token.block == BlockKind::Namespace &&
+            (style_.namespace_indentation == NamespaceIndentation::None ||
+             (style_.namespace_indentation == NamespaceIndentation::Inner && namespaces_ == 0)))
+            levels = 0;
+        return usize(levels) * usize(style_.indent_width);
+    }
 
 public:
-    explicit LayoutCursor(const FormatStyle& style): style_(style) {}
+    explicit LayoutCursor(const FormatStyle& style)
+        : style_(style), wrapping_(style.effective_brace_wrapping()) {}
 
     auto advance(const FormatSyntax& syntax, usize index) -> TokenLayout {
         const auto& token = syntax.tokens[index];
@@ -30,20 +57,28 @@ public:
         auto text = syntax.text(index);
         if (text == "}"_str && token.syntax.block != BlockKind::None) {
             if (token.syntax.block == BlockKind::Namespace && namespaces_ != 0) --namespaces_;
-            auto indented =
-                token.syntax.block != BlockKind::Namespace ||
-                style_.namespace_indentation == NamespaceIndentation::All ||
-                (style_.namespace_indentation == NamespaceIndentation::Inner && namespaces_ != 0);
-            if (indented && next_.indent != 0) --next_.indent;
+            auto width = block_width(token.syntax);
+            if (width <= next_.columns) next_.columns -= width;
         }
         if ((text == ")"_str || text == "]"_str) && next_.parens != 0) --next_.parens;
         auto current = next_;
+        if ((text == "{"_str || text == "}"_str) && token.syntax.block == BlockKind::Control &&
+            wrapping_.indent_braces)
+            current.columns += usize(style_.indent_width);
+        if (token.syntax.access_label) {
+            if (style_.indent_access_modifiers) {
+                if (current.columns >= usize(style_.indent_width))
+                    current.columns -= usize(style_.indent_width);
+            } else if (style_.access_modifier_offset >= 0)
+                current.columns += usize(static_cast<rstd::size_t>(style_.access_modifier_offset));
+            else {
+                auto distance = usize(static_cast<rstd::size_t>(
+                    -static_cast<rstd::int64_t>(style_.access_modifier_offset)));
+                if (distance <= current.columns) current.columns -= distance;
+            }
+        }
         if (text == "{"_str && token.syntax.block != BlockKind::None) {
-            auto indented =
-                token.syntax.block != BlockKind::Namespace ||
-                style_.namespace_indentation == NamespaceIndentation::All ||
-                (style_.namespace_indentation == NamespaceIndentation::Inner && namespaces_ != 0);
-            if (indented) ++next_.indent;
+            next_.columns += block_width(token.syntax);
             if (token.syntax.block == BlockKind::Namespace) ++namespaces_;
         }
         if (text == "("_str || text == "["_str) ++next_.parens;
@@ -51,11 +86,20 @@ public:
     }
 };
 
+auto paren_space(ParenSpacing role, const SpacesInParensOptions& options) -> Option<unsigned> {
+    if (role == ParenSpacing::Unknown) return None();
+    auto spaced = role == ParenSpacing::Cast          ? options.in_c_style_casts
+                  : role == ParenSpacing::Conditional ? options.in_conditional_statements
+                                                      : options.other;
+    return Some(spaced ? 1u : 0u);
+}
+
 auto gap_spaces(const FormatSyntax& syntax, usize index, const FormatStyle& style)
     -> Option<unsigned> {
     const auto& left  = syntax.tokens[index - usize(1)];
     const auto& right = syntax.tokens[index];
     auto        a = syntax.text(index - usize(1)), b = syntax.text(index);
+    if (right.syntax.access_colon || right.syntax.cast_operand) return Some(0u);
     if (! left.source.comment && ! right.source.comment &&
         left.source.kind == lexical::TokenKind::Punctuation &&
         right.source.kind == lexical::TokenKind::Punctuation) {
@@ -77,19 +121,15 @@ auto gap_spaces(const FormatSyntax& syntax, usize index, const FormatStyle& styl
         return None();
     if (left.source.kind == lexical::TokenKind::PpNumber && b == "."_str) return None();
     if (left.source.comment || right.source.comment) return Some(1u);
+    auto parens = style.effective_parens_options();
     if (a == "("_str && b == ")"_str && left.syntax.pair == index)
-        return Some(style.space_in_empty_parentheses ? 1u : 0u);
-    if (a == "("_str) {
-        if (style.spaces_in_parentheses && left.syntax.paren_role == ParenRole::Unknown)
-            return None();
-        return Some(style.spaces_in_parentheses ? 1u : 0u);
-    }
-    if (b == ")"_str) {
-        if (style.spaces_in_parentheses && right.syntax.pair != usize::MAX &&
-            syntax.tokens[right.syntax.pair].syntax.paren_role == ParenRole::Unknown)
-            return None();
-        return Some(style.spaces_in_parentheses ? 1u : 0u);
-    }
+        return Some(parens.in_empty_parentheses ? 1u : 0u);
+    if (parens.except_double_parentheses &&
+        ((a == "("_str && b == "("_str && left.syntax.double_paren) ||
+         (a == ")"_str && b == ")"_str && right.syntax.double_paren)))
+        return Some(0u);
+    if (a == "("_str) return paren_space(left.syntax.paren_spacing, parens);
+    if (b == ")"_str) return paren_space(right.syntax.paren_spacing, parens);
     if (a == ";"_str || a == ","_str) return Some(1u);
     if (b == ";"_str || b == ","_str || b == ")"_str || b == "]"_str) return Some(0u);
     if (a == "["_str && b != "["_str) return Some(0u);
@@ -140,8 +180,7 @@ auto compact_block(const FormatSyntax& syntax, usize index, const FormatStyle& s
     return false;
 }
 
-auto append_indent(String& output, unsigned indent, const FormatStyle& style) -> void {
-    auto columns = usize(indent) * usize(style.indent_width);
+auto append_indent(String& output, usize columns, const FormatStyle& style) -> void {
     if (style.use_tab == UseTab::ForIndentation) {
         auto tabs = columns / usize(style.tab_width);
         for (auto count = usize {}; count < tabs; ++count) output.push_ascii('\t');
@@ -193,6 +232,7 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
     }
     String       output;
     LayoutCursor cursor(style);
+    auto         wrapping = style.effective_brace_wrapping();
     TokenLayout  previous;
     auto         previous_end  = usize {};
     auto         compact_close = usize::MAX;
@@ -201,6 +241,17 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
         auto        current = cursor.advance(syntax, index);
         auto        begin   = previous_end;
         if (compact_block(syntax, index, style)) compact_close = token.syntax.pair;
+        auto compact_empty = false;
+        if (syntax.is(index, "{"_str) && token.syntax.pair == index + usize(1) &&
+            compact_close == usize::MAX && wrap_before(token.syntax, wrapping) &&
+            ! syntax.overlaps(token.source.begin, syntax.tokens[token.syntax.pair].source.end)) {
+            if (token.syntax.block == BlockKind::Function)
+                compact_empty = ! wrapping.split_empty_function;
+            else if (record(token.syntax.block))
+                compact_empty = ! wrapping.split_empty_record;
+            else if (token.syntax.block == BlockKind::Namespace)
+                compact_empty = ! wrapping.split_empty_namespace;
+        }
         if (index == usize {} && token.source.begin >= usize(3) &&
             syntax.bytes()[usize {}] == u8(0xef) && syntax.bytes()[usize(1)] == u8(0xbb) &&
             syntax.bytes()[usize(2)] == u8(0xbf)) {
@@ -220,7 +271,7 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
         else if (index == usize {}) {
             if (style.keep_empty_lines.at_start_of_file)
                 append_newlines(output, limited_newlines(newlines, style, false), newline);
-            append_indent(output, current.indent, style);
+            append_indent(output, current.columns, style);
         } else {
             const auto& left = syntax.tokens[index - usize(1)];
             auto        a = syntax.text(index - usize(1)), b = syntax.text(index);
@@ -228,6 +279,10 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
             auto        after_open   = a == "{"_str && left.syntax.block != BlockKind::None;
             auto        closing      = b == "}"_str && token.syntax.block != BlockKind::None;
             auto        continuation = a == "}"_str && token.syntax.brace_continuation;
+            auto        wrap_opening = opening && wrap_before(token.syntax, wrapping);
+            auto        wrap_continuation =
+                continuation &&
+                (token.syntax.else_continuation ? wrapping.before_else : wrapping.before_catch);
             if (compact_close != usize::MAX && index <= compact_close) {
                 auto spaces = gap_spaces(syntax, index, style);
                 if (after_open && closing && left.syntax.pair == index)
@@ -237,14 +292,14 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
                 auto count = spaces.is_some() ? *spaces : gap.is_empty() ? 0u : 1u;
                 for (unsigned column {}; column < count; ++column) output.push_ascii(' ');
             } else {
-                auto attached = (opening || continuation) &&
-                                style.break_before_braces == BraceStyle::Attach &&
-                                ! left.source.line_comment;
+                auto attached =
+                    ((opening && ! wrap_opening) || (continuation && ! wrap_continuation)) &&
+                    ! left.source.line_comment;
                 auto force_newline =
-                    left.source.line_comment || after_open || closing ||
-                    ((opening || continuation) &&
-                     style.break_before_braces == BraceStyle::Allman) ||
-                    (a == ";"_str && previous.parens == 0) ||
+                    left.source.line_comment || after_open || closing || wrap_opening ||
+                    wrap_continuation || token.syntax.access_label ||
+                    (left.syntax.access_end && ! token.source.comment) ||
+                    left.syntax.enum_separator || (a == ";"_str && previous.parens == 0) ||
                     (a == "}"_str && left.syntax.block != BlockKind::None && b != ";"_str &&
                      b != ","_str && b != ")"_str && ! token.syntax.block_continuation);
                 if (attached)
@@ -268,7 +323,7 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
                                 --tail;
                             output.push_str(gap.get(tail, gap.len()).unwrap());
                         } else
-                            append_indent(output, current.indent, style);
+                            append_indent(output, current.columns, style);
                     }
                 } else {
                     auto spaces = gap_spaces(syntax, index, style);
@@ -282,6 +337,7 @@ auto layout_source(const FormatSyntax& syntax, const FormatStyle& style)
         output.push_str(syntax.text(index));
         previous_end = token.source.end;
         previous     = current;
+        if (compact_empty) compact_close = token.syntax.pair;
         if (index == compact_close) compact_close = usize::MAX;
     }
     auto suffix = syntax.text(previous_end, syntax.bytes().len());

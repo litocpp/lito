@@ -11,7 +11,60 @@ using PathBuf = rstd::path::PathBuf;
 namespace lito::frontend::format
 {
 class StyleConfigurationParser;
-}
+
+struct ParensOptionsPatch {
+    Option<bool> except_double_parentheses;
+    Option<bool> in_conditional_statements;
+    Option<bool> in_c_style_casts;
+    Option<bool> in_empty_parentheses;
+    Option<bool> other;
+
+    auto apply(SpacesInParensOptions base) const -> SpacesInParensOptions {
+        if (except_double_parentheses.is_some())
+            base.except_double_parentheses = *except_double_parentheses;
+        if (in_conditional_statements.is_some())
+            base.in_conditional_statements = *in_conditional_statements;
+        if (in_c_style_casts.is_some()) base.in_c_style_casts = *in_c_style_casts;
+        if (in_empty_parentheses.is_some()) base.in_empty_parentheses = *in_empty_parentheses;
+        if (other.is_some()) base.other = *other;
+        return base;
+    }
+};
+
+struct BraceWrappingPatch {
+    Option<bool>              after_class;
+    Option<bool>              after_struct;
+    Option<bool>              after_union;
+    Option<bool>              after_enum;
+    Option<bool>              after_namespace;
+    Option<bool>              after_function;
+    Option<ControlBraceStyle> after_control_statement;
+    Option<bool>              before_else;
+    Option<bool>              before_catch;
+    Option<bool>              indent_braces;
+    Option<bool>              split_empty_function;
+    Option<bool>              split_empty_record;
+    Option<bool>              split_empty_namespace;
+
+    auto apply(BraceWrapping base) const -> BraceWrapping {
+        if (after_class.is_some()) base.after_class = *after_class;
+        if (after_struct.is_some()) base.after_struct = *after_struct;
+        if (after_union.is_some()) base.after_union = *after_union;
+        if (after_enum.is_some()) base.after_enum = *after_enum;
+        if (after_namespace.is_some()) base.after_namespace = *after_namespace;
+        if (after_function.is_some()) base.after_function = *after_function;
+        if (after_control_statement.is_some())
+            base.after_control_statement = *after_control_statement;
+        if (before_else.is_some()) base.before_else = *before_else;
+        if (before_catch.is_some()) base.before_catch = *before_catch;
+        if (indent_braces.is_some()) base.indent_braces = *indent_braces;
+        if (split_empty_function.is_some()) base.split_empty_function = *split_empty_function;
+        if (split_empty_record.is_some()) base.split_empty_record = *split_empty_record;
+        if (split_empty_namespace.is_some()) base.split_empty_namespace = *split_empty_namespace;
+        return base;
+    }
+};
+} // namespace lito::frontend::format
 
 export namespace lito::frontend::format
 {
@@ -24,10 +77,17 @@ class StyleConfiguration {
     Option<UseTab>               use_tab_;
     Option<NamespaceIndentation> namespace_indentation_;
     Option<BraceStyle>           break_before_braces_;
+    BraceWrappingPatch           brace_wrapping_;
     Option<SpaceBeforeParens>    space_before_parens_;
     Option<bool>                 space_before_assignment_operators_;
+    Option<SpacesInParens>       spaces_in_parens_;
+    ParensOptionsPatch           parens_options_;
     Option<bool>                 spaces_in_parentheses_;
     Option<bool>                 space_in_empty_parentheses_;
+    Option<bool>                 spaces_in_c_style_cast_parentheses_;
+    Option<bool>                 spaces_in_conditional_statement_;
+    Option<int>                  access_modifier_offset_;
+    Option<bool>                 indent_access_modifiers_;
     Option<ShortFunctionStyle>   short_functions_;
     Option<ShortBlockStyle>      short_blocks_;
     Option<unsigned>             max_empty_lines_to_keep_;
@@ -35,6 +95,8 @@ class StyleConfiguration {
     Option<bool>                 keep_end_of_file_;
     Option<bool>                 keep_start_of_block_;
     Option<bool>                 keep_end_of_block_;
+    Option<bool>                 legacy_keep_start_of_block_;
+    Option<bool>                 legacy_keep_end_of_file_;
 
     friend class StyleConfigurationParser;
 
@@ -48,16 +110,40 @@ public:
         if (use_tab_.is_some()) base.use_tab = *use_tab_;
         if (namespace_indentation_.is_some()) base.namespace_indentation = *namespace_indentation_;
         if (break_before_braces_.is_some()) base.break_before_braces = *break_before_braces_;
+        base.brace_wrapping = brace_wrapping_.apply(base.brace_wrapping);
         if (space_before_parens_.is_some()) base.space_before_parens = *space_before_parens_;
         if (space_before_assignment_operators_.is_some())
             base.space_before_assignment_operators = *space_before_assignment_operators_;
-        if (spaces_in_parentheses_.is_some()) base.spaces_in_parentheses = *spaces_in_parentheses_;
-        if (space_in_empty_parentheses_.is_some())
-            base.space_in_empty_parentheses = *space_in_empty_parentheses_;
+        if (spaces_in_parens_.is_some()) base.spaces_in_parens = *spaces_in_parens_;
+        base.spaces_in_parens_options = parens_options_.apply(base.spaces_in_parens_options);
+        auto other                    = spaces_in_parentheses_.is_some() && *spaces_in_parentheses_;
+        auto empty = space_in_empty_parentheses_.is_some() && *space_in_empty_parentheses_;
+        auto casts =
+            spaces_in_c_style_cast_parentheses_.is_some() && *spaces_in_c_style_cast_parentheses_;
+        auto conditional =
+            spaces_in_conditional_statement_.is_some() && *spaces_in_conditional_statement_;
+        if (base.spaces_in_parens != SpacesInParens::Custom &&
+            (other || empty || casts || conditional)) {
+            base.spaces_in_parens         = SpacesInParens::Custom;
+            base.spaces_in_parens_options = SpacesInParensOptions {
+                .in_conditional_statements = other || conditional,
+                .in_c_style_casts          = casts,
+                .in_empty_parentheses      = empty,
+                .other                     = other,
+            };
+        }
+        if (access_modifier_offset_.is_some())
+            base.access_modifier_offset = *access_modifier_offset_;
+        if (indent_access_modifiers_.is_some())
+            base.indent_access_modifiers = *indent_access_modifiers_;
         if (short_functions_.is_some()) base.short_functions = *short_functions_;
         if (short_blocks_.is_some()) base.short_blocks = *short_blocks_;
         if (max_empty_lines_to_keep_.is_some())
             base.max_empty_lines_to_keep = *max_empty_lines_to_keep_;
+        if (legacy_keep_start_of_block_.is_some())
+            base.keep_empty_lines.at_start_of_block = *legacy_keep_start_of_block_;
+        if (legacy_keep_end_of_file_.is_some())
+            base.keep_empty_lines.at_end_of_file = *legacy_keep_end_of_file_;
         if (keep_start_of_file_.is_some())
             base.keep_empty_lines.at_start_of_file = *keep_start_of_file_;
         if (keep_end_of_file_.is_some()) base.keep_empty_lines.at_end_of_file = *keep_end_of_file_;
@@ -76,6 +162,23 @@ auto parse_style_configuration(ref<str> text) -> lexical::Result<StyleConfigurat
 namespace lito::frontend::format
 {
 
+enum class StyleGroup
+{
+    Root,
+    KeepEmptyLines,
+    SpacesInParensOptions,
+    BraceWrapping,
+};
+
+auto style_group_name(StyleGroup group) -> ref<str> {
+    switch (group) {
+    case StyleGroup::KeepEmptyLines: return "KeepEmptyLines"_str;
+    case StyleGroup::SpacesInParensOptions: return "SpacesInParensOptions"_str;
+    case StyleGroup::BraceWrapping: return "BraceWrapping"_str;
+    default: return ""_str;
+    }
+}
+
 class StyleConfigurationParser {
     ref<str>                                   text_;
     StyleConfiguration                         configuration_;
@@ -86,9 +189,9 @@ class StyleConfigurationParser {
     bool                                       document_started_ {};
     bool                                       document_ended_ {};
     bool                                       fields_ {};
-    bool                                       keep_mapping_ {};
-    bool                                       keep_mapping_has_fields_ {};
-    usize                                      keep_mapping_line_ {};
+    StyleGroup                                 group_ { StyleGroup::Root };
+    bool                                       group_has_fields_ {};
+    usize                                      group_line_ {};
     Option<usize>                              child_indent_;
 
     auto failure(String message) const -> lexical::Error {
@@ -203,31 +306,100 @@ class StyleConfigurationParser {
         return Err(failure(rstd::format("option '{}' requires true or false", key)));
     }
 
-    auto set(ref<str> key, ref<str> value, bool nested) -> lexical::Result<empty> {
-        auto canonical = ! nested && key == "KeepEmptyLinesAtTheStartOfBlocks"_str
-                             ? "KeepEmptyLines.AtStartOfBlock"_Str
-                         : nested ? rstd::format("KeepEmptyLines.{}", key)
-                                  : String::make(key);
+    auto signed_number(ref<str> value, ref<str> key) const -> lexical::Result<int> {
+        if (value.is_empty())
+            return Err(failure(rstd::format("option '{}' requires a signed decimal integer", key)));
+        auto negative = value.starts_with("-"_str);
+        if (negative || value.starts_with("+"_str))
+            value = value.get(usize(1), value.len()).unwrap();
+        auto magnitude = number(value, key);
+        if (magnitude.is_err()) return Err(rstd::move(magnitude).unwrap_err());
+        constexpr auto maximum = unsigned(-1) / 2;
+        if (*magnitude > maximum + (negative ? 1u : 0u))
+            return Err(failure(rstd::format("signed value for option '{}' is out of range", key)));
+        if (negative && *magnitude == maximum + 1u) return Ok(-static_cast<int>(maximum) - 1);
+        return Ok(negative ? -static_cast<int>(*magnitude) : static_cast<int>(*magnitude));
+    }
+
+    auto boolean_field(ref<str> key, StyleGroup group) -> Option<bool>* {
+        auto& result = configuration_;
+        if (group == StyleGroup::KeepEmptyLines) {
+            if (key == "AtStartOfFile"_str) return rstd::addressof(result.keep_start_of_file_);
+            if (key == "AtEndOfFile"_str) return rstd::addressof(result.keep_end_of_file_);
+            if (key == "AtStartOfBlock"_str) return rstd::addressof(result.keep_start_of_block_);
+            if (key == "AtEndOfBlock"_str) return rstd::addressof(result.keep_end_of_block_);
+        } else if (group == StyleGroup::SpacesInParensOptions) {
+            if (key == "ExceptDoubleParentheses"_str)
+                return rstd::addressof(result.parens_options_.except_double_parentheses);
+            if (key == "InConditionalStatements"_str)
+                return rstd::addressof(result.parens_options_.in_conditional_statements);
+            if (key == "InCStyleCasts"_str)
+                return rstd::addressof(result.parens_options_.in_c_style_casts);
+            if (key == "InEmptyParentheses"_str)
+                return rstd::addressof(result.parens_options_.in_empty_parentheses);
+            if (key == "Other"_str) return rstd::addressof(result.parens_options_.other);
+        } else if (group == StyleGroup::BraceWrapping) {
+            auto& wrapping = result.brace_wrapping_;
+            if (key == "AfterClass"_str) return rstd::addressof(wrapping.after_class);
+            if (key == "AfterStruct"_str) return rstd::addressof(wrapping.after_struct);
+            if (key == "AfterUnion"_str) return rstd::addressof(wrapping.after_union);
+            if (key == "AfterEnum"_str) return rstd::addressof(wrapping.after_enum);
+            if (key == "AfterNamespace"_str) return rstd::addressof(wrapping.after_namespace);
+            if (key == "AfterFunction"_str) return rstd::addressof(wrapping.after_function);
+            if (key == "BeforeElse"_str) return rstd::addressof(wrapping.before_else);
+            if (key == "BeforeCatch"_str) return rstd::addressof(wrapping.before_catch);
+            if (key == "IndentBraces"_str) return rstd::addressof(wrapping.indent_braces);
+            if (key == "SplitEmptyFunction"_str)
+                return rstd::addressof(wrapping.split_empty_function);
+            if (key == "SplitEmptyRecord"_str) return rstd::addressof(wrapping.split_empty_record);
+            if (key == "SplitEmptyNamespace"_str)
+                return rstd::addressof(wrapping.split_empty_namespace);
+        } else {
+            if (key == "SpaceBeforeAssignmentOperators"_str)
+                return rstd::addressof(result.space_before_assignment_operators_);
+            if (key == "SpacesInParentheses"_str)
+                return rstd::addressof(result.spaces_in_parentheses_);
+            if (key == "SpaceInEmptyParentheses"_str)
+                return rstd::addressof(result.space_in_empty_parentheses_);
+            if (key == "SpacesInCStyleCastParentheses"_str)
+                return rstd::addressof(result.spaces_in_c_style_cast_parentheses_);
+            if (key == "SpacesInConditionalStatement"_str)
+                return rstd::addressof(result.spaces_in_conditional_statement_);
+            if (key == "IndentAccessModifiers"_str)
+                return rstd::addressof(result.indent_access_modifiers_);
+            if (key == "KeepEmptyLinesAtTheStartOfBlocks"_str)
+                return rstd::addressof(result.legacy_keep_start_of_block_);
+            if (key == "KeepEmptyLinesAtEOF"_str)
+                return rstd::addressof(result.legacy_keep_end_of_file_);
+        }
+        return nullptr;
+    }
+
+    auto set(ref<str> key, ref<str> value, StyleGroup group) -> lexical::Result<empty> {
+        auto canonical = group == StyleGroup::Root
+                             ? String::make(key)
+                             : rstd::format("{}.{}", style_group_name(group), key);
         auto distinct  = unique(canonical.as_str());
         if (distinct.is_err()) return distinct;
         auto decoded = scalar(value, canonical.as_str());
         if (decoded.is_err()) return Err(rstd::move(decoded).unwrap_err());
         auto  text   = decoded->as_str();
         auto& result = configuration_;
-        if (nested || key == "KeepEmptyLinesAtTheStartOfBlocks"_str) {
+        if (auto field = boolean_field(key, group); field != nullptr) {
             auto parsed = boolean(text, canonical.as_str());
             if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-            if (canonical == "KeepEmptyLines.AtStartOfFile"_str)
-                result.keep_start_of_file_ = Some(*parsed);
-            else if (canonical == "KeepEmptyLines.AtEndOfFile"_str)
-                result.keep_end_of_file_ = Some(*parsed);
-            else if (canonical == "KeepEmptyLines.AtStartOfBlock"_str)
-                result.keep_start_of_block_ = Some(*parsed);
-            else if (canonical == "KeepEmptyLines.AtEndOfBlock"_str)
-                result.keep_end_of_block_ = Some(*parsed);
+            *field = Some(*parsed);
+        } else if (group == StyleGroup::BraceWrapping && key == "AfterControlStatement"_str) {
+            if (text == "Never"_str || text == "false"_str)
+                result.brace_wrapping_.after_control_statement = Some(ControlBraceStyle::Never);
+            else if (text == "MultiLine"_str)
+                result.brace_wrapping_.after_control_statement = Some(ControlBraceStyle::MultiLine);
+            else if (text == "Always"_str || text == "true"_str)
+                result.brace_wrapping_.after_control_statement = Some(ControlBraceStyle::Always);
             else
-                return Err(
-                    failure(rstd::format("unsupported format option '{}'", canonical.as_str())));
+                return unsupported_value(canonical.as_str(), text);
+        } else if (group != StyleGroup::Root) {
+            return Err(failure(rstd::format("unsupported format option '{}'", canonical.as_str())));
         } else if (key == "IndentWidth"_str || key == "TabWidth"_str ||
                    key == "MaxEmptyLinesToKeep"_str || key == "ColumnLimit"_str) {
             auto parsed = number(text, key);
@@ -241,16 +413,17 @@ class StyleConfigurationParser {
                 result.max_empty_lines_to_keep_ = Some(*parsed);
             else if (*parsed != 0)
                 return Err(failure("builtin format only supports ColumnLimit: 0"_str));
-        } else if (key == "SpaceBeforeAssignmentOperators"_str ||
-                   key == "SpacesInParentheses"_str || key == "SpaceInEmptyParentheses"_str) {
-            auto parsed = boolean(text, key);
+        } else if (key == "AccessModifierOffset"_str) {
+            auto parsed = signed_number(text, key);
             if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-            if (key == "SpaceBeforeAssignmentOperators"_str)
-                result.space_before_assignment_operators_ = Some(*parsed);
-            else if (key == "SpacesInParentheses"_str)
-                result.spaces_in_parentheses_ = Some(*parsed);
+            result.access_modifier_offset_ = Some(*parsed);
+        } else if (key == "SpacesInParens"_str) {
+            if (text == "Never"_str)
+                result.spaces_in_parens_ = Some(SpacesInParens::Never);
+            else if (text == "Custom"_str)
+                result.spaces_in_parens_ = Some(SpacesInParens::Custom);
             else
-                result.space_in_empty_parentheses_ = Some(*parsed);
+                return unsupported_value(key, text);
         } else if (key == "UseTab"_str) {
             if (text == "Never"_str)
                 result.use_tab_ = Some(UseTab::Never);
@@ -272,6 +445,8 @@ class StyleConfigurationParser {
                 result.break_before_braces_ = Some(BraceStyle::Attach);
             else if (text == "Allman"_str)
                 result.break_before_braces_ = Some(BraceStyle::Allman);
+            else if (text == "Custom"_str)
+                result.break_before_braces_ = Some(BraceStyle::Custom);
             else
                 return unsupported_value(key, text);
         } else if (key == "SpaceBeforeParens"_str) {
@@ -284,20 +459,20 @@ class StyleConfigurationParser {
             else
                 return unsupported_value(key, text);
         } else if (key == "AllowShortFunctionsOnASingleLine"_str) {
-            if (text == "None"_str)
+            if (text == "None"_str || text == "false"_str)
                 result.short_functions_ = Some(ShortFunctionStyle::None);
             else if (text == "Empty"_str)
                 result.short_functions_ = Some(ShortFunctionStyle::Empty);
-            else if (text == "All"_str)
+            else if (text == "All"_str || text == "true"_str)
                 result.short_functions_ = Some(ShortFunctionStyle::All);
             else
                 return unsupported_value(key, text);
         } else if (key == "AllowShortBlocksOnASingleLine"_str) {
-            if (text == "Never"_str)
+            if (text == "Never"_str || text == "false"_str)
                 result.short_blocks_ = Some(ShortBlockStyle::Never);
             else if (text == "Empty"_str)
                 result.short_blocks_ = Some(ShortBlockStyle::Empty);
-            else if (text == "Always"_str)
+            else if (text == "Always"_str || text == "true"_str)
                 result.short_blocks_ = Some(ShortBlockStyle::Always);
             else
                 return unsupported_value(key, text);
@@ -322,10 +497,11 @@ class StyleConfigurationParser {
     }
 
     auto finish_mapping() -> lexical::Result<empty> {
-        if (keep_mapping_ && ! keep_mapping_has_fields_)
-            return Err(failure(rstd::format("option 'KeepEmptyLines' at line {} requires a mapping",
-                                            keep_mapping_line_)));
-        keep_mapping_ = false;
+        if (group_ != StyleGroup::Root && ! group_has_fields_)
+            return Err(failure(rstd::format("option '{}' at line {} requires a mapping",
+                                            style_group_name(group_),
+                                            group_line_)));
+        group_        = StyleGroup::Root;
         child_indent_ = None();
         return Ok(empty {});
     }
@@ -368,30 +544,39 @@ class StyleConfigurationParser {
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto value = body.get(value_offset, body.len()).unwrap().trim_ascii();
         if (indent != usize {}) {
-            if (! keep_mapping_)
+            if (group_ == StyleGroup::Root)
                 return Err(
                     failure(rstd::format("unexpected nested format option '{}'", key->as_str())));
             if (child_indent_.is_some() && *child_indent_ != indent)
-                return Err(failure("inconsistent KeepEmptyLines mapping indentation"_str));
+                return Err(failure(
+                    rstd::format("inconsistent {} mapping indentation", style_group_name(group_))));
             child_indent_ = Some(indent);
-            auto result   = set(key->as_str(), value, true);
-            if (result.is_ok()) keep_mapping_has_fields_ = true;
+            auto result   = set(key->as_str(), value, group_);
+            if (result.is_ok()) group_has_fields_ = true;
             return result;
         }
         auto finished = finish_mapping();
         if (finished.is_err()) return finished;
-        fields_ = true;
-        if (key->as_str() == "KeepEmptyLines"_str) {
-            auto distinct = unique("KeepEmptyLines"_str);
+        fields_    = true;
+        auto group = StyleGroup::Root;
+        if (key->as_str() == "KeepEmptyLines"_str)
+            group = StyleGroup::KeepEmptyLines;
+        else if (key->as_str() == "SpacesInParensOptions"_str)
+            group = StyleGroup::SpacesInParensOptions;
+        else if (key->as_str() == "BraceWrapping"_str)
+            group = StyleGroup::BraceWrapping;
+        if (group != StyleGroup::Root) {
+            auto distinct = unique(key->as_str());
             if (distinct.is_err()) return distinct;
             if (! value.is_empty())
-                return Err(failure("option 'KeepEmptyLines' requires a block mapping"_str));
-            keep_mapping_            = true;
-            keep_mapping_has_fields_ = false;
-            keep_mapping_line_       = line_;
+                return Err(
+                    failure(rstd::format("option '{}' requires a block mapping", key->as_str())));
+            group_            = group;
+            group_has_fields_ = false;
+            group_line_       = line_;
             return Ok(empty {});
         }
-        return set(key->as_str(), value, false);
+        return set(key->as_str(), value, StyleGroup::Root);
     }
 
 public:

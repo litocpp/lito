@@ -415,8 +415,9 @@ link-stdlib = false
         { "TabWidth: 0\n"_str, "TabWidth"_str },
         { "ColumnLimit: 80\n"_str, "ColumnLimit"_str },
         { "IndentWidth: \"\"\n"_str, "IndentWidth"_str },
-        { "KeepEmptyLinesAtTheStartOfBlocks: false\n"
-          "KeepEmptyLines:\n  AtStartOfBlock: true\n"_str,
+        { "BraceWrapping:\n  AfterCaseLabel: true\n"_str, "AfterCaseLabel"_str },
+        { "IndentAccessModifiers: Always\n"_str, "IndentAccessModifiers"_str },
+        { "KeepEmptyLines:\n  AtStartOfBlock: false\n  AtStartOfBlock: true\n"_str,
           "AtStartOfBlock"_str },
     };
     auto project = materialize("builtin-style-errors"_str, files);
@@ -440,4 +441,74 @@ link-stdlib = false
             EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), original);
         }
     }
+}
+
+TEST_F(FormatCommand, BuiltinInheritsCanonicalOptionsWithoutReapplyingLegacyFields) {
+    constexpr auto source    = "int f(int x){if(x){return (int)x;}return 0;}void empty(){}\n"_str;
+    constexpr auto inherited = "int f( int x ) {\n    if (x) {\n        return (int)x;\n"
+                               "    }\n    return 0;\n}\nvoid empty() {\n}\n"_str;
+    struct Source {
+        ref<str> path;
+        ref<str> expected;
+    };
+    const Source sources[] = {
+        { "src/base.cpp"_str, inherited },
+        { "src/on/main.cpp"_str, inherited },
+        { "src/off/main.cpp"_str, inherited },
+        { "src/options/main.cpp"_str,
+          "int f( int x ) {\n    if ( x ) {\n        return (int)x;\n"
+          "    }\n    return 0;\n}\nvoid empty( ) {\n}\n"_str },
+        { "src/wrapping/main.cpp"_str,
+          "int f( int x )\n{\n    if (x) {\n        return (int)x;\n"
+          "    }\n    return 0;\n}\nvoid empty()\n{\n}\n"_str },
+    };
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "builtin-style-inheritance"
+version = "0.1.0"
+[[bin]]
+name = "builtin-style-inheritance"
+sources = ["src/base.cpp", "src/on/main.cpp", "src/off/main.cpp", "src/options/main.cpp", "src/wrapping/main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { ".clang-format"_str,
+          "SpacesInParens: Custom\nSpacesInParensOptions:\n  Other: true\n"
+          "  InCStyleCasts: false\n  InEmptyParentheses: false\n  InConditionalStatements: false\n"
+          "BreakBeforeBraces: Attach\nBraceWrapping:\n  AfterFunction: true\n"_str },
+        { "src/on/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nSpacesInParentheses: true\n"
+          "SpaceInEmptyParentheses: true\nSpacesInConditionalStatement: true\n"
+          "SpacesInCStyleCastParentheses: true\n"_str },
+        { "src/off/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nSpacesInParentheses: false\n"
+          "SpaceInEmptyParentheses: false\nSpacesInConditionalStatement: false\n"
+          "SpacesInCStyleCastParentheses: false\n"_str },
+        { "src/options/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nSpacesInParensOptions:\n"
+          "  InConditionalStatements: true\n  InEmptyParentheses: true\n"_str },
+        { "src/wrapping/.clang-format"_str,
+          "BasedOnStyle: InheritParentConfig\nBreakBeforeBraces: Custom\n"_str },
+        { sources[0].path, source },
+        { sources[1].path, source },
+        { sources[2].path, source },
+        { sources[3].path, source },
+        { sources[4].path, source },
+    };
+    auto project = materialize("builtin-style-inheritance"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = lito::FormatRequest {
+        .root    = project->root.clone(),
+        .backend = lito::FormatBackend::Builtin,
+    };
+    auto result = lito::format(request);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_EQ(result->files, usize(5));
+    for (const auto& expected : sources) {
+        auto path = project->root.join(PathBuf::from(expected.path).as_path());
+        EXPECT_EQ(rstd::fs::read_to_string(path.as_path()).unwrap().as_str(), expected.expected);
+    }
+    request.mode = lito::FormatMode::Check;
+    auto clean   = lito::format(request);
+    ASSERT_TRUE(clean.is_ok());
+    EXPECT_TRUE(clean->success());
 }
