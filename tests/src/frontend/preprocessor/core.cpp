@@ -328,11 +328,9 @@ TEST(Preprocessor, RejectsInvalidUtf8AtSemanticBoundaries) {
         ref<str> suffix;
     };
     const Case cases[] = {
-        { "int "_str, ";\n"_str },
-        { "#include \""_str, "\"\n"_str },
-        { "#if defined("_str, ")\n#endif\n"_str },
-        { "#if 1"_str, "\n#endif\n"_str },
-        { "#define "_str, " 1\n"_str },
+        { "int "_str, ";\n"_str },         { "#"_str, "\n"_str },
+        { "#include \""_str, "\"\n"_str }, { "#if defined("_str, ")\n#endif\n"_str },
+        { "#if 1"_str, "\n#endif\n"_str }, { "#define "_str, " 1\n"_str },
     };
     for (const auto& item : cases) {
         auto sources = MemorySources {};

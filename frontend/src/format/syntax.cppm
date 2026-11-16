@@ -44,25 +44,31 @@ struct TextRange {
     usize end;
 };
 
-struct FormatToken {
+struct TokenSource {
     usize              begin;
     usize              end;
     lexical::TokenKind kind;
-    usize              pair { usize::MAX };
-    BlockKind          block { BlockKind::None };
-    OperatorRole       operator_role { OperatorRole::Unknown };
-    ParenRole          paren_role { ParenRole::Unknown };
-    ArrowRole          arrow_role { ArrowRole::None };
-    unsigned           indent {};
-    unsigned           parens {};
     bool               comment {};
     bool               line_comment {};
     bool               start_of_line {};
-    bool               protected_text {};
-    bool               module_statement {};
-    bool               word_like {};
-    bool               expression_prefix {};
-    bool               block_continuation {};
+};
+
+struct TokenSyntax {
+    usize        pair { usize::MAX };
+    BlockKind    block { BlockKind::None };
+    OperatorRole operator_role { OperatorRole::Unknown };
+    ParenRole    paren_role { ParenRole::Unknown };
+    ArrowRole    arrow_role { ArrowRole::None };
+    bool         protected_text {};
+    bool         module_statement {};
+    bool         word_like {};
+    bool         expression_prefix {};
+    bool         block_continuation {};
+};
+
+struct FormatToken {
+    TokenSource source;
+    TokenSyntax syntax;
 };
 
 struct FormatSyntax {
@@ -80,35 +86,28 @@ struct FormatSyntax {
             .unwrap();
     }
     auto text(usize index) const -> ref<str> {
-        return text(tokens[index].begin, tokens[index].end);
+        return text(tokens[index].source.begin, tokens[index].source.end);
     }
     auto is(usize index, ref<str> spelling) const -> bool {
         return index < tokens.len() && text(index) == spelling;
     }
     auto next_token(usize index, usize end = usize::MAX) const -> usize {
         if (index < tokens.len()) ++index;
-        while (index < tokens.len() && tokens[index].comment) ++index;
-        return index < tokens.len() && tokens[index].begin < end ? index : tokens.len();
+        while (index < tokens.len() && tokens[index].source.comment) ++index;
+        return index < tokens.len() && tokens[index].source.begin < end ? index : tokens.len();
     }
     auto previous_token(usize index) const -> usize {
         while (index != usize {}) {
             --index;
-            if (! tokens[index].comment) return index;
+            if (! tokens[index].source.comment) return index;
         }
         return usize::MAX;
     }
     auto line_begin(usize offset) const -> usize {
-        while (offset != usize {} && bytes()[offset - usize(1)] != u8('\n') &&
-               bytes()[offset - usize(1)] != u8('\r'))
-            --offset;
-        return offset;
+        return lexical::physical_line_begin(bytes(), offset);
     }
     auto line_end(usize offset) const -> usize {
-        while (offset < bytes().len() && bytes()[offset] != u8('\n') && bytes()[offset] != u8('\r'))
-            ++offset;
-        if (offset < bytes().len() && bytes()[offset] == u8('\r')) ++offset;
-        if (offset < bytes().len() && bytes()[offset] == u8('\n')) ++offset;
-        return offset;
+        return lexical::physical_line_end(bytes(), offset);
     }
     auto overlaps(usize begin, usize end) const -> bool {
         for (const auto& range : protected_ranges) {
@@ -125,10 +124,86 @@ struct FormatSyntax {
     }
 };
 
+class FormatSink {
+    FormatSyntax syntax_;
+
+public:
+    explicit FormatSink(lexical::SharedSourceSnapshot snapshot)
+        : syntax_ { .snapshot = rstd::move(snapshot) } {}
+
+    auto push_token(const lexical::SourceFile& source,
+                    lexical::TokenKind         kind,
+                    usize                      offset,
+                    usize                      length,
+                    lexical::SourceLocation,
+                    bool start_of_line,
+                    bool) -> void {
+        if (kind == lexical::TokenKind::Newline) return;
+        auto end   = offset + length;
+        auto bytes = source.contents();
+        if (offset == usize {} && end >= usize(3) && bytes[usize {}] == u8(0xef) &&
+            bytes[usize(1)] == u8(0xbb) && bytes[usize(2)] == u8(0xbf))
+            offset = usize(3);
+        if (offset != end)
+            syntax_.tokens.push(FormatToken {
+                .source = { .begin         = offset,
+                            .end           = end,
+                            .kind          = kind,
+                            .start_of_line = start_of_line },
+            });
+    }
+
+    auto push_comment(const lexical::SourceFile&,
+                      lexical::CommentKind,
+                      lexical::CommentStyle style,
+                      usize                 begin,
+                      usize                 end,
+                      lexical::SourceLocation,
+                      lexical::SourceLocation,
+                      bool start_of_line) -> void {
+        syntax_.tokens.push(FormatToken {
+            .source = {
+                .begin = begin,
+                .end = end,
+                .kind = lexical::TokenKind::Punctuation,
+                .comment = true,
+                .line_comment = style == lexical::CommentStyle::Line,
+                .start_of_line = start_of_line,
+            },
+        });
+    }
+
+    auto finish() -> FormatSyntax { return rstd::move(syntax_); }
+};
+
 auto whitespace(u8 value) -> bool {
     return value == u8(' ') || value == u8('\t') || value == u8('\r') || value == u8('\n') ||
            value == u8('\v') || value == u8('\f');
 }
+
+struct DirectiveReader {
+    const FormatSyntax& syntax;
+
+    auto kind(usize index) const -> lexical::TokenKind { return syntax.tokens[index].source.kind; }
+    auto text(usize index) const -> lexical::TokenText {
+        return lexical::TokenText::borrowed(syntax.text(index));
+    }
+    auto comment(usize index) const -> bool { return syntax.tokens[index].source.comment; }
+    auto start_of_line(usize index) const -> bool {
+        const auto& source = syntax.tokens[index].source;
+        if (source.start_of_line) return true;
+        auto bytes = syntax.bytes();
+        for (auto offset = syntax.line_begin(source.begin); offset < source.begin; ++offset) {
+            if (offset == usize {} && source.begin >= usize(3) && bytes[offset] == u8(0xef) &&
+                bytes[usize(1)] == u8(0xbb) && bytes[usize(2)] == u8(0xbf)) {
+                offset = usize(2);
+                continue;
+            }
+            if (! whitespace(bytes[offset])) return false;
+        }
+        return true;
+    }
+};
 
 auto normalize_ranges(Vec<TextRange>& ranges) -> void {
     rstd::slice_::sort_unstable_by(ranges.as_mut_slice().as_mut_ref(),
@@ -161,58 +236,42 @@ auto marker(ref<str> text, ref<str> name, bool on) -> bool {
 }
 
 auto collect_protection(FormatSyntax& syntax) -> void {
+    auto     reader      = DirectiveReader { syntax };
     auto     disabled    = Option<usize> {};
     auto     conditional = Option<usize> {};
     unsigned conditional_depth {};
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         const auto& token = syntax.tokens[index];
         auto        text  = syntax.text(index);
-        if (token.comment) {
+        if (token.source.comment) {
             auto off =
                 marker(text, "clang-format"_str, false) || marker(text, "lito-format"_str, false);
             auto on =
                 marker(text, "clang-format"_str, true) || marker(text, "lito-format"_str, true);
-            if (off && disabled.is_none()) disabled = Some(syntax.line_begin(token.begin));
+            if (off && disabled.is_none()) disabled = Some(syntax.line_begin(token.source.begin));
             if (on && disabled.is_some()) {
-                syntax.protected_ranges.push({ *disabled, syntax.line_end(token.end) });
+                syntax.protected_ranges.push({ *disabled, syntax.line_end(token.source.end) });
                 disabled = None();
             }
             continue;
         }
         if (text != "#"_str && text != "%:"_str) continue;
-        auto begin = syntax.line_begin(token.begin);
-        bool first = true;
-        for (auto scan = begin; scan < token.begin; ++scan) {
-            if (scan == usize {} && token.begin >= usize(3) && syntax.bytes()[scan] == u8(0xef) &&
-                syntax.bytes()[usize(1)] == u8(0xbb) && syntax.bytes()[usize(2)] == u8(0xbf)) {
-                scan = usize(2);
-                continue;
-            }
-            if (token.start_of_line) break;
-            if (! whitespace(syntax.bytes()[scan])) {
-                first = false;
-                break;
-            }
-        }
-        if (! first) continue;
-        auto end = syntax.line_end(token.end);
-        for (;;) {
-            auto newline = end;
-            if (newline > begin && syntax.bytes()[newline - usize(1)] == u8('\n')) --newline;
-            if (newline > begin && syntax.bytes()[newline - usize(1)] == u8('\r')) --newline;
-            if (newline == begin || syntax.bytes()[newline - usize(1)] != u8('\\') ||
-                end == syntax.bytes().len())
-                break;
-            end = syntax.line_end(end);
-        }
+        if (! reader.start_of_line(index)) continue;
+        auto begin     = syntax.line_begin(token.source.begin);
+        auto end       = lexical::continued_line_end(syntax.bytes(), token.source.end);
+        auto token_end = index + usize(1);
+        while (token_end < syntax.tokens.len() && syntax.tokens[token_end].source.begin < end)
+            ++token_end;
+        auto head = lexical::recognize_directive_head(
+            reader, index, token_end, lexical::DirectiveMarkerPolicy::HashAndDigraph);
+        if (head.is_none()) continue;
         syntax.directives.push({ begin, end });
         syntax.protected_ranges.push({ begin, end });
-        auto keyword_index = syntax.next_token(index, end);
-        if (keyword_index == syntax.tokens.len()) continue;
-        auto keyword = syntax.text(keyword_index);
-        if (keyword == "if"_str || keyword == "ifdef"_str || keyword == "ifndef"_str) {
+        if (head->kind == lexical::DirectiveKind::If ||
+            head->kind == lexical::DirectiveKind::Ifdef ||
+            head->kind == lexical::DirectiveKind::Ifndef) {
             if (conditional_depth++ == 0) conditional = Some(begin);
-        } else if (keyword == "endif"_str) {
+        } else if (head->kind == lexical::DirectiveKind::Endif) {
             if (conditional_depth == 0) {
                 syntax.preserve_all = true;
                 continue;
@@ -221,18 +280,14 @@ auto collect_protection(FormatSyntax& syntax) -> void {
                 syntax.protected_ranges.push({ *conditional, end });
                 conditional = None();
             }
-        } else if (keyword == "define"_str) {
-            auto name_index = syntax.next_token(keyword_index, end);
-            if (name_index < syntax.tokens.len())
-                syntax.macros.push(String::make(syntax.text(name_index)));
+        } else if (head->kind == lexical::DirectiveKind::Define && head->name_index != usize::MAX) {
+            syntax.macros.push(String::make(syntax.text(head->name_index)));
         }
     }
     if (disabled.is_some()) syntax.protected_ranges.push({ *disabled, syntax.bytes().len() });
     if (conditional.is_some()) syntax.preserve_all = true;
     for (auto index = usize {}; index + usize(1) < syntax.bytes().len(); ++index) {
-        if (syntax.bytes()[index] != u8('\\')) continue;
-        auto next = syntax.bytes()[index + usize(1)];
-        if (next != u8('\r') && next != u8('\n')) continue;
+        if (lexical::escaped_newline_length(syntax.bytes(), index) == usize {}) continue;
         auto begin = syntax.line_begin(index);
         auto end   = syntax.line_end(syntax.line_end(index));
         syntax.protected_ranges.push({ begin, end });
@@ -256,7 +311,7 @@ auto pair_tokens(FormatSyntax& syntax) -> void {
     Vec<usize> stack;
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token = syntax.tokens[index];
-        if (token.comment || syntax.directive(token.begin)) continue;
+        if (token.source.comment || syntax.directive(token.source.begin)) continue;
         auto text = syntax.text(index);
         if (opening(text))
             stack.push(usize(index));
@@ -266,18 +321,19 @@ auto pair_tokens(FormatSyntax& syntax) -> void {
                 syntax.preserve_all = true;
                 return;
             }
-            auto other                = stack.pop().unwrap();
-            token.pair                = other;
-            syntax.tokens[other].pair = index;
+            auto other                       = stack.pop().unwrap();
+            token.syntax.pair                = other;
+            syntax.tokens[other].syntax.pair = index;
         }
     }
     if (! stack.is_empty()) syntax.preserve_all = true;
     for (const auto& range : syntax.protected_ranges) {
         for (const auto& token : syntax.tokens) {
-            if (token.begin >= range.end) break;
-            if (token.begin < range.begin || token.pair == usize::MAX) continue;
-            const auto& pair = syntax.tokens[token.pair];
-            if (pair.begin < range.begin || pair.end > range.end) syntax.preserve_all = true;
+            if (token.source.begin >= range.end) break;
+            if (token.source.begin < range.begin || token.syntax.pair == usize::MAX) continue;
+            const auto& pair = syntax.tokens[token.syntax.pair];
+            if (pair.source.begin < range.begin || pair.source.end > range.end)
+                syntax.preserve_all = true;
         }
     }
 }
@@ -295,46 +351,48 @@ auto binary_operator(const FormatSyntax& syntax, usize index) -> bool {
         text == "||"_str || text == "<="_str || text == ">="_str)
         return true;
     auto left = index - usize(1), right = index + usize(1);
-    if (syntax.tokens[left].expression_prefix) return false;
-    if (! (syntax.tokens[left].word_like || syntax.is(left, ")"_str) || syntax.is(left, "]"_str)) ||
-        ! (syntax.tokens[right].word_like || syntax.is(right, "("_str)))
+    if (syntax.tokens[left].syntax.expression_prefix) return false;
+    if (! (syntax.tokens[left].syntax.word_like || syntax.is(left, ")"_str) ||
+           syntax.is(left, "]"_str)) ||
+        ! (syntax.tokens[right].syntax.word_like || syntax.is(right, "("_str)))
         return false;
     if (text == "+"_str || text == "-"_str || text == "/"_str || text == "%"_str || text == "^"_str)
         return true;
     return (text == "<"_str || text == ">"_str) &&
-           syntax.tokens[right].kind == lexical::TokenKind::PpNumber;
+           syntax.tokens[right].source.kind == lexical::TokenKind::PpNumber;
 }
 
 auto annotate_roles(FormatSyntax& syntax) -> void {
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
-        auto& token     = syntax.tokens[index];
-        auto  text      = syntax.text(index);
-        token.word_like = token.kind == lexical::TokenKind::Identifier ||
-                          token.kind == lexical::TokenKind::PpNumber ||
-                          token.kind == lexical::TokenKind::StringLiteral ||
-                          token.kind == lexical::TokenKind::CharacterLiteral;
-        token.expression_prefix =
+        auto& token            = syntax.tokens[index];
+        auto  text             = syntax.text(index);
+        token.syntax.word_like = token.source.kind == lexical::TokenKind::Identifier ||
+                                 token.source.kind == lexical::TokenKind::PpNumber ||
+                                 token.source.kind == lexical::TokenKind::StringLiteral ||
+                                 token.source.kind == lexical::TokenKind::CharacterLiteral;
+        token.syntax.expression_prefix =
             text == "return"_str || text == "co_return"_str || text == "throw"_str;
-        token.block_continuation = text == "else"_str || text == "catch"_str || text == "while"_str;
+        token.syntax.block_continuation =
+            text == "else"_str || text == "catch"_str || text == "while"_str;
     }
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token = syntax.tokens[index];
-        if (binary_operator(syntax, index)) token.operator_role = OperatorRole::Binary;
+        if (binary_operator(syntax, index)) token.syntax.operator_role = OperatorRole::Binary;
         if (syntax.is(index, "->"_str)) {
-            token.arrow_role = index != usize {} && syntax.is(index - usize(1), ")"_str)
-                                   ? ArrowRole::TrailingReturn
-                                   : ArrowRole::Member;
+            token.syntax.arrow_role = index != usize {} && syntax.is(index - usize(1), ")"_str)
+                                          ? ArrowRole::TrailingReturn
+                                          : ArrowRole::Member;
         }
         if (index == usize {} || ! syntax.is(index, "("_str)) continue;
         const auto& previous = syntax.tokens[index - usize(1)];
         auto        text     = syntax.text(index - usize(1));
         if (control(text) || text == "constexpr"_str)
-            token.paren_role = ParenRole::Control;
-        else if (previous.expression_prefix)
-            token.paren_role = ParenRole::Expression;
-        else if (previous.kind == lexical::TokenKind::Identifier || text == ")"_str ||
+            token.syntax.paren_role = ParenRole::Control;
+        else if (previous.syntax.expression_prefix)
+            token.syntax.paren_role = ParenRole::Expression;
+        else if (previous.source.kind == lexical::TokenKind::Identifier || text == ")"_str ||
                  text == "]"_str)
-            token.paren_role = ParenRole::Call;
+            token.syntax.paren_role = ParenRole::Call;
     }
 }
 
@@ -342,29 +400,29 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
     auto head = usize {};
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         auto& token = syntax.tokens[index];
-        if (token.comment || syntax.overlaps(token.begin, token.end)) continue;
+        if (token.source.comment || syntax.overlaps(token.source.begin, token.source.end)) continue;
         auto text = syntax.text(index);
         auto next = syntax.next_token(index);
         if (text == "import"_str && next < syntax.tokens.len() &&
             (syntax.is(next, "<"_str) ||
-             syntax.tokens[next].kind == lexical::TokenKind::StringLiteral)) {
+             syntax.tokens[next].source.kind == lexical::TokenKind::StringLiteral)) {
             auto end = next;
             while (end < syntax.tokens.len() && ! syntax.is(end, ";"_str)) ++end;
             if (end < syntax.tokens.len())
-                syntax.protected_ranges.push({ token.begin, syntax.tokens[end].end });
+                syntax.protected_ranges.push({ token.source.begin, syntax.tokens[end].source.end });
             index = end;
             head  = end + usize(1);
             continue;
         }
         if (text == "("_str || text == "["_str) {
-            if (token.pair != usize::MAX) index = token.pair;
+            if (token.syntax.pair != usize::MAX) index = token.syntax.pair;
             continue;
         }
         if (text == ";"_str || text == "}"_str) {
             head = index + usize(1);
             continue;
         }
-        if (text != "{"_str || token.pair == usize::MAX) continue;
+        if (text != "{"_str || token.syntax.pair == usize::MAX) continue;
         auto kind           = BlockKind::None;
         auto function_paren = usize::MAX;
         bool unsafe         = false;
@@ -372,7 +430,8 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
         bool namespace_seen = false;
         bool record_seen    = false;
         for (auto scan = head; scan < index; ++scan) {
-            if (syntax.tokens[scan].comment || syntax.directive(syntax.tokens[scan].begin))
+            if (syntax.tokens[scan].source.comment ||
+                syntax.directive(syntax.tokens[scan].source.begin))
                 continue;
             auto value = syntax.text(scan);
             if (value == "namespace"_str) namespace_seen = true;
@@ -382,9 +441,9 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                 value == "enum"_str || value == "operator"_str)
                 unsafe = true;
             if (value == "="_str) assignment = true;
-            if (value == "("_str && syntax.tokens[scan].pair < index) {
+            if (value == "("_str && syntax.tokens[scan].syntax.pair < index) {
                 if (function_paren == usize::MAX) function_paren = scan;
-                scan = syntax.tokens[scan].pair;
+                scan = syntax.tokens[scan].syntax.pair;
             } else if (value == ":"_str && function_paren != usize::MAX)
                 unsafe = true;
         }
@@ -399,7 +458,7 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                 if (before != usize::MAX && control(syntax.text(before)))
                     kind = BlockKind::Control;
                 else if (before != usize::MAX &&
-                         syntax.tokens[before].kind == lexical::TokenKind::Identifier)
+                         syntax.tokens[before].source.kind == lexical::TokenKind::Identifier)
                     kind = BlockKind::Function;
             } else if (auto before = syntax.previous_token(index); syntax.is(before, "else"_str) ||
                                                                    syntax.is(before, "do"_str) ||
@@ -409,20 +468,21 @@ auto classify_blocks(FormatSyntax& syntax) -> void {
                 kind = BlockKind::Control;
         }
         if (kind == BlockKind::None) {
-            syntax.protected_ranges.push({ token.begin, syntax.tokens[token.pair].end });
-            index = token.pair;
+            syntax.protected_ranges.push(
+                { token.source.begin, syntax.tokens[token.syntax.pair].source.end });
+            index = token.syntax.pair;
             continue;
         }
-        token.block                     = kind;
-        syntax.tokens[token.pair].block = kind;
-        head                            = index + usize(1);
+        token.syntax.block                            = kind;
+        syntax.tokens[token.syntax.pair].syntax.block = kind;
+        head                                          = index + usize(1);
     }
 }
 
 auto protect_constructs(FormatSyntax& syntax) -> void {
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
         const auto& token = syntax.tokens[index];
-        if (token.comment || syntax.directive(token.begin)) continue;
+        if (token.source.comment || syntax.directive(token.source.begin)) continue;
         auto text  = syntax.text(index);
         auto next  = syntax.next_token(index);
         bool macro = false;
@@ -444,54 +504,50 @@ auto protect_constructs(FormatSyntax& syntax) -> void {
             macro = macro && upper;
         }
         if (macro) {
-            auto end = token.end;
-            if (syntax.is(next, "("_str) && syntax.tokens[next].pair != usize::MAX)
-                end = syntax.tokens[syntax.tokens[next].pair].end;
-            syntax.protected_ranges.push({ token.begin, end });
+            auto end = token.source.end;
+            if (syntax.is(next, "("_str) && syntax.tokens[next].syntax.pair != usize::MAX)
+                end = syntax.tokens[syntax.tokens[next].syntax.pair].source.end;
+            syntax.protected_ranges.push({ token.source.begin, end });
         }
         auto control_index = next;
         if (syntax.is(control_index, "constexpr"_str))
             control_index = syntax.next_token(control_index);
         if (control(text) && syntax.is(control_index, "("_str) &&
-            syntax.tokens[control_index].pair != usize::MAX) {
-            auto after = syntax.next_token(syntax.tokens[control_index].pair);
+            syntax.tokens[control_index].syntax.pair != usize::MAX) {
+            auto after = syntax.next_token(syntax.tokens[control_index].syntax.pair);
             if (! syntax.is(after, "{"_str)) {
                 auto end = after;
                 while (end < syntax.tokens.len() && ! syntax.is(end, ";"_str)) ++end;
                 if (end < syntax.tokens.len())
-                    syntax.protected_ranges.push({ token.begin, syntax.tokens[end].end });
+                    syntax.protected_ranges.push(
+                        { token.source.begin, syntax.tokens[end].source.end });
             }
         }
         if (text == "case"_str || text == "default"_str || text == "public"_str ||
             text == "private"_str || text == "protected"_str || text == "else"_str) {
             if (text == "else"_str && (syntax.is(next, "{"_str) || syntax.is(next, "if"_str)))
                 continue;
-            auto end = syntax.line_end(token.end);
-            syntax.protected_ranges.push({ syntax.line_begin(token.begin), end });
+            auto end = syntax.line_end(token.source.end);
+            syntax.protected_ranges.push({ syntax.line_begin(token.source.begin), end });
         }
     }
     normalize_ranges(syntax.protected_ranges);
 }
 
-auto annotate_layout(FormatSyntax& syntax) -> void {
-    unsigned indent {};
+auto annotate_module_statements(FormatSyntax& syntax) -> void {
     unsigned parens {};
     auto     module_begin = usize::MAX;
     for (auto index = usize {}; index < syntax.tokens.len(); ++index) {
-        auto& token          = syntax.tokens[index];
-        token.protected_text = syntax.overlaps(token.begin, token.end);
-        auto text            = syntax.text(index);
-        if (! token.comment && ! token.protected_text) {
-            if (text == "}"_str && token.block != BlockKind::None && indent != 0) --indent;
+        auto& token                 = syntax.tokens[index];
+        token.syntax.protected_text = syntax.overlaps(token.source.begin, token.source.end);
+        auto text                   = syntax.text(index);
+        if (! token.source.comment && ! token.syntax.protected_text) {
             if ((text == ")"_str || text == "]"_str) && parens != 0) --parens;
         }
-        token.indent = indent;
-        token.parens = parens;
-        if (token.comment || token.protected_text) continue;
-        if (text == "{"_str && token.block != BlockKind::None) ++indent;
+        if (token.source.comment || token.syntax.protected_text) continue;
         if (text == "("_str || text == "["_str) ++parens;
         if ((text == "module"_str || text == "import"_str) && parens == 0) module_begin = index;
-        if (module_begin != usize::MAX) token.module_statement = true;
+        if (module_begin != usize::MAX) token.syntax.module_statement = true;
         if (text == ";"_str || text == "{"_str || text == "}"_str) module_begin = usize::MAX;
     }
 }
@@ -499,45 +555,10 @@ auto annotate_layout(FormatSyntax& syntax) -> void {
 auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSyntax> {
     if (rstd::str_::from_utf8(source.contents()).is_err())
         return Err(lexical::Error::make("format source is not UTF-8"_str));
-    auto lexed = lexical::lex_with_comments(source, true);
+    auto sink  = FormatSink(source.snapshot.clone());
+    auto lexed = lexical::lex_into(source, sink);
     if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
-    FormatSyntax syntax { .snapshot = source.snapshot.clone() };
-    auto         token_index   = usize {};
-    auto         comment_index = usize {};
-    while (token_index < lexed->tokens.len() || comment_index < lexed->comments.len()) {
-        if (token_index < lexed->tokens.len() &&
-            lexed->tokens[token_index].kind == lexical::TokenKind::Newline) {
-            ++token_index;
-            continue;
-        }
-        if (comment_index < lexed->comments.len() &&
-            (token_index == lexed->tokens.len() ||
-             lexed->comments[comment_index].begin.offset <
-                 lexed->tokens[token_index].spelling.offset)) {
-            const auto& comment = lexed->comments[comment_index++];
-            syntax.tokens.push(FormatToken {
-                .begin        = comment.begin.offset,
-                .end          = comment.end.offset,
-                .kind         = lexical::TokenKind::Punctuation,
-                .comment      = true,
-                .line_comment = comment.style == lexical::CommentStyle::Line,
-            });
-        } else {
-            const auto& token = lexed->tokens[token_index++];
-            auto        begin = token.spelling.offset;
-            auto        end   = begin + token.text.len();
-            if (begin == usize {} && end >= usize(3) && syntax.bytes()[usize {}] == u8(0xef) &&
-                syntax.bytes()[usize(1)] == u8(0xbb) && syntax.bytes()[usize(2)] == u8(0xbf))
-                begin = usize(3);
-            if (begin != end)
-                syntax.tokens.push(FormatToken {
-                    .begin         = begin,
-                    .end           = end,
-                    .kind          = token.kind,
-                    .start_of_line = token.start_of_line,
-                });
-        }
-    }
+    auto syntax = sink.finish();
     collect_protection(syntax);
     pair_tokens(syntax);
     if (! syntax.preserve_all) {
@@ -545,7 +566,7 @@ auto parse_source(const lexical::SourceFile& source) -> lexical::Result<FormatSy
         classify_blocks(syntax);
         normalize_ranges(syntax.protected_ranges);
         annotate_roles(syntax);
-        annotate_layout(syntax);
+        annotate_module_statements(syntax);
     }
     return Ok(rstd::move(syntax));
 }

@@ -4,6 +4,7 @@ export import :symbol;
 export import :token;
 export import :traits;
 export import :source;
+export import :directive;
 export import :error;
 export import :scanner;
 export import :lexer;

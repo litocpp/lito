@@ -14,6 +14,7 @@ target_sources(
          src/lexical/token.cppm
          src/lexical/traits.cppm
          src/lexical/source.cppm
+         src/lexical/directive.cppm
          src/lexical/error.cppm
          src/lexical/scanner.cppm
          src/lexical/lexer.cppm

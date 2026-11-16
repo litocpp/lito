@@ -5,6 +5,7 @@ import rstd.parse.core;
 import lito.frontend.memory;
 import :token;
 import :source;
+import :directive;
 import :error;
 
 using namespace rstd::prelude;
@@ -325,15 +326,6 @@ public:
 private:
     ScanFileStorageBuilder builder_;
 };
-
-auto escaped_newline_length(slice<u8> bytes, usize position) -> usize {
-    if (position + usize(1) >= bytes.len() || bytes[position] != u8('\\')) return usize {};
-    auto next = bytes[position + usize(1)];
-    if (next == u8('\n')) return usize(2);
-    if (next != u8('\r')) return usize {};
-    return position + usize(2) < bytes.len() && bytes[position + usize(2)] == u8('\n') ? usize(3)
-                                                                                       : usize(2);
-}
 
 template<typename Sink>
 auto lex_into(const SourceFile& source, Sink& sink) -> Result<empty> {

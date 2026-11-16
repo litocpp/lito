@@ -13,6 +13,27 @@ using namespace rstd::literals;
 
 using namespace lito::frontend::lexical;
 
+namespace lito::frontend::preprocessor
+{
+
+struct ScanDirectiveReader {
+    const ScanFileStorage& storage;
+    SourceId               source;
+
+    auto kind(usize index) const noexcept -> TokenKind {
+        return storage.token(source, index).kind();
+    }
+    auto text(usize index) const noexcept -> TokenText {
+        return storage.token(source, index).text();
+    }
+    auto start_of_line(usize index) const noexcept -> bool {
+        return storage.token(source, index).start_of_line();
+    }
+    auto comment(usize) const noexcept -> bool { return false; }
+};
+
+} // namespace lito::frontend::preprocessor
+
 export namespace lito::frontend::preprocessor
 {
 
@@ -1637,36 +1658,33 @@ private:
     }
 
     auto detected_include_guard(const ScanFileStorage& storage, SourceId source) -> Option<String> {
+        auto reader = ScanDirectiveReader { storage, source };
         auto cursor = usize {};
         while (cursor < storage.tokens.len() &&
                storage.token(source, cursor).kind() == TokenKind::Newline) {
             ++cursor;
         }
-        if (cursor + usize(2) >= storage.tokens.len()) return None();
-        auto marker  = storage.token(source, cursor);
-        auto keyword = storage.token(source, cursor + usize(1));
-        auto name    = storage.token(source, cursor + usize(2));
-        if (! marker.start_of_line() || marker.text() != "#"_str ||
-            keyword.text() != "ifndef"_str || name.kind() != TokenKind::Identifier) {
+        auto end  = logical_token_line_end(reader, cursor, storage.tokens.len());
+        auto head = recognize_directive_head(reader, cursor, end, DirectiveMarkerPolicy::HashOnly);
+        if (head.is_none() || head->kind != DirectiveKind::Ifndef ||
+            head->name_index == usize::MAX) {
             return None();
         }
+        auto name = storage.token(source, head->name_index);
+        if (name.kind() != TokenKind::Identifier) return None();
         auto guard_text = name.text().utf8();
         if (guard_text.is_err()) return None();
         auto guard = String::make(*guard_text);
-        while (cursor < storage.tokens.len() &&
-               storage.token(source, cursor).kind() != TokenKind::Newline) {
-            ++cursor;
-        }
+        cursor     = end;
         while (cursor < storage.tokens.len() &&
                storage.token(source, cursor).kind() == TokenKind::Newline) {
             ++cursor;
         }
-        if (cursor + usize(2) >= storage.tokens.len()) return None();
-        marker  = storage.token(source, cursor);
-        keyword = storage.token(source, cursor + usize(1));
-        name    = storage.token(source, cursor + usize(2));
-        if (! marker.start_of_line() || marker.text() != "#"_str ||
-            keyword.text() != "define"_str || name.text() != guard.as_str()) {
+        end  = logical_token_line_end(reader, cursor, storage.tokens.len());
+        head = recognize_directive_head(reader, cursor, end, DirectiveMarkerPolicy::HashOnly);
+        if (head.is_none() || head->kind != DirectiveKind::Define ||
+            head->name_index == usize::MAX ||
+            storage.token(source, head->name_index).text() != guard.as_str()) {
             return None();
         }
         auto last = storage.tokens.len();
@@ -1677,9 +1695,8 @@ private:
         if (last < usize(2)) return None();
         auto line = last - usize(1);
         while (line > usize {} && ! storage.token(source, line).start_of_line()) --line;
-        if (line >= last || storage.token(source, line).text() != "#"_str ||
-            line + usize(1) >= last ||
-            storage.token(source, line + usize(1)).text() != "endif"_str) {
+        head = recognize_directive_head(reader, line, last, DirectiveMarkerPolicy::HashOnly);
+        if (head.is_none() || head->kind != DirectiveKind::Endif) {
             return None();
         }
         return Some(rstd::move(guard));
@@ -1737,15 +1754,16 @@ private:
             value.path.as_path(), Some(value.search_index), import_once, value.system);
     }
 
-    auto handle_conditional(ref<str>               directive,
+    auto handle_conditional(DirectiveKind          directive,
                             const ScratchTokenVec& rest,
                             SourceLocation         location,
                             ScratchConditionalVec& conditions) -> Result<bool> {
-        if (directive == "if"_str || directive == "ifdef"_str || directive == "ifndef"_str) {
+        if (directive == DirectiveKind::If || directive == DirectiveKind::Ifdef ||
+            directive == DirectiveKind::Ifndef) {
             auto parent = active(conditions);
             auto value  = false;
             if (parent) {
-                if (directive == "if"_str) {
+                if (directive == DirectiveKind::If) {
                     auto evaluated = condition_value(rest);
                     if (evaluated.is_err()) return Err(rstd::move(evaluated).unwrap_err());
                     value = *evaluated;
@@ -1763,7 +1781,7 @@ private:
                     if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
                     value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
                                                                      identifier.utf8().unwrap());
-                    if (directive == "ifndef"_str) value = ! value;
+                    if (directive == DirectiveKind::Ifndef) value = ! value;
                 }
             }
             conditions.push(ConditionalFrame {
@@ -1777,13 +1795,14 @@ private:
             if (event.is_err()) return Err(rstd::move(event).unwrap_err());
             return Ok(true);
         }
-        if (directive == "elif"_str || directive == "elifdef"_str || directive == "elifndef"_str) {
+        if (directive == DirectiveKind::Elif || directive == DirectiveKind::Elifdef ||
+            directive == DirectiveKind::Elifndef) {
             if (conditions.is_empty()) return Err(failure("#elif without #if"_str, location));
             auto& frame = conditions[conditions.len() - usize(1)];
             if (frame.saw_else) return Err(failure("#elif after #else"_str, location));
             auto value = false;
             if (frame.parent_active && ! frame.branch_taken) {
-                if (directive == "elif"_str) {
+                if (directive == DirectiveKind::Elif) {
                     auto evaluated = condition_value(rest);
                     if (evaluated.is_err()) return Err(rstd::move(evaluated).unwrap_err());
                     value = *evaluated;
@@ -1801,14 +1820,14 @@ private:
                     if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
                     value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
                                                                      identifier.utf8().unwrap());
-                    if (directive == "elifndef"_str) value = ! value;
+                    if (directive == DirectiveKind::Elifndef) value = ! value;
                 }
             }
             frame.active       = frame.parent_active && ! frame.branch_taken && value;
             frame.branch_taken = frame.branch_taken || frame.active;
             return Ok(true);
         }
-        if (directive == "else"_str) {
+        if (directive == DirectiveKind::Else) {
             if (conditions.is_empty()) return Err(failure("#else without #if"_str, location));
             auto& frame = conditions[conditions.len() - usize(1)];
             if (frame.saw_else) return Err(failure("duplicate #else"_str, location));
@@ -1817,7 +1836,7 @@ private:
             frame.branch_taken = true;
             return Ok(true);
         }
-        if (directive == "endif"_str) {
+        if (directive == DirectiveKind::Endif) {
             if (conditions.is_empty()) return Err(failure("#endif without #if"_str, location));
             (void)conditions.pop();
             return Ok(true);
@@ -1970,20 +1989,19 @@ private:
         auto normal         = scratch_tokens();
         auto conditions     = ScratchConditionalVec::new_in(scratch_allocator_);
         auto comment_cursor = usize {};
+        auto reader         = ScanDirectiveReader { **loaded, source };
         for (auto cursor = usize {}; cursor < (*loaded)->tokens.len();) {
-            auto end = cursor;
-            while (end < (*loaded)->tokens.len() &&
-                   (*loaded)->token(source, end).kind() != TokenKind::Newline) {
-                ++end;
-            }
-            auto first =
-                cursor < end ? Some((*loaded)->token(source, cursor)) : Option<SourceTokenView> {};
-            auto directive = first.is_some() && first->start_of_line() && first->text() == "#"_str;
-            auto line_end  = end < (*loaded)->tokens.len() ? (*loaded)->token(source, end).offset()
-                                                           : (*loaded)->snapshot->contents.len();
-            collect_comments_through(
-                **loaded, comment_cursor, line_end, source, ! directive && active(conditions));
-            if (! directive) {
+            auto end = logical_token_line_end(reader, cursor, (*loaded)->tokens.len());
+            auto directive =
+                recognize_directive_head(reader, cursor, end, DirectiveMarkerPolicy::HashOnly);
+            auto line_end = end < (*loaded)->tokens.len() ? (*loaded)->token(source, end).offset()
+                                                          : (*loaded)->snapshot->contents.len();
+            collect_comments_through(**loaded,
+                                     comment_cursor,
+                                     line_end,
+                                     source,
+                                     directive.is_none() && active(conditions));
+            if (directive.is_none()) {
                 if (active(conditions)) {
                     for (auto index = cursor; index < end; ++index)
                         normal.push(materialize_source_token(**loaded, source, index));
@@ -1999,25 +2017,25 @@ private:
 
             auto flushed = flush_normal(normal);
             if (flushed.is_err()) return Err(rstd::move(flushed).unwrap_err());
-            auto line = scratch_tokens(end - cursor - usize(1));
-            for (auto index = cursor + usize(1); index < end; ++index) {
-                line.push(materialize_source_token(**loaded, source, index));
-            }
-            if (line.is_empty()) {
+            if (directive->kind == DirectiveKind::Empty) {
                 cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
                 continue;
             }
-            if (line[usize {}].kind != TokenKind::Identifier) {
+            auto line = scratch_tokens(end - directive->keyword_index);
+            for (auto index = directive->keyword_index; index < end; ++index) {
+                line.push(materialize_source_token(**loaded, source, index));
+            }
+            if (directive->kind == DirectiveKind::InvalidKeyword) {
                 return Err(
                     failure("invalid preprocessing directive"_str, line[usize {}].expansion));
             }
-            auto keyword_text = line[usize {}].text.utf8();
-            if (keyword_text.is_err())
+            if (directive->kind == DirectiveKind::InvalidUtf8)
                 return Err(failure("invalid UTF-8 directive"_str, line[usize {}].expansion));
-            auto keyword     = *keyword_text;
-            auto location    = line[usize {}].expansion;
-            auto rest        = move_range(line, usize(1), line.len());
-            auto conditional = handle_conditional(keyword, rest, location, conditions);
+            auto kind     = directive->kind;
+            auto location = line[usize {}].expansion;
+            auto rest =
+                move_range(line, directive->arguments_begin - directive->keyword_index, line.len());
+            auto conditional = handle_conditional(kind, rest, location, conditions);
             if (conditional.is_err()) return Err(rstd::move(conditional).unwrap_err());
             if (*conditional) {
                 ++raw_statistics_.conditionals;
@@ -2030,14 +2048,14 @@ private:
             }
 
             for (const auto& token : rest) {
-                if (keyword != "error"_str && keyword != "warning"_str &&
+                if (kind != DirectiveKind::Error && kind != DirectiveKind::Warning &&
                     token.kind == TokenKind::Identifier && token.text.utf8().is_err())
                     return Err(failure("invalid UTF-8 identifier"_str, token.expansion));
             }
-            if (keyword == "define"_str) {
+            if (kind == DirectiveKind::Define) {
                 auto result = define_macro(rest, true);
                 if (result.is_err()) return Err(rstd::move(result).unwrap_err());
-            } else if (keyword == "undef"_str) {
+            } else if (kind == DirectiveKind::Undef) {
                 if (rest.len() != usize(1) || rest[usize {}].kind != TokenKind::Identifier) {
                     return Err(failure("#undef requires one identifier"_str, location));
                 }
@@ -2049,28 +2067,28 @@ private:
                 auto event = emit_name(
                     EventKind::MacroUndefined, rest[usize {}].text.utf8().unwrap(), location);
                 if (event.is_err()) return Err(rstd::move(event).unwrap_err());
-            } else if (keyword == "include"_str || keyword == "include_next"_str ||
-                       keyword == "import"_str) {
+            } else if (kind == DirectiveKind::Include || kind == DirectiveKind::IncludeNext ||
+                       kind == DirectiveKind::Import) {
                 auto included = handle_include(rstd::move(rest),
-                                               keyword == "include_next"_str,
+                                               kind == DirectiveKind::IncludeNext,
                                                location,
-                                               keyword == "import"_str);
+                                               kind == DirectiveKind::Import);
                 if (included.is_err()) return Err(rstd::move(included).unwrap_err());
-            } else if (keyword == "embed"_str) {
+            } else if (kind == DirectiveKind::Embed) {
                 auto embedded = handle_embed(rstd::move(rest), location);
                 if (embedded.is_err()) return Err(rstd::move(embedded).unwrap_err());
-            } else if (keyword == "pragma"_str) {
+            } else if (kind == DirectiveKind::Pragma) {
                 auto handled = handle_pragma(rstd::move(rest), location);
                 if (handled.is_err()) return Err(rstd::move(handled).unwrap_err());
-            } else if (keyword == "error"_str) {
+            } else if (kind == DirectiveKind::Error) {
                 return Err(
                     failure(rstd::format("#error {}", directive_message(rest, usize {}).as_str()),
                             location));
-            } else if (keyword == "warning"_str) {
+            } else if (kind == DirectiveKind::Warning) {
                 auto event = emit_name(
                     EventKind::Diagnostic, directive_message(rest, usize {}).as_str(), location);
                 if (event.is_err()) return Err(rstd::move(event).unwrap_err());
-            } else if (keyword == "line"_str) {
+            } else if (kind == DirectiveKind::Line) {
                 auto disabled = disabled_macros();
                 auto expanded = expand(rstd::move(rest), disabled);
                 if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
@@ -2128,8 +2146,9 @@ private:
                     .path          = rstd::move(presumed),
                 });
             } else {
-                return Err(failure(
-                    rstd::format("unsupported preprocessing directive '#{}'", keyword), location));
+                return Err(failure(rstd::format("unsupported preprocessing directive '#{}'",
+                                                line[usize {}].text.utf8().unwrap()),
+                                   location));
             }
             cursor = end < (*loaded)->tokens.len() ? end + usize(1) : end;
         }
