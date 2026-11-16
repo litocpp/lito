@@ -384,7 +384,7 @@ sources = ["library.c"]
     artifacts = {
         {
             target = { kind = "lib", name = "fixture-install-library" },
-            destination = "lib/libfixture-install-library.so",
+            directory = "lib",
         },
     },
     files = {{

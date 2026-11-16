@@ -186,6 +186,31 @@ auto resolve_pkg_config_file(const InstallRecipe&                  recipe,
 export namespace lito
 {
 
+auto resolve_install_targets(const lito::manifest::PackageManifest& package,
+                             const TargetInfo& target) -> Vec<PackageInstallTarget> {
+    auto result = Vec<PackageInstallTarget>::make();
+    for (const auto& candidate : package.targets) {
+        const auto kind = lito::manifest::package_target_kind(candidate);
+        if (kind != lito::package::PackageTargetKind::Binary &&
+            ! lito::manifest::package_library_is_shared(candidate))
+            continue;
+        const auto product = kind == lito::package::PackageTargetKind::Binary
+                                 ? lito::artifact::ProductKind::Executable
+                                 : lito::artifact::ProductKind::SharedLibrary;
+        result.push(PackageInstallTarget {
+            .target =
+                lito::package::PackageTargetId {
+                    .package = package.name.clone(),
+                    .kind    = kind,
+                    .name    = String::make(lito::manifest::package_target_name(candidate)),
+                },
+            .artifact_name = lito::artifact::product_name(
+                product, lito::manifest::package_target_artifact_name(candidate), target),
+        });
+    }
+    return result;
+}
+
 auto resolve_install_packages(const lito::package::ResolvedPackageSelection& selection,
                               const TargetInfo& target) -> InstallResult<Vec<PackageInstallInput>> {
     auto result = Vec<PackageInstallInput>::make();
@@ -201,23 +226,11 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             return Err(InstallError::Message(
                 rstd::format("package '{}' has no installable version", name.as_str())));
         }
-        auto binaries = Vec<PackageInstallTarget>::make();
-        for (const auto& candidate : package->manifest.targets) {
-            if (lito::manifest::package_target_kind(candidate) !=
-                lito::package::PackageTargetKind::Binary)
-                continue;
-            binaries.push(PackageInstallTarget {
-                .target =
-                    lito::package::PackageTargetId {
-                        .package = package->manifest.name.clone(),
-                        .kind    = lito::package::PackageTargetKind::Binary,
-                        .name    = String::make(lito::manifest::package_target_name(candidate)),
-                    },
-                .artifact_name =
-                    String::make(lito::manifest::package_target_artifact_name(candidate)),
-            });
-        }
-        if (package->manifest.install_script.is_none() && binaries.is_empty()) {
+        auto targets    = resolve_install_targets(package->manifest, target);
+        auto has_binary = targets.iter().any([](auto candidate) {
+            return candidate->target.kind == lito::package::PackageTargetKind::Binary;
+        });
+        if (package->manifest.install_script.is_none() && ! has_binary) {
             return Err(InstallError::Message(
                 rstd::format("runtime package '{}' has no install target", name.as_str())));
         }
@@ -272,7 +285,7 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             .root                 = package->manifest.root.clone(),
             .manifest_path        = package->manifest.manifest_path.clone(),
             .script               = rstd::move(script),
-            .binaries             = rstd::move(binaries),
+            .targets              = rstd::move(targets),
             .source               = package->source.clone(),
             .runtime_dependencies = rstd::move(runtime_dependencies),
             .script_dependencies  = rstd::move(script_dependencies),

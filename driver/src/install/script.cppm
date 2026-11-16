@@ -121,6 +121,28 @@ auto recipe_target(luato::Table table, ref<str> owner, ref<str> context)
     });
 }
 
+auto artifact_destination(const luato::Table&                   item,
+                          const lito::package::PackageTargetId& target,
+                          const PackageInstallInput&            package) -> luato::Result<PathBuf> {
+    const auto exact = item.contains("destination"_str);
+    if (exact == item.contains("directory"_str)) {
+        return Err(luato::Error::binding(
+            "install artifact requires exactly one of 'destination' or 'directory'"_Str));
+    }
+    const auto field = exact ? "destination"_str : "directory"_str;
+    auto       path  = rstd_try(
+        recipe_path(rstd_try(item.required<String>(field)),
+                    exact ? "install artifact destination"_str : "install artifact directory"_str));
+    if (exact) return Ok(rstd::move(path));
+    for (const auto& candidate : package.targets) {
+        if (candidate.target != target) continue;
+        path.push(PathBuf::from(candidate.artifact_name.as_str()).as_path());
+        return Ok(rstd::move(path));
+    }
+    return Err(luato::Error::binding(rstd::format("unknown installable artifact target '{}'",
+                                                  lito::package::package_target_id_text(target))));
+}
+
 template<typename F>
 auto parse_array(const luato::Table& root, ref<str> field, F&& parse) -> luato::Result<empty> {
     if (! root.contains(field)) return Ok(empty {});
@@ -255,15 +277,14 @@ public:
         }
         rstd_try(parse_array(
             table, "artifacts"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
-                rstd_try(
-                    known_fields(item, { "target"_str, "destination"_str, "runtime_search"_str }));
+                rstd_try(known_fields(
+                    item,
+                    { "target"_str, "destination"_str, "directory"_str, "runtime_search"_str }));
                 auto target =
                     rstd_try(recipe_target(rstd_try(item.required<luato::Table>("target"_str)),
                                            package_.name.as_str(),
                                            "install artifact"_str));
-                auto destination =
-                    rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
-                                         "install artifact destination"_str));
+                auto destination    = rstd_try(artifact_destination(item, target, package_));
                 auto runtime_search = Vec<InstallArtifactRecipe::RuntimeSearchReference>::make();
                 rstd_try(parse_array(
                     item,

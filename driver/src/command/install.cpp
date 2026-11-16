@@ -73,7 +73,8 @@ auto resolve_install_recipes(const lito::package::ResolvedPackageSelection& sele
                 .source_identity = dependency.source_identity.clone(),
             });
         }
-        for (const auto& selected : owner.binaries) {
+        for (const auto& selected : owner.targets) {
+            if (selected.target.kind != lito::package::PackageTargetKind::Binary) continue;
             if (owner.direct && ! binaries.is_empty()) {
                 auto matched = false;
                 for (const auto& requested : binaries) {

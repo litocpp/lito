@@ -17,6 +17,49 @@ using PathBuf = rstd::path::PathBuf;
 
 class InstallSelection : public ProjectFixture {};
 
+TEST_F(InstallSelection, BinariesUseEffectiveTargetFileNames) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-default-install-name"
+version = "1.0.0"
+standard = "c99"
+
+[[bin]]
+name = "tool"
+sources = ["main.c"]
+)toml"_str },
+        { "main.c"_str, "int main(void) { return 0; }\n"_str },
+    };
+    auto project = materialize("default-install-name"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selection = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(selection.is_ok());
+    struct Case {
+        ref<str> triple;
+        ref<str> filename;
+    };
+    const Case cases[] = {
+        { "x86_64-unknown-linux-gnu"_str, "tool"_str },
+        { "x86_64-pc-windows-msvc"_str, "tool.exe"_str },
+        { "aarch64-apple-darwin"_str, "tool"_str },
+        { "aarch64-linux-android"_str, "tool"_str },
+        { "wasm32-unknown-unknown"_str, "tool.wasm"_str },
+    };
+    for (const auto& item : cases) {
+        auto target   = parse_target_info(item.triple).unwrap();
+        auto packages = lito::resolve_install_packages(*selection, target);
+        ASSERT_TRUE(packages.is_ok());
+        ASSERT_EQ(packages->len(), usize(1));
+        const auto& package = (*packages)[usize()];
+        EXPECT_TRUE(package.script.is_none());
+        ASSERT_EQ(package.targets.len(), usize(1));
+        EXPECT_EQ(package.targets[usize()].target.name.as_str(), "tool"_str);
+        EXPECT_EQ(package.targets[usize()].artifact_name.as_str(), item.filename);
+    }
+}
+
 TEST_F(InstallSelection, InstallPurposeSelectsWorkspaceBinaries) {
     auto selection_tree = install_selection_project_tree();
     ASSERT_TRUE(selection_tree.is_ok());

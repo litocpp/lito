@@ -28,8 +28,8 @@ auto managed_destination(ref<rstd::path::Path> root) -> lito::InstallDestination
     return lito::InstallDestination::Managed(lito::InstallRoot { .path = PathBuf::from(root) });
 }
 
-auto install_script_input(const lito::manifest::PackageManifest& manifest)
-    -> lito::PackageInstallInput {
+auto install_script_input(const lito::manifest::PackageManifest& manifest,
+                          const lito::system::TargetInfo& target) -> lito::PackageInstallInput {
     auto root = manifest.root.clone();
     return lito::PackageInstallInput {
         .name          = manifest.name.clone(),
@@ -37,6 +37,7 @@ auto install_script_input(const lito::manifest::PackageManifest& manifest)
         .root          = manifest.root.clone(),
         .manifest_path = manifest.manifest_path.clone(),
         .script        = Some(manifest.install_script->clone()),
+        .targets       = lito::resolve_install_targets(manifest, target),
         .source =
             lito::source::ResolvedPackageSource {
                 .identity       = lito::source::path_source_identity(root.as_path()),

@@ -35,7 +35,8 @@ runtime dependencies.
 ## Default recipe
 
 A package without `install.lua` receives one artifact entry for every selected `[[bin]]`. The
-destination is `bin/` followed by the binary's artifact name. Repeated `lito install --bin NAME`
+destination is `bin/` followed by the target platform's binary filename, including `.exe` on Windows
+and `.wasm` for WebAssembly targets. Repeated `lito install --bin NAME`
 filters binary targets only for directly selected packages using this default recipe.
 
 Every installable package must resolve a package version. A package without an install script must
@@ -76,9 +77,22 @@ An artifact selects a binary or shared library owned by the recipe package:
 ```lua
 artifacts = {{
   target = { kind = "bin", name = "viewer" },
-  destination = "bin/viewer",
+  directory = "bin",
 }}
 ```
+
+An artifact requires exactly one of `directory` or `destination`:
+
+- `directory` selects an install directory and retains the target platform's artifact filename.
+  Binary suffixes and shared-library prefixes/suffixes use the same naming rules as build products,
+  based on the effective target rather than the host system.
+- `destination` selects an exact complete file path. It is not treated as a directory and no
+  prefix or suffix is added, including on Windows and WebAssembly targets.
+
+Both forms use the relative-path restrictions below. Directory entries are resolved to complete
+file paths while reading the recipe, before build requirements, runtime search paths, and install
+destination conflicts are processed. A directory entry must select a declared binary or shared
+library; static libraries are not installable artifacts.
 
 `kind` accepts `bin` or `lib`. Library artifacts must be shared libraries. Targets and
 destinations cannot be repeated within the recipe. Artifact and generated-file selections determine

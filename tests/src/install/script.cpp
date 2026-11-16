@@ -110,7 +110,7 @@ lito.install({
     auto manifest  = lito::manifest::load_package_manifest(directory.as_path());
     ASSERT_TRUE(manifest.is_ok());
     ASSERT_TRUE(manifest->install_script.is_some());
-    auto recipe = lito::execute_install_script(install_script_input(*manifest),
+    auto recipe = lito::execute_install_script(install_script_input(*manifest, pkg_config_target()),
                                                lito::InstallScriptContext {
                                                    .profile     = "release"_Str,
                                                    .target      = "x86_64-test-linux"_Str,
@@ -234,12 +234,13 @@ lito.install({
         ASSERT_TRUE(invalid_project.is_ok());
         auto invalid = lito::manifest::load_package_manifest(invalid_project->root.as_path());
         ASSERT_TRUE(invalid.is_ok());
-        auto executed = lito::execute_install_script(install_script_input(*invalid),
-                                                     lito::InstallScriptContext {
-                                                         .profile     = "release"_Str,
-                                                         .target      = "x86_64-test-linux"_Str,
-                                                         .target_arch = "x86_64"_Str,
-                                                     });
+        auto executed =
+            lito::execute_install_script(install_script_input(*invalid, pkg_config_target()),
+                                         lito::InstallScriptContext {
+                                             .profile     = "release"_Str,
+                                             .target      = "x86_64-test-linux"_Str,
+                                             .target_arch = "x86_64"_Str,
+                                         });
         ASSERT_TRUE(executed.is_err());
         EXPECT_TRUE(executed.unwrap_err().is_Binding());
     }
@@ -253,12 +254,160 @@ lito.install({
     ASSERT_TRUE(missing_project.is_ok());
     auto missing = lito::manifest::load_package_manifest(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_ok());
-    auto unregistered = lito::execute_install_script(install_script_input(*missing),
-                                                     lito::InstallScriptContext {
-                                                         .profile     = "release"_Str,
-                                                         .target      = "x86_64-test-linux"_Str,
-                                                         .target_arch = "x86_64"_Str,
-                                                     });
+    auto unregistered =
+        lito::execute_install_script(install_script_input(*missing, pkg_config_target()),
+                                     lito::InstallScriptContext {
+                                         .profile     = "release"_Str,
+                                         .target      = "x86_64-test-linux"_Str,
+                                         .target_arch = "x86_64"_Str,
+                                     });
     ASSERT_TRUE(unregistered.is_err());
     EXPECT_TRUE(unregistered.unwrap_err().is_Message());
+}
+
+TEST_F(InstallScript, DirectoryUsesEffectiveTargetProductNames) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-install-directory"
+version = "1.0.0"
+standard = "c99"
+
+[lib]
+name = "library"
+kind = "shared"
+artifact = "native-name"
+sources = ["library.c"]
+
+[[bin]]
+name = "tool"
+sources = ["main.c"]
+
+[[bin]]
+name = "manual"
+sources = ["manual.c"]
+)toml"_str },
+        { "library.c"_str, "int library(void) { return 1; }\n"_str },
+        { "main.c"_str, "int main(void) { return 0; }\n"_str },
+        { "manual.c"_str, "int main(void) { return 0; }\n"_str },
+        { "install.lua"_str, R"lua(lito.install({ artifacts = {
+    { target = { kind = "bin", name = "tool" }, directory = "bin" },
+    { target = { kind = "lib", name = "library" }, directory = "lib" },
+    { target = { kind = "bin", name = "manual" }, destination = "bin/manual.binary" },
+} }))lua"_str },
+    };
+    auto project = materialize("install-directory"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto manifest = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(manifest.is_ok());
+    struct Case {
+        ref<str> triple;
+        ref<str> binary;
+        ref<str> library;
+    };
+    const Case cases[] = {
+        { "x86_64-unknown-linux-gnu"_str, "bin/tool"_str, "lib/libnative-name.so"_str },
+        { "x86_64-pc-windows-msvc"_str, "bin/tool.exe"_str, "lib/native-name.dll"_str },
+        { "aarch64-apple-darwin"_str, "bin/tool"_str, "lib/libnative-name.dylib"_str },
+        { "aarch64-linux-android"_str, "bin/tool"_str, "lib/libnative-name.so"_str },
+        { "wasm32-unknown-unknown"_str, "bin/tool.wasm"_str, "lib/native-name.wasm"_str },
+        { "wasm64-unknown-unknown"_str, "bin/tool.wasm"_str, "lib/native-name.wasm"_str },
+    };
+    for (const auto& item : cases) {
+        auto target = parse_target_info(item.triple).unwrap();
+        auto recipe = lito::execute_install_script(
+            install_script_input(*manifest, target),
+            lito::InstallScriptContext {
+                .profile     = "release"_Str,
+                .target      = target.triple.clone(),
+                .target_arch = String::make(architecture_name(target.architecture)),
+            });
+        if (recipe.is_err()) {
+            rstd::io::eprintln("{}: {}", item.triple, error_chain_text(recipe.unwrap_err()));
+            FAIL();
+            return;
+        }
+        ASSERT_EQ(recipe->artifacts.len(), usize(3));
+        EXPECT_EQ(recipe->artifacts[usize()].destination.as_path(),
+                  PathBuf::from(item.binary).as_path());
+        EXPECT_EQ(recipe->artifacts[usize(1)].destination.as_path(),
+                  PathBuf::from(item.library).as_path());
+        EXPECT_EQ(recipe->artifacts[usize(2)].destination.as_path(),
+                  PathBuf::from("bin/manual.binary"_str).as_path());
+    }
+}
+
+TEST_F(InstallScript, DirectoryRejectsInvalidPathsAndAmbiguousDestinations) {
+    constexpr auto manifest_text = R"toml([package]
+name = "fixture-install-directory-invalid"
+version = "1.0.0"
+standard = "c99"
+
+[lib]
+name = "static-library"
+archive = "static-library"
+sources = ["library.c"]
+
+[[bin]]
+name = "tool"
+sources = ["main.c"]
+)toml"_str;
+    struct Case {
+        ref<str> name;
+        ref<str> artifact;
+        ref<str> diagnostic;
+    };
+    const Case cases[] = {
+        { "both"_str,
+          R"(target = { kind = "bin", name = "tool" }, directory = "bin", destination = "bin/tool")"_str,
+          "exactly one"_str },
+        { "neither"_str, R"(target = { kind = "bin", name = "tool" })"_str, "exactly one"_str },
+        { "empty"_str,
+          R"(target = { kind = "bin", name = "tool" }, directory = "")"_str,
+          "non-empty relative path"_str },
+        { "absolute"_str,
+          R"(target = { kind = "bin", name = "tool" }, directory = "/bin")"_str,
+          "relative path"_str },
+        { "parent"_str,
+          R"(target = { kind = "bin", name = "tool" }, directory = "../bin")"_str,
+          "non-normal path component"_str },
+        { "reserved"_str,
+          R"(target = { kind = "bin", name = "tool" }, directory = ".lito/bin")"_str,
+          "may not target .lito"_str },
+        { "wrong-type"_str,
+          R"(target = { kind = "bin", name = "tool" }, directory = false)"_str,
+          "directory"_str },
+        { "missing-target"_str,
+          R"(target = { kind = "bin", name = "missing" }, directory = "bin")"_str,
+          "unknown installable artifact target"_str },
+        { "static-library"_str,
+          R"(target = { kind = "lib", name = "static-library" }, directory = "lib")"_str,
+          "unknown installable artifact target"_str },
+    };
+    for (const auto& item : cases) {
+        auto script = String::make("lito.install({ artifacts = {{ "_str);
+        script.push_str(item.artifact);
+        script.push_str(" }} })"_str);
+        const ProjectFile files[] = {
+            { "lito.toml"_str, manifest_text },
+            { "library.c"_str, "int library(void) { return 1; }\n"_str },
+            { "main.c"_str, "int main(void) { return 0; }\n"_str },
+            { "install.lua"_str, script.as_str() },
+        };
+        auto project = materialize(item.name, files);
+        ASSERT_TRUE(project.is_ok());
+        auto manifest = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(manifest.is_ok());
+        auto target = pkg_config_target();
+        auto recipe = lito::execute_install_script(
+            install_script_input(*manifest, target),
+            lito::InstallScriptContext {
+                .profile     = "release"_Str,
+                .target      = target.triple.clone(),
+                .target_arch = String::make(architecture_name(target.architecture)),
+            });
+        ASSERT_TRUE(recipe.is_err());
+        auto error = recipe.unwrap_err();
+        EXPECT_TRUE(error.is_Binding());
+        EXPECT_TRUE(error_chain_text(error).as_str().contains(item.diagnostic));
+    }
 }

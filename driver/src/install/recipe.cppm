@@ -21,7 +21,7 @@ struct PackageInstallInput {
     PathBuf                                       root;
     PathBuf                                       manifest_path;
     Option<PathBuf>                               script;
-    Vec<PackageInstallTarget>                     binaries;
+    Vec<PackageInstallTarget>                     targets;
     lito::source::ResolvedPackageSource           source;
     Vec<InstallRuntimeDependency>                 runtime_dependencies;
     Vec<String>                                   script_dependencies;

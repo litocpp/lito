@@ -43,7 +43,7 @@ An `install.lua` regular file replaces the default recipe for its package. The s
 lito.install({
   artifacts = {{
     target = { kind = "bin", name = "viewer" },
-    destination = "bin/viewer",
+    directory = "bin",
   }},
   files = {{
     source = "LICENSE",
