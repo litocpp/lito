@@ -380,6 +380,11 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
                 true,
                 "unknown-attribute-warnings"_str,
                 "-Wunknown-attributes"_str);
+    add_warning(schema,
+                compiler::CompilerWarning::UnknownAttributes,
+                false,
+                "no-unknown-attribute-warnings"_str,
+                "-Wno-unknown-attributes"_str);
     add(schema,
         cpp::CppCompilerArgumentKind::Diagnostic,
         "warning"_str,

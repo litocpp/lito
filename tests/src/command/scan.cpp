@@ -96,6 +96,14 @@ import :standard_library_capability_failure;
 #error missing GLib attribute capability
 #endif
 
+#if __has_cpp_attribute(nodiscard) != 201907 || \
+    !__has_cpp_attribute(clang::trivial_abi) || !__has_cpp_attribute(gnu::cold) || \
+    !__has_cpp_attribute(_Clang::__annotate__) || !__has_cpp_attribute(gnu::__flatten__) || \
+    !__has_cpp_attribute(clang::no_destroy) || !__has_attribute(__packed__) || \
+    __has_cpp_attribute(unsafe) || __has_cpp_attribute(lito_missing_attribute)
+#error missing complete attribute capabilities
+#endif
+
 #if __has_builtin(__builtin_lito_missing) || __has_feature(cxx_exceptions) || \
     __has_extension(cxx_exceptions) || __has_feature(cxx_rtti) || \
     __has_extension(cxx_rtti) || __is_identifier(class) || \

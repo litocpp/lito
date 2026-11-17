@@ -129,7 +129,8 @@ auto clang_warning_option(compiler::CompilerWarningOption option) noexcept -> re
         return option.enabled ? "-Wdeprecated-declarations"_str
                               : "-Wno-deprecated-declarations"_str;
     case compiler::CompilerWarning::UnknownAttributes:
-        return option.enabled ? "-Wunknown-attributes"_str : "-Wno-unknown-attributes"_str;
+        // Lito reports unknown attributes from the native frontend facts.
+        return "-Wno-unknown-attributes"_str;
     case compiler::CompilerWarning::ReturnTypeError: return "-Werror=return-type"_str;
     }
     return {};

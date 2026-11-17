@@ -155,6 +155,17 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     if (facts.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(facts).unwrap_err()));
     }
+    auto plugin_scopes = Vec<String>::make();
+    for (const auto& dependency : target.plugin_dependencies)
+        plugin_scopes.push(dependency.package.clone());
+    const auto& context     = discovery.contexts[source_target];
+    const auto& diagnostics = context.language.is_C()
+                                  ? context.language.as_C().options.diagnostics
+                                  : context.language.as_Cpp().options.diagnostics;
+    for (const auto& warning : toolchain::clang_attribute_warnings(
+             facts->result.attribute_uses.as_slice(), plugin_scopes.as_slice(), diagnostics)) {
+        rstd::io::eprintln("lito: {}", warning.as_str());
+    }
     auto projected = cpp::project_frontend_analysis(
         frontend::FrontendAnalysis {
             .result           = rstd::move(facts).unwrap().result,

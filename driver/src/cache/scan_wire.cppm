@@ -70,6 +70,14 @@ struct ScopedAttributeUse {
     String name;
 };
 
+struct AttributeUse {
+    String             scope;
+    String             name;
+    u64                syntax {};
+    DependencyLocation location;
+    u64                column {};
+};
+
 struct EmbeddedInput {
     String path;
     u64    size {};
@@ -92,6 +100,7 @@ struct Snapshot {
     Option<String>          implementation_module;
     Vec<ModuleImport>       imports;
     Vec<ScopedAttributeUse> scoped_attributes;
+    Vec<AttributeUse>       attribute_uses;
     Vec<String>             attribute_scopes;
     bool                    attribute_scopes_complete {};
     Vec<String>             header_inputs;
@@ -184,6 +193,14 @@ struct WriteModuleImport {
 
 struct WriteModuleImports {
     const Vec<frontend::ModuleImport>* values {};
+};
+
+struct WriteAttributeUse {
+    const frontend::AttributeUse* value {};
+};
+
+struct WriteAttributeUses {
+    const Vec<frontend::AttributeUse>* values {};
 };
 
 struct WriteScopedAttributeUse {
@@ -531,6 +548,40 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteModuleImports> {
 };
 
 template<>
+struct Impl<serde::Serialize, lito::scan_cache_wire::WriteAttributeUse> {
+    template<typename Serializer>
+    static auto serialize(Serializer&                                     serializer,
+                          const lito::scan_cache_wire::WriteAttributeUse& value) ->
+        typename Serializer::result_type {
+        auto map = rstd_try(serializer.begin_map(usize(5)));
+        rstd_try(serde::field(map, "column"_str, u64(value.value->column.to_primitive())));
+        rstd_try(serde::field(map,
+                              "location"_str,
+                              lito::scan_cache_wire::WriteDependencyLocation {
+                                  rstd::addressof(value.value->location) }));
+        rstd_try(serde::field(map, "name"_str, value.value->name));
+        rstd_try(serde::field(map, "scope"_str, value.value->scope));
+        rstd_try(serde::field(map, "syntax"_str, u64(static_cast<unsigned>(value.value->syntax))));
+        return map.end();
+    }
+};
+
+template<>
+struct Impl<serde::Serialize, lito::scan_cache_wire::WriteAttributeUses> {
+    template<typename Serializer>
+    static auto serialize(Serializer&                                      serializer,
+                          const lito::scan_cache_wire::WriteAttributeUses& value) ->
+        typename Serializer::result_type {
+        auto sequence = rstd_try(serializer.begin_sequence(value.values->len()));
+        for (const auto& attribute : *value.values) {
+            rstd_try(sequence.element(
+                lito::scan_cache_wire::WriteAttributeUse { rstd::addressof(attribute) }));
+        }
+        return sequence.end();
+    }
+};
+
+template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::WriteScopedAttributeUse> {
     template<typename Serializer>
     static auto serialize(Serializer&                                           serializer,
@@ -630,7 +681,11 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::WriteSnapshot> {
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::WriteSnapshot& value)
         -> typename Serializer::result_type {
         const auto& result = *value.value;
-        auto        map    = rstd_try(serializer.begin_map(usize(12)));
+        auto        map    = rstd_try(serializer.begin_map(usize(13)));
+        rstd_try(serde::field(
+            map,
+            "attribute-uses"_str,
+            lito::scan_cache_wire::WriteAttributeUses { rstd::addressof(result.attribute_uses) }));
         rstd_try(serde::field(map, "attribute-scopes"_str, result.attribute_scopes.scopes));
         rstd_try(
             serde::field(map, "attribute-scopes-complete"_str, result.attribute_scopes.complete));
@@ -817,6 +872,21 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::ModuleImport> {
 };
 
 template<>
+struct Impl<serde::Serialize, lito::scan_cache_wire::AttributeUse> {
+    template<typename Serializer>
+    static auto serialize(Serializer& serializer, const lito::scan_cache_wire::AttributeUse& value)
+        -> typename Serializer::result_type {
+        auto map = rstd_try(serializer.begin_map(usize(5)));
+        rstd_try(serde::field(map, "column"_str, value.column));
+        rstd_try(serde::field(map, "location"_str, value.location));
+        rstd_try(serde::field(map, "name"_str, value.name));
+        rstd_try(serde::field(map, "scope"_str, value.scope));
+        rstd_try(serde::field(map, "syntax"_str, value.syntax));
+        return map.end();
+    }
+};
+
+template<>
 struct Impl<serde::Serialize, lito::scan_cache_wire::ScopedAttributeUse> {
     template<typename Serializer>
     static auto serialize(Serializer&                                      serializer,
@@ -864,7 +934,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::Snapshot> {
     template<typename Serializer>
     static auto serialize(Serializer& serializer, const lito::scan_cache_wire::Snapshot& value) ->
         typename Serializer::result_type {
-        auto map = rstd_try(serializer.begin_map(usize(12)));
+        auto map = rstd_try(serializer.begin_map(usize(13)));
         rstd_try(serde::field(map, "attribute-scopes"_str, value.attribute_scopes));
         rstd_try(
             serde::field(map, "attribute-scopes-complete"_str, value.attribute_scopes_complete));
@@ -877,6 +947,7 @@ struct Impl<serde::Serialize, lito::scan_cache_wire::Snapshot> {
         rstd_try(serde::field(map, "preprocessor-environment"_str, value.preprocessor_environment));
         rstd_try(serde::field(map, "provided-module"_str, value.provided));
         rstd_try(serde::field(map, "scoped-attributes"_str, value.scoped_attributes));
+        rstd_try(serde::field(map, "attribute-uses"_str, value.attribute_uses));
         rstd_try(serde::field(map, "source"_str, value.source));
         return map.end();
     }
@@ -1139,10 +1210,40 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::ExternalMacro> {
 };
 
 template<>
+struct Impl<serde::Deserialize, lito::scan_cache_wire::AttributeUse> {
+    template<typename Deserializer>
+    static auto deserialize(Deserializer& deserializer)
+        -> Result<lito::scan_cache_wire::AttributeUse, typename Deserializer::error_type> {
+        auto scope  = serde::RequiredField<String>("scope"_str);
+        auto name   = serde::RequiredField<String>("name"_str);
+        auto syntax = serde::RequiredField<u64>("syntax"_str);
+        auto location =
+            serde::RequiredField<lito::scan_cache_wire::DependencyLocation>("location"_str);
+        auto column = serde::RequiredField<u64>("column"_str);
+        rstd_try(serde::deserialize_record(deserializer,
+                                           serde::UnknownFieldPolicy::Reject,
+                                           scope,
+                                           name,
+                                           syntax,
+                                           location,
+                                           column));
+        return Ok(lito::scan_cache_wire::AttributeUse {
+            .scope    = rstd_try(scope.take(deserializer)),
+            .name     = rstd_try(name.take(deserializer)),
+            .syntax   = rstd_try(syntax.take(deserializer)),
+            .location = rstd_try(location.take(deserializer)),
+            .column   = rstd_try(column.take(deserializer)),
+        });
+    }
+};
+
+template<>
 struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
         -> Result<lito::scan_cache_wire::Snapshot, typename Deserializer::error_type> {
+        auto attribute_uses =
+            serde::RequiredField<Vec<lito::scan_cache_wire::AttributeUse>>("attribute-uses"_str);
         auto source   = serde::RequiredField<String>("source"_str);
         auto provided = serde::RequiredField<Option<lito::scan_cache_wire::ProvidedModule>>(
             "provided-module"_str);
@@ -1169,6 +1270,7 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
                                            implementation,
                                            imports,
                                            scoped_attributes,
+                                           attribute_uses,
                                            attribute_scopes,
                                            attribute_scopes_complete,
                                            headers,
@@ -1182,6 +1284,7 @@ struct Impl<serde::Deserialize, lito::scan_cache_wire::Snapshot> {
             .implementation_module     = rstd_try(implementation.take(deserializer)),
             .imports                   = rstd_try(imports.take(deserializer)),
             .scoped_attributes         = rstd_try(scoped_attributes.take(deserializer)),
+            .attribute_uses            = rstd_try(attribute_uses.take(deserializer)),
             .attribute_scopes          = rstd_try(attribute_scopes.take(deserializer)),
             .attribute_scopes_complete = rstd_try(attribute_scopes_complete.take(deserializer)),
             .header_inputs             = rstd_try(headers.take(deserializer)),

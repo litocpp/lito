@@ -8,6 +8,7 @@ import lito.system;
 import lito.frontend;
 import lito.frontend.static_name;
 import :options;
+import :attributes;
 import :preprocessor_model;
 
 using namespace rstd::prelude;
@@ -291,7 +292,8 @@ auto environment_identity(ref<str>                       builtin_identity,
     auto add  = [&hash](ref<str> value) {
         hash.write_zero_terminated(value);
     };
-    add("lito-clang-preprocessor-environment-v4"_str);
+    add("lito-clang-preprocessor-environment-v5"_str);
+    add(CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
     add(context_id);
     add(builtin_identity);
     add(language == PreprocessorLanguage::C ? lito::c::C_IDENTIFIER_RULE_ID
@@ -403,62 +405,6 @@ using StandardLibraryHasExtension =
                                  frontend::StaticName<"c_atomic">,
                                  frontend::StaticName<"datasizeof">>;
 
-using StandardLibraryHasCppAttribute =
-    StandardLibraryCapabilitySet<preprocessor::HasCppAttributeQuery,
-                                 frontend::StaticName<"_Clang::acquire_shared_capability">,
-                                 frontend::StaticName<"_Clang::capability">,
-                                 frontend::StaticName<"_Clang::lifetimebound">,
-                                 frontend::StaticName<"_Clang::no_destroy">,
-                                 frontend::StaticName<"_Clang::no_field_protection">,
-                                 frontend::StaticName<"_Clang::no_specializations">,
-                                 frontend::StaticName<"_Clang::no_thread_safety_analysis">,
-                                 frontend::StaticName<"_Clang::noescape">,
-                                 frontend::StaticName<"_Clang::preferred_name">,
-                                 frontend::StaticName<"_Clang::ptrauth_vtable_pointer">,
-                                 frontend::StaticName<"_Clang::release_capability">,
-                                 frontend::StaticName<"_Clang::release_shared_capability">,
-                                 frontend::StaticName<"_Clang::scoped_lockable">,
-                                 frontend::StaticName<"_Clang::try_acquire_capability">,
-                                 frontend::StaticName<"_Clang::try_acquire_shared_capability">,
-                                 frontend::StaticName<"clang::coro_await_elidable">,
-                                 frontend::StaticName<"clang::coro_await_elidable_argument">,
-                                 frontend::StaticName<"msvc::no_unique_address">>;
-
-using StandardLibraryHasAttribute =
-    StandardLibraryCapabilitySet<preprocessor::HasAttributeQuery,
-                                 frontend::StaticName<"acquire_capability">,
-                                 frontend::StaticName<"alloc_size">,
-                                 frontend::StaticName<"always_inline">,
-                                 frontend::StaticName<"cleanup">,
-                                 frontend::StaticName<"const">,
-                                 frontend::StaticName<"deprecated">,
-                                 frontend::StaticName<"diagnose_if">,
-                                 frontend::StaticName<"enable_if">,
-                                 frontend::StaticName<"exclude_from_explicit_instantiation">,
-                                 frontend::StaticName<"fallthrough">,
-                                 frontend::StaticName<"flag_enum">,
-                                 frontend::StaticName<"format">,
-                                 frontend::StaticName<"format_arg">,
-                                 frontend::StaticName<"malloc">,
-                                 frontend::StaticName<"may_alias">,
-                                 frontend::StaticName<"no_instrument_function">,
-                                 frontend::StaticName<"no_sanitize">,
-                                 frontend::StaticName<"noinline">,
-                                 frontend::StaticName<"noreturn">,
-                                 frontend::StaticName<"pure">,
-                                 frontend::StaticName<"release_capability">,
-                                 frontend::StaticName<"require_constant_initialization">,
-                                 frontend::StaticName<"requires_capability">,
-                                 frontend::StaticName<"sentinel">,
-                                 frontend::StaticName<"type_visibility">,
-                                 frontend::StaticName<"unused">,
-                                 frontend::StaticName<"using_if_exists">,
-                                 frontend::StaticName<"warn_unused_result">>;
-
-using StandardLibraryHasDeclspecAttribute =
-    StandardLibraryCapabilitySet<preprocessor::HasDeclspecAttributeQuery,
-                                 frontend::StaticName<"empty_bases">>;
-
 using StandardLibraryHasWarning =
     StandardLibraryCapabilitySet<preprocessor::HasWarningQuery,
                                  frontend::StaticName<"-Winvalid-specialization">>;
@@ -466,15 +412,11 @@ using StandardLibraryHasWarning =
 auto standard_library_capabilities() -> Vec<preprocessor::BuiltinQueryKey> {
     auto result = Vec<preprocessor::BuiltinQueryKey>::with_capacity(
         StandardLibraryHasBuiltin::size + StandardLibraryHasFeature::size +
-        StandardLibraryHasExtension::size + StandardLibraryHasCppAttribute::size +
-        StandardLibraryHasAttribute::size + StandardLibraryHasDeclspecAttribute::size +
-        StandardLibraryHasWarning::size);
+        StandardLibraryHasExtension::size + StandardLibraryHasWarning::size);
     StandardLibraryHasBuiltin::append(result);
     StandardLibraryHasFeature::append(result);
     StandardLibraryHasExtension::append(result);
-    StandardLibraryHasCppAttribute::append(result);
-    StandardLibraryHasAttribute::append(result);
-    StandardLibraryHasDeclspecAttribute::append(result);
+    append_clang_attribute_queries(result);
     StandardLibraryHasWarning::append(result);
     return result;
 }

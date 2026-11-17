@@ -14,6 +14,7 @@ target_sources(
          src/android/sdk_catalog.cppm
          src/android/sdk_catalog_wire.cppm
          src/clang/arguments.cppm
+         src/clang/attributes.cppm
          src/clang/compile_executor.cppm
          src/clang/mod.cppm
          src/clang/options.cppm

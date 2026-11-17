@@ -51,6 +51,7 @@ struct PreprocessedTranslationUnit {
     SourceManager                               sources;
     SourceId                                    main_source {};
     Vec<Token>                                  tokens;
+    Vec<SourceId>                               system_sources;
     Vec<CommentTrivia>                          active_comments;
     Vec<rstd::path::PathBuf>                    header_inputs;
     Vec<frontend::EmbeddedInput>                embedded_inputs;
@@ -334,6 +335,7 @@ public:
             .sources              = rstd::move(sources_),
             .main_source          = main_source_,
             .tokens               = Vec<Token>::make(),
+            .system_sources       = rstd::move(system_sources_),
             .active_comments      = rstd::move(active_comments_),
             .header_inputs        = Vec<rstd::path::PathBuf>::make(),
             .embedded_inputs      = rstd::move(embedded_inputs_),
@@ -1971,6 +1973,7 @@ private:
         raw_statistics_.source_comments += (*loaded)->comments.len().to_primitive();
         auto source = sources_.add((*loaded)->snapshot.clone());
         if (main_file) main_source_ = source;
+        if (system) system_sources_.push(SourceId(source));
         if (path_value.is_some()) {
             auto guard = detected_include_guard(**loaded, source);
             if (guard.is_some()) {
@@ -2191,6 +2194,7 @@ private:
     Vec<frontend::ExternalMacroMaterialization> external_macros_;
     Vec<frontend::EmbeddedInput>                embedded_inputs_;
     frontend::AttributeScopeUsage               attribute_scopes_ { .complete = true };
+    Vec<SourceId>                               system_sources_;
     Vec<IncludeFrame>                           include_stack_;
     Vec<PresumedLineMapping>                    line_mappings_;
     Vec<CommentTrivia>                          active_comments_;

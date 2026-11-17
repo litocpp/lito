@@ -59,7 +59,7 @@ struct PreprocessorMacroDirective {
 };
 
 inline constexpr auto CLANG_STANDARD_LIBRARY_CAPABILITY_ID =
-    "lito-clang-standard-library-capabilities-v1"_str;
+    "lito-clang-standard-library-capabilities-v2"_str;
 
 struct ClangBuiltinEnvironmentSnapshot {
     String                                   key;

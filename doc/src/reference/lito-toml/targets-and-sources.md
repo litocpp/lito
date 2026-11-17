@@ -69,6 +69,45 @@ This controls loading only; plugin dependencies are still resolved and built on 
 Attribute-only plugins must not require execution on sources without their scope. Lito validates
 the manifest name, but does not inspect or enforce attribute registrations inside a plugin's code.
 
+Lito reports unknown attributes from its source scan and disables Clang's duplicate
+`-Wunknown-attributes` warnings. Its known spellings cover LLVM 23 attributes; support
+queries still use the active compiler, language mode, and target. Plugin package scopes
+are handled by their plugins, and the unscoped `unsafe` attribute never produces an
+unknown-attribute warning. `-Wno-unknown-attributes` disables Lito's warnings too.
+
+The optional `unsafe` checker is available as an ordinary plugin package in
+`plugins/unsafe`. Add it as a path dependency to enable checks for a target:
+
+```toml
+[dependencies]
+unsafe = { path = "path/to/lito/plugins/unsafe" }
+```
+
+It checks local raw-pointer operations and calls to unsafe functions. An unsafe function
+declaration imposes a requirement on its callers; its body still needs explicit unsafe blocks.
+Clang accepts the following annotation even when the plugin is not loaded:
+
+```cpp
+[[clang::annotate("unsafe")]] int load(const int* pointer);
+
+int consume(const int* pointer) {
+    [[clang::annotate("unsafe")]] {
+        return load(pointer);
+    }
+}
+```
+
+With the plugin loaded, `[[unsafe]]` is a shorthand for the same annotation. Without the
+plugin, it is ignored and does not preserve a function contract in BMI files. Libraries that
+must also compile without the plugin should use `[[clang::annotate("unsafe")]]` directly;
+the function annotation is preserved in BMI files without separate metadata. Unsafe blocks
+do not authorize the bodies of nested lambdas or local-class methods. The checker runs on
+sources without annotations too and therefore uses `attribute-only = false`.
+
+The initial checker does not insert bounds checks or implement ownership, borrow, or
+`Send`/`Sync` analysis. Raw indirect function calls require an unsafe block; unsafe destructors
+are rejected. System-header and imported implementation bodies remain library trust boundaries.
+
 ## `[pmacro]`
 
 A package has at most one pmacro target and cannot also declare `[lib]`. The target accepts

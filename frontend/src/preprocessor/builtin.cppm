@@ -53,7 +53,10 @@ struct CppAttributeBuiltinQueryHandler {
     static auto normalize(ref<str> value) -> String {
         auto separator = value.split_once("::"_str);
         if (separator.is_none()) return String::make(normalize_attribute_component(value));
-        auto result = String::make(normalize_attribute_component(separator->template get<0>()));
+        auto scope = separator->template get<0>();
+        if (scope == "_Clang"_str) scope = "clang"_str;
+        if (scope == "__gnu__"_str) scope = "gnu"_str;
+        auto result = String::make(scope);
         result.push_str("::"_str);
         result.push_str(normalize_attribute_component(separator->template get<1>()));
         return result;

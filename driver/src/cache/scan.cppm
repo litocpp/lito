@@ -20,7 +20,7 @@ using namespace rstd::literals;
 namespace lito
 {
 
-constexpr auto SCAN_CACHE_VERSION = u64(9);
+constexpr auto SCAN_CACHE_VERSION = u64(10);
 
 enum class ScanCacheMissReason
 {
@@ -209,6 +209,25 @@ auto restore_snapshot(scan_cache_wire::Snapshot value) -> Option<frontend::Front
             .name  = rstd::move(stored.name),
         });
     }
+    auto attribute_uses = Vec<frontend::AttributeUse>::with_capacity(value.attribute_uses.len());
+    for (auto& stored : value.attribute_uses) {
+        if (stored.syntax > u64(2) || stored.name.is_empty() || stored.location.path.is_empty() ||
+            stored.location.line == u64 {} || stored.column == u64 {} ||
+            stored.location.line > u64(usize::MAX.to_primitive()) ||
+            stored.column > u64(usize::MAX.to_primitive()))
+            return None();
+        attribute_uses.push(frontend::AttributeUse {
+            .syntax = static_cast<frontend::AttributeSyntax>(stored.syntax.to_primitive()),
+            .scope  = rstd::move(stored.scope),
+            .name   = rstd::move(stored.name),
+            .location =
+                frontend::DependencyLocation {
+                    .path = PathBuf::from(stored.location.path.as_str()),
+                    .line = usize(static_cast<size_t>(stored.location.line.to_primitive())),
+                },
+            .column = usize(static_cast<size_t>(stored.column.to_primitive())),
+        });
+    }
     auto headers = Vec<PathBuf>::with_capacity(value.header_inputs.len());
     for (auto& path : value.header_inputs) headers.push(PathBuf::from(path.as_str()));
     auto embedded = Vec<frontend::EmbeddedInput>::with_capacity(value.embedded_inputs.len());
@@ -235,6 +254,7 @@ auto restore_snapshot(scan_cache_wire::Snapshot value) -> Option<frontend::Front
         .implementation_module = rstd::move(value.implementation_module),
         .imports               = rstd::move(imports),
         .scoped_attributes     = rstd::move(scoped_attributes),
+        .attribute_uses        = rstd::move(attribute_uses),
         .attribute_scopes =
             frontend::AttributeScopeUsage {
                 .scopes   = rstd::move(value.attribute_scopes),

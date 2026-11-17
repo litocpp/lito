@@ -55,7 +55,8 @@ private:
 
 class MemoryIncludes {
 public:
-    explicit MemoryIncludes(const MemorySources& sources): sources_(sources) {}
+    explicit MemoryIncludes(const MemorySources& sources, bool system = false)
+        : sources_(sources), system_(system) {}
 
     auto resolve(const IncludeRequest& request) -> PpResult<Option<IncludeResolution>> {
         if (request.kind == IncludeKind::NextQuoted || request.kind == IncludeKind::NextAngled) {
@@ -67,13 +68,14 @@ public:
         if (text.is_none() || ! sources_.contains(*text)) {
             return Ok(None());
         }
-        return Ok(Some(IncludeResolution { .path = rstd::move(path) }));
+        return Ok(Some(IncludeResolution { .path = rstd::move(path), .system = system_ }));
     }
 
     usize next_queries {};
 
 private:
     const MemorySources& sources_;
+    bool                 system_ {};
 };
 
 class TestBuiltins {
@@ -1383,4 +1385,80 @@ TEST(BuiltinQuery, TargetQueriesRequireOneUnexpandedIdentifier) {
     EXPECT_TRUE(rejected("__is_target_os(linux, macos)"_str).is_err());
     EXPECT_TRUE(rejected("__is_target_os(\"linux\")"_str).is_err());
     EXPECT_TRUE(rejected("__is_target_os(linux::gnu)"_str).is_err());
+}
+
+auto attribute_source_facts(bool system_header, bool c_source)
+    -> PpResult<lito::frontend::FrontendResult> {
+    auto sources = MemorySources {};
+    sources.add("/main.cpp"_str, R"cpp(#include "attributes.hpp"
+#define ATTR(name) [[name]]
+ATTR(unsafe) int value;
+[[using clang: annotate("ignored::argument", (1, 2)), no_destroy]] int other;
+__attribute__((__unused__, missing_gnu(1, "nested::argument"))) int third;
+__declspec(noinline missing_declspec) int fourth;
+[[missing_cpp, plugin::marker]] int fifth;
+#if 0
+[[inactive]] int hidden;
+#endif
+)cpp"_str);
+    sources.add("/attributes.hpp"_str, "[[header_missing]] int header;\n"_str);
+    auto includes    = MemoryIncludes(sources, system_header);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto translation = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/main.cpp"_str),
+            .environment_identity = "attributes-test"_Str,
+        },
+        sources,
+        includes,
+        builtins,
+        identifiers,
+        pragmas,
+        events);
+    if (translation.is_err()) return Err(rstd::move(translation).unwrap_err());
+    if (! c_source) return lito::frontend::parser::parse_module_dependencies(*translation);
+    auto consumer = lito::frontend::parser::HeaderDependencyConsumer::make();
+    auto consumed = consumer.consume(translation->tokens.as_slice());
+    if (consumed.is_err()) return Err(rstd::move(consumed).unwrap_err());
+    return consumer.finish(*translation);
+}
+
+TEST(Preprocessor, AttributeUsesShareOneParserAcrossLanguagesAndCacheSnapshots) {
+    for (auto c_source : { false, true }) {
+        auto result = attribute_source_facts(false, c_source);
+        ASSERT_TRUE(result.is_ok());
+        const auto& uses = result->attribute_uses;
+        ASSERT_EQ(uses.len(), usize(10));
+        EXPECT_EQ(uses[usize {}].name.as_str(), "header_missing"_str);
+        EXPECT_EQ(uses[usize {}].location.path.as_path(),
+                  rstd::path::PathBuf::from("/attributes.hpp"_str).as_path());
+        EXPECT_EQ(uses[usize(1)].name.as_str(), "unsafe"_str);
+        EXPECT_EQ(uses[usize(1)].location.line, usize(3));
+        EXPECT_EQ(uses[usize(2)].scope.as_str(), "clang"_str);
+        EXPECT_EQ(uses[usize(2)].name.as_str(), "annotate"_str);
+        EXPECT_EQ(uses[usize(3)].name.as_str(), "no_destroy"_str);
+        EXPECT_EQ(uses[usize(4)].syntax, lito::frontend::AttributeSyntax::Gnu);
+        EXPECT_EQ(uses[usize(5)].name.as_str(), "missing_gnu"_str);
+        EXPECT_EQ(uses[usize(6)].name.as_str(), "noinline"_str);
+        EXPECT_EQ(uses[usize(7)].syntax, lito::frontend::AttributeSyntax::Declspec);
+        EXPECT_EQ(uses[usize(8)].name.as_str(), "missing_cpp"_str);
+        EXPECT_EQ(uses[usize(9)].scope.as_str(), "plugin"_str);
+        auto restored = lito::frontend::restore(lito::frontend::snapshot(*result));
+        ASSERT_TRUE(restored.is_some());
+        ASSERT_EQ(restored->attribute_uses.len(), uses.len());
+        EXPECT_EQ(restored->attribute_uses[usize(7)].name.as_str(), "missing_declspec"_str);
+        EXPECT_EQ(restored->attribute_uses[usize(9)].location.line, usize(7));
+    }
+}
+
+TEST(Preprocessor, AttributeUsesExcludeSystemHeadersButKeepPluginScopes) {
+    auto result = attribute_source_facts(true, false);
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_EQ(result->attribute_uses.len(), usize(9));
+    EXPECT_EQ(result->attribute_uses[usize {}].name.as_str(), "unsafe"_str);
+    EXPECT_EQ(result->scoped_attributes.len(), usize(3));
+    EXPECT_TRUE(result->attribute_scopes.may_use("plugin"_str));
 }

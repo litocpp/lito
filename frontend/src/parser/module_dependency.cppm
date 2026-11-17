@@ -2,6 +2,7 @@ export module lito.frontend.parser:module_dependency;
 
 import rstd;
 import :module_name;
+import :attribute;
 import lito.frontend.result;
 import lito.frontend.preprocessor;
 
@@ -26,21 +27,6 @@ struct SourceParseState {
     Vec<lexical::Token> candidate;
     usize               brace_depth {};
     bool                ignore_statement { false };
-};
-
-struct ScopedAttributeParseState {
-    bool           first_open {};
-    bool           in_list {};
-    bool           first_close {};
-    usize          parentheses {};
-    usize          braces {};
-    usize          squares {};
-    Option<String> scope;
-    Option<String> using_scope;
-    bool           using_prefix {};
-    bool           using_colon {};
-    bool           separator {};
-    bool           complete {};
 };
 
 auto primary_module(ref<str> declared) -> String {
@@ -79,15 +65,7 @@ public:
             if (token.kind == lexical::TokenKind::Identifier && token.text.utf8().is_err())
                 return Err(lexical::Error::at("invalid UTF-8 identifier"_Str, token.expansion));
             while (states_.len() <= token.expansion.source) states_.emplace_back();
-            while (attribute_states_.len() <= token.expansion.source) {
-                attribute_states_.emplace_back();
-                scoped_attributes_.emplace_back();
-            }
-            auto&      attribute_state  = attribute_states_[token.expansion.source];
-            const auto inside_attribute = attribute_state.in_list;
-            observe_scoped_attribute(
-                token, attribute_state, scoped_attributes_[token.expansion.source]);
-            if (inside_attribute || attribute_state.in_list) continue;
+            if (attributes_.consume(token)) continue;
             auto& state = states_[token.expansion.source];
             if (token.kind == lexical::TokenKind::Newline) continue;
             const auto& text = token.text;
@@ -147,21 +125,10 @@ public:
         auto attribute_scopes     = translation.attribute_scopes.clone();
         attribute_scopes.complete = attribute_scopes.complete && attribute_scopes_complete_ &&
                                     implementation_module_.is_none();
-        for (const auto& state : attribute_states_) {
-            if (state.in_list) attribute_scopes.complete = false;
-        }
-        for (const auto& attributes : scoped_attributes_) {
-            for (const auto& attribute : attributes) {
-                attribute_scopes.observe(attribute.scope.as_str());
-            }
-        }
-        auto facts = FrontendResult {
+        auto facts                = FrontendResult {
             .source = rstd::path::PathBuf::from(translation.sources.path(translation.main_source)),
             .provided              = rstd::move(provided_),
             .implementation_module = rstd::move(implementation_module_),
-            .scoped_attributes     = translation.main_source < scoped_attributes_.len()
-                                         ? rstd::move(scoped_attributes_[translation.main_source])
-                                         : Vec<ScopedAttributeUse>::make(),
             .attribute_scopes      = rstd::move(attribute_scopes),
             .header_inputs =
                 [&]() {
@@ -177,6 +144,7 @@ public:
             .preprocessor_environment = translation.environment_identity.clone(),
             .input_bytes              = translation.input_bytes,
         };
+        attributes_.finish(translation, facts);
         for (auto& pending : imports_) {
             auto path =
                 pending.presumed_path.is_some()
@@ -193,128 +161,6 @@ public:
     }
 
 private:
-    static auto reset_attribute_candidate(ScopedAttributeParseState& state) -> void {
-        state.scope     = None();
-        state.separator = false;
-        state.complete  = false;
-    }
-
-    static auto append_scoped_attribute(Vec<ScopedAttributeUse>& attributes,
-                                        ref<str>                 scope,
-                                        ref<str>                 name) -> void {
-        for (const auto& attribute : attributes) {
-            if (attribute.scope == scope && attribute.name == name) return;
-        }
-        attributes.push(ScopedAttributeUse {
-            .scope = String::make(scope),
-            .name  = String::make(name),
-        });
-    }
-
-    static auto observe_scoped_attribute(const lexical::Token&      token,
-                                         ScopedAttributeParseState& state,
-                                         Vec<ScopedAttributeUse>&   attributes) -> void {
-        if (token.kind == lexical::TokenKind::Newline) return;
-        const auto& text = token.text;
-        if (! state.in_list) {
-            if (text == "["_str) {
-                if (state.first_open) {
-                    state.in_list    = true;
-                    state.first_open = false;
-                    reset_attribute_candidate(state);
-                } else {
-                    state.first_open = true;
-                }
-            } else {
-                state.first_open = false;
-            }
-            return;
-        }
-
-        if (state.parentheses != usize {} || state.braces != usize {} ||
-            state.squares != usize {}) {
-            if (text == "("_str)
-                ++state.parentheses;
-            else if (text == ")"_str && state.parentheses != usize {})
-                --state.parentheses;
-            else if (text == "{"_str)
-                ++state.braces;
-            else if (text == "}"_str && state.braces != usize {})
-                --state.braces;
-            else if (text == "["_str)
-                ++state.squares;
-            else if (text == "]"_str && state.squares != usize {})
-                --state.squares;
-            return;
-        }
-
-        if (text == "]"_str) {
-            if (state.first_close) {
-                state = ScopedAttributeParseState {};
-            } else {
-                state.first_close = true;
-            }
-            return;
-        }
-        state.first_close = false;
-        if (text == ","_str) {
-            reset_attribute_candidate(state);
-            return;
-        }
-        if (text == "("_str) {
-            state.parentheses = usize(1);
-            state.complete    = true;
-            return;
-        }
-        if (text == "{"_str) {
-            state.braces   = usize(1);
-            state.complete = true;
-            return;
-        }
-        if (text == "["_str) {
-            state.squares  = usize(1);
-            state.complete = true;
-            return;
-        }
-        if (state.complete) return;
-        if (token.kind == lexical::TokenKind::Identifier) {
-            if (state.using_prefix) {
-                if (state.using_scope.is_none()) {
-                    state.using_scope = Some(String::make(text.utf8().unwrap()));
-                } else if (state.using_colon) {
-                    append_scoped_attribute(
-                        attributes, state.using_scope->as_str(), text.utf8().unwrap());
-                    state.complete = true;
-                } else {
-                    state.complete = true;
-                }
-                return;
-            }
-            if (state.scope.is_none() && text == "using"_str) {
-                state.using_prefix = true;
-                return;
-            }
-            if (state.scope.is_none()) {
-                state.scope = Some(String::make(text.utf8().unwrap()));
-            } else if (state.separator) {
-                append_scoped_attribute(attributes, state.scope->as_str(), text.utf8().unwrap());
-                state.complete = true;
-            } else {
-                state.complete = true;
-            }
-            return;
-        }
-        if (text == ":"_str && state.using_scope.is_some() && ! state.using_colon) {
-            state.using_colon = true;
-            return;
-        }
-        if (text == "::"_str && state.scope.is_some()) {
-            state.separator = true;
-            return;
-        }
-        state.complete = true;
-    }
-
     auto parse_candidate(const Vec<lexical::Token>& candidate) -> lexical::Result<empty> {
         auto declaration = usize {};
         auto exported    = candidate[usize {}].text == "export"_str;
@@ -377,15 +223,14 @@ private:
         return Ok(empty {});
     }
 
-    Option<ProvidedModule>         provided_;
-    Option<String>                 implementation_module_;
-    String                         declared_;
-    ImportIndexMap                 import_names_;
-    Vec<PendingImport>             imports_;
-    Vec<SourceParseState>          states_;
-    Vec<ScopedAttributeParseState> attribute_states_;
-    Vec<Vec<ScopedAttributeUse>>   scoped_attributes_;
-    bool                           attribute_scopes_complete_ { true };
+    Option<ProvidedModule> provided_;
+    Option<String>         implementation_module_;
+    String                 declared_;
+    ImportIndexMap         import_names_;
+    Vec<PendingImport>     imports_;
+    Vec<SourceParseState>  states_;
+    AttributeConsumer      attributes_;
+    bool                   attribute_scopes_complete_ { true };
 };
 
 auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& translation)

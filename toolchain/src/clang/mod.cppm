@@ -1,6 +1,7 @@
 export module lito.toolchain.clang;
 
 export import :arguments;
+export import :attributes;
 export import :options;
 export import :preprocessor_environment;
 export import :compile_executor;

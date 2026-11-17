@@ -34,6 +34,7 @@ target_sources(
          src/preprocessor/session.cppm
          src/preprocessor/directive.cppm
          src/preprocessor/mod.cppm
+         src/parser/attribute.cppm
          src/parser/module_dependency.cppm
          src/parser/module_name.cppm
          src/parser/header_dependency.cppm

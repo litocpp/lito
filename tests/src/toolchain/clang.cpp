@@ -61,7 +61,7 @@ esac
     ASSERT_TRUE(queried.is_ok()) << (queried.is_err()
                                          ? rstd::format("{}", queried.unwrap_err()).as_str()
                                          : ""_str);
-    EXPECT_EQ(queried->identity.as_str(), "782a07bcc753cd3f"_str);
+    EXPECT_EQ(queried->identity.as_str(), "3fe42b21e633e713"_str);
 }
 
 TEST(ClangPreprocessor, ResolvesFrameworkHeaderSearchEntries) {
@@ -567,7 +567,7 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     EXPECT_TRUE(has_argument(invocation->arguments, "-fno-builtin"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-pedantic"_str));
-    EXPECT_TRUE(has_argument(invocation->arguments, "-Wunknown-attributes"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-unknown-attributes"_str));
 }
 
 TEST(ClangToolchain, EmitsObjectiveCppLanguageForObjectiveCppUnits) {
@@ -655,7 +655,7 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wpedantic"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-gnu-statement-expression"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-deprecated-declarations"_str));
-    EXPECT_TRUE(has_argument(invocation->arguments, "-Wunknown-attributes"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-unknown-attributes"_str));
     EXPECT_TRUE(has_argument(invocation->arguments,
                              "-fmodule-file=sample.module=/tmp/sample.module.pcm"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-fprebuilt-module-path="_str));
@@ -1196,4 +1196,63 @@ TEST(ClangToolchain, ResolvesAndAttachesCompilerPluginSdkFromCompilerPrefix) {
     ASSERT_TRUE(attach_clang_plugin_sdk(context, *sdk, true).is_ok());
     EXPECT_EQ(context.language.as_Cpp().options.preprocessor.include_directories.len(), usize(1));
     EXPECT_EQ(context.external_identities.len(), usize(1));
+}
+
+TEST(ClangPreprocessor, ReportsUnknownAttributesAndKeepsUnsafeIndependentOfSupportQueries) {
+    auto directory = rstd::fs::TempDir::make("lito-attribute-diagnostics"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto source =
+        PathBuf::from(directory->path()).join(PathBuf::from("attributes.cpp"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(source.as_path(), R"cpp(
+#if __has_cpp_attribute(nodiscard) != 201907 || !__has_cpp_attribute(gnu::cold) || !__has_cpp_attribute(_Clang::__annotate__)
+#error missing attribute support
+#endif
+#if __has_cpp_attribute(unsafe) || __has_cpp_attribute(attribute_typo)
+#error unexpected attribute support
+#endif
+[[nodiscard]] int known();
+[[unsafe, __unsafe__]] int permitted();
+[[attribute_typo]] int unknown();
+[[example::marker]] int provided;
+[[using clang: annotate("tag")]] int annotated;
+__attribute__((attribute_typo)) int gnu;
+[[other::unsafe]] int scoped_unsafe;
+)cpp"_str.as_bytes())
+                    .is_ok());
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_ok());
+    auto options = cpp_options(
+        "c++23"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
+    auto context = cpp::CompileContext {
+        .id       = "attribute-context"_Str,
+        .scan_id  = "attribute-context"_Str,
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(options), cpp::CppPublicRequirements {}),
+    };
+    auto frontend = lito::frontend::FrontendService::make();
+    auto analyzed = created->preprocess(
+        source.as_path(), context, cpp::PackageCompileMetadata {}, directory->path(), frontend);
+    ASSERT_TRUE(analyzed.is_ok()) << (analyzed.is_err()
+                                          ? rstd::format("{}", analyzed.unwrap_err()).as_str()
+                                          : ""_str);
+    auto  scopes      = strings("example"_str);
+    auto& diagnostics = context.language.as_Cpp().options.diagnostics;
+    auto  warnings    = clang_attribute_warnings(
+        analyzed->result.attribute_uses.as_slice(), scopes.as_slice(), diagnostics);
+    ASSERT_EQ(warnings.len(), usize(3));
+    EXPECT_TRUE(warnings[usize {}].as_str().contains(
+        ":10:3: warning: unknown attribute 'attribute_typo'"_str));
+    EXPECT_TRUE(warnings[usize(1)].as_str().contains("unknown attribute 'attribute_typo'"_str));
+    EXPECT_TRUE(warnings[usize(2)].as_str().contains("unknown attribute 'other::unsafe'"_str));
+    compiler::set_warning(diagnostics,
+                          compiler::CompilerWarningOption {
+                              .warning = compiler::CompilerWarning::UnknownAttributes,
+                              .enabled = false,
+                          });
+    EXPECT_TRUE(clang_attribute_warnings(
+                    analyzed->result.attribute_uses.as_slice(), scopes.as_slice(), diagnostics)
+                    .is_empty());
 }

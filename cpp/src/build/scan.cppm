@@ -37,6 +37,7 @@ struct RequiredModule {
 };
 
 struct CommonScanResult {
+    Vec<frontend::AttributeUse>                 attribute_uses;
     rstd::path::PathBuf                         source;
     Vec<rstd::path::PathBuf>                    header_inputs;
     Vec<frontend::EmbeddedInput>                embedded_inputs;
@@ -84,7 +85,12 @@ struct SourceScanArtifact {
                      common.embedded_inputs.capacity() * usize(sizeof(frontend::EmbeddedInput)) +
                      common.external_macros.capacity() *
                          usize(sizeof(frontend::ExternalMacroMaterialization)) +
-                     common.preprocessor_environment.capacity();
+                     common.preprocessor_environment.capacity() +
+                     common.attribute_uses.capacity() * usize(sizeof(frontend::AttributeUse));
+        for (const auto& attribute : common.attribute_uses) {
+            bytes += attribute.scope.capacity() + attribute.name.capacity() +
+                     attribute.location.path.capacity();
+        }
         if (language.is_Cpp()) {
             bytes +=
                 language.as_Cpp().facts.required_modules.capacity() * usize(sizeof(RequiredModule));

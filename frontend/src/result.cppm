@@ -36,6 +36,31 @@ struct ScopedAttributeUse : DefaultInClass<ScopedAttributeUse, Clone> {
     auto clone() const -> ScopedAttributeUse;
 };
 
+enum class AttributeSyntax
+{
+    Cpp,
+    Gnu,
+    Declspec,
+};
+
+struct AttributeUse : DefaultInClass<AttributeUse, Clone> {
+    AttributeSyntax    syntax { AttributeSyntax::Cpp };
+    String             scope;
+    String             name;
+    DependencyLocation location;
+    usize              column {};
+
+    auto clone() const -> AttributeUse {
+        return AttributeUse {
+            .syntax   = syntax,
+            .scope    = scope.clone(),
+            .name     = name.clone(),
+            .location = location.clone(),
+            .column   = column,
+        };
+    }
+};
+
 enum class IncludeLookupKind
 {
     Quoted,
@@ -147,6 +172,7 @@ struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
     Vec<ScopedAttributeUse>           scoped_attributes;
+    Vec<AttributeUse>                 attribute_uses;
     AttributeScopeUsage               attribute_scopes;
     Vec<rstd::path::PathBuf>          header_inputs;
     Vec<EmbeddedInput>                embedded_inputs;
@@ -163,6 +189,7 @@ struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
     Vec<ScopedAttributeUse>           scoped_attributes;
+    Vec<AttributeUse>                 attribute_uses;
     AttributeScopeUsage               attribute_scopes;
     Vec<rstd::path::PathBuf>          header_inputs;
     Vec<EmbeddedInput>                embedded_inputs;
@@ -251,6 +278,7 @@ auto FrontendResult::clone() const -> FrontendResult {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .scoped_attributes        = as<Clone>(scoped_attributes).clone(),
+        .attribute_uses           = as<Clone>(attribute_uses).clone(),
         .attribute_scopes         = attribute_scopes.clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
         .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
@@ -267,6 +295,7 @@ auto FrontendSnapshot::clone() const -> FrontendSnapshot {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .scoped_attributes        = as<Clone>(scoped_attributes).clone(),
+        .attribute_uses           = as<Clone>(attribute_uses).clone(),
         .attribute_scopes         = attribute_scopes.clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
         .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
@@ -283,6 +312,7 @@ auto snapshot(const FrontendResult& result) -> FrontendSnapshot {
         .implementation_module    = as<Clone>(result.implementation_module).clone(),
         .imports                  = as<Clone>(result.imports).clone(),
         .scoped_attributes        = as<Clone>(result.scoped_attributes).clone(),
+        .attribute_uses           = as<Clone>(result.attribute_uses).clone(),
         .attribute_scopes         = result.attribute_scopes.clone(),
         .header_inputs            = as<Clone>(result.header_inputs).clone(),
         .embedded_inputs          = as<Clone>(result.embedded_inputs).clone(),
@@ -305,6 +335,11 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
     }
     for (const auto& attribute : value.scoped_attributes) {
         if (attribute.scope.is_empty() || attribute.name.is_empty()) return None();
+    }
+    for (const auto& attribute : value.attribute_uses) {
+        if (attribute.name.is_empty() || attribute.location.path.is_empty() ||
+            attribute.location.line == usize {} || attribute.column == usize {})
+            return None();
     }
     for (const auto& macro : value.external_macros) {
         if (macro.name.is_empty() || macro.dependency_key.is_empty() ||
@@ -331,6 +366,7 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
         .implementation_module    = rstd::move(value.implementation_module),
         .imports                  = rstd::move(value.imports),
         .scoped_attributes        = rstd::move(value.scoped_attributes),
+        .attribute_uses           = rstd::move(value.attribute_uses),
         .attribute_scopes         = rstd::move(value.attribute_scopes),
         .header_inputs            = rstd::move(value.header_inputs),
         .embedded_inputs          = rstd::move(value.embedded_inputs),

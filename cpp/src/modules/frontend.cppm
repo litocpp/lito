@@ -47,6 +47,7 @@ auto project_frontend_analysis(frontend::FrontendAnalysis      analysis,
     -> Result<SourceScanArtifact, String> {
     auto facts  = rstd::move(analysis.result);
     auto common = CommonScanResult {
+        .attribute_uses           = rstd::move(facts.attribute_uses),
         .source                   = rstd::move(facts.source),
         .header_inputs            = rstd::move(facts.header_inputs),
         .embedded_inputs          = rstd::move(facts.embedded_inputs),

@@ -53,6 +53,33 @@ using namespace rstd::literals;
 namespace lito
 {
 
+auto emit_attribute_warnings(const cpp::PackageSpec&       package,
+                             const Vec<cpp::PreparedUnit>& units,
+                             const Vec<cpp::ScanResult>&   scans) -> void {
+    for (const auto& scan : scans) {
+        if (scan.unit >= units.len()) continue;
+        const auto& unit   = units[scan.unit].unit;
+        auto        target = cpp::project_target(unit);
+        if (target.is_none() || unit.context == nullptr) continue;
+        const auto& spec   = package.targets[*target];
+        auto        scopes = Vec<String>::make();
+        for (const auto& dependency : spec.plugin_dependencies)
+            scopes.push(dependency.package.clone());
+        const auto& context     = *unit.context;
+        const auto& diagnostics = context.language.is_C()
+                                      ? context.language.as_C().options.diagnostics
+                                  : scan.language.is_C() && context.c_source.is_some()
+                                      ? context.c_source->options.diagnostics
+                                      : context.language.as_Cpp().options.diagnostics;
+        for (const auto& warning :
+             toolchain::clang_attribute_warnings(cpp::scan_common(scan).attribute_uses.as_slice(),
+                                                 scopes.as_slice(),
+                                                 diagnostics)) {
+            rstd::io::eprintln("lito: {}", warning.as_str());
+        }
+    }
+}
+
 auto emit(const BuildRequest&   request,
           BuildEventKind        kind,
           ref<str>              target,
@@ -1326,6 +1353,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         layout.output(),
         deferred_scan_finalize.saturating_add(remaining_finalize_started.elapsed()),
         BuildPreparationSummary::ScanFinalize(units.len(), scan_graph_statistics.headers));
+
+    emit_attribute_warnings(package, units, scans);
 
     auto initial_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
     auto materialized       = materialize_build_actions(package,
