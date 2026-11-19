@@ -1,3 +1,12 @@
+<release version="0.8.10" date="2026-11-19">
+  <description>
+    <ul>
+      <li>Reuse scans during module discovery.</li>
+      <li>Speed up scan profiling.</li>
+      <li>Add the unsafe plugin and attribute diagnostics.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.9" date="2026-11-17">
   <description>
     <ul>
