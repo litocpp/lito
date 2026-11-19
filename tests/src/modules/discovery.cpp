@@ -699,6 +699,60 @@ TEST_F(ModuleDiscovery, DiscoveryAndModuleConventionsBuildExpectedCases) {
     }
 }
 
+TEST_F(ModuleDiscovery, ColdBuildScansSharedConventionProviderOnce) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"module([package]
+name = "fixture-shared-module-discovery"
+version = "0.1.0"
+
+[lib]
+name = "fixture-shared-module-discovery"
+module = "fixture.reuse"
+archive = "fixture-shared-module-discovery"
+)module"_str },
+        { "src/lib.cppm"_str, R"module(export module fixture.reuse;
+export import fixture.reuse.left;
+export import fixture.reuse.right;
+)module"_str },
+        { "src/left.cppm"_str, R"module(export module fixture.reuse.left;
+import fixture.reuse.shared;
+export auto left() -> int { return shared_value; }
+)module"_str },
+        { "src/right.cppm"_str, R"module(export module fixture.reuse.right;
+import fixture.reuse.shared;
+import fixture.reuse.later;
+export auto right() -> int { return shared_value + later(); }
+)module"_str },
+        { "src/later.cppm"_str, R"module(export module fixture.reuse.later;
+import fixture.reuse.shared;
+export auto later() -> int { return shared_value; }
+)module"_str },
+        { "src/shared.cppm"_str, R"module(module;
+#include "shared.hpp"
+export module fixture.reuse.shared;
+export constexpr int shared_value = SHARED_VALUE;
+)module"_str },
+        { "src/shared.hpp"_str, "#define SHARED_VALUE 42\n"_str },
+    };
+    auto project = materialize("shared-module-discovery"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        "shared-module-discovery"_str, project->root.as_path(), Vec<String>::make());
+    auto built = lito::build(request);
+    ASSERT_TRUE(built.is_ok());
+    EXPECT_EQ(built->compiled, usize(5));
+    EXPECT_EQ(built->frontend.analyze_builds, usize(5));
+    EXPECT_EQ(built->scan_graph.headers, usize(1));
+    auto shared = usize {};
+    for (const auto& frame : built->scan_profile.frames()) {
+        auto file = frame.source.as_path().file_name();
+        if (file.is_none()) continue;
+        auto name = file->to_str();
+        if (name.is_some() && *name == "shared.cppm"_str) ++shared;
+    }
+    EXPECT_EQ(shared, usize(1));
+}
+
 TEST_F(ModuleDiscovery, RunnableModuleEntryRequiresModuleContextDuringDiscovery) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]

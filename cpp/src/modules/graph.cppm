@@ -199,8 +199,8 @@ public:
                                ref<str>              standard_library_context_identity,
                                bool                  provider_allowed = true) -> DiscoveryUnitId;
 
-    auto contains_completed_project_unit(TargetId target, ref<rstd::path::Path> source) const
-        -> bool;
+    auto completed_project_module(TargetId target, ref<rstd::path::Path> source) const
+        -> Option<Option<ref<str>>>;
 
     auto complete(DiscoveryUnitId unit, const SourceScanArtifact& artifact)
         -> Result<empty, String>;
@@ -398,11 +398,15 @@ auto SemanticScanGraphBuilder::register_project_unit(TargetId              targe
     return unit;
 }
 
-auto SemanticScanGraphBuilder::contains_completed_project_unit(TargetId              target,
-                                                               ref<rstd::path::Path> source) const
-    -> bool {
+auto SemanticScanGraphBuilder::completed_project_module(TargetId              target,
+                                                        ref<rstd::path::Path> source) const
+    -> Option<Option<ref<str>>> {
     auto existing = unit_index_.get(unit_key(target, source).as_str());
-    return existing.is_some() && units_[**existing].complete;
+    if (existing.is_none()) return None();
+    const auto& unit = units_[**existing];
+    if (! unit.complete) return None();
+    if (unit.provided.is_none()) return Some(Option<ref<str>> {});
+    return Some(Some(unit.provided->logical_name.as_str()));
 }
 
 auto SemanticScanGraphBuilder::bind_provider(ref<str> key, DiscoveryUnitId provider) -> void {
