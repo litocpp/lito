@@ -177,12 +177,17 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
     }
 
     auto cxxflags = rstd_try(query_llvm_config("--cxxflags"_str, "query Clang SDK C++ flags"_str));
-    auto standard_library = target.is_msvc() ? lito::config::StandardLibrary::Msvc
-                            : cxxflags.as_str().contains("-stdlib=libc++"_str)
-                                ? lito::config::StandardLibrary::Libcxx
-                                : lito::config::StandardLibrary::Libstdcxx;
-    auto exceptions       = ! cxxflags.as_str().contains("-fno-exceptions"_str) &&
-                            ! cxxflags.as_str().contains("/EHs-c-"_str);
+    auto standard_library = rstd_try(
+        resolve_standard_library_selection(lito::config::StandardLibrarySelection::Auto, target));
+    if (! target.is_msvc()) {
+        if (cxxflags.as_str().contains("-stdlib=libc++"_str)) {
+            standard_library = lito::config::StandardLibrary::Libcxx;
+        } else if (cxxflags.as_str().contains("-stdlib=libstdc++"_str)) {
+            standard_library = lito::config::StandardLibrary::Libstdcxx;
+        }
+    }
+    auto exceptions = ! cxxflags.as_str().contains("-fno-exceptions"_str) &&
+                      ! cxxflags.as_str().contains("/EHs-c-"_str);
     auto rtti =
         ! cxxflags.as_str().contains("-fno-rtti"_str) && ! cxxflags.as_str().contains("/GR-"_str);
     auto library_metadata = rstd::fs::metadata(clang_cpp.as_path());
@@ -275,17 +280,16 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
     }
     auto target = parse_target_info(compiler.target.as_str());
     if (target.is_err()) return Err(ToolchainError::Platform(rstd::move(target).unwrap_err()));
-    auto layout = target->family == TargetFamily::Windows
-                      ? ClangSdkLayout {
-                            .cmake       = PathBuf::from("lib/cmake"_str),
-                            .clang_cpp   = PathBuf::from("bin/clang-cpp.dll"_str),
-                            .llvm_config = PathBuf::from("bin/llvm-config.exe"_str),
-                        }
-                      : ClangSdkLayout {
-                            .cmake       = PathBuf::from("lib/cmake"_str),
-                            .clang_cpp   = PathBuf::from("lib/libclang-cpp.so"_str),
-                            .llvm_config = PathBuf::from("bin/llvm-config"_str),
-                        };
+    auto clang_cpp_filename = lito::system::plugin_filename("clang-cpp"_str, *target);
+    auto library_directory =
+        PathBuf::from(target->family == TargetFamily::Windows ? "bin"_str : "lib"_str);
+    auto layout = ClangSdkLayout {
+        .cmake     = PathBuf::from("lib/cmake"_str),
+        .clang_cpp = library_directory.join(PathBuf::from(clang_cpp_filename.as_str()).as_path()),
+        .llvm_config =
+            PathBuf::from(target->family == TargetFamily::Windows ? "bin/llvm-config.exe"_str
+                                                                  : "bin/llvm-config"_str),
+    };
     if (target->family != TargetFamily::Windows) {
         auto prefix_path = PathBuf::from(*prefix);
         auto default_config =
@@ -297,7 +301,8 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
         if (default_exists.is_ok() && multilib_exists.is_ok() && ! *default_exists &&
             *multilib_exists) {
             layout.cmake     = PathBuf::from("lib64/cmake"_str);
-            layout.clang_cpp = PathBuf::from("lib64/libclang-cpp.so"_str);
+            layout.clang_cpp = PathBuf::from("lib64"_str)
+                                   .join(PathBuf::from(clang_cpp_filename.as_str()).as_path());
         }
     }
     return inspect_clang_sdk(compiler, *target, *prefix, layout, environment);

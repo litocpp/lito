@@ -1619,7 +1619,13 @@ public:
                 toolchain::command::push_option(command, "-Wl,--export-memory"_str);
             }
         }
-        if (context.output == LinkOutputKind::SharedLibrary) {
+        if (context.output == LinkOutputKind::LoadableModule &&
+            target.platform == TargetPlatform::Macos) {
+            toolchain::command::push_option(command, "-bundle"_str);
+            toolchain::command::push_option(command, "-Wl,-flat_namespace"_str);
+            toolchain::command::push_option(command, "-Wl,-undefined,dynamic_lookup"_str);
+        } else if (context.output == LinkOutputKind::SharedLibrary ||
+                   context.output == LinkOutputKind::LoadableModule) {
             if (! wasm_target &&
                 (target.family != TargetFamily::Unix || target.platform == TargetPlatform::Macos)) {
                 return Err(ToolchainError::Message(
@@ -1787,6 +1793,26 @@ public:
                              ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
         context.output = LinkOutputKind::SharedLibrary;
+        return link_executable(output_path,
+                               objects,
+                               inputs,
+                               context,
+                               lto,
+                               link_requirements,
+                               linker_options,
+                               working_directory);
+    }
+
+    auto link_loadable_module(ref<rstd::path::Path>              output_path,
+                              const Vec<PathBuf>&                objects,
+                              const Vec<ResolvedLinkInput>&      inputs,
+                              LinkTargetContext                  context,
+                              const Option<lito::manifest::Lto>& lto,
+                              const lito::link::Requirements&    link_requirements,
+                              const Vec<String>&                 linker_options,
+                              ref<rstd::path::Path>              working_directory) const
+        -> ToolchainResult<rstd::time::Duration> {
+        context.output = LinkOutputKind::LoadableModule;
         return link_executable(output_path,
                                objects,
                                inputs,

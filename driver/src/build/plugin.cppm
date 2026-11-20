@@ -149,14 +149,14 @@ auto build_compiler_plugins(const cpp::BuildConfiguration&     configuration,
         auto options      = plan.linker_options[target].clone();
         auto context      = compiler_plugin_link_context(configuration, platform, plan);
         context.soname    = Some(filename.clone());
-        auto linked       = toolchain.link_shared_library(output.as_path(),
-                                                          Vec<PathBuf>::make(),
-                                                          inputs,
-                                                          rstd::move(context),
-                                                          compiler_plugin_link_lto(plan),
-                                                          requirements,
-                                                          options,
-                                                          spec.root.as_path());
+        auto linked       = toolchain.link_loadable_module(output.as_path(),
+                                                           Vec<PathBuf>::make(),
+                                                           inputs,
+                                                           rstd::move(context),
+                                                           compiler_plugin_link_lto(plan),
+                                                           requirements,
+                                                           options,
+                                                           spec.root.as_path());
         if (linked.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(linked).unwrap_err()));
         }

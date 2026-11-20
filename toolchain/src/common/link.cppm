@@ -31,6 +31,7 @@ enum class LinkOutputKind
 {
     Executable,
     SharedLibrary,
+    LoadableModule,
 };
 
 struct LinkTargetContext {
