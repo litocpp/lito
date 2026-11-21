@@ -9,6 +9,7 @@ import :source.requirement;
 import :dependency.consumption;
 import :dependency.condition;
 import :dependency.source;
+import :manifest.build_script;
 import :manifest.package;
 import :package.identity;
 import :source.tree;
@@ -209,6 +210,32 @@ struct ResolvedPackage {
         return { runtime_dependencies.as_slice(), host_view };
     }
 };
+
+auto resolved_script_dependency_names(const ResolvedPackage& package) -> Vec<String> {
+    auto dependencies = Vec<String>::make();
+    for (const auto& dependency : package.active_dependencies()) {
+        if (dependency.is_Script()) {
+            dependencies.push(dependency.as_Script().value.name.clone());
+        }
+    }
+    return dependencies;
+}
+
+auto resolved_script_package_view(const ResolvedPackage& package)
+    -> Option<ResolvedScriptPackageView> {
+    if (package.manifest.script.is_none()) return None();
+    return Some(ResolvedScriptPackageView {
+        .name            = package.manifest.name.clone(),
+        .require_name    = lito::manifest::script_require_name(package.manifest.name.as_str()),
+        .source_identity = package.source_identity.clone(),
+        .supports        = package.manifest.script->supports.clone(),
+        .root            = package.manifest.root.clone(),
+        .embedded_source = package.embedded_source.is_some()
+                               ? Some(package.embedded_source->clone())
+                               : Option<lito::source::SourceTree> {},
+        .dependencies    = resolved_script_dependency_names(package),
+    });
+}
 
 struct ResolvedProjectRoot {
     String          name;

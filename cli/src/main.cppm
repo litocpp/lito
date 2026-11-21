@@ -1317,7 +1317,7 @@ extern "C++" int main() {
         }
     }
     if ((build_command || invocation.command.is_Update() || invocation.command.is_Install() ||
-         invocation.command.is_Lock()) &&
+         invocation.command.is_Lock() || reuse_pack) &&
         registry_bootstrap.is_none()) {
         auto loaded = lito::config::load_registry_bootstrap_config();
         if (loaded.is_err()) {

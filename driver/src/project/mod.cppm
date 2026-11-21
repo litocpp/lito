@@ -1569,41 +1569,42 @@ auto prepare_build_project(
     const Option<BuildEventSink>&             observer       = None(),
     Option<lito::workspace::WorkspaceCatalog> catalog        = None(),
     const Option<BuildSetupReportSink>&       setup_reporter = None(),
-    const lito::config::LitoBootstrapConfig*  registries     = nullptr)
-    -> ProjectResult<PreparedBuildProject> {
-    auto resolved = rstd_try(resolve_build_project(selection,
-                                                   profile,
-                                                   configuration,
-                                                   sources,
-                                                   lock,
-                                                   cmake_build_overrides,
-                                                   tool_resolver,
-                                                   environment,
-                                                   locked,
-                                                   purpose,
-                                                   jobs,
-                                                   observer,
-                                                   rstd::move(catalog),
-                                                   registries));
-    auto prepared = prepare_resolved_build_project(rstd::move(resolved.session),
-                                                   resolved.configuration,
+    const lito::config::LitoBootstrapConfig*  registries     = nullptr,
+    Option<ResolvedBuildProject> resolved = None()) -> ProjectResult<PreparedBuildProject> {
+    auto project  = resolved.is_some() ? rstd::move(resolved).unwrap()
+                                       : rstd_try(resolve_build_project(selection,
+                                                                        profile,
+                                                                        configuration,
+                                                                        sources,
+                                                                        lock,
+                                                                        cmake_build_overrides,
+                                                                        tool_resolver,
+                                                                        environment,
+                                                                        locked,
+                                                                        purpose,
+                                                                        jobs,
+                                                                        observer,
+                                                                        rstd::move(catalog),
+                                                                        registries));
+    auto prepared = prepare_resolved_build_project(rstd::move(project.session),
+                                                   project.configuration,
                                                    profile,
                                                    requested_output,
                                                    sources,
                                                    cargo,
                                                    pkg_config,
                                                    cmake,
-                                                   rstd::move(resolved.toolchain),
-                                                   rstd::move(resolved.plugin_host),
+                                                   rstd::move(project.toolchain),
+                                                   rstd::move(project.plugin_host),
                                                    tool_resolver,
                                                    environment,
                                                    jobs,
                                                    observer,
                                                    setup_reporter);
     if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
-    prepared->target_runtimes = rstd::move(resolved.target_runtimes);
-    prepared->target_stripper = rstd::move(resolved.target_stripper);
-    prepared->android_sdk     = rstd::move(resolved.android_sdk);
+    prepared->target_runtimes = rstd::move(project.target_runtimes);
+    prepared->target_stripper = rstd::move(project.target_stripper);
+    prepared->android_sdk     = rstd::move(project.android_sdk);
     return prepared;
 }
 

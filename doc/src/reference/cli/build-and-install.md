@@ -189,3 +189,38 @@ Each argument is a string or one of the following references.
 
 `lito.env(NAME)` returns a UTF-8 environment value or `nil` when the variable is unset.
 The tool and its arguments are passed directly as a process invocation.
+
+### Lua recipes and script packages
+
+A Lua recipe declares its input targets and a callback. Lito runs the callback for the selected
+recipe after building or validating those inputs. `tool` and `args` belong to executable recipes.
+
+```lua
+local lito = require("@lito")
+lito.pack {
+    name = "copy",
+    output = "viewer.bin",
+    inputs = { "bin:viewer" },
+    run = function(ctx)
+        lito.copy_file(ctx.artifacts["bin:viewer"], ctx.output)
+    end,
+}
+```
+
+The callback receives `package_root`, `work_dir`, `output`, the effective target triple in
+`target`, and an `artifacts` table mapping each input selector to its validated runtime file.
+Android builds additionally provide `android_abi` and the integer `android_min_api`.
+Lito removes `work_dir` after the recipe and publishes `output` only if the callback succeeds.
+
+Packages declaring `[script] supports = ["pack"]` can be normal version or path dependencies.
+Load modules with `require()` during recipe declaration and capture their exports in the callback.
+Use the package's script name, such as `require("@lito.apk")` for `lito-apk`.
+`--no-build` uses the completed target configuration and resolves script dependencies from local
+sources and the existing lock without configuring a compiler.
+
+During the callback, `lito.run { tool = ..., args = {...}, cwd = ... }` runs a host executable
+directly and reports any nonzero exit. `cwd` defaults to the package root. File helpers provide
+`file_kind(path)`, `list_dir(path)`, `mkdir(path)`, `copy_file(source, destination)`, and
+`link_file(source, destination)`. `list_dir` returns sorted names, and `link_file` returns `false`
+when the destination already exists. `temp_dir(parent)` allocates a temporary directory on the
+parent's filesystem and removes it after the callback.

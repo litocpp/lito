@@ -1056,7 +1056,7 @@
           "minProperties": 1,
           "uniqueItems": true,
           "items": {
-            "enum": ["build", "install"]
+            "enum": ["build", "install", "pack"]
           }
         }
       },

@@ -67,6 +67,8 @@ auto parse_script_package(Option<wire::Script>                  value,
             kind = ScriptHostKind::Build;
         } else if (value == "install"_str) {
             kind = ScriptHostKind::Install;
+        } else if (value == "pack"_str) {
+            kind = ScriptHostKind::Pack;
         } else {
             return Err(ManifestSchemaError::Data(
                 rstd::serde::Error::invalid_value(path.with_field("supports"_str).with_index(index),

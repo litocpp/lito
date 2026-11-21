@@ -28,6 +28,7 @@ import :build.compile.database;
 import :build.action_graph.native;
 import :build.profiling;
 import :build.project;
+import :package.module_catalog;
 import :build.plugin;
 import :build.proc_macro;
 import :cache.error;
@@ -584,7 +585,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                  Option<lito::workspace::WorkspaceCatalog> catalog,
                                  Option<PreparedBuildProject>              prepared,
                                  BuildStageTimingReport                    stage_timing,
-                                 bool prepared_defaults = false) -> BuildResult<BuildSummary> {
+                                 bool                         prepared_defaults = false,
+                                 Option<ResolvedBuildProject> resolved_build    = None())
+    -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return Err(BuildError::Message("build project root is required"_Str));
     }
@@ -628,7 +631,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                     preparation_observer,
                     rstd::move(catalog),
                     request.setup_reporter,
-                    request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
+                    request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr,
+                    rstd::move(resolved_build));
                 if (project.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(project).unwrap_err()));
                 }
@@ -2066,8 +2070,10 @@ auto build_prepared_project(const BuildRequest&               request,
 }
 
 namespace {
-auto build_and_publish(const BuildRequest& request,
-                       Option<lito::workspace::WorkspaceCatalog> catalog)
+auto build_and_publish(const BuildRequest&                       request,
+                       Option<lito::workspace::WorkspaceCatalog> catalog,
+                       Option<ResolvedBuildProject>              resolved            = None(),
+                       const ResolvedProcessEnvironment*         process_environment = nullptr)
     -> BuildResult<BuildSummary> {
     auto total_started = rstd::time::Instant::now();
     if (request.selection.root.is_empty()) {
@@ -2090,14 +2096,24 @@ auto build_and_publish(const BuildRequest& request,
     if (publication.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(publication).unwrap_err()));
     }
-    auto environment = stage_timing.measure(BuildStage::Environment, [&] {
-        return ResolvedProcessEnvironment::resolve(request.environment);
-    });
-    if (environment.is_err()) {
-        return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
+    auto environment = Option<ResolvedProcessEnvironment> {};
+    if (process_environment == nullptr) {
+        auto resolved_environment = stage_timing.measure(BuildStage::Environment, [&] {
+            return ResolvedProcessEnvironment::resolve(request.environment);
+        });
+        if (resolved_environment.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(resolved_environment).unwrap_err()));
+        }
+        environment         = Some(rstd::move(resolved_environment).unwrap());
+        process_environment = rstd::addressof(*environment);
     }
-    auto summary = build_with_environment_impl(
-        request, *environment, rstd::move(catalog), None(), rstd::move(stage_timing));
+    auto summary = build_with_environment_impl(request,
+                                               *process_environment,
+                                               rstd::move(catalog),
+                                               None(),
+                                               rstd::move(stage_timing),
+                                               false,
+                                               rstd::move(resolved));
     if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
     emit(request,
          BuildEventKind::ProductPublish,
@@ -2113,6 +2129,76 @@ auto build_and_publish(const BuildRequest& request,
     return Ok(rstd::move(summary).unwrap());
 }
 } // namespace
+
+auto resolve_build_for_recipe(const BuildRequest&               request,
+                              lito::workspace::WorkspaceCatalog catalog,
+                              const ResolvedProcessEnvironment& environment)
+    -> BuildResult<ResolvedBuildProject> {
+    auto tool_resolver =
+        lito::tools::ToolResolver(environment, request.tools.clone(), request.tool_reporter);
+    auto profile   = request.profile.is_some()
+                         ? request.profile->clone()
+                         : lito::package::default_build_profile(request.purpose);
+    auto execution = rstd_try(resolve_scan_execution(request.execution.scan));
+    auto resolved  = resolve_build_project(
+        request.selection,
+        profile,
+        request.configuration,
+        request.sources,
+        request.lock,
+        request.cmake_build_overrides,
+        tool_resolver,
+        environment,
+        request.locked,
+        request.purpose,
+        execution.jobs,
+        request.observer,
+        Some(rstd::move(catalog)),
+        request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr);
+    if (resolved.is_err()) return Err(BuildError::Project(rstd::move(resolved).unwrap_err()));
+    return Ok(rstd::move(resolved).unwrap());
+}
+
+auto build_and_publish_resolved_project(const BuildRequest&               request,
+                                        const ResolvedProcessEnvironment& environment,
+                                        ResolvedBuildProject project) -> BuildResult<BuildSummary> {
+    return build_and_publish(
+        request, None(), Some(rstd::move(project)), rstd::addressof(environment));
+}
+
+auto resolve_pack_script_dependencies(const BuildRequest&               request,
+                                      lito::workspace::WorkspaceCatalog catalog,
+                                      const ResolvedProcessEnvironment& environment,
+                                      const CompletedBuildProduct&      product,
+                                      ref<str> name) -> BuildResult<PackScriptDependencies> {
+    auto target = parse_target_info(product.target.as_str());
+    if (target.is_err()) {
+        return Err(BuildError::Message(rstd::format("completed build target '{}' is invalid: {}",
+                                                    product.target.as_str(),
+                                                    rstd::move(target).unwrap_err())));
+    }
+    auto sources    = request.sources.clone();
+    sources.network = lito::source::NetworkPolicy::Offline;
+    sources.source_bundles.clear();
+    auto selection = resolve_existing_project_selection(
+        request.selection,
+        request.purpose,
+        sources,
+        request.lock,
+        *target,
+        environment,
+        usize(1),
+        request.observer,
+        Some(rstd::move(catalog)),
+        request.registries.is_some() ? rstd::addressof(*request.registries) : nullptr,
+        {},
+        rstd::addressof(product.conditions));
+    if (selection.is_err()) return Err(BuildError::Project(rstd::move(selection).unwrap_err()));
+    auto dependencies = pack_script_dependencies(*selection, name);
+    if (dependencies.is_err())
+        return Err(BuildError::Package(rstd::move(dependencies).unwrap_err()));
+    return Ok(rstd::move(dependencies).unwrap());
+}
 
 auto build_and_publish_resolved_project(BuildRequest request,
                                         lito::workspace::ResolvedProjectEntry project)

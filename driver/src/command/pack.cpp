@@ -6,7 +6,10 @@ module lito.driver;
 import rstd;
 import :command.pack;
 import :build;
+import :build.project;
+import :package.module_catalog;
 import :pack.script;
+import :project;
 import lito.core;
 import lito.system;
 
@@ -31,35 +34,13 @@ public:
     auto operator=(const PackStagingDirectory&) -> PackStagingDirectory& = delete;
     ~PackStagingDirectory() { (void)rstd::fs::remove_dir_all(path_.as_path()); }
 
-    auto file(ref<rstd::path::Path> name) const -> PathBuf { return path_.join(name); }
+    auto path() const -> ref<rstd::path::Path> { return path_.as_path(); }
 };
 
 auto pack_io_error(String action, ref<rstd::path::Path> path, rstd::io::Error error)
     -> CommandError {
     return CommandError::System(
         SystemError::Io(rstd::move(action), PathBuf::from(path), rstd::move(error)));
-}
-
-auto reserve_pack_directory(ref<rstd::path::Path> parent) -> CommandResult<PathBuf> {
-    auto created_parent = rstd::fs::create_dir_all(parent);
-    if (created_parent.is_err()) {
-        return Err(pack_io_error(
-            "create pack output directory"_Str, parent, rstd::move(created_parent).unwrap_err()));
-    }
-    constexpr auto attempt_limit = usize(64);
-    for (auto attempt = usize {}; attempt < attempt_limit; ++attempt) {
-        auto name = PathBuf::from(rstd::format(".lito-pack-{}-{}", rstd::process::id(), attempt));
-        auto path = PathBuf::from(parent).join(name.as_path());
-        auto made = rstd::fs::create_dir(path.as_path());
-        if (made.is_ok()) return Ok(rstd::move(path));
-        auto error = rstd::move(made).unwrap_err();
-        if (error.kind() != rstd::io::ErrorKind { rstd::io::ErrorKind::AlreadyExists }) {
-            return Err(pack_io_error(
-                "create pack staging directory"_Str, path.as_path(), rstd::move(error)));
-        }
-    }
-    return Err(CommandError::Message(
-        rstd::format("cannot reserve pack staging directory under '{}'", parent)));
 }
 
 auto pack_tool(const PackRecipe&                 recipe,
@@ -137,12 +118,34 @@ auto reuse_pack_product(const BuildRequest& request, ref<rstd::path::Path> proje
     return Ok(rstd::move(product));
 }
 
-auto prepare_pack_product(PackRequest& request, lito::workspace::ResolvedProjectEntry project)
-    -> CommandResult<CompletedBuildProduct> {
-    if (request.no_build) return reuse_pack_product(request.build, project.root.as_path());
-    auto built = build_and_publish_resolved_project(rstd::move(request.build), rstd::move(project));
-    if (built.is_err()) return Err(CommandError::Build(rstd::move(built).unwrap_err()));
-    return Ok(rstd::move(built).unwrap().product);
+struct PackPreparation {
+    PackScriptDependencies        dependencies;
+    Option<ResolvedBuildProject>  build;
+    Option<CompletedBuildProduct> product;
+};
+
+auto prepare_pack(const PackRequest&                request,
+                  lito::workspace::WorkspaceCatalog workspace,
+                  const ResolvedProcessEnvironment& environment,
+                  ref<str> package_name) -> CommandResult<PackPreparation> {
+    if (request.no_build) {
+        auto product =
+            rstd_try(reuse_pack_product(request.build, request.build.selection.root.as_path()));
+        auto dependencies = rstd_try(resolve_pack_script_dependencies(
+            request.build, rstd::move(workspace), environment, product, package_name));
+        return Ok(PackPreparation {
+            .dependencies = rstd::move(dependencies),
+            .product      = Some(rstd::move(product)),
+        });
+    }
+    auto build =
+        rstd_try(resolve_build_for_recipe(request.build, rstd::move(workspace), environment));
+    auto dependencies =
+        rstd_try(pack_script_dependencies(build.session.project.selection, package_name));
+    return Ok(PackPreparation {
+        .dependencies = rstd::move(dependencies),
+        .build        = Some(rstd::move(build)),
+    });
 }
 
 auto append_pack_arguments(rstd::process::Command&      command,
@@ -175,22 +178,14 @@ auto append_pack_arguments(rstd::process::Command&      command,
     return Ok(empty {});
 }
 
-auto execute_pack(const PackRecipe&                 recipe,
-                  ref<rstd::path::Path>             tool,
-                  ref<rstd::path::Path>             package_root,
-                  const ResolvedProcessEnvironment& environment,
-                  const CompletedBuildProduct&      product,
-                  PathBuf                           output) -> CommandResult<PathBuf> {
-    auto parent = output.as_path().parent();
-    auto name   = output.as_path().file_name();
-    if (parent.is_none() || name.is_none() || ! output.as_path().is_absolute()) {
-        return Err(CommandError::Message(
-            rstd::format("pack output '{}' must specify an absolute file path", output.as_path())));
-    }
-    auto directory = PackStagingDirectory(rstd_try(reserve_pack_directory(*parent)));
-    auto staged    = directory.file(recipe.output.as_path());
-    auto command   = rstd::process::Command::make(tool.as_os_str());
-    rstd_try(append_pack_arguments(command, recipe, product, staged.as_path()));
+auto execute_pack_tool(const PackRecipe&                 recipe,
+                       ref<rstd::path::Path>             tool,
+                       ref<rstd::path::Path>             package_root,
+                       const ResolvedProcessEnvironment& environment,
+                       const CompletedBuildProduct&      product,
+                       ref<rstd::path::Path>             staged) -> CommandResult<empty> {
+    auto command = rstd::process::Command::make(tool.as_os_str());
+    rstd_try(append_pack_arguments(command, recipe, product, staged));
     command.current_dir(package_root);
     lito::system::apply_command_environment(command, environment);
     auto status = command.status();
@@ -207,6 +202,58 @@ auto execute_pack(const PackRecipe&                 recipe,
                          tool,
                          code.is_some() ? "exit code"_str : "signal"_str,
                          code.is_some() ? *code : status->signal().unwrap_or(i32(-1)))));
+    }
+    return Ok(empty {});
+}
+
+auto execute_pack_callback(PackScriptSession&           session,
+                           const CompletedBuildProduct& product,
+                           ref<rstd::path::Path>        package_root,
+                           ref<rstd::path::Path>        work_dir,
+                           ref<rstd::path::Path>        output) -> CommandResult<empty> {
+    const auto& recipe    = session.recipe();
+    auto        artifacts = Vec<PackCallbackArtifact>::with_capacity(recipe.inputs.len());
+    for (const auto& target : recipe.inputs) {
+        auto artifact = rstd_try(pack_artifact(product, target));
+        artifacts.push(PackCallbackArtifact {
+            .selector = rstd::format("{}:{}",
+                                     lito::package::package_target_kind_name(target.kind),
+                                     target.name.as_str()),
+            .path     = artifact->primary.path.clone(),
+        });
+    }
+    return session.execute(PackCallbackContext {
+        .package_root    = PathBuf::from(package_root),
+        .work_dir        = PathBuf::from(work_dir),
+        .output          = PathBuf::from(output),
+        .target          = product.target.clone(),
+        .android_abi     = product.android_abi.clone(),
+        .android_min_api = product.android_minimum_api,
+        .artifacts       = rstd::move(artifacts),
+    });
+}
+
+auto execute_pack(PackScriptSession&                session,
+                  const Option<PathBuf>&            tool,
+                  ref<rstd::path::Path>             package_root,
+                  const ResolvedProcessEnvironment& environment,
+                  const CompletedBuildProduct&      product,
+                  PathBuf                           output) -> CommandResult<PathBuf> {
+    const auto& recipe = session.recipe();
+    auto        parent = output.as_path().parent();
+    if (parent.is_none() || output.as_path().file_name().is_none() ||
+        ! output.as_path().is_absolute()) {
+        return Err(CommandError::Message(
+            rstd::format("pack output '{}' must specify an absolute file path", output.as_path())));
+    }
+    auto directory = PackStagingDirectory(rstd_try(reserve_pack_directory(*parent)));
+    auto staged    = PathBuf::from(directory.path()).join(recipe.output.as_path());
+    if (tool.is_some()) {
+        rstd_try(execute_pack_tool(
+            recipe, tool->as_path(), package_root, environment, product, staged.as_path()));
+    } else {
+        rstd_try(execute_pack_callback(
+            session, product, package_root, directory.path(), staged.as_path()));
     }
     auto metadata = rstd::fs::symlink_metadata(staged.as_path());
     if (metadata.is_err()) {
@@ -250,36 +297,40 @@ auto pack(PackRequest request) -> CommandResult<PathBuf> {
         return Err(CommandError::Message(
             rstd::format("unknown local pack package '{}'", package_name.as_str())));
     }
-    auto package_root = (*package)->root.clone();
-    auto recipe       = rstd_try(
-        load_pack_recipe(package_root.as_path(), package_name.as_str(), request.recipe.as_str()));
-    auto environment = rstd_try(ResolvedProcessEnvironment::resolve(request.build.environment));
-    auto tool        = rstd_try(pack_tool(recipe, package_root.as_path(), environment));
-    for (const auto& argument : recipe.arguments) {
-        if (! argument.is_Artifact()) continue;
-        const auto& target  = argument.as_Artifact().target;
-        auto        present = false;
-        for (const auto& prior : request.build.exact_targets) {
-            if (prior == target) {
-                present = true;
-                break;
-            }
-        }
-        if (! present) request.build.exact_targets.push(target.clone());
-    }
+    auto package_root            = (*package)->root.clone();
+    request.build.selection.root = rstd::move(project.root);
     if (request.build.profile.is_none()) {
         request.build.profile = Some(lito::manifest::BuildProfileName { .value = "release"_Str });
     }
     request.build.purpose = lito::package::PackageSelectionPurpose::Production;
-    auto product          = rstd_try(prepare_pack_product(request, rstd::move(project)));
-    auto output           = request.output.is_some()
-                                ? rstd::move(request.output).unwrap()
-                                : product.build_directory.join(PathBuf::from("pack"_str).as_path())
-                                      .join(PathBuf::from(package_name.as_str()).as_path())
-                                      .join(PathBuf::from(recipe.name.as_str()).as_path())
-                                      .join(recipe.output.as_path());
+    auto environment = rstd_try(ResolvedProcessEnvironment::resolve(request.build.environment));
+    auto prepared    = rstd_try(
+        prepare_pack(request, rstd::move(project.catalog), environment, package_name.as_str()));
+    auto        session = rstd_try(PackScriptSession::load(package_root.as_path(),
+                                                           package_name.as_str(),
+                                                           request.recipe.as_str(),
+                                                           rstd::move(prepared.dependencies),
+                                                           environment));
+    const auto& recipe  = session.recipe();
+    auto        tool    = Option<PathBuf> {};
+    if (! recipe.lua_callback) {
+        tool = Some(rstd_try(pack_tool(recipe, package_root.as_path(), environment)));
+    }
+    for (const auto& target : recipe.inputs) request.build.exact_targets.push(target.clone());
+    if (prepared.build.is_some()) {
+        auto built       = rstd_try(build_and_publish_resolved_project(
+            request.build, environment, rstd::move(prepared.build).unwrap()));
+        prepared.product = Some(rstd::move(built.product));
+    }
+    auto product = rstd::move(prepared.product).unwrap();
+    auto output  = request.output.is_some()
+                       ? rstd::move(request.output).unwrap()
+                       : product.build_directory.join(PathBuf::from("pack"_str).as_path())
+                             .join(PathBuf::from(package_name.as_str()).as_path())
+                             .join(PathBuf::from(recipe.name.as_str()).as_path())
+                             .join(recipe.output.as_path());
     return execute_pack(
-        recipe, tool.as_path(), package_root.as_path(), environment, product, rstd::move(output));
+        session, tool, package_root.as_path(), environment, product, rstd::move(output));
 }
 
 } // namespace lito

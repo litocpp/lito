@@ -250,12 +250,6 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
                 .source_identity = runtime->source_identity.clone(),
             });
         }
-        auto script_dependencies = Vec<String>::make();
-        for (const auto& dependency : package->active_dependencies()) {
-            if (dependency.is_Script()) {
-                script_dependencies.push(dependency.as_Script().value.name.clone());
-            }
-        }
         auto script_packages = Vec<lito::package::ResolvedScriptPackageView>::make();
         for (const auto& provider : selection.graph.packages) {
             if (provider.manifest.script.is_none()) continue;
@@ -263,24 +257,8 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             for (const auto& name : selection.selected_package_names)
                 if (name == provider.manifest.name.as_str()) active = true;
             if (! active) continue;
-            auto dependencies = Vec<String>::make();
-            for (const auto& dependency : provider.active_dependencies()) {
-                if (dependency.is_Script()) {
-                    dependencies.push(dependency.as_Script().value.name.clone());
-                }
-            }
-            script_packages.push(lito::package::ResolvedScriptPackageView {
-                .name = provider.manifest.name.clone(),
-                .require_name =
-                    lito::manifest::script_require_name(provider.manifest.name.as_str()),
-                .source_identity = provider.source_identity.clone(),
-                .supports        = provider.manifest.script->supports.clone(),
-                .root            = provider.manifest.root.clone(),
-                .embedded_source = provider.embedded_source.is_some()
-                                       ? Some(provider.embedded_source->clone())
-                                       : Option<lito::source::SourceTree> {},
-                .dependencies    = rstd::move(dependencies),
-            });
+            auto script = lito::package::resolved_script_package_view(provider);
+            if (script.is_some()) script_packages.push(rstd::move(script).unwrap());
         }
         result.push(PackageInstallInput {
             .name                 = package->manifest.name.clone(),
@@ -291,7 +269,7 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             .targets              = rstd::move(targets),
             .source               = package->source.clone(),
             .runtime_dependencies = rstd::move(runtime_dependencies),
-            .script_dependencies  = rstd::move(script_dependencies),
+            .script_dependencies  = lito::package::resolved_script_dependency_names(*package),
             .script_packages      = rstd::move(script_packages),
             .direct               = direct_package(selection, name.as_str()),
         });

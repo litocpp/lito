@@ -12,6 +12,7 @@ enum class ScriptHostKind
 {
     Build,
     Install,
+    Pack,
 };
 
 struct ScriptPackageManifest {
@@ -24,7 +25,12 @@ auto script_require_name(ref<str> package) -> String;
 } // namespace lito::manifest
 
 auto lito::manifest::script_host_kind_name(ScriptHostKind kind) noexcept -> ref<str> {
-    return kind == ScriptHostKind::Build ? "build"_str : "install"_str;
+    switch (kind) {
+    case ScriptHostKind::Build: return "build"_str;
+    case ScriptHostKind::Install: return "install"_str;
+    case ScriptHostKind::Pack: return "pack"_str;
+    }
+    __builtin_unreachable();
 }
 
 auto lito::manifest::script_require_name(ref<str> package) -> String {

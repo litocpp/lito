@@ -7,10 +7,46 @@ import rstd;
 import licrypto;
 import luato;
 import lito.core;
+import :package.selection;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
+
+export namespace lito
+{
+
+struct PackScriptDependencies {
+    String                                        identity;
+    Vec<String>                                   dependencies;
+    Vec<lito::package::ResolvedScriptPackageView> packages;
+};
+
+auto pack_script_dependencies(const lito::package::ResolvedPackageSelection& selection,
+                              ref<str>                                       name)
+    -> lito::package::PackageResult<PackScriptDependencies> {
+    auto result = PackScriptDependencies {};
+    for (const auto& package : selection.graph.packages) {
+        if (package.manifest.name == name) {
+            result.identity     = package.source_identity.clone();
+            result.dependencies = lito::package::resolved_script_dependency_names(package);
+        }
+        if (package.manifest.script.is_none() ||
+            ! selection.selected_package_names.iter().any([&](auto selected) {
+                return (*selected) == package.manifest.name;
+            }))
+            continue;
+        auto script = lito::package::resolved_script_package_view(package);
+        if (script.is_some()) result.packages.push(rstd::move(script).unwrap());
+    }
+    if (result.identity.is_empty()) {
+        return Err(lito::package::PackageError::Message(
+            rstd::format("pack package '{}' is missing from the resolved graph", name)));
+    }
+    return Ok(rstd::move(result));
+}
+
+} // namespace lito
 
 export namespace lito::package
 {
