@@ -50,6 +50,10 @@ def catalog_candidate(version: str, document: dict) -> dict:
             "os": "linux",
             "architecture": "x86_64",
         },
+        f"LLVM-{version}-Linux-ARM64.tar.xz": {
+            "os": "linux",
+            "architecture": "aarch64",
+        },
         f"clang+llvm-{version}-x86_64-pc-windows-msvc.tar.xz": {
             "os": "windows",
             "architecture": "x86_64",

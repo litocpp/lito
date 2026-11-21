@@ -16,6 +16,112 @@
   ],
   "releases": [
     {
+      "version": "23.1.6",
+      "upstream-tag": "llvmorg-23.1.6",
+      "artifacts": [
+        {
+          "host": {
+            "os": "linux",
+            "architecture": "x86_64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/LLVM-23.1.6-Linux-X64.tar.xz",
+            "sha256": "bd4d1c434ff69ef06d19e7934c04708da677e5f2eb51f5bcf052ab91818f0094",
+            "size": 2014723508,
+            "root": "LLVM-23.1.6-Linux-X64"
+          },
+          "paths": {
+            "cc": "bin/clang",
+            "cxx": "bin/clang++",
+            "linker": "bin/ld.lld",
+            "archiver": "bin/llvm-ar",
+            "strip": "bin/llvm-strip",
+            "format": "bin/clang-format",
+            "llvm-config": "bin/llvm-config",
+            "cmake": "lib/cmake",
+            "clang-cpp": "lib/libclang-cpp.so"
+          },
+          "runtime-components": []
+        },
+        {
+          "host": {
+            "os": "windows",
+            "architecture": "x86_64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/clang%2Bllvm-23.1.6-x86_64-pc-windows-msvc.tar.xz",
+            "sha256": "16af05919cf36958dfb4ddaa4fc4d9d4ff577f5daeb76bc112ea49cd8ced82b2",
+            "size": 901284676,
+            "root": "clang+llvm-23.1.6-x86_64-pc-windows-msvc"
+          },
+          "paths": {
+            "cc": "bin/clang.exe",
+            "cxx": "bin/clang++.exe",
+            "linker": "bin/lld-link.exe",
+            "archiver": "bin/llvm-ar.exe",
+            "strip": "bin/llvm-strip.exe",
+            "format": "bin/clang-format.exe",
+            "llvm-config": "bin/llvm-config.exe",
+            "cmake": "lib/cmake",
+            "clang-cpp": "bin/clang-cpp.dll"
+          },
+          "runtime-components": []
+        },
+        {
+          "host": {
+            "os": "windows",
+            "architecture": "aarch64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/clang%2Bllvm-23.1.6-aarch64-pc-windows-msvc.tar.xz",
+            "sha256": "fa5a25df6a1405fdfb9942f4d5cc73bfc3b8b31cfd43ee2fbd43bd2e3168be01",
+            "size": 760067264,
+            "root": "clang+llvm-23.1.6-aarch64-pc-windows-msvc"
+          },
+          "paths": {
+            "cc": "bin/clang.exe",
+            "cxx": "bin/clang++.exe",
+            "linker": "bin/lld-link.exe",
+            "archiver": "bin/llvm-ar.exe",
+            "strip": "bin/llvm-strip.exe",
+            "format": "bin/clang-format.exe",
+            "llvm-config": "bin/llvm-config.exe",
+            "cmake": "lib/cmake",
+            "clang-cpp": "bin/clang-cpp.dll"
+          },
+          "runtime-components": []
+        },
+        {
+          "host": {
+            "os": "linux",
+            "architecture": "aarch64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/LLVM-23.1.6-Linux-ARM64.tar.xz",
+            "sha256": "e9daa167da28b9e31d30046f05f98e3e7da3647cdbe1c1863e8b223c07ccf291",
+            "size": 1828682280,
+            "root": "LLVM-23.1.6-Linux-ARM64"
+          },
+          "paths": {
+            "cc": "bin/clang",
+            "cxx": "bin/clang++",
+            "linker": "bin/ld.lld",
+            "archiver": "bin/llvm-ar",
+            "strip": "bin/llvm-strip",
+            "format": "bin/clang-format",
+            "llvm-config": "bin/llvm-config",
+            "cmake": "lib/cmake",
+            "clang-cpp": "lib/libclang-cpp.so"
+          },
+          "runtime-components": []
+        }
+      ]
+    },
+    {
       "version": "22.1.8",
       "upstream-tag": "llvmorg-22.1.8",
       "artifacts": [

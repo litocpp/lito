@@ -171,8 +171,8 @@ TEST_F(SdkStore, ListMergesCatalogAndVersionDescriptorsWithoutNetworkOrTools) {
 
     auto available = lito::list_llvm_sdks();
     ASSERT_TRUE(available.is_ok());
-    ASSERT_EQ(available->entries.len(), usize(1));
-    EXPECT_EQ(available->entries[usize {}].version.as_str(), "22.1.8"_str);
+    ASSERT_EQ(available->entries.len(), usize(2));
+    EXPECT_EQ(available->entries[usize {}].version.as_str(), "23.1.6"_str);
     EXPECT_EQ(available->entries[usize {}].status, lito::SdkListStatus::Available);
 
     auto host = lito::system::detect_host_info();
@@ -185,11 +185,12 @@ TEST_F(SdkStore, ListMergesCatalogAndVersionDescriptorsWithoutNetworkOrTools) {
 
     auto merged = lito::list_llvm_sdks();
     ASSERT_TRUE(merged.is_ok());
-    ASSERT_EQ(merged->entries.len(), usize(2));
-    EXPECT_EQ(merged->entries[usize {}].version.as_str(), "22.1.8"_str);
+    ASSERT_EQ(merged->entries.len(), usize(3));
+    EXPECT_EQ(merged->entries[usize {}].version.as_str(), "23.1.6"_str);
     EXPECT_EQ(merged->entries[usize {}].status, lito::SdkListStatus::Available);
-    EXPECT_EQ(merged->entries[usize(1)].version.as_str(), "21.0.0"_str);
-    EXPECT_EQ(merged->entries[usize(1)].status, lito::SdkListStatus::InstalledUnavailable);
+    EXPECT_EQ(merged->entries[usize(1)].version.as_str(), "22.1.8"_str);
+    EXPECT_EQ(merged->entries[usize(2)].version.as_str(), "21.0.0"_str);
+    EXPECT_EQ(merged->entries[usize(2)].status, lito::SdkListStatus::InstalledUnavailable);
     EXPECT_FALSE(
         rstd::fs::exists(
             data_home.join(PathBuf::from("lito/llvm/CACHEDIR.TAG"_str).as_path()).as_path())
@@ -210,9 +211,9 @@ TEST_F(SdkStore, ListReportsDescriptorConflictsAsInvalid) {
 
     auto listed = lito::list_llvm_sdks();
     ASSERT_TRUE(listed.is_ok());
-    ASSERT_EQ(listed->entries.len(), usize(1));
-    EXPECT_EQ(listed->entries[usize {}].status, lito::SdkListStatus::Invalid);
-    ASSERT_TRUE(listed->entries[usize {}].issue.is_some());
+    ASSERT_EQ(listed->entries.len(), usize(2));
+    EXPECT_EQ(listed->entries[usize(1)].status, lito::SdkListStatus::Invalid);
+    ASSERT_TRUE(listed->entries[usize(1)].issue.is_some());
 }
 
 TEST_F(SdkStore, ListRejectsSchemaOneDescriptors) {
@@ -235,9 +236,9 @@ TEST_F(SdkStore, ListRejectsSchemaOneDescriptors) {
 
     auto listed = lito::list_llvm_sdks();
     ASSERT_TRUE(listed.is_ok());
-    ASSERT_EQ(listed->entries.len(), usize(2));
-    EXPECT_EQ(listed->entries[usize(1)].version.as_str(), "21.0.0"_str);
-    EXPECT_EQ(listed->entries[usize(1)].status, lito::SdkListStatus::Invalid);
+    ASSERT_EQ(listed->entries.len(), usize(3));
+    EXPECT_EQ(listed->entries[usize(2)].version.as_str(), "21.0.0"_str);
+    EXPECT_EQ(listed->entries[usize(2)].status, lito::SdkListStatus::Invalid);
 }
 
 TEST_F(SdkStore, ActivateProvidesProjectDefaultsAndDeactivateKeepsExistingLeaseAlive) {
