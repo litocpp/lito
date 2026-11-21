@@ -567,7 +567,12 @@ auto resolve_configured_toolchain(const config::BuildConfigurationRequest& confi
         return Err(rstd::into<ProjectError>(rstd::move(android).unwrap_err()));
     }
     auto resolved = rstd::move(android).unwrap();
-    auto tools    = resolved.tools.clone();
+    auto compilers =
+        select_android_compilers(rstd::move(resolved), configuration.toolchain, environment);
+    if (compilers.is_err())
+        return Err(rstd::into<ProjectError>(rstd::move(compilers).unwrap_err()));
+    resolved   = rstd::move(compilers).unwrap();
+    auto tools = resolved.tools.clone();
     return Ok(ConfiguredToolchainSelection {
         .tools       = rstd::move(tools),
         .android     = Some(rstd::move(resolved)),
@@ -738,13 +743,14 @@ auto resolve_build_context(const lito::config::ProjectBuildOptions& options,
 
 auto host_configuration_request(const config::BuildConfigurationRequest& configuration)
     -> config::BuildConfigurationRequest {
-    auto request                     = configuration.clone();
-    request.target                   = config::BuildTargetRequest::Default();
-    request.toolchain.sdk            = None();
-    request.toolchain.target         = config::ToolchainTargetSelection::CompilerDefault();
-    request.toolchain.wasm           = None();
-    request.standard_library         = config::StandardLibrarySelection::Auto;
-    request.standard_library_runtime = config::StandardLibraryRuntime::Dynamic;
+    auto request             = configuration.clone();
+    request.target           = config::BuildTargetRequest::Default();
+    request.toolchain.sdk    = None();
+    request.toolchain.target = config::ToolchainTargetSelection::CompilerDefault();
+    request.toolchain.wasm   = None();
+    request.toolchain.runtime_resource_directory = None();
+    request.standard_library                     = config::StandardLibrarySelection::Auto;
+    request.standard_library_runtime             = config::StandardLibraryRuntime::Dynamic;
     return request;
 }
 

@@ -245,6 +245,8 @@ struct ToolchainSpec {
     Option<ToolchainSdkSelection> sdk;
     ToolchainTargetSelection      target { ToolchainTargetSelection::CompilerDefault() };
     Option<WasmToolchainSpec>     wasm;
+    Option<PathBuf>               runtime_resource_directory;
+    bool                          cc_configured {}, cxx_configured {};
 
     auto clone() const -> ToolchainSpec {
         return ToolchainSpec {
@@ -255,6 +257,9 @@ struct ToolchainSpec {
             .sdk    = as<Clone>(sdk).clone(),
             .target = target.clone(),
             .wasm   = wasm.is_some() ? Some(wasm->clone()) : Option<WasmToolchainSpec> {},
+            .runtime_resource_directory = as<Clone>(runtime_resource_directory).clone(),
+            .cc_configured              = cc_configured,
+            .cxx_configured             = cxx_configured,
         };
     }
 };
@@ -271,8 +276,14 @@ struct ToolchainOverride {
 
 auto apply_toolchain_override(ToolchainSpec specification, ToolchainOverride values)
     -> ToolchainSpec {
-    if (values.cc.is_some()) specification.cc = rstd::move(values.cc).unwrap();
-    if (values.cxx.is_some()) specification.cxx = rstd::move(values.cxx).unwrap();
+    if (values.cc.is_some()) {
+        specification.cc            = rstd::move(values.cc).unwrap();
+        specification.cc_configured = true;
+    }
+    if (values.cxx.is_some()) {
+        specification.cxx            = rstd::move(values.cxx).unwrap();
+        specification.cxx_configured = true;
+    }
     if (values.ld.is_some()) specification.ld = rstd::move(values.ld).unwrap();
     if (values.ar.is_some()) specification.ar = rstd::move(values.ar).unwrap();
     if (values.sdk.is_some()) specification.sdk = Some(rstd::move(values.sdk).unwrap());

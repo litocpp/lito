@@ -78,14 +78,15 @@ auto push_path_argument(Vec<String>&          arguments,
 auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& toolchain)
     -> lito::tools::ToolResult<empty> {
     if (toolchain.target.is_some()) {
-        rstd_try(push_path_argument(arguments,
-                                    "-DCMAKE_TOOLCHAIN_FILE="_str,
-                                    toolchain.target->file.as_path(),
-                                    "CMake toolchain file"_str));
+        if (toolchain.target->file.is_some())
+            rstd_try(push_path_argument(arguments,
+                                        "-DCMAKE_TOOLCHAIN_FILE="_str,
+                                        toolchain.target->file->as_path(),
+                                        "CMake toolchain file"_str));
         for (const auto& entry : toolchain.target->cache) {
             arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
         }
-        return Ok(empty {});
+        if (toolchain.target->file.is_some()) return Ok(empty {});
     }
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_C_COMPILER="_str, toolchain.cc.as_path(), "C compiler"_str));
@@ -104,6 +105,32 @@ auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& 
     arguments.push("-DCMAKE_LINKER_TYPE=lito_configured"_Str);
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, toolchain.archiver.as_path(), "archiver"_str));
+    return Ok(empty {});
+}
+
+auto push_cmake_linker_flags(Vec<String>&                  arguments,
+                             const Request&                requirement,
+                             const ToolchainConfiguration& toolchain,
+                             const ProfileConfiguration&   profile,
+                             bool apply_cache) -> lito::tools::ToolResult<empty> {
+    auto runtime = String::make();
+    if (toolchain.target.is_some() && toolchain.target->runtime_resource_directory.is_some()) {
+        auto path =
+            rstd_try(cmake_path_literal(toolchain.target->runtime_resource_directory->as_path(),
+                                        "CMake target runtime resource directory"_str));
+        runtime = rstd::format(" -resource-dir={}", path.as_str());
+    }
+    constexpr ref<str> names[] = { "CMAKE_EXE_LINKER_FLAGS"_str,
+                                   "CMAKE_SHARED_LINKER_FLAGS"_str,
+                                   "CMAKE_MODULE_LINKER_FLAGS"_str };
+    for (auto name : names) {
+        auto value = profile.linker_flags.clone();
+        if (apply_cache)
+            for (const auto& entry : requirement.cache)
+                if (entry.name.as_str() == name) value = entry.value.clone();
+        value.push_str(runtime.as_str());
+        arguments.push(rstd::format("-D{}={}", name, value.as_str()));
+    }
     return Ok(empty {});
 }
 
@@ -181,12 +208,10 @@ auto configure_source(const Request&                    requirement,
         arguments.push(
             rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", profile.msvc_runtime.as_str()));
     }
-    arguments.push(rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
-    arguments.push(rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", profile.linker_flags.as_str()));
-    arguments.push(rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
     for (const auto& entry : requirement.cache) {
         arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
     }
+    rstd_try(push_cmake_linker_flags(arguments, requirement, toolchain, profile, true));
     rstd_try(run_cmake(
         rstd::move(arguments),
         rstd::format("CMake dependency '{}' configure", requirement.package.as_str()).as_str(),
@@ -508,6 +533,24 @@ auto configure_probe(const Request&                    requirement,
                                     "CMake find install prefix"_str));
     }
     rstd_try(push_cmake_toolchain(arguments, toolchain));
+    if (toolchain.target.is_some()) {
+        auto roots = Vec<PathBuf>::make();
+        if (requirement.source.is_Directory() && requirement.adapter.is_none())
+            roots.push(area.install.clone());
+        else if (requirement.source.is_Find() && requirement.find_install_prefix.is_some())
+            roots.push(requirement.find_install_prefix->clone());
+        for (const auto& path : provider.search_paths) roots.push(path.clone());
+        if (! roots.is_empty()) {
+            auto value = "-DCMAKE_FIND_ROOT_PATH="_Str;
+            for (usize index {}; index < roots.len(); ++index) {
+                if (index != usize {}) value.push_ascii(';');
+                auto path =
+                    rstd_try(path_text(roots[index].as_path(), "CMake target find root"_str));
+                value.push_str(path.as_str());
+            }
+            arguments.push(rstd::move(value));
+        }
+    }
     push_lito_owned_cmake_configuration(arguments, provider.generator.as_str());
     arguments.push(
         rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
@@ -518,9 +561,6 @@ auto configure_probe(const Request&                    requirement,
         arguments.push(
             rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", profile.msvc_runtime.as_str()));
     }
-    arguments.push(rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
-    arguments.push(rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", profile.linker_flags.as_str()));
-    arguments.push(rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
     if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
@@ -538,6 +578,12 @@ auto configure_probe(const Request&                    requirement,
             arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
         }
     }
+    rstd_try(push_cmake_linker_flags(arguments,
+                                     requirement,
+                                     toolchain,
+                                     profile,
+                                     requirement.source.is_Directory() &&
+                                         requirement.adapter.is_some()));
     return run_cmake(
         rstd::move(arguments),
         rstd::format("CMake package '{}' query", requirement.package.as_str()).as_str(),

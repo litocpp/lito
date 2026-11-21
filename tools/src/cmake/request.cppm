@@ -56,9 +56,10 @@ struct Provider {
 };
 
 struct TargetToolchainConfiguration : DefaultInClass<TargetToolchainConfiguration, Clone> {
-    PathBuf         file;
+    Option<PathBuf> file;
     Vec<CacheEntry> cache;
     String          identity;
+    Option<PathBuf> runtime_resource_directory;
 
     auto clone() const -> TargetToolchainConfiguration {
         auto entries = cache.iter()
@@ -68,9 +69,10 @@ struct TargetToolchainConfiguration : DefaultInClass<TargetToolchainConfiguratio
                            })
                            .collect<Vec<CacheEntry>>();
         return TargetToolchainConfiguration {
-            .file     = file.clone(),
-            .cache    = rstd::move(entries),
-            .identity = identity.clone(),
+            .file                       = as<Clone>(file).clone(),
+            .cache                      = rstd::move(entries),
+            .identity                   = identity.clone(),
+            .runtime_resource_directory = as<Clone>(runtime_resource_directory).clone(),
         };
     }
 };

@@ -103,6 +103,7 @@ private:
         auto compiler_command   = Vec<String>::make();
         auto c_compiler_command = Vec<String>::make();
         auto resource_command   = Vec<String>::make();
+        auto c_resource_command = Vec<String>::make();
         auto help_command       = Vec<String>::make();
         auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
@@ -113,6 +114,10 @@ private:
         pushed = toolchain::command::push_path(resource_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(resource_command,
+                                        toolchain::clang_options::PRINT_RESOURCE_DIR);
+        pushed = toolchain::command::push_path(c_resource_command, c_compiler_path.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(c_resource_command,
                                         toolchain::clang_options::PRINT_RESOURCE_DIR);
         pushed = toolchain::command::push_path(help_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
@@ -125,6 +130,8 @@ private:
         auto archiver_identity = probe_archiver(archiver_path.as_path(), environment);
         auto resource          = toolchain::command::tool_output(
             rstd::move(resource_command), "clang++ resource query"_str, environment);
+        auto c_resource = toolchain::command::tool_output(
+            rstd::move(c_resource_command), "clang resource query"_str, environment);
         auto help = toolchain::command::tool_output(
             rstd::move(help_command), "clang++ help query"_str, environment);
         if (compiler_version.is_err()) return Err(rstd::move(compiler_version).unwrap_err());
@@ -133,6 +140,7 @@ private:
         }
         if (archiver_identity.is_err()) return Err(rstd::move(archiver_identity).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
+        if (c_resource.is_err()) return Err(rstd::move(c_resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
             return Err(ToolchainError::Message("configured compiler is not clang++"_Str));
@@ -216,8 +224,23 @@ private:
         if (canonical_resource.is_err()) {
             return Err(rstd::move(canonical_resource).unwrap_err());
         }
+        auto c_resource_path      = PathBuf::from(c_resource->as_str());
+        auto canonical_c_resource = toolchain::command::resolve_path(
+            c_resource_path.as_path(), "Clang C resource directory"_str);
+        if (canonical_c_resource.is_err()) {
+            return Err(rstd::move(canonical_c_resource).unwrap_err());
+        }
 
-        auto resolved_resource = rstd::move(canonical_resource).unwrap();
+        auto resolved_resource   = rstd::move(canonical_resource).unwrap();
+        auto resolved_c_resource = rstd::move(canonical_c_resource).unwrap();
+        auto runtime_resource    = resolved_resource.clone();
+        if (specification.runtime_resource_directory.is_some()) {
+            auto resolved = toolchain::command::resolve_path(
+                specification.runtime_resource_directory->as_path(),
+                "target runtime resource directory"_str);
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            runtime_resource = rstd::move(resolved).unwrap();
+        }
         auto compiler_metadata = rstd::fs::metadata(compiler_path.as_path());
         if (compiler_metadata.is_err()) {
             return Err(ToolchainError::Io("inspect compiler"_Str,
@@ -247,16 +270,18 @@ private:
         auto compiler_text   = compiler_path.as_path().to_str();
         auto c_compiler_text = c_compiler_path.as_path().to_str();
         auto resource_text   = resolved_resource.as_path().to_str();
-        if (compiler_text.is_none() || c_compiler_text.is_none() || resource_text.is_none()) {
+        auto c_resource_text = resolved_c_resource.as_path().to_str();
+        if (compiler_text.is_none() || c_compiler_text.is_none() || resource_text.is_none() ||
+            c_resource_text.is_none()) {
             return Err(
                 ToolchainError::Message("Clang compiler or resource path is not valid UTF-8"_Str));
         }
         auto build_identity =
-            rstd::format("lito-clang-build-v4\n"
+            rstd::format("lito-clang-build-v5\n"
                          "cxx:{}\n{}\n{}:{}:{}\n"
                          "cc:{}\n{}\n{}:{}:{}\n"
                          "supported-targets:{}\n"
-                         "target:{}\ntarget-source:{}\nstdlib:{}\nresource:{}",
+                         "target:{}\ntarget-source:{}\nstdlib:{}\nresource:{}\nc-resource:{}",
                          *compiler_text,
                          compiler_version->as_str(),
                          compiler_metadata->size(),
@@ -271,7 +296,11 @@ private:
                          compile_target->info.triple.as_str(),
                          compile_target_source_name(compile_target->source),
                          lito::config::standard_library_name(compile_target->standard_library),
-                         *resource_text);
+                         *resource_text,
+                         *c_resource_text);
+        if (specification.runtime_resource_directory.is_some())
+            build_identity.push_str(
+                rstd::format("\nruntime-resource:{}", runtime_resource.as_path()).as_str());
         auto identity = CompilerIdentity {
             .path                   = compiler_path.clone(),
             .version                = rstd::move(compiler_version).unwrap(),
@@ -279,6 +308,7 @@ private:
             .c_version              = rstd::move(c_compiler_version).unwrap(),
             .target                 = compile_target->info.triple.clone(),
             .resource_directory     = resolved_resource.clone(),
+            .c_resource_directory   = resolved_c_resource.clone(),
             .build_identity         = build_identity.clone(),
             .size                   = compiler_metadata->size(),
             .modified_seconds       = timestamp.seconds,
@@ -314,6 +344,8 @@ private:
                                    rstd::move(linker_identity).unwrap(),
                                    rstd::move(archiver_identity).unwrap(),
                                    rstd::move(resolved_resource),
+                                   rstd::move(resolved_c_resource),
+                                   rstd::move(runtime_resource),
                                    rstd::move(identity),
                                    rstd::move(compiler_default).unwrap(),
                                    rstd::move(compile_target).unwrap(),
@@ -1587,6 +1619,9 @@ public:
                 command, "--sysroot="_str, context.platform.sysroot->as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
+        toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
+        pushed = toolchain::command::push_path(command, runtime_resource_dir_.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         pushed = push_clang_lld_selection(command, linker_identity_.executable.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         if (context.wasm.is_some() != wasm_target) {
@@ -1944,6 +1979,8 @@ private:
                    LinkerIdentity                linker_identity,
                    ArchiverIdentity              archiver_identity,
                    PathBuf                       resource_dir,
+                   PathBuf                       c_resource_dir,
+                   PathBuf                       runtime_resource_dir,
                    CompilerIdentity              identity,
                    TargetInfo                    compiler_default,
                    CompileTarget                 compile_target,
@@ -1957,6 +1994,8 @@ private:
           linker_identity_(rstd::move(linker_identity)),
           archiver_identity_(rstd::move(archiver_identity)),
           resource_dir_(rstd::move(resource_dir)),
+          c_resource_dir_(rstd::move(c_resource_dir)),
+          runtime_resource_dir_(rstd::move(runtime_resource_dir)),
           compiler_identity_(rstd::move(identity)),
           compiler_default_(rstd::move(compiler_default)),
           compile_target_(rstd::move(compile_target)),
@@ -2073,7 +2112,7 @@ private:
             auto        pushed  = toolchain::command::push_path(command, c_compiler_.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
-            pushed = toolchain::command::push_path(command, resource_dir_.as_path());
+            pushed = toolchain::command::push_path(command, c_resource_dir_.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
@@ -2162,7 +2201,7 @@ private:
             auto        pushed = toolchain::command::push_path(command, c_compiler_.as_path());
             if (pushed.is_err()) return pushed;
             toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
-            pushed = toolchain::command::push_path(command, resource_dir_.as_path());
+            pushed = toolchain::command::push_path(command, c_resource_dir_.as_path());
             if (pushed.is_err()) return pushed;
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
@@ -2222,6 +2261,8 @@ private:
     LinkerIdentity                                                linker_identity_;
     ArchiverIdentity                                              archiver_identity_;
     PathBuf                                                       resource_dir_;
+    PathBuf                                                       c_resource_dir_;
+    PathBuf                                                       runtime_resource_dir_;
     CompilerIdentity                                              compiler_identity_;
     TargetInfo                                                    compiler_default_;
     CompileTarget                                                 compile_target_;

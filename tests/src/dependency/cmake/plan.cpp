@@ -244,7 +244,8 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                                  Some(rstd::move(android)));
     ASSERT_TRUE(android_plan.is_ok());
     ASSERT_TRUE(android_plan->tool.toolchain.target.is_some());
-    EXPECT_EQ(android_plan->tool.toolchain.target->file.as_path(),
+    ASSERT_TRUE(android_plan->tool.toolchain.target->file.is_some());
+    EXPECT_EQ(android_plan->tool.toolchain.target->file->as_path(),
               project->root.join(PathBuf::from("android.toolchain.cmake"_str).as_path()).as_path());
     ASSERT_EQ(android_plan->tool.toolchain.target->cache.len(), usize(3));
     EXPECT_EQ(android_plan->tool.toolchain.target->cache[usize {}].name.as_str(),

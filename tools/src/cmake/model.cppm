@@ -292,10 +292,21 @@ auto work_area(const Request&                requirement,
     append_identity(recipe, toolchain.linker_identity.as_str());
     append_identity(recipe, archiver->as_str());
     if (toolchain.target.is_some()) {
-        auto file = path_text(toolchain.target->file.as_path(), "CMake toolchain file"_str);
-        if (file.is_err()) return Err(rstd::move(file).unwrap_err());
-        append_identity(recipe, file->as_str());
+        if (toolchain.target->file.is_some()) {
+            auto file = path_text(toolchain.target->file->as_path(), "CMake toolchain file"_str);
+            if (file.is_err()) return Err(rstd::move(file).unwrap_err());
+            append_identity(recipe, file->as_str());
+        } else {
+            append_identity(recipe, "configured-target-toolchain"_str);
+        }
         append_identity(recipe, toolchain.target->identity.as_str());
+        append_identity(recipe, "lito-cmake-target-find-roots-v1"_str);
+        if (toolchain.target->runtime_resource_directory.is_some()) {
+            auto resource = path_text(toolchain.target->runtime_resource_directory->as_path(),
+                                      "CMake target runtime resource directory"_str);
+            if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
+            append_identity(recipe, resource->as_str());
+        }
         for (const auto& entry : toolchain.target->cache) {
             append_identity(recipe, entry.name.as_str());
             append_identity(recipe, entry.value.as_str());

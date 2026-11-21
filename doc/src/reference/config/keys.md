@@ -42,6 +42,12 @@ Compiler and archiver fields accept a searchable name or an absolute path:
 - `cxx`, default `clang++`;
 - `ar`, default `llvm-ar`.
 
+For an Android build target, omitted `cc` and `cxx` use the selected NDK's drivers.
+Explicit compiler fields override those defaults independently. The NDK still owns the ABI,
+minimum API, sysroot, and target runtime libraries. Compiler builtin headers come from the
+selected driver; the NDK's compiler runtime resource directory is used only for linking.
+CMake dependencies receive the same compiler and target selections.
+
 `os` and `arch` select the compile target and must be configured together. `arch` uses the
 canonical names returned by LLVM's target triple API, such as `x86_64`, `i386`, and `aarch64`;
 aliases such as `amd64`, `x64`, and `arm64` are rejected. If both fields are omitted, Lito obtains

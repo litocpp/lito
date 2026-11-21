@@ -289,10 +289,27 @@ auto cmake_toolchain(const cpp::BuildConfiguration&        configuration,
             .name  = "ANDROID_STL"_Str,
             .value = android->standard_library.clone(),
         });
+        auto runtime_resource_directory = Option<PathBuf> {};
+        auto file                       = Some(android->toolchain_file.clone());
+        if (android->compilers.is_some()) {
+            const auto& compilers = *android->compilers;
+            file                  = None();
+            cache.clear();
+            cache.push({ "CMAKE_SYSTEM_NAME"_Str, "Android"_Str });
+            cache.push({ "CMAKE_SYSTEM_VERSION"_Str, rstd::format("{}", compilers.minimum_api) });
+            cache.push({ "CMAKE_ANDROID_NDK"_Str, rstd::format("{}", compilers.ndk.as_path()) });
+            cache.push({ "CMAKE_ANDROID_ARCH_ABI"_Str, android->abi.clone() });
+            cache.push({ "CMAKE_ANDROID_STL_TYPE"_Str, android->standard_library.clone() });
+            cache.push({ "CMAKE_SYSROOT"_Str, rstd::format("{}", compilers.sysroot.as_path()) });
+            cache.push({ "CMAKE_C_COMPILER_TARGET"_Str, compilers.target.clone() });
+            cache.push({ "CMAKE_CXX_COMPILER_TARGET"_Str, compilers.target.clone() });
+            runtime_resource_directory = Some(compilers.runtime_resource_directory.clone());
+        }
         result.target = Some(lito::tools::cmake::TargetToolchainConfiguration {
-            .file     = android->toolchain_file.clone(),
-            .cache    = rstd::move(cache),
-            .identity = android->identity.clone(),
+            .file                       = rstd::move(file),
+            .cache                      = rstd::move(cache),
+            .identity                   = android->identity.clone(),
+            .runtime_resource_directory = rstd::move(runtime_resource_directory),
         });
     }
     return result;

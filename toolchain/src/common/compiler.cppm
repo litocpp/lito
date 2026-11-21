@@ -15,6 +15,7 @@ struct CompilerIdentity {
     String  c_version;
     String  target;
     PathBuf resource_directory;
+    PathBuf c_resource_directory;
     String  build_identity;
     u64     size {};
     i64     modified_seconds {};
@@ -31,6 +32,7 @@ struct CompilerIdentity {
             .c_version              = c_version.clone(),
             .target                 = target.clone(),
             .resource_directory     = resource_directory.clone(),
+            .c_resource_directory   = c_resource_directory.clone(),
             .build_identity         = build_identity.clone(),
             .size                   = size,
             .modified_seconds       = modified_seconds,

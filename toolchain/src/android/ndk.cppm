@@ -8,6 +8,7 @@ import rstd;
 import licrypto;
 import rstd.json;
 import lito.core;
+import lito.toolchain.common;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -184,12 +185,31 @@ struct ResolvedAndroidTarget {
     }
 };
 
+struct AndroidCmakeCompilerSelection {
+    PathBuf ndk;
+    PathBuf sysroot;
+    String  target;
+    u32     minimum_api {};
+    PathBuf runtime_resource_directory;
+
+    auto clone() const -> AndroidCmakeCompilerSelection {
+        return AndroidCmakeCompilerSelection {
+            .ndk                        = ndk.clone(),
+            .sysroot                    = sysroot.clone(),
+            .target                     = target.clone(),
+            .minimum_api                = minimum_api,
+            .runtime_resource_directory = runtime_resource_directory.clone(),
+        };
+    }
+};
+
 struct AndroidCmakeProjection {
-    PathBuf toolchain_file;
-    String  abi;
-    String  platform;
-    String  standard_library;
-    String  identity;
+    PathBuf                               toolchain_file;
+    String                                abi;
+    String                                platform;
+    String                                standard_library;
+    String                                identity;
+    Option<AndroidCmakeCompilerSelection> compilers;
 
     auto clone() const -> AndroidCmakeProjection {
         return AndroidCmakeProjection {
@@ -198,6 +218,8 @@ struct AndroidCmakeProjection {
             .platform         = platform.clone(),
             .standard_library = standard_library.clone(),
             .identity         = identity.clone(),
+            .compilers        = compilers.is_some() ? Some(compilers->clone())
+                                                    : Option<AndroidCmakeCompilerSelection> {},
         };
     }
 };
@@ -245,6 +267,11 @@ auto resolve_android_toolchain(AndroidNdkDistribution                    distrib
                                const lito::config::AndroidTargetRequest& request,
                                lito::config::StandardLibraryRuntime      runtime)
     -> AndroidNdkResult<ResolvedAndroidToolchain>;
+auto select_android_compilers(ResolvedAndroidToolchain                        selected,
+                              const lito::config::ToolchainSpec&              configured,
+                              const lito::system::ResolvedProcessEnvironment& environment)
+    -> ToolchainResult<ResolvedAndroidToolchain>;
+
 auto resolve_android_build_platform(const lito::system::HostInfo&   host,
                                     const lito::system::TargetInfo& compiler_default,
                                     const ResolvedAndroidTarget&    target)
@@ -733,6 +760,57 @@ auto resolve_android_toolchain(AndroidNdkDistribution                    distrib
             },
         .shared_runtime = rstd::move(shared_runtime),
     });
+}
+
+auto select_android_compilers(ResolvedAndroidToolchain                        selected,
+                              const lito::config::ToolchainSpec&              configured,
+                              const lito::system::ResolvedProcessEnvironment& environment)
+    -> ToolchainResult<ResolvedAndroidToolchain> {
+    if (! configured.cc_configured && ! configured.cxx_configured) return Ok(rstd::move(selected));
+    const auto resolve = [&](ref<rstd::path::Path> requested,
+                             ref<str>              description) -> ToolchainResult<PathBuf> {
+        auto located = environment.locate_executable(requested, description);
+        if (located.is_err())
+            return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
+        if (located->is_none())
+            return Err(ToolchainError::Message(rstd::format(
+                "cannot resolve {} '{}' from effective PATH", description, requested)));
+        return Ok(rstd::move(located).unwrap().unwrap());
+    };
+    if (configured.cc_configured)
+        selected.tools.cc = rstd_try(resolve(configured.cc.as_path(), "Android C compiler"_str));
+    if (configured.cxx_configured)
+        selected.tools.cxx =
+            rstd_try(resolve(configured.cxx.as_path(), "Android C++ compiler"_str));
+    auto command = Vec<String>::make();
+    rstd_try(toolchain::command::push_path(command, selected.distribution.paths().cxx.as_path()));
+    command.push("-print-resource-dir"_Str);
+    auto resource      = rstd_try(toolchain::command::tool_output(
+        rstd::move(command), "Android NDK Clang resource directory"_str, environment));
+    auto resource_path = PathBuf::from(resource.as_str());
+    auto canonical     = rstd_try(toolchain::command::resolve_path(
+        resource_path.as_path(), "Android NDK Clang resource directory"_str));
+    // External Clang still uses the selected NDK's Android builtins and unwind runtime.
+    selected.tools.runtime_resource_directory = Some(canonical.clone());
+    selected.tools.cc_configured              = configured.cc_configured;
+    selected.tools.cxx_configured             = configured.cxx_configured;
+    selected.cmake.compilers                  = Some(AndroidCmakeCompilerSelection {
+        .ndk                        = PathBuf::from(selected.distribution.root()),
+        .sysroot                    = selected.target.sysroot.clone(),
+        .target                     = selected.target.clang_target.clone(),
+        .minimum_api                = selected.target.minimum_api,
+        .runtime_resource_directory = canonical.clone(),
+    });
+    selected.cmake.identity                   = rstd::format(
+        "android-cmake-v3\nndk={}\nabi={}\nplatform={}\nstdlib={}\ncc={}\ncxx={}\nresource={}",
+        selected.distribution.identity(),
+        selected.cmake.abi.as_str(),
+        selected.cmake.platform.as_str(),
+        selected.cmake.standard_library.as_str(),
+        selected.tools.cc.as_path(),
+        selected.tools.cxx.as_path(),
+        canonical.as_path());
+    return Ok(rstd::move(selected));
 }
 
 auto resolve_android_build_platform(const lito::system::HostInfo&   host,
