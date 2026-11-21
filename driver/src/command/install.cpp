@@ -292,6 +292,9 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         resolved.session.project.selection, recipes, effective_target));
     for (const auto& target : requirements.targets) {
         request.build.exact_targets.push(target.clone());
+        auto& effective = resolved.session.project.selection.effective_targets;
+        if (! effective.iter().any([&](auto existing) { return *existing == target; }))
+            effective.push(target.clone());
     }
     auto profile_name              = request.build.profile->clone();
     auto cmake_find_install_prefix = request.destination.is_Prefix()

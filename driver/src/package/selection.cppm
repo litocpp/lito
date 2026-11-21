@@ -67,6 +67,7 @@ struct ResolvedPackageSelection {
     Vec<String>                host_tool_package_names;
     Vec<PackageTargetId>       selected_targets;
     Vec<PackageTargetId>       effective_targets;
+    Vec<PackageTargetId>       unavailable_targets;
     EffectiveLanguageStandards standards;
 };
 
@@ -131,24 +132,33 @@ auto selected_by_purpose(ProjectRootRole         role,
         return kind == PackageTargetKind::Binary;
     }
     return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
+           kind == PackageTargetKind::Cdylib ||
            kind == PackageTargetKind::Plugin || kind == PackageTargetKind::ProcMacro;
 }
 
 auto append_selected_targets(Vec<PackageTargetId>&   output,
+                             Vec<PackageTargetId>&   unavailable,
                              const ResolvedPackage&  package,
                              ProjectRootRole         role,
                              PackageSelectionPurpose purpose,
+                             const TargetInfo*       platform,
                              PackageRootSelection    mode = PackageRootSelection::Targets) -> bool {
     auto selected = false;
     for (const auto& target : package.manifest.targets) {
         if (lito::manifest::package_target_is_host_tool(target)) continue;
         const auto kind = lito::manifest::package_target_kind(target);
         if (! selected_by_purpose(role, kind, purpose)) continue;
-        output.push(PackageTargetId {
+        auto id = PackageTargetId {
             .package = package.manifest.name.clone(),
             .kind    = kind,
             .name    = String::make(lito::manifest::package_target_name(target)),
-        });
+        };
+        auto predicate = lito::manifest::package_target_predicate(target);
+        if (platform != nullptr && predicate.is_some() && ! (*predicate)->matches(*platform)) {
+            unavailable.push(rstd::move(id));
+            continue;
+        }
+        output.push(rstd::move(id));
         selected = true;
     }
     if (! package.manifest.compile_tests.is_empty() &&
@@ -243,8 +253,9 @@ auto resolve_package_selection_with_environment_impl(
     }
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();
     for (const auto& root : graph.roots) root_roles.insert(root.name.clone(), root.role);
-    auto selected_roots   = Vec<String>::make();
-    auto selected_targets = Vec<PackageTargetId>::make();
+    auto selected_roots      = Vec<String>::make();
+    auto selected_targets   = Vec<PackageTargetId>::make();
+    auto unavailable_targets = Vec<PackageTargetId>::make();
     if (selection.packages.is_empty()) {
         auto defaults = StringSet::make();
         if (purpose != PackageSelectionPurpose::All) {
@@ -275,9 +286,11 @@ auto resolve_package_selection_with_environment_impl(
             }
             if (selected_package != nullptr && supported &&
                 append_selected_targets(selected_targets,
+                                        unavailable_targets,
                                         *selected_package,
                                         root.role,
                                         purpose,
+                                        target,
                                         selection.root_selection)) {
                 selected_roots.push(name.clone());
             }
@@ -321,12 +334,20 @@ auto resolve_package_selection_with_environment_impl(
                     }
                 }
             }
+            const auto unavailable_start = unavailable_targets.len();
             if (selected_package == nullptr ||
                 ! append_selected_targets(selected_targets,
+                                          unavailable_targets,
                                           *selected_package,
                                           **role,
                                           purpose,
+                                          target,
                                           selection.root_selection)) {
+                if (unavailable_targets.len() != unavailable_start) {
+                    return Err(PackageSelectionError::Message(
+                        rstd::format("project package '{}' has no {} target for platform '{}'",
+                                     name.as_str(), purpose, target->triple.as_str())));
+                }
                 return Err(PackageSelectionError::Message(
                     rstd::format("project package '{}' has no {} target", name.as_str(), purpose)));
             }
@@ -335,6 +356,11 @@ auto resolve_package_selection_with_environment_impl(
         }
     }
     if (selected_roots.is_empty()) {
+        if (! unavailable_targets.is_empty()) {
+            return Err(PackageSelectionError::Message(
+                rstd::format("project has no {} target for platform '{}'",
+                             purpose, target->triple.as_str())));
+        }
         return Err(PackageSelectionError::Message(
             rstd::format("project has no selected {} package", purpose)));
     }
@@ -389,8 +415,12 @@ auto resolve_package_selection_with_environment_impl(
             }
             auto appended = Vec<PackageTargetId>::make();
             if (selected_package == nullptr ||
-                ! append_selected_targets(
-                    appended, *selected_package, ProjectRootRole::PrimaryPackage, purpose)) {
+                ! append_selected_targets(appended,
+                                          unavailable_targets,
+                                          *selected_package,
+                                          ProjectRootRole::PrimaryPackage,
+                                          purpose,
+                                          target)) {
                 return Err(PackageSelectionError::Message(
                     rstd::format("runtime package '{}' has no install target", name.as_str())));
             }
@@ -428,11 +458,13 @@ auto resolve_package_selection_with_environment_impl(
         .host_tool_package_names          = rstd::move(selected_packages->tools),
         .selected_targets                 = rstd::move(target_selected_targets),
         .effective_targets                = rstd::move(effective_targets),
+        .unavailable_targets              = rstd::move(unavailable_targets),
         .standards                        = rstd::move(standards).unwrap(),
     });
 }
 
-auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
+auto resolve_plugin_host_selection(ResolvedPackageSelection selection,
+                                   const TargetInfo& host_target)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     if (selection.host_package_names.is_empty()) {
         return Err(PackageSelectionError::Message("plugin host selection has no packages"_Str));
@@ -457,6 +489,7 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     }
     auto selected_targets  = Vec<PackageTargetId>::make();
     auto effective_targets = Vec<PackageTargetId>::make();
+    selection.unavailable_targets.clear();
     for (const auto& package : selection.graph.packages) {
         if (! host.contains_key(package.manifest.name.as_str())) continue;
         for (const auto& target : package.manifest.targets) {
@@ -479,6 +512,11 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
                 .kind    = kind,
                 .name    = String::make(lito::manifest::package_target_name(target)),
             };
+            auto predicate = lito::manifest::package_target_predicate(target);
+            if (predicate.is_some() && ! (*predicate)->matches(host_target)) {
+                selection.unavailable_targets.push(rstd::move(id));
+                continue;
+            }
             if (is_provider || is_plugin || is_processor || is_tool)
                 selected_targets.push(id.clone());
             effective_targets.push(rstd::move(id));
@@ -504,15 +542,16 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection)
     for (const auto& name : selection.artifact_processor_package_names) {
         if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
             return Err(PackageSelectionError::Message(
-                rstd::format("host selection is missing artifact processor target for package '{}'",
-                             name.as_str())));
+                rstd::format("package '{}' has no artifact processor target for host platform '{}'",
+                             name.as_str(), host_target.triple.as_str())));
         }
     }
     for (const auto& name : selection.host_tool_package_names) {
         if (! host.contains_key(name.as_str())) continue;
         if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
-            return Err(PackageSelectionError::Message(rstd::format(
-                "host selection is missing host-tool target for package '{}'", name.as_str())));
+            return Err(PackageSelectionError::Message(
+                rstd::format("package '{}' has no host-tool target for host platform '{}'",
+                             name.as_str(), host_target.triple.as_str())));
         }
     }
     for (auto& package : selection.graph.packages) package.host_view = true;
@@ -574,6 +613,27 @@ auto merge_host_build_selection(ResolvedPackageSelection& project,
                                 Option<ref<str>>          environment_difference,
                                 Option<ref<str>>          extension_difference)
     -> PackageSelectionResult<Vec<HostBuildPlacement>> {
+    if (! host.unavailable_targets.is_empty()) {
+        const auto filter_tools = [&](ResolvedPackageGraph& graph) {
+            const auto filter_dependencies = [&](Vec<ResolvedRequiredDependency>& dependencies) {
+                for (auto& dependency : dependencies) {
+                    if (! dependency.is_Cpp()) continue;
+                    auto& tools = dependency.as_Cpp().value.host_tools;
+                    tools.retain([&](const PackageTargetId& tool) {
+                        for (const auto& unavailable : host.unavailable_targets)
+                            if (unavailable == tool) return false;
+                        return true;
+                    });
+                }
+            };
+            for (auto& package : graph.packages) {
+                filter_dependencies(package.dependencies);
+                filter_dependencies(package.dev_dependencies);
+            }
+        };
+        filter_tools(project.graph);
+        filter_tools(host.graph);
+    }
     auto       placements = Vec<HostBuildPlacement>::make();
     const auto index_of   = [](const ResolvedPackageGraph& graph, ref<str> name) -> Option<usize> {
         for (usize index {}; index < graph.packages.len(); ++index)

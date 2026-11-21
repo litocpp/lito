@@ -141,6 +141,7 @@ struct Document {
     Option<PluginTarget>                                                            plugin;
     Option<ModuleTarget>                                                            pmacro;
     Option<Vec<BinaryTarget>>                                                       bin;
+    Option<Vec<CdylibTarget>>                                                       cdylib;
     Option<Vec<TestTarget>>                                                         test;
     Option<Vec<BenchmarkTarget>>                                                    bench;
     Option<Vec<ExampleTarget>>                                                      example;
@@ -179,6 +180,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
         auto plugin       = serde::OptionalField<PluginTarget>("plugin"_str);
         auto pmacro       = serde::OptionalField<ModuleTarget>("pmacro"_str);
         auto bin          = serde::OptionalField<Vec<BinaryTarget>>("bin"_str);
+        auto cdylib       = serde::OptionalField<Vec<CdylibTarget>>("cdylib"_str);
         auto test         = serde::OptionalField<Vec<TestTarget>>("test"_str);
         auto bench        = serde::OptionalField<Vec<BenchmarkTarget>>("bench"_str);
         auto example      = serde::OptionalField<Vec<ExampleTarget>>("example"_str);
@@ -212,6 +214,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
                                            plugin,
                                            pmacro,
                                            bin,
+                                           cdylib,
                                            test,
                                            bench,
                                            example,
@@ -234,6 +237,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
             .plugin                = plugin.take(),
             .pmacro                = pmacro.take(),
             .bin                   = bin.take(),
+            .cdylib                = cdylib.take(),
             .test                  = test.take(),
             .bench                 = bench.take(),
             .example               = example.take(),
@@ -259,6 +263,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::DocumentInput<Embedded>> {
             if (result.plugin.is_some()) return Err(d.unknown_field(plugin.names().canonical()));
             if (result.pmacro.is_some()) return Err(d.unknown_field(pmacro.names().canonical()));
             if (result.bin.is_some()) return Err(d.unknown_field(bin.names().canonical()));
+            if (result.cdylib.is_some()) return Err(d.unknown_field(cdylib.names().canonical()));
             if (result.test.is_some()) return Err(d.unknown_field(test.names().canonical()));
             if (result.bench.is_some()) return Err(d.unknown_field(bench.names().canonical()));
             if (result.example.is_some()) return Err(d.unknown_field(example.names().canonical()));

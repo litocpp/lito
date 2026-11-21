@@ -192,8 +192,11 @@ auto resolve_install_targets(const lito::manifest::PackageManifest& package,
     for (const auto& candidate : package.targets) {
         const auto kind = lito::manifest::package_target_kind(candidate);
         if (kind != lito::package::PackageTargetKind::Binary &&
+            kind != lito::package::PackageTargetKind::Cdylib &&
             ! lito::manifest::package_library_is_shared(candidate))
             continue;
+        auto predicate = lito::manifest::package_target_predicate(candidate);
+        if (predicate.is_some() && ! (*predicate)->matches(target)) continue;
         const auto product = kind == lito::package::PackageTargetKind::Binary
                                  ? lito::artifact::ProductKind::Executable
                                  : lito::artifact::ProductKind::SharedLibrary;
@@ -322,6 +325,13 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                 if (lito::manifest::package_target_kind(candidate) == generated.target.kind &&
                     lito::manifest::package_target_name(candidate) ==
                         generated.target.name.as_str()) {
+                    auto predicate = lito::manifest::package_target_predicate(candidate);
+                    if (predicate.is_some() && ! (*predicate)->matches(target)) {
+                        return Err(InstallError::Message(rstd::format(
+                            "generated_files target '{}' is unavailable for platform '{}'",
+                            lito::package::package_target_id_text(generated.target),
+                            target.triple.as_str())));
+                    }
                     found = true;
                     break;
                 }
@@ -358,6 +368,13 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                 if (lito::manifest::package_target_kind(candidate) == artifact.target.kind &&
                     lito::manifest::package_target_name(candidate) ==
                         artifact.target.name.as_str()) {
+                    auto predicate = lito::manifest::package_target_predicate(candidate);
+                    if (predicate.is_some() && ! (*predicate)->matches(target)) {
+                        return Err(InstallError::Message(rstd::format(
+                            "install artifact target '{}' is unavailable for platform '{}'",
+                            lito::package::package_target_id_text(artifact.target),
+                            target.triple.as_str())));
+                    }
                     found = true;
                     break;
                 }

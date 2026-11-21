@@ -63,7 +63,8 @@ lito build [OPTIONS]
 
 Additional options:
 
-- repeated `--target NAME` selects package targets;
+- repeated `--target NAME` selects package targets. Use a kind prefix, such as `bin:viewer`,
+  `lib:viewer`, or `cdylib:viewer-android`, to disambiguate names;
 - repeated `--example NAME` selects example targets instead of production targets;
 - `--examples` builds all examples in the selected packages;
 - `--build-dir DIRECTORY` overrides the profile output root.
@@ -78,6 +79,8 @@ lito build --target codegen --target viewer -j 8
 
 Without explicit package/target selection, Lito uses package defaults or workspace
 `default-members`. `build` uses the `debug` profile when `--profile` is omitted.
+Binary and cdylib targets may declare their own platform predicates. Default selection skips an
+unsupported target. Selecting such a target explicitly reports an error.
 
 Builds automatically write `compile_commands.json` in the effective build directory, such as
 `build/debug/` or `build/release/`. The database contains the selected dependency closure, including

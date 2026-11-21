@@ -72,7 +72,7 @@ The top-level recipe accepts only `artifacts`, `target_runtimes`, `external_asse
 
 ### Artifacts
 
-An artifact selects a binary or shared library owned by the recipe package:
+An artifact selects a binary, shared library, or cdylib owned by the recipe package:
 
 ```lua
 artifacts = {{
@@ -94,7 +94,7 @@ file paths while reading the recipe, before build requirements, runtime search p
 destination conflicts are processed. A directory entry must select a declared binary or shared
 library; static libraries are not installable artifacts.
 
-`kind` accepts `bin` or `lib`. Library artifacts must be shared libraries. Targets and
+`kind` accepts `bin`, `lib`, or `cdylib`. An artifact of kind `lib` must be a shared library. Targets and
 destinations cannot be repeated within the recipe. Artifact and generated-file selections determine
 which targets are built.
 

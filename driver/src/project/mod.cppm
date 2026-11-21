@@ -1071,6 +1071,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
+    metadata->unavailable_targets = rstd::move(project.unavailable_targets);
+    metadata->target_triple       = session.platform.effective_target.triple.clone();
     return Ok(ResolvedProjectMetadata {
         .platform                   = rstd::move(session.platform),
         .layout                     = rstd::move(layout).unwrap(),
@@ -1472,7 +1474,7 @@ auto resolve_build_project(const lito::package::PackageSelection&         select
                                     rstd::addressof(conditions),
                                     rstd::addressof(session->platform.effective_target)));
         auto host_selection = lito::package::resolve_plugin_host_selection(
-            rstd::move(host_session.project.selection));
+            rstd::move(host_session.project.selection), host_session.platform.effective_target);
         if (host_selection.is_err()) {
             return Err(rstd::into<ProjectError>(rstd::move(host_selection).unwrap_err()));
         }

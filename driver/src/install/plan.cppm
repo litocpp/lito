@@ -104,9 +104,9 @@ auto artifact_for(const CompletedBuildProduct&          product,
         }
         result = rstd::addressof(artifact);
     }
-    const auto expected_kind = target.kind == lito::package::PackageTargetKind::Library
-                                   ? cpp::ArtifactKind::SharedLibrary
-                                   : cpp::ArtifactKind::Executable;
+    const auto expected_kind = target.kind == lito::package::PackageTargetKind::Binary
+                                   ? cpp::ArtifactKind::Executable
+                                   : cpp::ArtifactKind::SharedLibrary;
     if (result == nullptr || (require_installable && result->kind != expected_kind)) {
         return Err(InstallMaterializeError::Message(
             rstd::format("build did not return the installable artifact for '{}'",

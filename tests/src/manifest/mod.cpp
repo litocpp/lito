@@ -2147,6 +2147,8 @@ sources = ["src/more.cppm"]
         case lito::package::PackageTargetKind::Binary: ++binaries; break;
         case lito::package::PackageTargetKind::Test: ++tests; break;
         case lito::package::PackageTargetKind::Benchmark: ++benchmarks; break;
+        case lito::package::PackageTargetKind::Cdylib:
+        case lito::package::PackageTargetKind::Example:
         case lito::package::PackageTargetKind::ProcMacro:
         case lito::package::PackageTargetKind::Attachment:
         case lito::package::PackageTargetKind::CompileTest: break;
@@ -2197,7 +2199,7 @@ name = "fixture-shared-library"
 version = "0.1.0"
 
 [lib]
-name = "fixture-shared-library"
+name = "shared-target"
 kind = "shared"
 artifact = "fixture_shared"
 module = "fixture.shared_library"
@@ -2208,12 +2210,29 @@ linker-options = ["-Wl,--version-script=fixture.map"]
     ASSERT_TRUE(shared.is_ok());
     ASSERT_EQ(shared->targets.len(), usize(1));
     ASSERT_TRUE(shared->targets[usize {}].is_Library());
+    EXPECT_EQ(lito::manifest::package_target_name(shared->targets[usize {}]), "shared-target"_str);
     EXPECT_TRUE(shared->targets[usize {}].as_Library().output.is_Shared());
     EXPECT_EQ(shared->targets[usize {}].as_Library().output.as_Shared().artifact.as_str(),
               "fixture_shared"_str);
     ASSERT_EQ(shared->targets[usize {}].as_Library().linker_options.len(), usize(1));
     EXPECT_EQ(shared->targets[usize {}].as_Library().linker_options[usize {}].as_str(),
               "-Wl,--version-script=fixture.map"_str);
+
+    auto default_shared_project = manifest("default-shared-artifact"_str, R"toml([package]
+name = "fixture-default-shared-artifact"
+version = "0.1.0"
+
+[lib]
+name = "renamed-library"
+module = "fixture.default_shared_artifact"
+kind = "shared"
+)toml"_str);
+    ASSERT_TRUE(default_shared_project.is_ok());
+    auto default_shared =
+        lito::manifest::load_package_manifest(default_shared_project->root.as_path());
+    ASSERT_TRUE(default_shared.is_ok());
+    EXPECT_EQ(lito::manifest::package_target_artifact_name(default_shared->targets[usize {}]),
+              "renamed-library"_str);
 
     constexpr ref<str> invalid[] = {
         R"toml([package]
@@ -2265,6 +2284,73 @@ name = "fixture-wasm-target"
         EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
         ++index;
     }
+}
+
+TEST_F(Manifest, PlatformTargetsAndLibraryDefaultsShareOneManifest) {
+    auto project = manifest("platform-targets"_str, R"toml([package]
+name = "fixture-platform-targets"
+version = "0.1.0"
+target = { family = "unix" }
+
+[lib]
+module = "fixture.platform_targets"
+
+[[bin]]
+name = "desktop"
+sources = ["src/desktop.cpp"]
+target = { os = ["linux", "macos"] }
+
+[[bin]]
+name = "inspect"
+sources = ["src/inspect.cpp"]
+target = { not-os = "android" }
+
+[[cdylib]]
+name = "mobile"
+artifact = "viewer_android"
+sources = ["src/mobile.cpp"]
+target = { os = "android" }
+link-stdlib = false
+linker-options = ["-Wl,--as-needed"]
+
+[[cdylib]]
+name = "probe"
+module = "fixture.probe"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto package = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(package.is_ok());
+    ASSERT_EQ(package->targets.len(), usize(5));
+    const auto& library = package->targets[usize {}];
+    const auto& desktop = package->targets[usize(1)];
+    const auto& inspect = package->targets[usize(2)];
+    const auto& mobile  = package->targets[usize(3)];
+    const auto& probe   = package->targets[usize(4)];
+    using namespace lito::manifest;
+    EXPECT_EQ(package_target_name(library), "fixture-platform-targets"_str);
+    EXPECT_EQ(package_target_artifact_name(library), "fixture-platform-targets"_str);
+    EXPECT_EQ(package_target_kind(mobile), lito::package::PackageTargetKind::Cdylib);
+    EXPECT_EQ(package_target_artifact_name(mobile), "viewer_android"_str);
+    EXPECT_EQ(package_target_artifact_name(probe), "probe"_str);
+    EXPECT_FALSE(package_target_links_stdlib(mobile));
+    auto linker_options = package_target_linker_options(mobile);
+    ASSERT_TRUE(linker_options.is_some());
+    ASSERT_EQ((*linker_options)->len(), usize(1));
+    EXPECT_EQ((**linker_options)[usize {}].as_str(), "-Wl,--as-needed"_str);
+    EXPECT_EQ(package_target_source(probe).discovery, SourceDiscoveryMode::Module);
+    EXPECT_TRUE(package_target_predicate(library).is_none());
+    EXPECT_TRUE(package_target_predicate(probe).is_none());
+
+    auto linux_target   = parse_target_info("x86_64-unknown-linux-gnu"_str).unwrap();
+    auto android_target = parse_target_info("aarch64-linux-android29"_str).unwrap();
+    ASSERT_TRUE(package_target_predicate(desktop).is_some());
+    ASSERT_TRUE(package_target_predicate(inspect).is_some());
+    ASSERT_TRUE(package_target_predicate(mobile).is_some());
+    EXPECT_TRUE(package_target_predicate(desktop).unwrap()->matches(linux_target));
+    EXPECT_FALSE(package_target_predicate(desktop).unwrap()->matches(android_target));
+    EXPECT_FALSE(package_target_predicate(inspect).unwrap()->matches(android_target));
+    EXPECT_TRUE(package_target_predicate(mobile).unwrap()->matches(android_target));
+    EXPECT_FALSE(package_target_predicate(mobile).unwrap()->matches(linux_target));
 }
 
 TEST_F(Manifest, PackageStandardDefaultsToCpp20AndAcceptsExplicitCpp) {

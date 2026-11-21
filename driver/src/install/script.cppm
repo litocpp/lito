@@ -109,14 +109,17 @@ auto recipe_target(luato::Table table, ref<str> owner, ref<str> context)
     -> luato::Result<lito::package::PackageTargetId> {
     rstd_try(known_fields(table, { "kind"_str, "name"_str }));
     auto kind = rstd_try(table.required<String>("kind"_str));
-    if (kind != "bin"_str && kind != "lib"_str) {
-        return Err(
-            luato::Error::binding(rstd::format("{} target.kind must be 'bin' or 'lib'", context)));
-    }
+    auto target_kind = lito::package::PackageTargetKind::Binary;
+    if (kind == "lib"_str)
+        target_kind = lito::package::PackageTargetKind::Library;
+    else if (kind == "cdylib"_str)
+        target_kind = lito::package::PackageTargetKind::Cdylib;
+    else if (kind != "bin"_str)
+        return Err(luato::Error::binding(
+            rstd::format("{} target.kind must be 'bin', 'lib', or 'cdylib'", context)));
     return Ok(lito::package::PackageTargetId {
         .package = owner.into(),
-        .kind    = kind == "lib"_str ? lito::package::PackageTargetKind::Library
-                                     : lito::package::PackageTargetKind::Binary,
+        .kind    = target_kind,
         .name    = rstd_try(table.required<String>("name"_str)),
     });
 }

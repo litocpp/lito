@@ -111,6 +111,7 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<
         const auto kind = lito::manifest::package_target_kind(target);
         if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Plugin ||
             kind == PackageTargetKind::ProcMacro || kind == PackageTargetKind::Binary ||
+            kind == PackageTargetKind::Cdylib ||
             kind == PackageTargetKind::Benchmark) {
             requires_version = true;
             break;

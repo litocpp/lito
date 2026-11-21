@@ -811,6 +811,7 @@ auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -
     case lito::package::PackageTargetKind::Library:
         return lito::manifest::package_library_is_shared(target) ? ArtifactKind::SharedLibrary
                                                                  : ArtifactKind::StaticLibrary;
+    case lito::package::PackageTargetKind::Cdylib: return ArtifactKind::SharedLibrary;
     case lito::package::PackageTargetKind::Plugin: return ArtifactKind::CompilerPlugin;
     case lito::package::PackageTargetKind::ProcMacro: return ArtifactKind::ProcMacroProvider;
     case lito::package::PackageTargetKind::Binary: return ArtifactKind::Executable;
@@ -1161,7 +1162,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& target : package.manifest.targets) {
             auto kind = lito::manifest::package_target_kind(target);
             if (kind == lito::package::PackageTargetKind::Library) has_library = true;
-            if (lito::manifest::package_library_is_shared(target)) has_link_action = true;
+            if (lito::manifest::package_library_is_shared(target) ||
+                kind == lito::package::PackageTargetKind::Cdylib)
+                has_link_action = true;
             if (kind == lito::package::PackageTargetKind::Binary ||
                 kind == lito::package::PackageTargetKind::Test ||
                 kind == lito::package::PackageTargetKind::Benchmark ||
@@ -1341,6 +1344,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .kind    = kind,
                 .name    = String::make(lito::manifest::package_target_name(manifest_target)),
             };
+            if (lito::manifest::package_target_predicate(manifest_target).is_some() &&
+                ! selected_target(available_targets, id)) {
+                continue;
+            }
             auto& source = lito::manifest::package_target_source(manifest_target);
             auto  source_groups =
                 rstd_try(resolve_source_groups(package_index, package, source, external_sources));

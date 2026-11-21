@@ -181,6 +181,7 @@ auto package_target_kind_text(lito::package::PackageTargetKind kind) -> ref<str>
 auto parse_package_target_kind(ref<str> value)
     -> BuildProductResult<lito::package::PackageTargetKind> {
     if (value == "lib"_str) return Ok(lito::package::PackageTargetKind::Library);
+    if (value == "cdylib"_str) return Ok(lito::package::PackageTargetKind::Cdylib);
     if (value == "plugin"_str) return Ok(lito::package::PackageTargetKind::Plugin);
     if (value == "proc-macro"_str) return Ok(lito::package::PackageTargetKind::ProcMacro);
     if (value == "bin"_str) return Ok(lito::package::PackageTargetKind::Binary);

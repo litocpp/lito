@@ -14,6 +14,7 @@ enum class PackageTargetKind
     Plugin,
     ProcMacro,
     Binary,
+    Cdylib,
     Test,
     Benchmark,
     Attachment,
@@ -27,6 +28,7 @@ auto package_target_kind_name(PackageTargetKind kind) noexcept -> ref<str> {
     case PackageTargetKind::Plugin: return "plugin"_str;
     case PackageTargetKind::ProcMacro: return "proc-macro"_str;
     case PackageTargetKind::Binary: return "bin"_str;
+    case PackageTargetKind::Cdylib: return "cdylib"_str;
     case PackageTargetKind::Test: return "test"_str;
     case PackageTargetKind::Benchmark: return "bench"_str;
     case PackageTargetKind::Attachment: return "attachment"_str;

@@ -82,7 +82,13 @@ class PackageTargetManifest {
               (ProcMacro, (String name; TargetSourceManifest source;)),
               (Binary,
                (String name; TargetSourceManifest source; bool link_stdlib; bool host_tool;
-                Vec<RuntimeResourceManifest>                                     resources;)),
+                Vec<RuntimeResourceManifest>                                     resources;
+                Option<TargetPredicate>                                          target;)),
+              (Cdylib,
+               (String name; String artifact; TargetSourceManifest source;
+                Vec<String>                                        linker_options;
+                bool                                               link_stdlib;
+                Option<TargetPredicate>                            target;)),
               (Test,
                (String name; TargetSourceManifest source; bool link_stdlib;
                 Vec<TargetAttachmentManifest>                  attachments;)),
@@ -100,6 +106,7 @@ auto package_target_kind(const PackageTargetManifest& target) noexcept
     if (target.is_Plugin()) return lito::package::PackageTargetKind::Plugin;
     if (target.is_ProcMacro()) return lito::package::PackageTargetKind::ProcMacro;
     if (target.is_Binary()) return lito::package::PackageTargetKind::Binary;
+    if (target.is_Cdylib()) return lito::package::PackageTargetKind::Cdylib;
     if (target.is_Test()) return lito::package::PackageTargetKind::Test;
     if (target.is_Example()) return lito::package::PackageTargetKind::Example;
     return lito::package::PackageTargetKind::Benchmark;
@@ -110,6 +117,7 @@ auto package_target_name(const PackageTargetManifest& target) noexcept -> ref<st
     if (target.is_Plugin()) return target.as_Plugin().name.as_str();
     if (target.is_ProcMacro()) return target.as_ProcMacro().name.as_str();
     if (target.is_Binary()) return target.as_Binary().name.as_str();
+    if (target.is_Cdylib()) return target.as_Cdylib().name.as_str();
     if (target.is_Test()) return target.as_Test().name.as_str();
     if (target.is_Example()) return target.as_Example().name.as_str();
     return target.as_Benchmark().name.as_str();
@@ -121,6 +129,7 @@ auto package_target_source(const PackageTargetManifest& target) noexcept
     if (target.is_Plugin()) return target.as_Plugin().source;
     if (target.is_ProcMacro()) return target.as_ProcMacro().source;
     if (target.is_Binary()) return target.as_Binary().source;
+    if (target.is_Cdylib()) return target.as_Cdylib().source;
     if (target.is_Test()) return target.as_Test().source;
     if (target.is_Example()) return target.as_Example().source;
     return target.as_Benchmark().source;
@@ -131,12 +140,14 @@ auto package_target_source(PackageTargetManifest& target) noexcept -> TargetSour
     if (target.is_Plugin()) return target.as_Plugin().source;
     if (target.is_ProcMacro()) return target.as_ProcMacro().source;
     if (target.is_Binary()) return target.as_Binary().source;
+    if (target.is_Cdylib()) return target.as_Cdylib().source;
     if (target.is_Test()) return target.as_Test().source;
     if (target.is_Example()) return target.as_Example().source;
     return target.as_Benchmark().source;
 }
 
 auto package_target_artifact_name(const PackageTargetManifest& target) noexcept -> ref<str> {
+    if (target.is_Cdylib()) return target.as_Cdylib().artifact.as_str();
     if (target.is_Library()) {
         const auto& output = target.as_Library().output;
         return output.is_Static() ? output.as_Static().artifact.as_str()
@@ -149,8 +160,24 @@ auto package_library_is_shared(const PackageTargetManifest& target) noexcept -> 
     return target.is_Library() && target.as_Library().output.is_Shared();
 }
 
+auto package_target_is_cdylib(const PackageTargetManifest& target) noexcept -> bool {
+    return target.is_Cdylib();
+}
+
+auto package_target_predicate(const PackageTargetManifest& target) noexcept
+    -> Option<ref<TargetPredicate>> {
+    const auto* predicate = target.is_Binary()   ? rstd::addressof(target.as_Binary().target)
+                            : target.is_Cdylib() ? rstd::addressof(target.as_Cdylib().target)
+                                                 : nullptr;
+    if (predicate == nullptr || predicate->is_none()) return None();
+    return Some(ref<TargetPredicate>::from_raw_parts(rstd::addressof(**predicate)));
+}
+
 auto package_target_linker_options(const PackageTargetManifest& target) noexcept
     -> Option<ref<Vec<String>>> {
+    if (target.is_Cdylib())
+        return Some(
+            ref<Vec<String>>::from_raw_parts(rstd::addressof(target.as_Cdylib().linker_options)));
     if (! target.is_Library()) return None();
     return Some(
         ref<Vec<String>>::from_raw_parts(rstd::addressof(target.as_Library().linker_options)));
@@ -158,6 +185,7 @@ auto package_target_linker_options(const PackageTargetManifest& target) noexcept
 
 auto package_target_links_stdlib(const PackageTargetManifest& target) noexcept -> bool {
     if (target.is_Binary()) return target.as_Binary().link_stdlib;
+    if (target.is_Cdylib()) return target.as_Cdylib().link_stdlib;
     if (target.is_Test()) return target.as_Test().link_stdlib;
     if (target.is_Example()) return target.as_Example().link_stdlib;
     if (target.is_Benchmark()) return target.as_Benchmark().link_stdlib;

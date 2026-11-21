@@ -6,6 +6,7 @@ export module lito.core:manifest.wire.target;
 import rstd;
 import rstd.serde;
 import :manifest.wire;
+import :manifest.wire.common;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -19,6 +20,7 @@ enum class TargetKind
     Module,
     Plugin,
     Binary,
+    Cdylib,
     Test,
     Example,
     Benchmark
@@ -34,7 +36,7 @@ struct TargetSource {
 };
 
 struct TargetFields : TargetSource {
-    String                        name;
+    Option<String>                name;
     Option<String>                kind;
     Option<String>                archive;
     Option<String>                artifact;
@@ -44,6 +46,7 @@ struct TargetFields : TargetSource {
     bool                          attribute_only {};
     Option<Vec<RuntimeResource>>  resources;
     Option<Vec<TargetAttachment>> attach;
+    Option<Predicate>             target;
 };
 
 template<TargetKind Kind>
@@ -53,6 +56,7 @@ using LibraryTarget   = Target<TargetKind::Library>;
 using ModuleTarget    = Target<TargetKind::Module>;
 using PluginTarget    = Target<TargetKind::Plugin>;
 using BinaryTarget    = Target<TargetKind::Binary>;
+using CdylibTarget    = Target<TargetKind::Cdylib>;
 using TestTarget      = Target<TargetKind::Test>;
 using ExampleTarget   = Target<TargetKind::Example>;
 using BenchmarkTarget = Target<TargetKind::Benchmark>;
@@ -93,45 +97,53 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
             auto attribute_only = serde::DefaultedField<bool>("attribute-only"_str, false);
             rstd_try(read(attribute_only));
             result.attribute_only = attribute_only.take();
+        } else if constexpr (Kind == TargetKind::Library) {
+            auto name           = serde::OptionalField<String>("name"_str);
+            auto kind           = serde::OptionalField<String>("kind"_str);
+            auto archive        = serde::OptionalField<String>("archive"_str);
+            auto artifact       = serde::OptionalField<String>("artifact"_str);
+            auto linker_options = serde::DefaultedField<Vec<String>>("linker-options"_str, {});
+            rstd_try(read(name, kind, archive, artifact, linker_options));
+            result.name           = name.take();
+            result.kind           = kind.take();
+            result.archive        = archive.take();
+            result.artifact       = artifact.take();
+            result.linker_options = linker_options.take();
         } else {
             auto name = serde::RequiredField<String>("name"_str);
-            if constexpr (Kind == TargetKind::Library) {
-                auto kind           = serde::OptionalField<String>("kind"_str);
-                auto archive        = serde::OptionalField<String>("archive"_str);
-                auto artifact       = serde::OptionalField<String>("artifact"_str);
+            auto link_stdlib = serde::DefaultedField<bool>("link-stdlib"_str, true);
+            if constexpr (Kind == TargetKind::Binary) {
+                auto target = serde::OptionalField<lito::manifest::wire::Predicate>("target"_str);
+                auto host_tool = serde::DefaultedField<bool>("host-tool"_str, false);
+                auto resources = serde::OptionalField<Vec<lito::manifest::wire::RuntimeResource>>(
+                    "resources"_str);
+                rstd_try(read(name, link_stdlib, target, host_tool, resources));
+                result.target    = target.take();
+                result.host_tool = host_tool.take();
+                result.resources = resources.take();
+            } else if constexpr (Kind == TargetKind::Cdylib) {
+                auto target   = serde::OptionalField<lito::manifest::wire::Predicate>("target"_str);
+                auto artifact = serde::OptionalField<String>("artifact"_str);
                 auto linker_options = serde::DefaultedField<Vec<String>>("linker-options"_str, {});
-                rstd_try(read(name, kind, archive, artifact, linker_options));
-                result.kind           = kind.take();
-                result.archive        = archive.take();
+                rstd_try(read(name, link_stdlib, target, artifact, linker_options));
+                result.target         = target.take();
                 result.artifact       = artifact.take();
                 result.linker_options = linker_options.take();
+            } else if constexpr (Kind == TargetKind::Example) {
+                auto resources = serde::OptionalField<Vec<lito::manifest::wire::RuntimeResource>>(
+                    "resources"_str);
+                rstd_try(read(name, link_stdlib, resources));
+                result.resources = resources.take();
+            } else if constexpr (Kind == TargetKind::Test || Kind == TargetKind::Benchmark) {
+                auto attach =
+                    serde::OptionalField<Vec<lito::manifest::wire::TargetAttachment>>("attach"_str);
+                rstd_try(read(name, link_stdlib, attach));
+                result.attach = attach.take();
             } else {
-                auto link_stdlib = serde::DefaultedField<bool>("link-stdlib"_str, true);
-                if constexpr (Kind == TargetKind::Binary) {
-                    auto host_tool = serde::DefaultedField<bool>("host-tool"_str, false);
-                    auto resources =
-                        serde::OptionalField<Vec<lito::manifest::wire::RuntimeResource>>(
-                            "resources"_str);
-                    rstd_try(read(name, link_stdlib, host_tool, resources));
-                    result.host_tool = host_tool.take();
-                    result.resources = resources.take();
-                } else if constexpr (Kind == TargetKind::Example) {
-                    auto resources =
-                        serde::OptionalField<Vec<lito::manifest::wire::RuntimeResource>>(
-                            "resources"_str);
-                    rstd_try(read(name, link_stdlib, resources));
-                    result.resources = resources.take();
-                } else if constexpr (Kind == TargetKind::Test || Kind == TargetKind::Benchmark) {
-                    auto attach = serde::OptionalField<Vec<lito::manifest::wire::TargetAttachment>>(
-                        "attach"_str);
-                    rstd_try(read(name, link_stdlib, attach));
-                    result.attach = attach.take();
-                } else {
-                    rstd_try(read(name, link_stdlib));
-                }
-                result.link_stdlib = link_stdlib.take();
+                rstd_try(read(name, link_stdlib));
             }
-            result.name = rstd_try(name.take(deserializer));
+            result.link_stdlib = link_stdlib.take();
+            result.name        = Some(rstd_try(name.take(deserializer)));
         }
         result.module        = module.take();
         result.path          = path.take();

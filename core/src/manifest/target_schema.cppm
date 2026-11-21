@@ -525,11 +525,15 @@ auto parse_source_groups(Option<wire::SourceGroups> value)
     return Ok(rstd::move(result));
 }
 
-auto parse_library_target(Option<wire::LibraryTarget> value, PackageLanguage language)
+auto parse_library_target(Option<wire::LibraryTarget> value,
+                          ref<str>                    package_name,
+                          PackageLanguage             language)
     -> ManifestSchemaResult<Option<PackageTargetManifest>> {
     if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
     auto wire = rstd::move(value).unwrap();
-    auto name = rstd::move(wire.name);
+    auto name = rstd::move(wire.name).unwrap_or_else([&] {
+        return String::make(package_name);
+    });
     if (! package_name_is_valid(name.as_str())) {
         return Err(
             ManifestSchemaError::Domain("manifest.lib.name must be a valid target name"_Str));
@@ -538,23 +542,23 @@ auto parse_library_target(Option<wire::LibraryTarget> value, PackageLanguage lan
     auto archive        = rstd::move(wire.archive);
     auto artifact       = rstd::move(wire.artifact);
     auto linker_options = rstd::move(wire.linker_options);
-    if (archive.is_some() == artifact.is_some()) {
-        return Err(ManifestSchemaError::Domain(
-            "manifest.lib must contain exactly one of 'archive' or 'artifact'"_Str));
-    }
     auto output = LibraryOutput::Static(String::make());
     if (kind.is_none() || kind->as_str() == "static"_str) {
-        if (archive.is_none()) {
-            return Err(
-                ManifestSchemaError::Domain("manifest.lib static output requires 'archive'"_Str));
+        if (artifact.is_some()) {
+            return Err(ManifestSchemaError::Domain(
+                "manifest.lib static output cannot set 'artifact'"_Str));
         }
-        output = LibraryOutput::Static(rstd::move(archive).unwrap());
+        output = LibraryOutput::Static(rstd::move(archive).unwrap_or_else([&] {
+            return name.clone();
+        }));
     } else if (kind->as_str() == "shared"_str) {
-        if (artifact.is_none()) {
+        if (archive.is_some()) {
             return Err(
-                ManifestSchemaError::Domain("manifest.lib shared output requires 'artifact'"_Str));
+                ManifestSchemaError::Domain("manifest.lib shared output cannot set 'archive'"_Str));
         }
-        output = LibraryOutput::Shared(rstd::move(artifact).unwrap());
+        output = LibraryOutput::Shared(rstd::move(artifact).unwrap_or_else([&] {
+            return name.clone();
+        }));
     } else {
         return Err(
             ManifestSchemaError::Domain("manifest.lib.kind must be 'static' or 'shared'"_Str));
@@ -678,7 +682,7 @@ auto parse_runnable_targets(Option<Vec<T>>                   value,
         const auto context = rstd::format("manifest.{}[{}]", key, index);
         auto       path    = DataPath().with_field(key).with_index(index);
         auto&      wire    = entries[index];
-        auto       name    = rstd::move(wire.name);
+        auto       name    = rstd::move(wire.name).unwrap();
         if (! package_name_is_valid(name.as_str())) {
             return Err(ManifestSchemaError::Domain(
                 rstd::format("{}.name must be a valid target name", context.as_str())));
@@ -689,14 +693,36 @@ auto parse_runnable_targets(Option<Vec<T>>                   value,
                     rstd::format("manifest.{} repeats target name '{}'", key, name.as_str())));
             }
         }
+        const auto cdylib = kind == lito::package::PackageTargetKind::Cdylib;
+        const auto module_required =
+            cdylib && language == PackageLanguage::Cpp && wire.sources.is_none();
         auto source = rstd_try(
             parse_target_source(rstd::move(static_cast<lito::manifest::wire::TargetSource&>(wire)),
                                 context.as_str(),
                                 path,
-                                false,
+                                module_required,
                                 language));
+        auto predicate = Option<TargetPredicate> {};
+        if (wire.target.is_some()) {
+            predicate = Some(rstd_try(parse_target_predicate(
+                rstd::move(wire.target), rstd::format("{}.target", context.as_str()).as_str())));
+        }
         auto link_stdlib = wire.link_stdlib;
-        if (kind == lito::package::PackageTargetKind::Binary) {
+        if (cdylib) {
+            auto artifact = rstd::move(wire.artifact).unwrap_or_else([&] {
+                return name.clone();
+            });
+            if (! valid_artifact_name(artifact.as_str())) {
+                return Err(ManifestSchemaError::Domain(rstd::format(
+                    "{}.artifact must be a safe artifact basename", context.as_str())));
+            }
+            result.push(PackageTargetManifest::Cdylib(rstd::move(name),
+                                                      rstd::move(artifact),
+                                                      rstd::move(source),
+                                                      rstd::move(wire.linker_options),
+                                                      link_stdlib,
+                                                      rstd::move(predicate)));
+        } else if (kind == lito::package::PackageTargetKind::Binary) {
             auto host_tool = wire.host_tool;
             auto resources = rstd_try(parse_runtime_resources(rstd::move(wire.resources), path));
             if (host_tool && ! resources.is_empty()) {
@@ -707,7 +733,8 @@ auto parse_runnable_targets(Option<Vec<T>>                   value,
                                                       rstd::move(source),
                                                       link_stdlib,
                                                       host_tool,
-                                                      rstd::move(resources)));
+                                                      rstd::move(resources),
+                                                      rstd::move(predicate)));
         } else if (kind == lito::package::PackageTargetKind::Example) {
             auto resources = rstd_try(parse_runtime_resources(rstd::move(wire.resources), path));
             result.push(PackageTargetManifest::Example(

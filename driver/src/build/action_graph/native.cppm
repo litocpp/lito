@@ -176,15 +176,28 @@ auto extend_native_action_graph(NativeActionGraph&            result,
     }
     for (auto target : action_targets) {
         if (target >= package.targets.len() || result.target_artifacts[target].is_some()) continue;
-        auto kind = target_output_kind(package.targets[target].artifact_kind);
+        const auto& spec = package.targets[target];
+        auto        kind = target_output_kind(spec.artifact_kind);
         if (kind.is_none()) continue;
+        auto path = target_output_path(layout, spec);
+        for (const auto& existing_id : result.target_artifacts) {
+            if (existing_id.is_none()) continue;
+            const auto& existing = (*result.graph.artifacts())[existing_id->value];
+            if (existing.path.is_some() && existing.path->as_path() == path.as_path()) {
+                return Err(BuildError::Message(rstd::format(
+                    "targets '{}' and '{}' write the same output '{}'",
+                    existing.identity.as_str(),
+                    lito::package::package_target_id_text(spec.id),
+                    path.as_path())));
+            }
+        }
         result.target_artifacts[target] =
             Some(rstd_try(result.graph.add_artifact(BuildArtifactSpec {
                 .identity = rstd::format(
-                    "target:{}", lito::package::package_target_id_text(package.targets[target].id)),
+                    "target:{}", lito::package::package_target_id_text(spec.id)),
                 .domain = domain.clone(),
                 .kind   = *kind,
-                .path   = Some(target_output_path(layout, package.targets[target])),
+                .path   = Some(rstd::move(path)),
             })));
     }
     for (auto unit = first_new_unit; unit < units.len(); ++unit) {

@@ -4,9 +4,10 @@
 
 A package has at most one library target.
 
-- `name` is required and is a package-style target name.
-- Static output uses `archive`; shared output uses `kind = "shared"` and `artifact`. Output basenames
-  are safe names; `.` and `..` are rejected.
+- `name` is a package-style target name and defaults to the package name.
+- Static output uses `archive`, which defaults to the library target name. `kind = "shared"`
+  specifies a shared library with an optional `artifact` basename that has the same default. Output
+  basenames are safe names; `.` and `..` are rejected.
 - `linker-options` is an optional array for a shared library's own link action. It is rejected for a
   static library and never becomes consumer usage.
 - `module` is optional for an explicit source list and required for module convention discovery.
@@ -227,14 +228,60 @@ expansion depth is limited to 64 and generated output to 16 MiB per compilation.
 
 ## `[[bin]]`
 
+A package can declare multiple binaries.
+
 - `name` is required.
 - `module`, `sources`, `source-groups`, and `when` have the same roles as for a library.
+- `target` is an optional [platform predicate](workspace-and-package.md#package) that further
+  restricts the package's supported platforms.
 - `link-stdlib` is a boolean and defaults to `true`.
 - `resources` is a non-empty array of generated runtime resources when present.
 
 With discovery, the runnable entry is `src/main.cppm`. When the entry imports the runnable target's
 declared root module, that root module uses `src/mod.cppm`. A convention-discovered `main.cppm`
 must itself declare a named module. If the target declares `module`, the provided name must match.
+
+## `[[cdylib]]`
+
+A package can declare multiple shared libraries intended for loading by an external host. Binaries
+and cdylibs can use the package's `[lib]`, which remains the library exposed to package dependencies.
+
+- `name` is a required target name. `artifact` is an optional output basename and defaults to `name`.
+- `module`, `sources`, `source-groups`, and `when` specify the target's sources.
+- `target` is an optional platform predicate with the same behavior as for `[[bin]]`.
+- `linker-options` applies to this target's link action. `link-stdlib` defaults to `true`.
+
+Module discovery uses `src/lib.cppm` by default and requires `module`. Use `path` to choose a
+distinct entry when the package declares more than one library or cdylib entry.
+
+The target's sources define its exported ABI, including exported C entry points where the host
+requires them. The native toolchain determines the supported output format and filename suffix.
+An Android target with `artifact = "viewer_native"` produces `libviewer_native.so`.
+
+```toml
+[package]
+name = "viewer"
+version = "0.1.0"
+
+[lib]
+module = "viewer"
+
+[[bin]]
+name = "viewer"
+target = { os = ["linux", "windows", "macos"] }
+sources = ["src/desktop.cpp"]
+
+[[cdylib]]
+name = "viewer-android"
+target = { os = "android" }
+artifact = "viewer_native"
+sources = ["src/android.cpp"]
+```
+
+The current target must satisfy both the package predicate and any target predicate. By default,
+`lito build` selects supported production targets. An explicit selector for a disabled target is an
+error. Use `--target bin:NAME` or `--target cdylib:NAME` to select a particular entry. `when` selects
+additional source groups within an enabled target.
 
 ## `[[example]]`
 

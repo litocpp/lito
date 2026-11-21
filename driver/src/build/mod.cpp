@@ -347,7 +347,8 @@ auto build_link_target(const BuildRequest&                 request,
                                                  platform.effective_target),
         .primary =
             BuiltArtifactFile {
-                .role         = target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
+                .role         = target_spec.id.kind == lito::package::PackageTargetKind::Library &&
+                                        target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
                                     ? ArtifactFileRole::LinkInput
                                     : ArtifactFileRole::Runtime,
                 .path         = rstd::move(executable_path),

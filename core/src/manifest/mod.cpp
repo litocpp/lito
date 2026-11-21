@@ -315,7 +315,8 @@ auto assemble_manifest_document(PathBuf                               root,
     auto standard = rstd_try(parse_package_standard(rstd::move(package_value.standard)));
     auto target_language =
         standard.is_some() ? package_standard_language(*standard) : PackageLanguage::Cpp;
-    auto library = rstd_try(parse_library_target(rstd::move(input.lib), target_language));
+    auto library =
+        rstd_try(parse_library_target(rstd::move(input.lib), name.as_str(), target_language));
     auto plugin =
         rstd_try(parse_plugin_target(rstd::move(input.plugin), name.as_str(), target_language));
     auto proc_macro =
@@ -323,6 +324,10 @@ auto assemble_manifest_document(PathBuf                               root,
     auto bins    = rstd_try(parse_runnable_targets(rstd::move(input.bin),
                                                    lito::package::PackageTargetKind::Binary,
                                                    "bin"_str,
+                                                   target_language));
+    auto cdylibs = rstd_try(parse_runnable_targets(rstd::move(input.cdylib),
+                                                   lito::package::PackageTargetKind::Cdylib,
+                                                   "cdylib"_str,
                                                    target_language));
     auto tests   = rstd_try(parse_runnable_targets(rstd::move(input.test),
                                                    lito::package::PackageTargetKind::Test,
@@ -377,14 +382,16 @@ auto assemble_manifest_document(PathBuf                               root,
     const auto has_plugin     = plugin.is_some();
     const auto has_proc_macro = proc_macro.is_some();
     const auto has_bins       = ! bins.is_empty();
+    const auto has_cdylibs    = ! cdylibs.is_empty();
     auto       targets        = Vec<PackageTargetManifest>::with_capacity(
         (has_library ? usize(1) : usize {}) + (has_plugin ? usize(1) : usize {}) +
-        (has_proc_macro ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len() +
-        examples.len());
+        (has_proc_macro ? usize(1) : usize {}) + bins.len() + cdylibs.len() + tests.len() +
+        benches.len() + examples.len());
     if (library.is_some()) targets.push(rstd::move(library).unwrap());
     if (plugin.is_some()) targets.push(rstd::move(plugin).unwrap());
     if (proc_macro.is_some()) targets.push(rstd::move(proc_macro).unwrap());
     for (auto& target : bins) targets.push(rstd::move(target));
+    for (auto& target : cdylibs) targets.push(rstd::move(target));
     for (auto& target : tests) targets.push(rstd::move(target));
     for (auto& target : benches) targets.push(rstd::move(target));
     for (auto& target : examples) targets.push(rstd::move(target));
@@ -420,7 +427,8 @@ auto assemble_manifest_document(PathBuf                               root,
     if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none() &&
         build_script.is_none() && script.is_none()) {
         return Err(ManifestSchemaError::Domain(
-            "manifest must contain at least one of 'lib', 'plugin', 'pmacro', 'bin', 'test', "
+            "manifest must contain at least one of 'lib', 'plugin', 'pmacro', 'bin', 'cdylib', "
+            "'test', "
             "'bench', 'example' or 'compile-test', provide build.lua/install.lua, or declare a script package"_Str));
     }
     auto has_benches = false;
@@ -433,7 +441,7 @@ auto assemble_manifest_document(PathBuf                               root,
     const auto version_optional = install_script->is_none() &&
                                   (has_compile_contract || build_script.is_none()) &&
                                   ! has_library && ! has_plugin && ! has_proc_macro && ! has_bins &&
-                                  ! has_benches && script.is_none();
+                                  ! has_cdylibs && ! has_benches && script.is_none();
     auto       version = parse_package_version(rstd::move(package_value.version), version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     auto license = parse_package_license(rstd::move(package_value.license));

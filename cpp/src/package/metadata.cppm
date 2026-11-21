@@ -218,6 +218,8 @@ struct PackageMetadata {
     String                              default_profile;
     Vec<lito::package::PackageTargetId> default_targets;
     Vec<lito::package::PackageTargetId> available_targets;
+    Vec<lito::package::PackageTargetId> unavailable_targets;
+    String                              target_triple;
     Vec<SelectedPackageMetadata>        selected_packages;
     Vec<ExternalSourceRoot>             external_sources;
     Vec<PackageBuildToolRequirement>    build_tools;

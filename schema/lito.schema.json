@@ -378,7 +378,6 @@
     },
     "libraryTarget": {
       "type": "object",
-      "required": ["name"],
       "properties": {
         "name": {
           "$ref": "#/definitions/packageName"
@@ -392,6 +391,9 @@
         },
         "artifact": {
           "$ref": "#/definitions/artifactName"
+        },
+        "linker-options": {
+          "$ref": "#/definitions/stringArray"
         },
         "module": {
           "$ref": "#/definitions/moduleName"
@@ -415,14 +417,14 @@
         {
           "oneOf": [
             {
-              "required": ["archive"],
               "not": { "required": ["artifact"] },
               "properties": {
-                "kind": { "enum": ["static"] }
+                "kind": { "enum": ["static"] },
+                "linker-options": { "maxItems": 0 }
               }
             },
             {
-              "required": ["kind", "artifact"],
+              "required": ["kind"],
               "not": { "required": ["archive"] },
               "properties": {
                 "kind": { "enum": ["shared"] }
@@ -540,6 +542,48 @@
       },
       "additionalProperties": false
     },
+    "cdylibTarget": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/packageName"
+        },
+        "artifact": {
+          "$ref": "#/definitions/artifactName"
+        },
+        "target": {
+          "$ref": "#/definitions/targetPredicate"
+        },
+        "module": {
+          "$ref": "#/definitions/moduleName"
+        },
+        "path": { "$ref": "#/definitions/relativePath" },
+        "source-root": { "$ref": "#/definitions/relativePath" },
+        "sources": {
+          "$ref": "#/definitions/nonEmptyPathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
+        },
+        "linker-options": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "link-stdlib": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/targetSources"
+        }
+      ],
+      "additionalProperties": false
+    },
     "binaryTarget": {
       "type": "object",
       "required": [
@@ -548,6 +592,13 @@
       "properties": {
         "name": {
           "$ref": "#/definitions/packageName"
+        },
+        "target": {
+          "$ref": "#/definitions/targetPredicate"
+        },
+        "host-tool": {
+          "type": "boolean",
+          "default": false
         },
         "module": {
           "$ref": "#/definitions/moduleName"
@@ -2363,6 +2414,13 @@
             "$ref": "#/definitions/binaryTarget"
           }
         },
+        "cdylib": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/cdylibTarget"
+          }
+        },
         "test": {
           "type": "array",
           "minItems": 1,
@@ -2448,6 +2506,7 @@
                 },
                 "lib": { "$ref": "#/definitions/cTargetLayout" },
                 "bin": { "items": { "$ref": "#/definitions/cTargetLayout" } },
+                "cdylib": { "items": { "$ref": "#/definitions/cTargetLayout" } },
                 "test": { "items": { "$ref": "#/definitions/cTargetLayout" } },
                 "bench": { "items": { "$ref": "#/definitions/cTargetLayout" } },
                 "example": { "items": { "$ref": "#/definitions/cTargetLayout" } }
@@ -2471,6 +2530,7 @@
                       { "required": ["plugin"] },
                       { "required": ["pmacro"] },
                       { "required": ["bin"] },
+                      { "required": ["cdylib"] },
                       { "required": ["bench"] }
                     ]
                   }
