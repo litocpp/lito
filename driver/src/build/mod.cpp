@@ -2090,8 +2090,10 @@ auto build_and_publish(const BuildRequest&                       request,
               };
     auto stage_timing = BuildStageTimingReport {};
     auto publication  = stage_timing.measure(BuildStage::ProductBegin, [&] {
-        return begin_build_product_publication(
-            request.selection.root.as_path(), request.build_directory.as_path(), profile.as_str());
+        return begin_build_product_publication(request.selection.root.as_path(),
+                                               request.build_directory.as_path(),
+                                               profile.as_str(),
+                                               request.configuration.target);
     });
     if (publication.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(publication).unwrap_err()));

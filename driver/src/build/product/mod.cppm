@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import lito.core;
 import lito.cpp;
+import lito.toolchain;
 import :build.product.error;
 import :build.request;
 import :build.artifact;
@@ -54,15 +55,17 @@ struct BuildProductPublication {
     PathBuf state;
     PathBuf lock;
     String  generation;
+    Option<PathBuf> latest_state;
 };
 
 auto resolve_build_base_directory(ref<rstd::path::Path> project_root,
                                   ref<rstd::path::Path> requested,
                                   ref<str>              profile) -> PathBuf;
 
-auto begin_build_product_publication(ref<rstd::path::Path> project_root,
-                                     ref<rstd::path::Path> requested,
-                                     ref<str>              profile)
+auto begin_build_product_publication(ref<rstd::path::Path>                   project_root,
+                                     ref<rstd::path::Path>                   requested,
+                                     ref<str>                                profile,
+                                     const lito::config::BuildTargetRequest& target = {})
     -> BuildProductResult<BuildProductPublication>;
 
 auto finalize_completed_build_product(CompletedBuildProduct product)
@@ -72,9 +75,11 @@ auto complete_build_product_publication(const BuildProductPublication& publicati
                                         const CompletedBuildProduct&   product)
     -> BuildProductResult<empty>;
 
-auto load_completed_build_product(ref<rstd::path::Path> project_root,
-                                  ref<rstd::path::Path> requested,
-                                  ref<str> profile) -> BuildProductResult<CompletedBuildProduct>;
+auto load_completed_build_product(ref<rstd::path::Path>                   project_root,
+                                  ref<rstd::path::Path>                   requested,
+                                  ref<str>                                profile,
+                                  const lito::config::BuildTargetRequest& target = {})
+    -> BuildProductResult<CompletedBuildProduct>;
 
 auto validate_completed_build_product(const CompletedBuildProduct& product,
                                       const BuildRequest&          request,
@@ -924,6 +929,19 @@ auto product_layout(ref<rstd::path::Path> base) -> BuildProductLayout {
     };
 }
 
+auto android_product_state(const BuildProductLayout&                 layout,
+                           const lito::config::AndroidTargetRequest& target)
+    -> BuildProductResult<PathBuf> {
+    if (android_abi_clang_prefix(target.abi.as_str()).is_none()) {
+        return Err(BuildProductError::Message(
+            rstd::format("unsupported Android ABI '{}'", target.abi.as_str())));
+    }
+    auto metadata = layout.state.as_path().parent().unwrap();
+    auto name     = android_target_output_key(target);
+    name.push_str(".json"_str);
+    return Ok(join(join(metadata, "build-products"_str).as_path(), name.as_str()));
+}
+
 auto acquire_product_lock(ref<rstd::path::Path> path, rstd::fs::FileLockMode mode, bool create)
     -> BuildProductResult<rstd::fs::FileLock> {
     auto options = rstd::fs::OpenOptions::make().read(true).write(true);
@@ -978,7 +996,8 @@ auto state_generation(const Json& value, ref<str> expected_state) -> BuildProduc
     return product_required_string(value, "generation"_str, "build product state"_str);
 }
 
-auto write_product_state(ref<rstd::path::Path> path, Json value) -> BuildProductResult<empty> {
+auto write_product_state(ref<rstd::path::Path> path, const Json& value)
+    -> BuildProductResult<empty> {
     auto text = rstd::json::to_string(
         value, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     text.push_ascii('\n');
@@ -1222,9 +1241,10 @@ auto resolve_build_base_directory(ref<rstd::path::Path> project_root,
     return PathBuf::from(BuildDirectory::resolve(project_root, requested, profile).path());
 }
 
-auto begin_build_product_publication(ref<rstd::path::Path> project_root,
-                                     ref<rstd::path::Path> requested,
-                                     ref<str>              profile)
+auto begin_build_product_publication(ref<rstd::path::Path>                   project_root,
+                                     ref<rstd::path::Path>                   requested,
+                                     ref<str>                                profile,
+                                     const lito::config::BuildTargetRequest& target)
     -> BuildProductResult<BuildProductPublication> {
     auto base    = resolve_build_base_directory(project_root, requested, profile);
     auto layout  = product_layout(base.as_path());
@@ -1244,18 +1264,33 @@ auto begin_build_product_publication(ref<rstd::path::Path> project_root,
     layout    = product_layout(canonical_base->as_path());
     auto lock = rstd_try(
         acquire_product_lock(layout.lock.as_path(), rstd::fs::FileLockMode::Exclusive, true));
+    auto latest_state = Option<PathBuf> {};
+    if (target.is_Android()) {
+        auto state  = rstd_try(android_product_state(layout, target.as_Android().target));
+        auto parent = state.as_path().parent().unwrap();
+        auto made   = rstd::fs::create_dir_all(parent);
+        if (made.is_err()) {
+            return Err(BuildProductError::Io("create Android build product directory"_Str,
+                                             PathBuf::from(parent),
+                                             rstd::move(made).unwrap_err()));
+        }
+        latest_state = Some(rstd::exchange(layout.state, rstd::move(state)));
+    }
     auto time       = rstd::time::SystemTime::now().as_unix_time();
     auto generation = rstd::format("{}-{}-{}", rstd::process::id(), time.seconds, time.nanoseconds);
     auto state      = JsonMap::make();
     state.insert("schema"_Str, Json::Number(rstd::json::Number::from_u64(BUILD_PRODUCT_SCHEMA)));
     state.insert("state"_Str, product_string("building"_str));
     state.insert("generation"_Str, product_string(generation.as_str()));
-    rstd_try(write_product_state(layout.state.as_path(), Json::Object(rstd::move(state))));
+    auto document = Json::Object(rstd::move(state));
+    rstd_try(write_product_state(layout.state.as_path(), document));
+    if (latest_state.is_some()) rstd_try(write_product_state(latest_state->as_path(), document));
     return Ok(BuildProductPublication {
         .base_directory = rstd::move(layout.base),
         .state          = rstd::move(layout.state),
         .lock           = rstd::move(layout.lock),
         .generation     = rstd::move(generation),
+        .latest_state   = rstd::move(latest_state),
     });
 }
 
@@ -1361,12 +1396,24 @@ auto complete_build_product_publication(const BuildProductPublication& publicati
     state.insert("state"_Str, product_string("complete"_str));
     state.insert("generation"_Str, product_string(generation.as_str()));
     state.insert("product"_Str, rstd_try(product_json(product)));
-    return write_product_state(publication.state.as_path(), Json::Object(rstd::move(state)));
+    auto document = Json::Object(rstd::move(state));
+    rstd_try(write_product_state(publication.state.as_path(), document));
+    if (publication.latest_state.is_some()) {
+        auto latest = rstd_try(read_product_state(publication.latest_state->as_path()));
+        auto latest_generation =
+            rstd_try(product_required_string(latest, "generation"_str, "build product state"_str));
+        if (latest_generation == generation.as_str()) {
+            rstd_try(write_product_state(publication.latest_state->as_path(), document));
+        }
+    }
+    return Ok(empty {});
 }
 
-auto load_completed_build_product(ref<rstd::path::Path> project_root,
-                                  ref<rstd::path::Path> requested,
-                                  ref<str> profile) -> BuildProductResult<CompletedBuildProduct> {
+auto load_completed_build_product(ref<rstd::path::Path>                   project_root,
+                                  ref<rstd::path::Path>                   requested,
+                                  ref<str>                                profile,
+                                  const lito::config::BuildTargetRequest& target)
+    -> BuildProductResult<CompletedBuildProduct> {
     auto base           = resolve_build_base_directory(project_root, requested, profile);
     auto canonical_base = rstd::fs::canonicalize(base.as_path());
     if (canonical_base.is_err()) {
@@ -1378,6 +1425,19 @@ auto load_completed_build_product(ref<rstd::path::Path> project_root,
     auto layout = product_layout(base.as_path());
     auto lock   = rstd_try(
         acquire_product_lock(layout.lock.as_path(), rstd::fs::FileLockMode::Shared, false));
+    if (target.is_Android()) {
+        auto path     = rstd_try(android_product_state(layout, target.as_Android().target));
+        auto metadata = rstd::fs::symlink_metadata(path.as_path());
+        if (metadata.is_ok()) {
+            layout.state = rstd::move(path);
+        } else {
+            auto error = rstd::move(metadata).unwrap_err();
+            if (error.kind() != rstd::io::ErrorKind { rstd::io::ErrorKind::NotFound }) {
+                return Err(BuildProductError::Io(
+                    "inspect Android build product"_Str, rstd::move(path), rstd::move(error)));
+            }
+        }
+    }
     auto state = rstd_try(read_product_state(layout.state.as_path()));
     auto state_text =
         rstd_try(product_required_string(state, "state"_str, "build product state"_str));

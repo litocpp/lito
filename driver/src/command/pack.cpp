@@ -90,8 +90,8 @@ auto pack_artifact(const CompletedBuildProduct& product, const PackageTargetId& 
 auto reuse_pack_product(const BuildRequest& request, ref<rstd::path::Path> project_root)
     -> CommandResult<CompletedBuildProduct> {
     const auto profile = request.profile->as_str();
-    auto       loaded =
-        load_completed_build_product(project_root, request.build_directory.as_path(), profile);
+    auto       loaded  = load_completed_build_product(
+        project_root, request.build_directory.as_path(), profile, request.configuration.target);
     if (loaded.is_err()) {
         return Err(CommandError::Build(BuildError::Product(rstd::move(loaded).unwrap_err())));
     }
@@ -146,6 +146,69 @@ auto prepare_pack(const PackRequest&                request,
         .dependencies = rstd::move(dependencies),
         .build        = Some(rstd::move(build)),
     });
+}
+
+auto finish_pack_product(const BuildRequest&               request,
+                         PackPreparation&                  prepared,
+                         const ResolvedProcessEnvironment& environment)
+    -> CommandResult<CompletedBuildProduct> {
+    if (prepared.product.is_some()) return Ok(rstd::move(prepared.product).unwrap());
+    auto built = rstd_try(build_and_publish_resolved_project(
+        request, environment, rstd::move(prepared.build).unwrap()));
+    return Ok(rstd::move(built.product));
+}
+
+auto prepare_pack_variants(PackRequest&                      request,
+                           PackPreparation&                  prepared,
+                           const PackRecipe&                 recipe,
+                           const ResolvedProcessEnvironment& environment)
+    -> CommandResult<Vec<CompletedBuildProduct>> {
+    auto products = Vec<CompletedBuildProduct>::make();
+    if (recipe.android_abis.is_empty()) {
+        products.push(rstd_try(finish_pack_product(request.build, prepared, environment)));
+        return Ok(rstd::move(products));
+    }
+    auto& target = request.build.configuration.target;
+    if (! target.is_Android()) {
+        return Err(CommandError::Message(
+            rstd::format("pack recipe '{}' requires an Android build.target", recipe.name)));
+    }
+    auto& request_abi = target.as_Android().target.abi;
+    auto  seed        = request_abi.clone();
+    if (! recipe.android_abis.iter().any([&](auto abi) {
+            return *abi == seed;
+        })) {
+        return Err(CommandError::Message(rstd::format(
+            "pack recipe '{}' android_abis must include the configured Android ABI '{}'",
+            recipe.name,
+            seed)));
+    }
+    for (const auto& abi : recipe.android_abis) {
+        request_abi = abi.clone();
+        if (abi == seed) {
+            products.push(rstd_try(finish_pack_product(request.build, prepared, environment)));
+            continue;
+        }
+        if (request.no_build) {
+            products.push(rstd_try(
+                reuse_pack_product(request.build, request.build.selection.root.as_path())));
+            continue;
+        }
+        auto project =
+            lito::workspace::resolve_project_entry(request.build.selection.root.as_path());
+        if (project.is_err()) {
+            return Err(CommandError::Message(
+                rstd::format("cannot resolve pack project for Android ABI '{}': {}",
+                             abi,
+                             rstd::move(project).unwrap_err())));
+        }
+        auto resolved = rstd_try(resolve_build_for_recipe(
+            request.build, rstd::move(project).unwrap().catalog, environment));
+        auto built    = rstd_try(
+            build_and_publish_resolved_project(request.build, environment, rstd::move(resolved)));
+        products.push(rstd::move(built.product));
+    }
+    return Ok(rstd::move(products));
 }
 
 auto append_pack_arguments(rstd::process::Command&      command,
@@ -206,12 +269,8 @@ auto execute_pack_tool(const PackRecipe&                 recipe,
     return Ok(empty {});
 }
 
-auto execute_pack_callback(PackScriptSession&           session,
-                           const CompletedBuildProduct& product,
-                           ref<rstd::path::Path>        package_root,
-                           ref<rstd::path::Path>        work_dir,
-                           ref<rstd::path::Path>        output) -> CommandResult<empty> {
-    const auto& recipe    = session.recipe();
+auto pack_callback_target(const PackRecipe& recipe, const CompletedBuildProduct& product)
+    -> CommandResult<PackCallbackTarget> {
     auto        artifacts = Vec<PackCallbackArtifact>::with_capacity(recipe.inputs.len());
     for (const auto& target : recipe.inputs) {
         auto artifact = rstd_try(pack_artifact(product, target));
@@ -222,10 +281,7 @@ auto execute_pack_callback(PackScriptSession&           session,
             .path     = artifact->primary.path.clone(),
         });
     }
-    return session.execute(PackCallbackContext {
-        .package_root    = PathBuf::from(package_root),
-        .work_dir        = PathBuf::from(work_dir),
-        .output          = PathBuf::from(output),
+    return Ok(PackCallbackTarget {
         .target          = product.target.clone(),
         .android_abi     = product.android_abi.clone(),
         .android_min_api = product.android_minimum_api,
@@ -233,11 +289,28 @@ auto execute_pack_callback(PackScriptSession&           session,
     });
 }
 
+auto execute_pack_callback(PackScriptSession&                session,
+                           const Vec<CompletedBuildProduct>& products,
+                           ref<rstd::path::Path>             package_root,
+                           ref<rstd::path::Path>             work_dir,
+                           ref<rstd::path::Path>             output) -> CommandResult<empty> {
+    auto targets = Vec<PackCallbackTarget>::with_capacity(products.len());
+    for (const auto& product : products) {
+        targets.push(rstd_try(pack_callback_target(session.recipe(), product)));
+    }
+    return session.execute(PackCallbackContext {
+        .package_root = PathBuf::from(package_root),
+        .work_dir     = PathBuf::from(work_dir),
+        .output       = PathBuf::from(output),
+        .targets      = rstd::move(targets),
+    });
+}
+
 auto execute_pack(PackScriptSession&                session,
                   const Option<PathBuf>&            tool,
                   ref<rstd::path::Path>             package_root,
                   const ResolvedProcessEnvironment& environment,
-                  const CompletedBuildProduct&      product,
+                  const Vec<CompletedBuildProduct>& products,
                   PathBuf                           output) -> CommandResult<PathBuf> {
     const auto& recipe = session.recipe();
     auto        parent = output.as_path().parent();
@@ -249,11 +322,15 @@ auto execute_pack(PackScriptSession&                session,
     auto directory = PackStagingDirectory(rstd_try(reserve_pack_directory(*parent)));
     auto staged    = PathBuf::from(directory.path()).join(recipe.output.as_path());
     if (tool.is_some()) {
-        rstd_try(execute_pack_tool(
-            recipe, tool->as_path(), package_root, environment, product, staged.as_path()));
+        rstd_try(execute_pack_tool(recipe,
+                                   tool->as_path(),
+                                   package_root,
+                                   environment,
+                                   products[usize {}],
+                                   staged.as_path()));
     } else {
         rstd_try(execute_pack_callback(
-            session, product, package_root, directory.path(), staged.as_path()));
+            session, products, package_root, directory.path(), staged.as_path()));
     }
     auto metadata = rstd::fs::symlink_metadata(staged.as_path());
     if (metadata.is_err()) {
@@ -317,20 +394,18 @@ auto pack(PackRequest request) -> CommandResult<PathBuf> {
         tool = Some(rstd_try(pack_tool(recipe, package_root.as_path(), environment)));
     }
     for (const auto& target : recipe.inputs) request.build.exact_targets.push(target.clone());
-    if (prepared.build.is_some()) {
-        auto built       = rstd_try(build_and_publish_resolved_project(
-            request.build, environment, rstd::move(prepared.build).unwrap()));
-        prepared.product = Some(rstd::move(built.product));
-    }
-    auto product = rstd::move(prepared.product).unwrap();
-    auto output  = request.output.is_some()
-                       ? rstd::move(request.output).unwrap()
-                       : product.build_directory.join(PathBuf::from("pack"_str).as_path())
-                             .join(PathBuf::from(package_name.as_str()).as_path())
-                             .join(PathBuf::from(recipe.name.as_str()).as_path())
-                             .join(recipe.output.as_path());
+    auto        products = rstd_try(prepare_pack_variants(request, prepared, recipe, environment));
+    const auto& first    = products[usize {}];
+    const auto& output_base =
+        recipe.android_abis.is_empty() ? first.build_directory : first.base_directory;
+    auto output = request.output.is_some()
+                      ? rstd::move(request.output).unwrap()
+                      : output_base.join(PathBuf::from("pack"_str).as_path())
+                            .join(PathBuf::from(package_name.as_str()).as_path())
+                            .join(PathBuf::from(recipe.name.as_str()).as_path())
+                            .join(recipe.output.as_path());
     return execute_pack(
-        session, tool, package_root.as_path(), environment, product, rstd::move(output));
+        session, tool, package_root.as_path(), environment, products, rstd::move(output));
 }
 
 } // namespace lito

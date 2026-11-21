@@ -29,6 +29,7 @@ struct PackRecipe {
     Vec<PackArgument>                   arguments;
     PathBuf                             output;
     Vec<lito::package::PackageTargetId> inputs;
+    Vec<String>                         android_abis;
     bool                                lua_callback {};
 };
 
@@ -37,14 +38,18 @@ struct PackCallbackArtifact {
     PathBuf path;
 };
 
-struct PackCallbackContext {
-    PathBuf                   package_root;
-    PathBuf                   work_dir;
-    PathBuf                   output;
+struct PackCallbackTarget {
     String                    target;
     String                    android_abi;
     u32                       android_min_api {};
     Vec<PackCallbackArtifact> artifacts;
+};
+
+struct PackCallbackContext {
+    PathBuf                 package_root;
+    PathBuf                 work_dir;
+    PathBuf                 output;
+    Vec<PackCallbackTarget> targets;
 };
 
 class PackScriptSession {

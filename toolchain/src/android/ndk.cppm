@@ -545,7 +545,12 @@ auto host_tag(const lito::system::HostInfo& host) -> AndroidNdkResult<String> {
                                               lito::system::architecture_name(host.architecture))));
 }
 
-auto official_clang_prefix(ref<str> abi) -> Option<ref<str>> {
+} // namespace lito
+
+export namespace lito
+{
+
+auto android_abi_clang_prefix(ref<str> abi) -> Option<ref<str>> {
     if (abi == "armeabi-v7a"_str) return Some("armv7a-linux-androideabi"_str);
     if (abi == "arm64-v8a"_str) return Some("aarch64-linux-android"_str);
     if (abi == "x86"_str) return Some("i686-linux-android"_str);
@@ -553,10 +558,9 @@ auto official_clang_prefix(ref<str> abi) -> Option<ref<str>> {
     return None();
 }
 
-} // namespace lito
-
-export namespace lito
-{
+auto android_target_output_key(const lito::config::AndroidTargetRequest& target) -> String {
+    return rstd::format("android-{}-api{}", target.abi.as_str(), target.minimum_api);
+}
 
 auto parse_android_ndk_revision(ref<str> value) -> AndroidNdkResult<AndroidNdkRevision> {
     auto first = value.split_once("."_str);
@@ -667,7 +671,7 @@ auto open_android_ndk(ref<rstd::path::Path> root, const lito::system::HostInfo& 
 auto resolve_android_target(const AndroidNdkDistribution&             distribution,
                             const lito::config::AndroidTargetRequest& request)
     -> AndroidNdkResult<ResolvedAndroidTarget> {
-    auto prefix = official_clang_prefix(request.abi.as_str());
+    auto prefix = android_abi_clang_prefix(request.abi.as_str());
     if (prefix.is_none()) {
         return Err(AndroidNdkError::Message(rstd::format(
             "Android ABI '{}' is not supported; expected armeabi-v7a, arm64-v8a, x86, or x86_64",
@@ -706,7 +710,7 @@ auto resolve_android_target(const AndroidNdkDistribution&             distributi
         .library_triple = metadata->triple.clone(),
         .target_info    = rstd::move(target_info).unwrap(),
         .sysroot        = distribution.paths().sysroot.clone(),
-        .output_key = rstd::format("android-{}-api{}", request.abi.as_str(), request.minimum_api),
+        .output_key     = android_target_output_key(request),
     });
 }
 

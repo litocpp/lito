@@ -7,6 +7,7 @@ import rstd;
 import luato;
 import lito.core;
 import lito.system;
+import lito.toolchain;
 import :command.error;
 import :package.module_catalog;
 import :pack.script;
@@ -20,6 +21,7 @@ namespace
 
 using lito::PackArgument;
 using lito::PackCallbackContext;
+using lito::PackCallbackTarget;
 using lito::PackRecipe;
 using lito::manifest::package_name_is_valid;
 using lito::package::PackageTargetId;
@@ -131,6 +133,35 @@ auto recipe_value(luato::TableHandle& table, ref<str> field) -> luato::Result<lu
     return table.get_in_call(luato::IntoLua<ref<str>>::into_lua(field));
 }
 
+auto parse_pack_android_abis(luato::TableHandle& table) -> luato::Result<Vec<String>> {
+    auto abis   = rstd_try(recipe_value(table, "android_abis"_str));
+    auto result = Vec<String>::make();
+    if (abis.is_Nil()) return Ok(rstd::move(result));
+    if (! abis.is_Table()) {
+        return Err(luato::Error::binding("pack recipe android_abis must be an array"_Str));
+    }
+    auto values = rstd_try(abis.as_Table().value.to_value());
+    if (! values.is_Array() || values.as_Array().value->len() == usize {}) {
+        return Err(luato::Error::binding("pack recipe android_abis must be a non-empty array"_Str));
+    }
+    for (const auto& value : values.as_Array().value->values()) {
+        if (! value.is_String()) {
+            return Err(luato::Error::binding("pack recipe Android ABI must be a string"_Str));
+        }
+        const auto& abi = value.as_String().value;
+        if (lito::android_abi_clang_prefix(abi.as_str()).is_none()) {
+            return Err(luato::Error::binding(rstd::format("unsupported Android ABI '{}'", abi)));
+        }
+        if (result.iter().any([&](auto item) {
+                return *item == abi;
+            })) {
+            return Err(luato::Error::binding(rstd::format("duplicate Android ABI '{}'", abi)));
+        }
+        result.push(abi.clone());
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_pack_recipe(luato::TableHandle table, ref<str> package_name)
     -> luato::Result<DeclaredPackRecipe> {
     auto callback = rstd_try(recipe_value(table, "run"_str));
@@ -146,7 +177,7 @@ auto parse_pack_recipe(luato::TableHandle table, ref<str> package_name)
     for (const auto& key : keys) {
         auto text = rstd_try(key.as_utf8());
         if (text != "name"_str && text != "output"_str && text != "inputs"_str &&
-            text != "run"_str) {
+            text != "run"_str && text != "android_abis"_str) {
             return Err(
                 luato::Error::binding(rstd::format("unknown Lua pack recipe field '{}'", text)));
         }
@@ -155,6 +186,7 @@ auto parse_pack_recipe(luato::TableHandle table, ref<str> package_name)
     auto output = rstd_try(recipe_value(table, "output"_str));
     auto recipe = rstd_try(pack_name_and_output(String::make(rstd_try(name.as_utf8())),
                                                 String::make(rstd_try(output.as_utf8()))));
+    recipe.android_abis = rstd_try(parse_pack_android_abis(table));
     auto inputs = rstd_try(recipe_value(table, "inputs"_str));
     if (! inputs.is_Table()) {
         return Err(luato::Error::binding("pack recipe inputs must be an array"_Str));
@@ -194,6 +226,22 @@ auto path_text(ref<rstd::path::Path> path) -> luato::Result<String> {
         return Err(luato::Error::binding(rstd::format("path '{}' is not valid UTF-8", path)));
     }
     return Ok(String::make(*text));
+}
+
+auto set_pack_target(luato::Table& table, const PackCallbackTarget& target)
+    -> luato::Result<empty> {
+    auto artifacts = luato::Table::make();
+    for (const auto& artifact : target.artifacts) {
+        rstd_try(
+            artifacts.set(artifact.selector.clone(), rstd_try(path_text(artifact.path.as_path()))));
+    }
+    rstd_try(table.set("artifacts"_Str, rstd::move(artifacts)));
+    rstd_try(table.set("target"_Str, target.target.clone()));
+    if (! target.android_abi.is_empty()) {
+        rstd_try(table.set("android_abi"_Str, target.android_abi.clone()));
+        rstd_try(table.set("android_min_api"_Str, i64(target.android_min_api.to_primitive())));
+    }
+    return Ok(empty {});
 }
 
 } // namespace
@@ -524,20 +572,20 @@ auto PackScriptSession::execute(const PackCallbackContext& context) -> CommandRe
         return Err(CommandError::Message("pack recipe has no Lua callback"_Str));
     }
     auto arguments = [&]() -> luato::Result<luato::TableHandle> {
-        auto artifacts = luato::Table::make();
-        for (const auto& artifact : context.artifacts) {
-            rstd_try(artifacts.set(artifact.selector.clone(),
-                                   rstd_try(path_text(artifact.path.as_path()))));
-        }
         auto data = luato::Table::make();
-        rstd_try(data.set("artifacts"_Str, rstd::move(artifacts)));
         rstd_try(data.set("package_root"_Str, rstd_try(path_text(context.package_root.as_path()))));
         rstd_try(data.set("work_dir"_Str, rstd_try(path_text(context.work_dir.as_path()))));
         rstd_try(data.set("output"_Str, rstd_try(path_text(context.output.as_path()))));
-        rstd_try(data.set("target"_Str, context.target.clone()));
-        if (! context.android_abi.is_empty()) {
-            rstd_try(data.set("android_abi"_Str, context.android_abi.clone()));
-            rstd_try(data.set("android_min_api"_Str, i64(context.android_min_api.to_primitive())));
+        if (selected.recipe.android_abis.is_empty()) {
+            rstd_try(set_pack_target(data, context.targets[usize {}]));
+        } else {
+            auto targets = Vec<luato::Value>::with_capacity(context.targets.len());
+            for (const auto& target : context.targets) {
+                auto variant = luato::Table::make();
+                rstd_try(set_pack_target(variant, target));
+                targets.push(luato::Value::Table(rstd::move(variant)));
+            }
+            rstd_try(data.set("variants"_Str, luato::Array::from(rstd::move(targets))));
         }
         auto lua = rstd_try(impl_->state.from_snapshot(luato::Value::Table(rstd::move(data))));
         return Ok(rstd::move(lua.as_Table().value));
