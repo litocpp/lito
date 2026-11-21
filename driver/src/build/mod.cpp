@@ -2065,7 +2065,10 @@ auto build_prepared_project(const BuildRequest&               request,
     return summary;
 }
 
-auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
+namespace {
+auto build_and_publish(const BuildRequest& request,
+                       Option<lito::workspace::WorkspaceCatalog> catalog)
+    -> BuildResult<BuildSummary> {
     auto total_started = rstd::time::Instant::now();
     if (request.selection.root.is_empty()) {
         return Err(BuildError::Message("build project root is required"_Str));
@@ -2094,7 +2097,7 @@ auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
         return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
     }
     auto summary = build_with_environment_impl(
-        request, *environment, None(), None(), rstd::move(stage_timing));
+        request, *environment, rstd::move(catalog), None(), rstd::move(stage_timing));
     if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
     emit(request,
          BuildEventKind::ProductPublish,
@@ -2108,6 +2111,18 @@ auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
     }
     summary->stage_timing.record(BuildStage::Total, total_started.elapsed());
     return Ok(rstd::move(summary).unwrap());
+}
+} // namespace
+
+auto build_and_publish_resolved_project(BuildRequest request,
+                                        lito::workspace::ResolvedProjectEntry project)
+    -> BuildResult<BuildSummary> {
+    request.selection.root = rstd::move(project.root);
+    return build_and_publish(request, Some(rstd::move(project.catalog)));
+}
+
+auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
+    return build_and_publish(request, None());
 }
 
 } // namespace lito

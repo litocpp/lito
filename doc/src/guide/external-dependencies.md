@@ -69,7 +69,8 @@ targets = [
 ]
 ```
 
-`lito pack` and `lito publish` preserve CMake dependency declarations without running CMake.
+Registry source packaging with `lito pack` or `lito publish` preserves CMake dependency
+declarations without running CMake.
 Registry/Action checks decide whether those dependencies can be used in the check environment.
 External source declarations and Cargo dependencies remain disallowed in Registry archives.
 

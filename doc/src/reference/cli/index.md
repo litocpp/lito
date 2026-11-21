@@ -19,8 +19,8 @@ package version.
 `-c/--config KEY=VALUE` overrides one config value for the invocation and may be repeated.
 
 `--use-env-flags` appends ambient `CFLAGS`, `CXXFLAGS`, and `LDFLAGS` to the C, C++, and link option
-domains. It is valid only for `build`, `run`, `install`, `test`, `bench`, `doc`, `scan`, `fetch`, and `tree`; the variables
-are otherwise ignored.
+domains. It is valid for `build`, `run`, `install`, `test`, `bench`, `doc`, `scan`, `fetch`, `tree`,
+and `pack --recipe` when building. The variables are otherwise ignored.
 
 Toolchain values are configuration keys rather than dedicated CLI options. Override one invocation
 with `-c toolchain.cxx=/opt/llvm/bin/clang++` or persist the value in a config file.
@@ -33,7 +33,7 @@ persisted local config directly.
 - `init [DIRECTORY] [--name NAME]` creates a binary package in a new or empty directory. The
   package name defaults to the directory name.
 - `add PACKAGE[@REQUIREMENT] [--registry NAME]` adds a Registry dependency to `lito.toml`.
-- [`build`, `run --example`, and `install`](build-and-install.md)
+- [`build`, `run --example`, `install`, and `pack --recipe`](build-and-install.md)
 - [`test` and `bench`](test-and-bench.md)
 - [`doc`, `scan`, and `format`](doc-scan-and-format.md)
 - [`update`, `lock`, and `config`](update-lock-and-config.md)

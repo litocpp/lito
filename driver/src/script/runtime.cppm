@@ -42,6 +42,26 @@ auto register_script_utilities(luato::ModuleSpec& module) -> void {
     module.function("version_matches"_Str, &script_version_matches);
 }
 
+auto environment_value(String name) -> luato::Result<Option<String>> {
+    if (name.is_empty()) {
+        return Err(luato::Error::binding("environment variable name must not be empty"_Str));
+    }
+    for (auto byte : name.as_str().as_bytes()) {
+        if (byte == u8('=') || byte == u8 {}) {
+            return Err(luato::Error::binding(rstd::format(
+                "environment variable name '{}' contains an invalid character", name)));
+        }
+    }
+    auto value = rstd::env::var_os(name.as_str());
+    if (value.is_none()) return Ok(None());
+    auto text = rstd::move(value).unwrap().into_string();
+    if (text.is_err()) {
+        return Err(luato::Error::binding(
+            rstd::format("environment variable '{}' is not valid UTF-8", name)));
+    }
+    return Ok(Some(rstd::move(text).unwrap()));
+}
+
 auto loaded_script_identities(const luato::State& state) -> Vec<String> {
     return rstd::iter::from_slice(state.loaded_modules())
         .map([](auto module) {

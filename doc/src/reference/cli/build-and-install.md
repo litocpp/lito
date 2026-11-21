@@ -1,4 +1,4 @@
-# `build`, `run`, and `install`
+# `build`, `run`, `install`, and `pack`
 
 ## Shared package/profile selection
 
@@ -137,3 +137,55 @@ lito install --profile release --prefix package-root --force
 ```
 
 See [Install and runtime resources](../../guide/install-and-runtime-resources.md).
+
+## `lito pack --recipe`
+
+```sh
+lito pack -p viewer --recipe apk --output dist/viewer.apk
+```
+
+Select one local package with `-p` and one recipe from its package-root `pack.lua` with `--recipe`.
+The command uses the existing build target configuration and builds the targets referenced by the
+recipe. It defaults to the `release` profile. `--profile` and `--build-dir` select a different build.
+Use `--no-build` with the matching profile, target configuration, and build directory to package an
+existing completed build. The original `lito pack` syntax for Registry source archives is available
+without `--recipe`.
+
+The default output is `pack/PACKAGE/RECIPE/FILENAME` inside the effective build directory.
+`--output FILE` overrides it. Relative output paths are resolved from the command's working
+directory. The tool writes a temporary file and Lito publishes it at the destination after a
+successful exit.
+
+### `pack.lua`
+
+The script may declare multiple named recipes. A recipe specifies a host executable, its arguments,
+and an output filename. `tool` accepts an executable name on the host `PATH`, an absolute path, or
+a package-relative path with a directory component. The tool runs from the package directory with
+the resolved host environment.
+
+```lua
+lito.pack {
+    name = "apk",
+    tool = "python3",
+    output = "viewer.apk",
+    args = {
+        "android/package.py",
+        "--library", { artifact = "cdylib:viewer-android" },
+        "--abi", { android_abi = true },
+        "--min-api", { android_min_api = true },
+        "--output", { output = true },
+    },
+}
+```
+
+Each argument is a string or one of the following references.
+
+- `{ artifact = "bin:NAME" }` or `{ artifact = "cdylib:NAME" }` passes the actual artifact path and
+  selects that package-owned target for the build. Each recipe needs at least one artifact input.
+- `{ android_abi = true }` and `{ android_min_api = true }` pass the ABI and native minimum API from
+  the Android build configuration. These references require an Android build.
+- `{ output = true }` passes the temporary output path and must appear exactly once. The tool must
+  create a regular file at that path.
+
+`lito.env(NAME)` returns a UTF-8 environment value or `nil` when the variable is unset.
+The tool and its arguments are passed directly as a process invocation.

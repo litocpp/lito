@@ -10,6 +10,7 @@ target_sources(
           src/command/format.cpp
           src/command/fetch.cpp
           src/command/install.cpp
+          src/command/pack.cpp
           src/command/lock.cpp
           src/command/scan.cpp
           src/command/tree.cpp
@@ -17,6 +18,7 @@ target_sources(
           src/config/mod.cpp
           src/dependency/external_source.cpp
           src/install/store.cpp
+          src/pack/script.cpp
           src/package/builtin.cpp
           src/sdk/mod.cpp)
 target_sources(
@@ -67,6 +69,7 @@ target_sources(
          src/command/format_execution.cppm
          src/command/fetch.cppm
          src/command/install.cppm
+         src/command/pack.cppm
          src/command/lock.cppm
          src/command/reporting.cppm
          src/command/progress.cppm
@@ -141,6 +144,7 @@ target_sources(
          src/build/generated/declaration.cppm
          src/build/generated/execution.cppm
          src/build/script/declaration.cppm
+         src/pack/script.cppm
          src/script/runtime.cppm
          src/script/build_request.cppm
          src/script/build.cppm

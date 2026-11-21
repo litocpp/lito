@@ -1159,6 +1159,9 @@ extern "C++" int main() {
     auto       install_source     = Option<lito::ResolvedInstallSource> {};
     const auto reuse_install =
         invocation.command.is_Install() && invocation.command.as_Install().options.no_build;
+    const auto reuse_pack =
+        invocation.command.is_PackRecipe() && invocation.command.as_PackRecipe().options.no_build;
+    const auto reuse_build = reuse_install || reuse_pack;
     if (invocation.command.is_Install()) {
         const auto& options = invocation.command.as_Install().options;
         if (options.source.is_some()) {
@@ -1266,7 +1269,7 @@ extern "C++" int main() {
     auto config_root = install_source.is_some() ? install_source->project.root.as_path()
                                                 : invocation.working_directory.as_path();
     auto active_sdk  = Option<lito::ActiveSdkLease> {};
-    if (! reuse_install) {
+    if (! reuse_build) {
         auto active_sdk_result = lito::acquire_active_llvm_sdk();
         if (active_sdk_result.is_err()) {
             auto error = rstd::move(active_sdk_result).unwrap_err();
@@ -1283,7 +1286,7 @@ extern "C++" int main() {
             .mode              = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
                                                       : lito::config::ConfigLoadMode::Enabled,
             .overrides         = rstd::move(invocation.config_overrides),
-            .environment_flags = invocation.use_env_flags && ! reuse_install
+            .environment_flags = invocation.use_env_flags && ! reuse_build
                                      ? lito::config::EnvironmentFlagPolicy::Append
                                      : lito::config::EnvironmentFlagPolicy::Ignore,
             .defaults          = rstd::move(defaults),
@@ -1297,6 +1300,7 @@ extern "C++" int main() {
     auto       active_android = Option<lito::AndroidNdkLease> {};
     const auto build_command  = invocation.command.is_Build() || invocation.command.is_Run() ||
                                 (invocation.command.is_Install() && ! reuse_install) ||
+                                (invocation.command.is_PackRecipe() && ! reuse_pack) ||
                                 invocation.command.is_Test() || invocation.command.is_Bench() ||
                                 invocation.command.is_Doc() || invocation.command.is_Scan() ||
                                 invocation.command.is_Fetch() || invocation.command.is_Tree();
@@ -1324,6 +1328,66 @@ extern "C++" int main() {
     }
     if (registry_bootstrap.is_some()) {
         registry_bootstrap->set_embedded_packages(lito_embedded_packages());
+    }
+
+    if (invocation.command.is_PackRecipe()) {
+        auto options = rstd::move(invocation.command).as_PackRecipe().options;
+        apply_source_options(project.sources,
+                             project.cargo.offline,
+                             project.root.as_path(),
+                             options.offline || options.no_build,
+                             options.frozen || options.no_build,
+                             rstd::move(options.source_bundles));
+        if (options.output.is_some() && options.output->as_path().is_relative()) {
+            auto directory = rstd::fs::canonicalize(invocation.working_directory.as_path());
+            if (directory.is_err()) {
+                rstd::io::eprintln("lito: cannot resolve pack output directory '{}': {}",
+                                   invocation.working_directory.as_path(), directory.unwrap_err());
+                return 1;
+            }
+            options.output = Some(directory->join(options.output->as_path()));
+        }
+        auto request = lito::PackRequest {
+            .build    = lito::BuildRequest {},
+            .recipe   = rstd::move(options.recipe),
+            .output   = rstd::move(options.output),
+            .no_build = options.no_build,
+        };
+        auto& build = request.build;
+        build.selection.root                = rstd::move(project.root);
+        build.selection.packages            = rstd::move(options.packages);
+        build.selection.features            = rstd::move(options.features);
+        build.selection.features.configured = rstd::move(project.package_features);
+        build.environment                   = rstd::move(project.environment);
+        build.tools                         = rstd::move(project.tools);
+        build.registries                    = rstd::move(registry_bootstrap);
+        build.configuration                 = build_configuration(rstd::move(project.toolchain),
+                                                                  project.standard_library,
+                                                                  project.standard_library_runtime,
+                                                                  rstd::move(project.build_options),
+                                                                  rstd::move(project.build_target));
+        build.lock                          = rstd::move(project.lock);
+        build.sources                       = rstd::move(project.sources);
+        build.cargo                         = project.cargo;
+        build.pkg_config                    = rstd::move(project.pkg_config);
+        build.cmake                         = rstd::move(project.cmake);
+        build.cmake_build_overrides         = rstd::move(project.cmake_build_overrides);
+        build.locked                        = options.locked || options.frozen || options.no_build;
+        build.profile                       = rstd::move(options.profile);
+        build.execution.scan.jobs          = options.jobs;
+        build.execution.compile.jobs       = options.jobs;
+        if (options.build_directory.is_some()) {
+            build.build_directory = rstd::move(options.build_directory).unwrap();
+        }
+        auto event_context = EventContext { .verbose = options.verbose };
+        configure_build_output(build, event_context);
+        auto result = lito::pack(rstd::move(request));
+        if (result.is_err()) {
+            report_error(result.unwrap_err());
+            return 1;
+        }
+        rstd::io::println("packed {}", result->as_path());
+        return 0;
     }
 
     if (invocation.command.is_Lock()) {

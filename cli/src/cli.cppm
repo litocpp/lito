@@ -183,6 +183,22 @@ struct PackOptions {
     bool            list {};
 };
 
+struct PackRecipeOptions {
+    Vec<String>                              packages;
+    String                                   recipe;
+    Option<PathBuf>                          output;
+    Option<lito::manifest::BuildProfileName> profile;
+    Option<PathBuf>                          build_directory;
+    bool                                     no_build {};
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             source_bundles;
+    bool                                     verbose {};
+    Option<usize>                            jobs;
+    lito::package::FeatureSelection          features;
+};
+
 struct PublishOptions {
     Option<String> package;
     Option<String> registry;
@@ -288,6 +304,7 @@ class CliCommand {
               (Init, (InitOptions options;)),
               (Add, (AddOptions options;)),
               (Pack, (PackOptions options;)),
+              (PackRecipe, (PackRecipeOptions options;)),
               (Publish, (PublishOptions options;)),
               (Lock, (LockCommand command;)),
               (Config, (ConfigCommand command;)),
@@ -568,13 +585,19 @@ struct AddSchema {
 };
 
 struct PackSchema {
-    CommandKey     command;
-    ArgKey<String> package;
-    ArgKey<String> registry;
-    ArgKey<String> output;
-    ArgKey<bool>   list;
+    CommandKey            command;
+    PackageProfileArgs    package;
+    ArgKey<String>        registry;
+    ArgKey<String>        output;
+    ArgKey<bool>          list;
+    ArgKey<String>        recipe;
+    ArgKey<String>        build_directory;
+    ArgKey<bool>          no_build;
+    SourceAcquisitionArgs source_acquisition;
+    ArgKey<bool>          verbose;
+    ArgKey<usize>         jobs;
 
-    auto decode(const Matches& matches) const -> Result<PackOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<CliCommand, CliDecodeError>;
 };
 
 struct PublishSchema {
@@ -1307,32 +1330,50 @@ auto make_add_definition() -> CommandDefinition<AddSchema> {
 
 auto make_pack_definition() -> CommandDefinition<PackSchema> {
     auto command = Command::make("pack"_str);
-    command.about("Create a Registry package archive"_str);
+    command.about("Create a distribution file or Registry source archive"_str);
     auto key      = command.key();
-    auto package  = command.add_arg(Arg<String>::value("package"_str, string_parser())
-                                        .short_name(u8('p'))
-                                        .long_name("package"_str)
-                                        .value_name("NAME"_str)
-                                        .help("Select one package"_str));
+    auto package  = add_package_profile_args(command);
     auto registry = command.add_arg(Arg<String>::value("registry"_str, string_parser())
                                         .long_name("registry"_str)
                                         .value_name("NAME"_str)
-                                        .help("Select a configured Registry"_str));
+                                        .help("Select a Registry for the source archive"_str));
     auto output   = command.add_arg(Arg<String>::value("output"_str, string_parser())
                                         .long_name("output"_str)
                                         .value_name("FILE"_str)
-                                        .help("Write the package archive to a file"_str));
+                                        .help("Set the output file"_str));
     auto list     = command.add_arg(
         Arg<bool>::flag("list"_str)
             .long_name("list"_str)
             .help("List the selected package files without writing an archive"_str));
+    auto recipe = command.add_arg(Arg<String>::value("recipe"_str, string_parser())
+                                       .long_name("recipe"_str)
+                                       .value_name("NAME"_str)
+                                       .help("Select a distribution recipe from pack.lua"_str));
+    auto build_directory = command.add_arg(build_directory_arg());
+    auto no_build        = command.add_arg(Arg<bool>::flag("no-build"_str)
+                                               .long_name("no-build"_str)
+                                               .help("Pack completed build artifacts"_str));
+    auto source_acquisition = add_source_acquisition_args(command);
+    auto verbose = command.add_arg(
+        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
+    auto jobs = command.add_arg(jobs_arg());
+    command.conflicts(recipe, registry);
+    command.conflicts(recipe, list);
+    command.conflicts(no_build, source_acquisition.source_bundle);
+    command.conflicts(no_build, jobs);
     return {
         PackSchema {
-            .command  = key,
-            .package  = package,
-            .registry = registry,
-            .output   = output,
-            .list     = list,
+            .command            = key,
+            .package            = rstd::move(package),
+            .registry           = registry,
+            .output             = output,
+            .list               = list,
+            .recipe             = recipe,
+            .build_directory    = build_directory,
+            .no_build           = no_build,
+            .source_acquisition = rstd::move(source_acquisition),
+            .verbose            = verbose,
+            .jobs               = jobs,
         },
         rstd::move(command),
     };
@@ -2112,13 +2153,52 @@ auto AddSchema::decode(const Matches& matches) const -> Result<AddOptions, CliDe
     });
 }
 
-auto PackSchema::decode(const Matches& matches) const -> Result<PackOptions, CliDecodeError> {
-    return Ok(PackOptions {
-        .package  = rstd_try(optional_string(matches, package)),
-        .registry = rstd_try(optional_string(matches, registry)),
-        .output   = rstd_try(optional_path(matches, output)),
-        .list     = rstd_try(flag_value(matches, list)),
-    });
+auto PackSchema::decode(const Matches& matches) const -> Result<CliCommand, CliDecodeError> {
+    auto selected  = rstd_try(decode_package_profile(matches, package));
+    auto named     = rstd_try(optional_string(matches, recipe));
+    auto file      = rstd_try(optional_path(matches, output));
+    auto directory = rstd_try(optional_path(matches, build_directory));
+    auto reuse     = rstd_try(flag_value(matches, no_build));
+    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto report    = rstd_try(flag_value(matches, verbose));
+    auto workers   = rstd_try(optional_jobs(matches, jobs));
+    if (named.is_none()) {
+        if (selected.profile.is_some() || ! selected.features.enabled.is_empty() ||
+            ! selected.features.default_features || directory.is_some() || reuse || report ||
+            workers.is_some() || source.locked || source.offline || source.frozen ||
+            ! source.source_bundles.is_empty()) {
+            return Err(CliDecodeError::InvalidUsage("pack build options require --recipe NAME"_Str));
+        }
+        if (selected.packages.len() > usize(1)) {
+            return Err(CliDecodeError::InvalidUsage("pack accepts at most one --package NAME"_Str));
+        }
+        return Ok(CliCommand::Pack(PackOptions {
+            .package  = selected.packages.is_empty() ? Option<String> {}
+                                                     : Some(rstd::move(selected.packages[usize {}])),
+            .registry = rstd_try(optional_string(matches, registry)),
+            .output   = rstd::move(file),
+            .list     = rstd_try(flag_value(matches, list)),
+        }));
+    }
+    if (selected.packages.len() != usize(1) || selected.packages[usize {}].is_empty() ||
+        named->is_empty()) {
+        return Err(CliDecodeError::InvalidUsage("pack requires -p NAME and --recipe NAME"_Str));
+    }
+    return Ok(CliCommand::PackRecipe(PackRecipeOptions {
+        .packages        = rstd::move(selected.packages),
+        .recipe          = rstd::move(named).unwrap(),
+        .output          = rstd::move(file),
+        .profile         = rstd::move(selected.profile),
+        .build_directory = rstd::move(directory),
+        .no_build        = reuse,
+        .locked          = source.locked,
+        .offline         = source.offline,
+        .frozen          = source.frozen,
+        .source_bundles  = rstd::move(source.source_bundles),
+        .verbose         = report,
+        .jobs            = workers,
+        .features        = rstd::move(selected.features),
+    }));
 }
 
 auto PublishSchema::decode(const Matches& matches) const -> Result<PublishOptions, CliDecodeError> {
@@ -2360,8 +2440,7 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         return Ok(CliCommand::Add(rstd::move(options)));
     }
     if (auto child = matches.subcommand_matches(schema.pack.command); child.is_some()) {
-        auto options = rstd_try(schema.pack.decode(**child));
-        return Ok(CliCommand::Pack(rstd::move(options)));
+        return schema.pack.decode(**child);
     }
     if (auto child = matches.subcommand_matches(schema.publish.command); child.is_some()) {
         auto options = rstd_try(schema.publish.decode(**child));
@@ -2404,14 +2483,18 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     const auto consumes_build_options =
         command.is_Build() || command.is_Run() || command.is_Install() || command.is_Test() ||
         command.is_Bench() || command.is_Doc() || command.is_Scan() || command.is_Fetch() ||
-        command.is_Tree();
+        command.is_Tree() || command.is_PackRecipe();
     if (use_env_flags && ! consumes_build_options) {
         return Err(CliDecodeError::InvalidUsage(
-            "--use-env-flags is only valid for build, run, install, test, bench, doc, scan, fetch, and tree"_Str));
+            "--use-env-flags is only valid for build, run, install, test, bench, doc, scan, fetch, tree, and pack --recipe"_Str));
     }
     if (use_env_flags && command.is_Install() && command.as_Install().options.no_build) {
         return Err(
             CliDecodeError::InvalidUsage("--use-env-flags conflicts with install --no-build"_Str));
+    }
+    if (use_env_flags && command.is_PackRecipe() && command.as_PackRecipe().options.no_build) {
+        return Err(
+            CliDecodeError::InvalidUsage("--use-env-flags conflicts with pack --no-build"_Str));
     }
     if (command.is_Config() && (no_config || ! overrides.is_empty())) {
         return Err(CliDecodeError::InvalidUsage(
@@ -2423,7 +2506,7 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     }
     if ((command.is_Pack() || command.is_Publish()) && ! overrides.is_empty()) {
         return Err(CliDecodeError::InvalidUsage(
-            "pack and publish do not accept project --config overrides"_Str));
+            "Registry source packing and publishing do not accept project --config overrides"_Str));
     }
     return Ok(CliInvocation {
         .working_directory = PathBuf::from(rstd::move(directory)),

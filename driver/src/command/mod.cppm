@@ -15,5 +15,6 @@ export import :command.update;
 export import :command.fetch;
 export import :command.lock;
 export import :command.install;
+export import :command.pack;
 export import :command.reporting;
 export import :command.progress;
