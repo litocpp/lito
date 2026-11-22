@@ -622,21 +622,33 @@ auto parse_runtime_dependencies(
         auto& specification = *table.get_mut(name.as_str()).unwrap();
         if (specification.workspace.is_some()) {
             result.workspace_dependencies.push(WorkspaceRuntimeDependencyReference {
-                .name      = name.clone(),
-                .condition = rstd_try(parse_dependency_condition(
+                .name             = name.clone(),
+                .features         = rstd::move(specification.features),
+                .default_features = specification.default_features,
+                .condition        = rstd_try(parse_dependency_condition(
                     rstd::move(specification.condition), context.as_str())) });
             continue;
         }
         auto source = rstd_try(
             parse_package_dependency_source(specification, context.as_str(), name.as_str()));
         result.explicit_dependencies.push(DeclaredRuntimeDependency {
-            .name      = name.clone(),
-            .source    = rstd::move(source),
-            .condition = rstd_try(
+            .name             = name.clone(),
+            .source           = rstd::move(source),
+            .features         = rstd::move(specification.features),
+            .default_features = specification.default_features,
+            .condition        = rstd_try(
                 parse_dependency_condition(rstd::move(specification.condition), context.as_str())),
         });
     }
     return Ok(rstd::move(result));
+}
+
+auto contains_dependency(const ParsedRuntimeDependencies& dependencies, ref<str> name) -> bool {
+    return dependencies.explicit_dependencies.iter().any([&](auto dependency) {
+        return dependency->name.as_str() == name;
+    }) || dependencies.workspace_dependencies.iter().any([&](auto dependency) {
+        return dependency->name.as_str() == name;
+    });
 }
 
 auto parse_workspace_dependencies(

@@ -219,6 +219,10 @@ auto runtime_dependencies(const PackageManifest& manifest, const StandaloneManif
             manifest, *dependency.source.publication, dependency.name.as_str(), options));
         if (dependency.condition.is_some())
             entry.insert("condition"_Str, string_value(dependency.condition->source.as_str()));
+        if (dependency.features.is_some())
+            entry.insert("features"_Str, string_array(*dependency.features));
+        if (dependency.default_features.is_some())
+            entry.insert("default-features"_Str, Toml::Boolean(*dependency.default_features));
         table.insert(dependency.name.clone(), Toml::Table(rstd::move(entry)));
     }
     return Ok(Some(Toml::Table(rstd::move(table))));

@@ -241,6 +241,7 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                     DependencyKind::Runtime,
                     DependencyType::Runtime,
                     edge_index });
+                requests.dependency(package, dependency);
                 installing.insert(dependency.name.clone(), empty {});
                 selected_target.insert(dependency.name.clone(), empty {});
             }

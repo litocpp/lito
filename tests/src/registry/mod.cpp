@@ -2209,3 +2209,35 @@ archive = "sample"
               lito::registry::REGISTRY_INSPECTION_FAILURE_SCHEMA);
     EXPECT_EQ((*failure)["code"_str].as_str().unwrap(), "external_inputs_not_allowed"_str);
 }
+
+TEST(RegistryMetadata, RuntimeFeaturesSurviveSourceInspection) {
+    auto tree = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("lito.toml"_str, R"toml([package]
+name = "sample"
+version = "1.2.3"
+[[bin]]
+name = "sample"
+sources = ["main.cpp"]
+link-stdlib = false
+[features.integration]
+enables = ["renderer/extra"]
+[runtime-dependencies.renderer]
+version = "0.1"
+features = ["bridge"]
+default-features = false
+)toml"_str)
+                    .is_ok());
+    ASSERT_TRUE(tree.add_text("main.cpp"_str, "int main() { return 0; }\n"_str).is_ok());
+    auto inspected = lito::registry::inspect_registry_source_tree(
+        tree, registry_package("sample"_str), registry_version("1.2.3"_str));
+    if (inspected.is_err()) rstd::io::eprintln("{}", inspected.unwrap_err().message);
+    ASSERT_TRUE(inspected.is_ok());
+    ASSERT_EQ(inspected->dependencies.len(), usize(1));
+    const auto& runtime = inspected->dependencies[usize {}];
+    EXPECT_EQ(runtime.kind, lito::registry::RegistryDependencyKind::Runtime);
+    ASSERT_EQ(runtime.features.len(), usize(1));
+    EXPECT_EQ(runtime.features[usize {}], "bridge"_str);
+    EXPECT_FALSE(runtime.default_features);
+    EXPECT_TRUE(runtime.consumption.usage.uses_runtime());
+    EXPECT_FALSE(runtime.consumption.usage.uses_library());
+}

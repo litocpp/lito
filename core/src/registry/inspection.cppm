@@ -161,6 +161,10 @@ auto append_runtime_dependency(Vec<RegistryDependencyProjection>&               
             lito::dependency::DependencyConsumption {
                 .usage = lito::dependency::DependencyUsage::runtime_only(),
             },
+        .features =
+            dependency.features.is_some() ? dependency.features->clone() : Vec<String>::make(),
+        .default_features =
+            dependency.default_features.is_some() ? *dependency.default_features : true,
     });
     return Ok(empty {});
 }

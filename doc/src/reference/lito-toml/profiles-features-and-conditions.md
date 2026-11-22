@@ -49,7 +49,8 @@ Feature names start with an ASCII letter or `_`, followed by letters, digits, `-
 `default` is a boolean and defaults to `false`.
 
 `enables` is an optional array of `dependency/feature` strings. When this feature is enabled,
-each entry requests the named feature through an active direct dependency or development dependency.
+each entry requests the named feature through an active direct dependency, development dependency,
+or runtime dependency.
 For example:
 
 ```toml
@@ -66,9 +67,13 @@ uses the same provider. Development requests apply only when development targets
 Fixed dependency `features` and forwarded requests are unified across consumers. Forwarding can
 continue through the provider's own feature declarations.
 
-Only C++/plugin/pmacro dependencies support these requests. Entries must reference a declared direct
-dependency; script, runtime, and external dependencies, local feature names, `dep:`, and `?/feature`
-are not supported. Duplicate entries are rejected. A requested provider feature must exist.
+Runtime requests apply only when the consumer is being installed. Forwarding to a runtime package
+does not make it a compile/link dependency or activate it during an ordinary build.
+
+Normal/development C++/plugin/pmacro dependencies and runtime dependencies support these requests.
+Entries must reference a declared direct dependency; script and external dependencies, local feature
+names, `dep:`, and `?/feature` are not supported. Duplicate entries are rejected. A requested provider
+feature must exist.
 
 Lito derives the package-local macro as `LITO_FEAT_` plus the uppercased feature name with `-`
 changed to `_`. Two features that normalize to the same macro are rejected.
@@ -79,10 +84,12 @@ and `enables` in a feature declaration and derive the macro from the feature nam
 Command-line `--features` accepts repeated arguments, comma-separated names, and quoted ASCII
 whitespace-separated names. Empty separator items are ignored and repeated selectors are deduplicated.
 A bare feature name matches every selected root declaring it; at least one must match.
-`package/feature` selects a selected root's feature or a direct C++/plugin/pmacro dependency's feature.
+`package/feature` selects a selected root's feature or a direct C++/plugin/pmacro or runtime
+dependency's feature.
 Dependency requests are applied only through active edges, including development edges only when
-their targets are selected. A qualifier does not add roots, search transitive dependencies, or
-bypass dependency conditions. Unknown selectors and malformed or repeated slashes are errors.
+their targets are selected and runtime edges only when their consumer is installed. A qualifier does
+not add roots, search transitive dependencies, or bypass dependency conditions. Unknown selectors
+and malformed or repeated slashes are errors.
 `dep:` and weak dependency `?/feature` syntax are not supported.
 
 ## `[[when]]`

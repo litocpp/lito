@@ -97,9 +97,18 @@ TEST_F(Manifest, TypedFieldSchemasRejectInvalidModesAndKeepPaths) {
         { R"toml(runtime-dependencies.dep = {path="../dep", pub=false})toml"_str,
           Kind::UnknownField,
           "runtime-dependencies.dep.pub"_str },
-        { R"toml(runtime-dependencies.dep = {workspace=true, features=[]})toml"_str,
-          Kind::UnknownField,
+        { R"toml(runtime-dependencies.dep = {workspace=true, features=true})toml"_str,
+          Kind::TypeMismatch,
           "runtime-dependencies.dep.features"_str },
+        { R"toml(runtime-dependencies.dep = {path="../dep", features={ignored=true}})toml"_str,
+          Kind::TypeMismatch,
+          "runtime-dependencies.dep.features"_str },
+        { R"toml(runtime-dependencies.dep = {path="../dep", default-features="ignored"})toml"_str,
+          Kind::TypeMismatch,
+          "runtime-dependencies.dep.default-features"_str },
+        { R"toml(runtime-dependencies.dep = {workspace=true, usage="runtime"})toml"_str,
+          Kind::UnknownField,
+          "runtime-dependencies.dep.usage"_str },
         { R"toml(external-sources.dep = {workspace=true, git="https://example.invalid/repo"})toml"_str,
           Kind::UnknownField,
           "external-sources.dep.git"_str },
@@ -242,8 +251,8 @@ pub = false
 threads = false
 [runtime-dependencies.runtime]
 path = "../runtime"
-features = {ignored = true}
-default-features = "ignored"
+features = []
+default-features = false
 [[when]]
 condition = 'target.os == "linux"'
 usage = {threads=false}
@@ -272,6 +281,12 @@ path = "../rust"
     EXPECT_FALSE(*dependency.default_features);
     ASSERT_TRUE(dependency.is_public.is_some());
     EXPECT_FALSE(*dependency.is_public);
+    ASSERT_EQ(package->runtime_dependencies.len(), usize(1));
+    const auto& runtime = package->runtime_dependencies[usize {}];
+    ASSERT_TRUE(runtime.features.is_some());
+    EXPECT_TRUE(runtime.features->is_empty());
+    ASSERT_TRUE(runtime.default_features.is_some());
+    EXPECT_FALSE(*runtime.default_features);
     ASSERT_EQ(package->conditions.len(), usize(1));
     EXPECT_TRUE(package->conditions[usize {}].usage.declares_threads);
     EXPECT_FALSE(package->conditions[usize {}].usage.values.threads);
@@ -2820,7 +2835,6 @@ TEST_F(Manifest, FeatureEnablesRejectInvalidReferences) {
         "\"normal/1bridge\""_str,
         "\"normal/bridge\", \"normal/bridge\""_str,
         "\"absent/bridge\""_str,
-        "\"runtime/bridge\""_str,
         "\"external/bridge\""_str,
     };
     usize index {};
@@ -3675,4 +3689,47 @@ TEST_F(Manifest, BuildScriptOnlyPackageKeepsTheDiscoveredOwner) {
     auto empty = manifest("empty-assets"_str, files[0].contents);
     ASSERT_TRUE(empty.is_ok());
     EXPECT_TRUE(lito::manifest::load_package_manifest(empty->root.as_path()).is_err());
+}
+
+TEST_F(Manifest, RuntimeFeaturesSurviveStandalonePackaging) {
+    auto project = manifest("runtime-features"_str, R"toml([package]
+name = "plugin"
+version = "0.1.0"
+[[bin]]
+name = "plugin"
+link-stdlib = false
+[features.integration]
+enables = ["renderer/extra"]
+[runtime-dependencies.renderer]
+version = "0.1"
+features = ["bridge"]
+default-features = false
+condition = "feature.integration"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    auto copy = manifest("runtime-features-copy"_str, serialized->as_str());
+    ASSERT_TRUE(copy.is_ok());
+    auto reloaded = lito::manifest::load_package_manifest(copy->root.as_path());
+    ASSERT_TRUE(reloaded.is_ok());
+    ASSERT_EQ(reloaded->runtime_dependencies.len(), usize(1));
+    const auto& runtime = reloaded->runtime_dependencies[usize {}];
+    ASSERT_TRUE(runtime.features.is_some());
+    ASSERT_EQ(runtime.features->len(), usize(1));
+    EXPECT_EQ((*runtime.features)[usize {}], "bridge"_str);
+    ASSERT_TRUE(runtime.default_features.is_some());
+    EXPECT_FALSE(*runtime.default_features);
+    ASSERT_TRUE(runtime.condition.is_some());
+    EXPECT_EQ(runtime.condition->source, "feature.integration"_str);
+    ASSERT_EQ(reloaded->features.len(), usize(1));
+    ASSERT_EQ(reloaded->features[usize {}].enables.len(), usize(1));
+    EXPECT_EQ(reloaded->features[usize {}].enables[usize {}].dependency, "renderer"_str);
 }

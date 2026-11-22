@@ -163,8 +163,22 @@ See [pmacro targets](targets-and-sources.md#pmacro) for compilation and macro in
 
 ## `[runtime-dependencies.NAME]`
 
-Runtime dependencies use the same package sources and do not accept `pub`, `usage`, `features`, or
-`default-features`. They belong to runtime/install planning rather than compilation.
+Runtime dependencies use the same package sources and accept `features` and `default-features`,
+including on workspace references. They do not accept `pub` or `usage` and belong to runtime/install
+planning rather than the consumer's compile or link usage.
+
+```toml
+[runtime-dependencies.renderer]
+workspace = true
+features = ["bridge"]
+default-features = false
+```
+
+An active runtime edge requests its features only when its consumer is being installed. Ordinary
+builds, host instances, and false dependency conditions do not contribute runtime requests. Fixed,
+forwarded, CLI, and other consumer requests are unified before configuring the runtime package.
+`default-features` defaults to `true`; `false` does not cancel default requests from other edges,
+and `--no-default-features` disables only root defaults.
 
 ## `[workspace.dependencies.NAME]`
 
@@ -196,7 +210,7 @@ features = ["simd"]
 
 For a workspace pmacro dependency, the member may set features and `default-features`, but omits
 `pub` and `usage`. Workspace development dependencies may select usage but remain private.
-Workspace runtime dependencies additionally omit feature fields.
+Workspace runtime dependencies may select features and `default-features`, but omit `pub` and `usage`.
 
 ## Source and package conflicts
 

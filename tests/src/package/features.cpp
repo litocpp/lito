@@ -1158,3 +1158,188 @@ TEST(PackageFeatures, SelectionProjectsExternalConditionsBeforeBuildConsumers) {
     EXPECT_EQ(graph.packages[usize {}].effective_pkg_config_dependencies().len(), usize(1));
     EXPECT_TRUE(graph.packages[usize {}].effective_cmake_dependencies().is_empty());
 }
+
+TEST(PackageFeatures, RuntimeFeaturesPropagateBeforeConditionsAndRecomputation) {
+    auto renderer_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    renderer_features.push(forwarding_feature("bridge"_str, "common"_str, "bridge"_str));
+    renderer_features.push(feature("extra"_str));
+    auto renderer_dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
+    renderer_dependencies.push(dependency("common"_str, {}, false));
+    renderer_dependencies.push(conditioned_dependency("fallback"_str, "!feature.bridge"_str));
+    auto plugin_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    plugin_features.push(forwarding_feature("integration"_str, "renderer"_str, "extra"_str));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("common"_str, feature_declarations("bridge"_str)));
+    graph.packages.push(
+        package("renderer"_str, rstd::move(renderer_features), rstd::move(renderer_dependencies)));
+    graph.packages.push(package("plugin"_str, rstd::move(plugin_features)));
+    graph.packages[usize(2)].runtime_dependencies.push({
+        .name             = "renderer"_Str,
+        .features         = names("bridge"_str),
+        .default_features = false,
+    });
+    graph.packages.push(package("fallback"_str));
+    auto roots     = names("plugin"_str);
+    auto targets   = library_targets("plugin"_str);
+    auto selection = lito::package::FeatureSelection { .enabled = names("integration"_str) };
+    for (auto install : { true, false, true }) {
+        auto selected = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, install);
+        ASSERT_TRUE(selected.is_ok());
+        EXPECT_EQ(selected_name(selected->install, "renderer"_str), install);
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "bridge"_str), install);
+        EXPECT_EQ(feature_enabled(graph.packages[usize(1)], "bridge"_str), install);
+        EXPECT_EQ(feature_enabled(graph.packages[usize(1)], "extra"_str), install);
+        EXPECT_FALSE(selected_name(selected->target, "fallback"_str));
+        ASSERT_TRUE(lito::package::resolve_features(graph,
+                                                    roots,
+                                                    selected->target,
+                                                    targets,
+                                                    selection,
+                                                    &selected->host,
+                                                    &selected->install)
+                        .is_ok());
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "bridge"_str), install);
+        EXPECT_EQ(feature_enabled(graph.packages[usize(1)], "bridge"_str), install);
+        EXPECT_EQ(feature_enabled(graph.packages[usize(1)], "extra"_str), install);
+    }
+    graph.packages.push(package("bundle"_str));
+    graph.packages[usize(4)].runtime_dependencies.push({
+        .name             = "plugin"_Str,
+        .features         = names("integration"_str),
+        .default_features = false,
+    });
+    roots         = names("bundle"_str);
+    targets       = library_targets("bundle"_str);
+    auto selected = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), {}, {}, true);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "bridge"_str));
+    ASSERT_TRUE(
+        lito::package::resolve_features(
+            graph, roots, selected->target, targets, {}, &selected->host, &selected->install)
+            .is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "bridge"_str));
+}
+
+TEST(PackageFeatures, RuntimeFeaturesRespectConditionsAndConsumerInstallQualification) {
+    auto root_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    root_features.push(forwarding_feature("integration"_str, "provider"_str, "extra"_str));
+    root_features.push(feature("include"_str));
+    auto root_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    root_edges.push(dependency("middle"_str));
+    auto tool                             = dependency("generator"_str);
+    tool.as_Cpp().value.consumption.usage = lito::dependency::DependencyUsage::tool_only();
+    root_edges.push(rstd::move(tool));
+    auto middle_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    middle_edges.push(dependency("provider"_str, {}, false));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package(
+        "provider"_str, feature_declarations("bridge"_str, "extra"_str, "cli"_str, "leaked"_str)));
+    graph.packages.push(package("middle"_str, {}, rstd::move(middle_edges)));
+    graph.packages[usize(1)].runtime_dependencies.push(
+        { .name = "provider"_Str, .features = names("leaked"_str) });
+    graph.packages.push(package("generator"_str));
+    graph.packages[usize(2)].runtime_dependencies.push(
+        { .name = "provider"_Str, .features = names("leaked"_str) });
+    graph.packages.push(package("root"_str, rstd::move(root_features), rstd::move(root_edges)));
+    graph.packages[usize(3)].runtime_dependencies.push({
+        .name             = "provider"_Str,
+        .features         = names("bridge"_str),
+        .default_features = false,
+        .activation       = { .condition = Some(external_condition("feature.include"_str)) },
+    });
+    struct Case {
+        bool install;
+        bool include;
+    };
+    const Case cases[] = {
+        { false, true }, { true, false }, { true, true }, { false, true }, { true, false }
+    };
+    auto roots   = names("root"_str);
+    auto targets = library_targets("root"_str);
+    for (auto item : cases) {
+        auto selection = lito::package::FeatureSelection { .enabled = names("integration"_str,
+                                                                            "provider/cli"_str) };
+        if (item.include) selection.enabled.push("include"_Str);
+        auto selected = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, item.install);
+        ASSERT_TRUE(selected.is_ok());
+        auto enabled = item.install && item.include;
+        EXPECT_TRUE(selected_name(selected->target, "provider"_str));
+        EXPECT_FALSE(feature_enabled(graph.packages[usize {}], "leaked"_str));
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "bridge"_str), enabled);
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "extra"_str), enabled);
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "cli"_str), enabled);
+        ASSERT_TRUE(lito::package::resolve_features(graph,
+                                                    roots,
+                                                    selected->target,
+                                                    targets,
+                                                    selection,
+                                                    &selected->host,
+                                                    &selected->install)
+                        .is_ok());
+        EXPECT_FALSE(feature_enabled(graph.packages[usize {}], "leaked"_str));
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "bridge"_str), enabled);
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "extra"_str), enabled);
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "cli"_str), enabled);
+    }
+}
+
+TEST(PackageFeatures, RuntimeDefaultsUnifyAcrossInstallingConsumers) {
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        auto provider_features = Vec<lito::manifest::FeatureDeclaration>::make();
+        provider_features.push(feature("default-on"_str, true));
+        auto graph = lito::package::ResolvedPackageGraph {};
+        graph.packages.push(package("provider"_str, rstd::move(provider_features)));
+        graph.packages.push(package("first"_str));
+        graph.packages[usize(1)].runtime_dependencies.push(
+            { .name = "provider"_Str, .default_features = mode == 0 });
+        auto roots   = names("first"_str);
+        auto targets = library_targets("first"_str);
+        if (mode == 2) {
+            graph.packages.push(package("second"_str));
+            graph.packages[usize(2)].runtime_dependencies.push({ .name = "provider"_Str });
+            roots.push("second"_Str);
+            targets = library_targets("first"_str, "second"_str);
+        }
+        auto selection = lito::package::FeatureSelection { .default_features = false };
+        auto selected  = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, true);
+        ASSERT_TRUE(selected.is_ok());
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "default-on"_str), mode != 1);
+        ASSERT_TRUE(lito::package::resolve_features(graph,
+                                                    roots,
+                                                    selected->target,
+                                                    targets,
+                                                    selection,
+                                                    &selected->host,
+                                                    &selected->install)
+                        .is_ok());
+        EXPECT_EQ(feature_enabled(graph.packages[usize {}], "default-on"_str), mode != 1);
+        ASSERT_TRUE(lito::package::resolve_features(
+                        graph, roots, selected->target, targets, selection, &selected->host)
+                        .is_ok());
+        EXPECT_FALSE(feature_enabled(graph.packages[usize {}], "default-on"_str));
+    }
+}
+
+TEST(PackageFeatures, RuntimeMissingFeaturesReportOnlyWhenEdgeIsInstalled) {
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("plugin"_str));
+    graph.packages[usize {}].runtime_dependencies.push(
+        { .name = "renderer"_Str, .features = names("missing"_str) });
+    graph.packages.push(package("renderer"_str));
+    auto roots   = names("plugin"_str);
+    auto targets = library_targets("plugin"_str);
+    ASSERT_TRUE(lito::package::select_conditioned_packages(
+                    graph, roots, targets, nullptr, None(), {}, {}, false)
+                    .is_ok());
+    auto selected = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), {}, {}, true);
+    ASSERT_TRUE(selected.is_err());
+    auto message = rstd::format("{}", selected.unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("missing"_str));
+    EXPECT_TRUE(
+        message.as_str().contains("runtime dependency 'renderer' from package 'plugin'"_str));
+}

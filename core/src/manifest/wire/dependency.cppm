@@ -52,25 +52,21 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Dependency<Mode>> {
                 return Ok(rstd::move(result));
             }
         }
-        auto path       = serde::OptionalField<String>("path"_str);
-        auto git        = serde::OptionalField<String>("git"_str);
-        auto branch     = serde::OptionalField<String>("branch"_str);
-        auto tag        = serde::OptionalField<String>("tag"_str);
-        auto rev        = serde::OptionalField<String>("rev"_str);
-        auto commit     = serde::OptionalField<String>("commit"_str);
-        auto builtin    = serde::OptionalField<String>("builtin"_str);
-        auto version    = serde::OptionalField<String>("version"_str);
-        auto registry   = serde::OptionalField<String>("registry"_str);
-        auto workspace  = serde::OptionalField<WorkspaceReference>("workspace"_str);
-        auto visibility = serde::OptionalField<String>("visibility"_str);
-        auto usage      = serde::OptionalField<TextList>("usage"_str);
-        auto pub        = serde::OptionalField<bool>("pub"_str);
-        using FeatureInput =
-            mtp::cond<Mode == DependencyMode::Runtime, serde::Ignored, Vec<String>>;
-        using DefaultFeatureInput =
-            mtp::cond<Mode == DependencyMode::Runtime, serde::Ignored, bool>;
-        auto features         = serde::OptionalField<FeatureInput>("features"_str);
-        auto default_features = serde::OptionalField<DefaultFeatureInput>("default-features"_str);
+        auto path             = serde::OptionalField<String>("path"_str);
+        auto git              = serde::OptionalField<String>("git"_str);
+        auto branch           = serde::OptionalField<String>("branch"_str);
+        auto tag              = serde::OptionalField<String>("tag"_str);
+        auto rev              = serde::OptionalField<String>("rev"_str);
+        auto commit           = serde::OptionalField<String>("commit"_str);
+        auto builtin          = serde::OptionalField<String>("builtin"_str);
+        auto version          = serde::OptionalField<String>("version"_str);
+        auto registry         = serde::OptionalField<String>("registry"_str);
+        auto workspace        = serde::OptionalField<WorkspaceReference>("workspace"_str);
+        auto visibility       = serde::OptionalField<String>("visibility"_str);
+        auto usage            = serde::OptionalField<TextList>("usage"_str);
+        auto pub              = serde::OptionalField<bool>("pub"_str);
+        auto features         = serde::OptionalField<Vec<String>>("features"_str);
+        auto default_features = serde::OptionalField<bool>("default-features"_str);
         auto condition        = serde::OptionalField<String>("condition"_str);
         rstd_try(serde::deserialize_record(d,
                                            serde::UnknownFieldPolicy::Reject,
@@ -93,28 +89,22 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Dependency<Mode>> {
         result.condition = condition.take();
         if (result.condition.is_some() && Mode == DependencyMode::Workspace)
             return Err(d.unknown_field(condition.names().canonical()));
-        result.path               = path.take();
-        result.git                = git.take();
-        result.branch             = branch.take();
-        result.tag                = tag.take();
-        result.rev                = rev.take();
-        result.commit             = commit.take();
-        result.builtin            = builtin.take();
-        result.version            = version.take();
-        result.registry           = registry.take();
-        result.workspace          = workspace.take().is_some() ? Some(true) : Option<bool> {};
-        result.visibility         = visibility.take();
-        result.usage              = usage.take();
-        result.pub                = pub.take();
-        auto       feature_values = features.take();
-        auto       default_feature_value = default_features.take();
-        const auto has_features          = feature_values.is_some();
-        const auto has_default_features  = default_feature_value.is_some();
-        if constexpr (Mode != DependencyMode::Runtime) {
-            result.features         = rstd::move(feature_values);
-            result.default_features = rstd::move(default_feature_value);
-        }
-        const auto inherited = result.workspace.is_some();
+        result.path             = path.take();
+        result.git              = git.take();
+        result.branch           = branch.take();
+        result.tag              = tag.take();
+        result.rev              = rev.take();
+        result.commit           = commit.take();
+        result.builtin          = builtin.take();
+        result.version          = version.take();
+        result.registry         = registry.take();
+        result.workspace        = workspace.take().is_some() ? Some(true) : Option<bool> {};
+        result.visibility       = visibility.take();
+        result.usage            = usage.take();
+        result.pub              = pub.take();
+        result.features         = features.take();
+        result.default_features = default_features.take();
+        const auto inherited    = result.workspace.is_some();
         if (result.path.is_some() && inherited)
             return Err(d.unknown_field(path.names().canonical()));
         if (result.git.is_some() && inherited) return Err(d.unknown_field(git.names().canonical()));
@@ -140,11 +130,9 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Dependency<Mode>> {
         if (result.pub.is_some() &&
             ! (Mode == DependencyMode::Normal || Mode == DependencyMode::Development))
             return Err(d.unknown_field(pub.names().canonical()));
-        if (has_features && ! (Mode != DependencyMode::Workspace &&
-                               ! (Mode == DependencyMode::Runtime && inherited)))
+        if (result.features.is_some() && Mode == DependencyMode::Workspace)
             return Err(d.unknown_field(features.names().canonical()));
-        if (has_default_features && ! (Mode != DependencyMode::Workspace &&
-                                       ! (Mode == DependencyMode::Runtime && inherited)))
+        if (result.default_features.is_some() && Mode == DependencyMode::Workspace)
             return Err(d.unknown_field(default_features.names().canonical()));
         return Ok(rstd::move(result));
     }

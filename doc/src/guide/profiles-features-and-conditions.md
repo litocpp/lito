@@ -123,6 +123,8 @@ Now `--features tracing` also requests `media`'s `tracing` feature. The same for
 the package feature is enabled by defaults, configuration, or another dependency. Without it, the
 dependency remains available without this extra request. An inactive dependency condition or an
 unused development dependency prevents forwarding; requests from active consumers are unified.
+Runtime dependencies accept the same feature requests, including `enables` forwarding and qualified
+CLI selectors, but contribute them only when their consumer is being installed.
 
 To persist package-specific preferences, use project configuration rather than manifest feature
 declarations:

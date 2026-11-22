@@ -105,6 +105,35 @@ class FeatureRequests {
     };
     Vec<DependencyRequest> dependency_requests_;
 
+    template<typename Dependency>
+    auto collect(const ResolvedPackage& owner, const Dependency& value, ref<str> kind) -> void {
+        auto source = rstd::format(
+            "{} '{}' from package '{}'", kind, value.name.as_str(), owner.manifest.name.as_str());
+        for (const auto& feature : value.features)
+            request(value.name.as_str(), feature.as_str(), source.as_str());
+        if (value.default_features) defaults(value.name.as_str(), source.as_str());
+        for (const auto& entry : dependency_requests_) {
+            if (entry.owner == owner.manifest.name && entry.value.package == value.name)
+                request(
+                    value.name.as_str(), entry.value.feature.as_str(), entry.value.source.as_str());
+        }
+        for (const auto& declaration : owner.manifest.features) {
+            auto enabled = false;
+            for (const auto& feature : owner.features)
+                if (feature.name == declaration.name && feature.enabled) enabled = true;
+            if (! enabled) continue;
+            for (const auto& forwarded : declaration.enables) {
+                if (forwarded.dependency != value.name) continue;
+                auto reason = rstd::format("feature '{}/{}' enables '{}/{}'",
+                                           owner.manifest.name.as_str(),
+                                           declaration.name.as_str(),
+                                           value.name.as_str(),
+                                           forwarded.feature.as_str());
+                request(value.name.as_str(), forwarded.feature.as_str(), reason.as_str());
+            }
+        }
+    }
+
 public:
     auto request(ref<str> package, ref<str> feature, ref<str> source) -> void {
         for (const auto& entry : requests_) {
@@ -155,6 +184,8 @@ public:
                     };
                     bind(package->dependencies);
                     bind(package->dev_dependencies);
+                    for (const auto& edge : package->runtime_dependencies)
+                        if (edge.name == selector.package->as_str()) dependency = true;
                     if (dependency) {
                         dependency_requests_.push({ root.clone(),
                                                     { selector.package->clone(),
@@ -184,41 +215,16 @@ public:
     }
 
     auto dependency(const ResolvedPackage& owner, const ResolvedRequiredDependency& edge) -> void {
-        const auto collect = [&](const auto& value) {
-            auto source = rstd::format("dependency '{}' from package '{}'",
-                                       value.name.as_str(),
-                                       owner.manifest.name.as_str());
-            for (const auto& feature : value.features)
-                request(value.name.as_str(), feature.as_str(), source.as_str());
-            if (value.default_features) defaults(value.name.as_str(), source.as_str());
-            for (const auto& entry : dependency_requests_) {
-                if (entry.owner == owner.manifest.name && entry.value.package == value.name)
-                    request(value.name.as_str(),
-                            entry.value.feature.as_str(),
-                            entry.value.source.as_str());
-            }
-            for (const auto& declaration : owner.manifest.features) {
-                auto enabled = false;
-                for (const auto& feature : owner.features)
-                    if (feature.name == declaration.name && feature.enabled) enabled = true;
-                if (! enabled) continue;
-                for (const auto& forwarded : declaration.enables) {
-                    if (forwarded.dependency != value.name) continue;
-                    auto reason = rstd::format("feature '{}/{}' enables '{}/{}'",
-                                               owner.manifest.name.as_str(),
-                                               declaration.name.as_str(),
-                                               value.name.as_str(),
-                                               forwarded.feature.as_str());
-                    request(value.name.as_str(), forwarded.feature.as_str(), reason.as_str());
-                }
-            }
-        };
         if (edge.is_Cpp())
-            collect(edge.as_Cpp().value);
+            collect(owner, edge.as_Cpp().value, "dependency"_str);
         else if (edge.is_Plugin())
-            collect(edge.as_Plugin().value);
+            collect(owner, edge.as_Plugin().value, "dependency"_str);
         else if (edge.is_Pmacro())
-            collect(edge.as_Pmacro().value);
+            collect(owner, edge.as_Pmacro().value, "dependency"_str);
+    }
+
+    auto dependency(const ResolvedPackage& owner, const ResolvedRuntimeDependency& edge) -> void {
+        collect(owner, edge, "runtime dependency"_str);
     }
 
     auto configure(ref<str> package, const FeatureSelection& selection) -> void {
@@ -295,7 +301,8 @@ auto resolve_features(ResolvedPackageGraph&       graph,
                       const Vec<String>&          selected_packages,
                       const Vec<PackageTargetId>& selected_targets,
                       const FeatureSelection&     selection,
-                      const Vec<String>*          host_packages = nullptr) -> PackageResult<empty> {
+                      const Vec<String>*          host_packages = nullptr,
+                      const Vec<String>* install_packages       = nullptr) -> PackageResult<empty> {
     auto       requests = FeatureRequests {};
     const auto contains = [](const Vec<String>& names, ref<str> name) {
         for (const auto& value : names)
@@ -328,6 +335,10 @@ auto resolve_features(ResolvedPackageGraph&       graph,
                 break;
             }
         }
+        if (target && install_packages != nullptr && contains(*install_packages, name))
+            for (const auto& edge : package.runtime_dependencies)
+                if (edge.activation.target && contains(selected_packages, edge.name.as_str()))
+                    rstd_try(visit(edge));
         return Ok(empty {});
     };
     rstd_try(requests.select_roots(graph, selected_roots, selection));

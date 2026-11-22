@@ -502,10 +502,11 @@ auto assemble_manifest_document(PathBuf                               root,
     for (const auto& feature : *features) {
         for (const auto& enabled : feature.enables) {
             if (! contains_dependency(parsed_dependencies, enabled.dependency.as_str()) &&
-                ! contains_dependency(parsed_dev_dependencies, enabled.dependency.as_str())) {
+                ! contains_dependency(parsed_dev_dependencies, enabled.dependency.as_str()) &&
+                ! contains_dependency(parsed_runtime_dependencies, enabled.dependency.as_str())) {
                 return Err(ManifestSchemaError::Domain(
                     rstd::format("features.{}.enables references '{}' which is not a direct "
-                                 "dependency or dev-dependency",
+                                 "dependency, dev-dependency, or runtime-dependency",
                                  feature.name.as_str(),
                                  enabled.dependency.as_str())));
             }

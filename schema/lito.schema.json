@@ -1616,8 +1616,6 @@
         {
           "not": {
             "anyOf": [
-              { "required": ["features"] },
-              { "required": ["default-features"] },
               { "required": ["usage"] },
               { "required": ["pub"] }
             ]

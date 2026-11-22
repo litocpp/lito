@@ -52,11 +52,15 @@ struct DeclaredRuntimeDependency {
     String                                        name;
     PackageDependencySource                       source;
     Option<PathBuf>                               declaration_root;
+    Option<Vec<String>>                           features;
+    Option<bool>                                  default_features;
     Option<lito::dependency::DependencyCondition> condition;
 };
 
 struct WorkspaceRuntimeDependencyReference {
     String                                        name;
+    Option<Vec<String>>                           features;
+    Option<bool>                                  default_features;
     Option<lito::dependency::DependencyCondition> condition;
 };
 

@@ -111,8 +111,7 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<
         const auto kind = lito::manifest::package_target_kind(target);
         if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Plugin ||
             kind == PackageTargetKind::ProcMacro || kind == PackageTargetKind::Binary ||
-            kind == PackageTargetKind::Cdylib ||
-            kind == PackageTargetKind::Benchmark) {
+            kind == PackageTargetKind::Cdylib || kind == PackageTargetKind::Benchmark) {
             requires_version = true;
             break;
         }
@@ -1141,7 +1140,11 @@ public:
                 return Err(rstd::move(dependency_name).unwrap_err());
             }
             runtime_dependencies.push(ResolvedRuntimeDependency {
-                .name       = rstd::move(dependency_name).unwrap(),
+                .name     = rstd::move(dependency_name).unwrap(),
+                .features = dependency.features.is_some() ? dependency.features->clone()
+                                                          : Vec<String>::make(),
+                .default_features =
+                    dependency.default_features.is_some() ? *dependency.default_features : true,
                 .activation = { .condition = dependency.condition.is_some()
                                                  ? Some(dependency.condition->clone())
                                                  : None() },

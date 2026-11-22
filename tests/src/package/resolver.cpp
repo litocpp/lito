@@ -1766,3 +1766,61 @@ link-stdlib = false
     EXPECT_EQ(all->selected_package_names[usize {}].as_str(), "fixture-default-app"_str);
     EXPECT_EQ(all->selected_package_names[usize(1)].as_str(), "fixture-default-tool"_str);
 }
+
+TEST_F(PackageResolver, WorkspaceRuntimeFeaturesReachResolvedEdges) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "runtime-features"
+members = ["plugin", "renderer"]
+default-members = ["plugin"]
+[workspace.dependencies.renderer]
+path = "renderer"
+)toml"_str },
+        { "plugin/lito.toml"_str, R"toml([package]
+name = "plugin"
+version = "0.1.0"
+[features.integration]
+enables = ["renderer/extra"]
+[runtime-dependencies.renderer]
+workspace = true
+features = ["bridge"]
+default-features = false
+condition = "feature.integration"
+)toml"_str },
+        { "plugin/install.lua"_str,
+          "lito.install({files={{source=\"plugin.txt\",destination=\"share/plugin.txt\"}}})\n"_str },
+        { "plugin/plugin.txt"_str, "plugin\n"_str },
+        { "renderer/lito.toml"_str, R"toml([package]
+name = "renderer"
+version = "0.1.0"
+[[bin]]
+name = "renderer"
+link-stdlib = false
+sources = ["main.cpp"]
+[features.bridge]
+[features.extra]
+)toml"_str },
+        { "renderer/main.cpp"_str, "int main() { return 0; }\n"_str },
+    };
+    auto project = materialize("runtime-features-workspace"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    const lito::package::ResolvedPackage* plugin = nullptr;
+    for (const auto& package : graph->packages)
+        if (package.manifest.name == "plugin"_str) plugin = rstd::addressof(package);
+    ASSERT_NE(plugin, nullptr);
+    EXPECT_TRUE(plugin->manifest.workspace_runtime_dependencies.is_empty());
+    ASSERT_EQ(plugin->manifest.runtime_dependencies.len(), usize(1));
+    ASSERT_TRUE(plugin->manifest.runtime_dependencies[usize {}].features.is_some());
+    ASSERT_TRUE(plugin->manifest.runtime_dependencies[usize {}].default_features.is_some());
+    EXPECT_FALSE(*plugin->manifest.runtime_dependencies[usize {}].default_features);
+    ASSERT_EQ(plugin->runtime_dependencies.len(), usize(1));
+    const auto& runtime = plugin->runtime_dependencies[usize {}];
+    EXPECT_EQ(runtime.name, "renderer"_str);
+    ASSERT_EQ(runtime.features.len(), usize(1));
+    EXPECT_EQ(runtime.features[usize {}], "bridge"_str);
+    EXPECT_FALSE(runtime.default_features);
+    ASSERT_TRUE(runtime.activation.condition.is_some());
+    EXPECT_EQ(runtime.activation.condition->source, "feature.integration"_str);
+}

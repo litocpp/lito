@@ -128,8 +128,14 @@ auto resolved_dependency_name(const ResolvedRequiredDependency& dependency) noex
 
 struct ResolvedRuntimeDependency {
     String               name;
+    Vec<String>          features;
+    bool                 default_features { true };
     DependencyActivation activation;
 };
+
+auto resolved_dependency_name(const ResolvedRuntimeDependency& dependency) noexcept -> ref<str> {
+    return dependency.name.as_str();
+}
 
 struct ResolvedFeature {
     String      name;
