@@ -915,6 +915,14 @@
         "default": {
           "type": "boolean",
           "default": false
+        },
+        "enables": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+/[A-Za-z_][A-Za-z0-9_-]*$"
+          },
+          "uniqueItems": true
         }
       },
       "additionalProperties": false

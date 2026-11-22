@@ -151,7 +151,7 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
             const auto edge_index                                              = declaration++;
             if (! enabled) continue;
             auto provider_host = host;
-            requests.dependency(current.as_str(), dependency);
+            requests.dependency(package, dependency);
             if (dependency.is_Plugin()) {
                 if (host && plugins.contains_key(current.as_str())) {
                     return Err(PackageError::Message(
@@ -200,7 +200,7 @@ auto select_conditioned_packages(ResolvedPackageGraph&              graph,
                 const auto edge_index        = declaration++;
                 if (! dependency.activation.target) continue;
                 auto provider_host = false;
-                requests.dependency(current.as_str(), dependency);
+                requests.dependency(package, dependency);
                 if (dependency.is_Plugin()) {
                     provider_host = true;
                     selected_host.insert(dependency.as_Plugin().value.name.clone(), empty {});

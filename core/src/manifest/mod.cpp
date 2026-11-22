@@ -499,6 +499,18 @@ auto assemble_manifest_document(PathBuf                               root,
     auto parsed_dependencies         = rstd::move(dependencies).unwrap();
     auto parsed_dev_dependencies     = rstd::move(dev_dependencies).unwrap();
     auto parsed_runtime_dependencies = rstd::move(runtime_dependencies).unwrap();
+    for (const auto& feature : *features) {
+        for (const auto& enabled : feature.enables) {
+            if (! contains_dependency(parsed_dependencies, enabled.dependency.as_str()) &&
+                ! contains_dependency(parsed_dev_dependencies, enabled.dependency.as_str())) {
+                return Err(ManifestSchemaError::Domain(
+                    rstd::format("features.{}.enables references '{}' which is not a direct "
+                                 "dependency or dev-dependency",
+                                 feature.name.as_str(),
+                                 enabled.dependency.as_str())));
+            }
+        }
+    }
     for (const auto& dependency : parsed_dev_dependencies.explicit_dependencies) {
         if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
             return Err(ManifestSchemaError::Domain(rstd::format(

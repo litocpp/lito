@@ -93,6 +93,270 @@ auto selected_name(const Vec<String>& names, ref<str> name) -> bool {
     return false;
 }
 
+auto forwarding_feature(ref<str> name,
+                        ref<str> dependency,
+                        ref<str> requested,
+                        bool     default_enabled = false) -> lito::manifest::FeatureDeclaration {
+    auto result = feature(name, default_enabled);
+    result.enables.push({ dependency.into(), requested.into() });
+    return result;
+}
+
+TEST(PackageFeatures, FeatureEnablesUnifyBeforeConditionsAndSurviveRecomputation) {
+    auto common_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    common_features.push(forwarding_feature("waywallen"_str, "leaf"_str, "bridge"_str));
+    common_features.push(feature("extra"_str));
+    auto common_dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
+    common_dependencies.push(dependency("leaf"_str, names("fixed"_str), false));
+    auto fallback                 = dependency("fallback"_str);
+    fallback.activation.condition = Some(lito::dependency::DependencyCondition {
+        .source     = "!feature.waywallen"_Str,
+        .expression = lito::condition::parse("!feature.waywallen"_str).unwrap(),
+    });
+    common_dependencies.push(rstd::move(fallback));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("leaf"_str, feature_declarations("bridge"_str, "fixed"_str)));
+    graph.packages.push(
+        package("common"_str, rstd::move(common_features), rstd::move(common_dependencies)));
+    for (auto name : { "scene"_str, "web"_str }) {
+        auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+        declarations.push(forwarding_feature("waywallen"_str, "common"_str, "waywallen"_str));
+        auto dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
+        dependencies.push(dependency("common"_str, names("extra"_str), false));
+        graph.packages.push(package(name, rstd::move(declarations), rstd::move(dependencies)));
+    }
+    graph.packages.push(package("fallback"_str));
+    auto roots     = names("scene"_str, "web"_str);
+    auto targets   = library_targets("scene"_str, "web"_str);
+    auto selection = lito::package::FeatureSelection { .enabled = names("waywallen"_str) };
+    auto selected  = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_FALSE(selected_name(selected->target, "fallback"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "bridge"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "fixed"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "extra"_str));
+    EXPECT_EQ(graph.packages[usize(1)].features[usize {}].activation_sources.len(), usize(2));
+    ASSERT_TRUE(lito::package::resolve_features(graph, roots, selected->target, targets, selection)
+                    .is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "bridge"_str));
+    EXPECT_EQ(graph.packages[usize(1)].features[usize {}].activation_sources.len(), usize(2));
+    selection.enabled.clear();
+    selected = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, {}, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected_name(selected->target, "fallback"_str));
+    EXPECT_FALSE(feature_enabled(graph.packages[usize {}], "bridge"_str));
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "fixed"_str));
+    EXPECT_FALSE(feature_enabled(graph.packages[usize(1)], "waywallen"_str));
+    EXPECT_TRUE(graph.packages[usize(1)].features[usize {}].activation_sources.is_empty());
+}
+
+TEST(PackageFeatures, FeatureEnablesFollowEveryActivationSource) {
+    for (unsigned source = 0; source < 5; ++source) {
+        auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+        declarations.push(
+            forwarding_feature("bridge"_str, "provider"_str, "bridge"_str, source == 0));
+        auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+        edges.push(dependency("provider"_str, {}, false));
+        auto graph = lito::package::ResolvedPackageGraph {};
+        graph.packages.push(package("app"_str, rstd::move(declarations), rstd::move(edges)));
+        graph.packages.push(package("provider"_str, feature_declarations("bridge"_str)));
+        auto roots     = names("app"_str);
+        auto targets   = library_targets("app"_str);
+        auto selection = lito::package::FeatureSelection {};
+        if (source == 1) selection.enabled = names("bridge"_str);
+        if (source == 2)
+            selection.configured.push({ "app"_Str, names("bridge"_str), "config"_Str });
+        if (source == 3) selection.all_features = true;
+        if (source == 4) {
+            auto upstream = Vec<lito::package::ResolvedRequiredDependency>::make();
+            upstream.push(dependency("app"_str, names("bridge"_str), false));
+            graph.packages.push(package("upstream"_str, {}, rstd::move(upstream)));
+            roots   = names("upstream"_str);
+            targets = library_targets("upstream"_str);
+        }
+        auto selected = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, false);
+        ASSERT_TRUE(selected.is_ok());
+        EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "bridge"_str));
+        auto forwarded = false;
+        for (const auto& reason : graph.packages[usize(1)].features[usize {}].activation_sources)
+            if (reason.as_str().contains("app/bridge"_str)) forwarded = true;
+        EXPECT_TRUE(forwarded);
+        ASSERT_TRUE(
+            lito::package::resolve_features(graph, roots, selected->target, targets, selection)
+                .is_ok());
+        EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "bridge"_str));
+    }
+}
+
+TEST(PackageFeatures, FeatureEnablesDoNotLeakThroughInactiveEdges) {
+    auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+    declarations.push(forwarding_feature("bridge"_str, "provider"_str, "bridge"_str));
+    declarations.push(feature("use-provider"_str));
+    auto edge                 = dependency("provider"_str, {}, false);
+    edge.activation.condition = Some(lito::dependency::DependencyCondition {
+        .source     = "feature.use-provider"_Str,
+        .expression = lito::condition::parse("feature.use-provider"_str).unwrap(),
+    });
+    auto edges                = Vec<lito::package::ResolvedRequiredDependency>::make();
+    edges.push(rstd::move(edge));
+    edges.push(dependency("middle"_str));
+    auto middle = Vec<lito::package::ResolvedRequiredDependency>::make();
+    middle.push(dependency("provider"_str, {}, false));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("app"_str, rstd::move(declarations), rstd::move(edges)));
+    graph.packages.push(package("middle"_str, {}, rstd::move(middle)));
+    graph.packages.push(package("provider"_str, feature_declarations("bridge"_str)));
+    auto roots     = names("app"_str);
+    auto targets   = library_targets("app"_str);
+    auto selection = lito::package::FeatureSelection { .enabled = names("bridge"_str) };
+    for (auto enabled : { false, true }) {
+        if (enabled) selection.enabled.push("use-provider"_Str);
+        auto selected = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, false);
+        ASSERT_TRUE(selected.is_ok());
+        EXPECT_TRUE(selected_name(selected->target, "provider"_str));
+        EXPECT_EQ(feature_enabled(graph.packages[usize(2)], "bridge"_str), enabled);
+        ASSERT_TRUE(
+            lito::package::resolve_features(graph, roots, selected->target, targets, selection)
+                .is_ok());
+        EXPECT_EQ(feature_enabled(graph.packages[usize(2)], "bridge"_str), enabled);
+    }
+}
+
+TEST(PackageFeatures, FeatureEnablesRespectDevelopmentTargets) {
+    auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+    declarations.push(forwarding_feature("bridge"_str, "provider"_str, "bridge"_str));
+    auto development = Vec<lito::package::ResolvedRequiredDependency>::make();
+    development.push(dependency("provider"_str, {}, false));
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("app"_str, rstd::move(declarations), {}, rstd::move(development)));
+    graph.packages.push(package("provider"_str, feature_declarations("bridge"_str)));
+    auto roots     = names("app"_str);
+    auto targets   = library_targets("app"_str);
+    auto selection = lito::package::FeatureSelection { .enabled = names("bridge"_str) };
+    for (auto kind :
+         { lito::package::PackageTargetKind::Library, lito::package::PackageTargetKind::Test }) {
+        targets[usize {}].kind = kind;
+        auto selected          = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, false);
+        ASSERT_TRUE(selected.is_ok());
+        auto enabled = kind == lito::package::PackageTargetKind::Test;
+        EXPECT_EQ(feature_enabled(graph.packages[usize(1)], "bridge"_str), enabled);
+        ASSERT_TRUE(
+            lito::package::resolve_features(graph, roots, selected->target, targets, selection)
+                .is_ok());
+        EXPECT_EQ(feature_enabled(graph.packages[usize(1)], "bridge"_str), enabled);
+    }
+}
+
+TEST(PackageFeatures, FeatureEnablesSupportCppPluginPmacroAndToolDependencies) {
+    for (unsigned kind = 0; kind < 4; ++kind) {
+        auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+        declarations.push(forwarding_feature("bridge"_str, "provider"_str, "bridge"_str));
+        auto edge =
+            kind == 1   ? lito::package::ResolvedRequiredDependency::Plugin(
+                              lito::package::ResolvedPluginDependency { .name = "provider"_Str })
+            : kind == 2 ? lito::package::ResolvedRequiredDependency::Pmacro(
+                              lito::package::ResolvedPmacroDependency { .name = "provider"_Str })
+                        : dependency("provider"_str, {}, false);
+        if (kind == 3)
+            edge.as_Cpp().value.consumption.usage = lito::dependency::DependencyUsage::tool_only();
+        auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+        edges.push(rstd::move(edge));
+        auto graph = lito::package::ResolvedPackageGraph {};
+        graph.packages.push(package("app"_str, rstd::move(declarations), rstd::move(edges)));
+        graph.packages.push(package("provider"_str, feature_declarations("bridge"_str)));
+        auto roots     = names("app"_str);
+        auto targets   = library_targets("app"_str);
+        auto selection = lito::package::FeatureSelection { .enabled = names("bridge"_str) };
+        auto selected  = lito::package::select_conditioned_packages(
+            graph, roots, targets, nullptr, None(), selection, {}, false);
+        ASSERT_TRUE(selected.is_ok());
+        EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "bridge"_str));
+        ASSERT_TRUE(lito::package::resolve_features(
+                        graph, roots, selected->target, targets, selection, &selected->host)
+                        .is_ok());
+        EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "bridge"_str));
+    }
+}
+
+TEST(PackageFeatures, FeatureEnablesFollowActiveHostEdges) {
+    const auto host_edge = [] {
+        auto edge                 = dependency("provider"_str, {}, false);
+        edge.activation.condition = Some(lito::dependency::DependencyCondition {
+            .source     = "target.os == \"linux\""_Str,
+            .expression = lito::condition::parse("target.os == \"linux\""_str).unwrap(),
+        });
+        return edge;
+    };
+    auto generator_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    generator_features.push(forwarding_feature("bridge"_str, "provider"_str, "bridge"_str));
+    auto generator_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    generator_edges.push(host_edge());
+    auto app_features = Vec<lito::manifest::FeatureDeclaration>::make();
+    auto app_feature  = forwarding_feature("bridge"_str, "generator"_str, "bridge"_str);
+    app_feature.enables.push({ "provider"_Str, "bridge"_Str });
+    app_features.push(rstd::move(app_feature));
+    auto generator                             = dependency("generator"_str, {}, false);
+    generator.as_Cpp().value.consumption.usage = lito::dependency::DependencyUsage::tool_only();
+    auto app_edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+    app_edges.push(rstd::move(generator));
+    app_edges.push(host_edge());
+    auto graph = lito::package::ResolvedPackageGraph {};
+    graph.packages.push(package("provider"_str, feature_declarations("bridge"_str)));
+    graph.packages.push(
+        package("generator"_str, rstd::move(generator_features), rstd::move(generator_edges)));
+    graph.packages.push(package("app"_str, rstd::move(app_features), rstd::move(app_edges)));
+    auto environment = lito::package::PackageConditionEnvironment {};
+    environment.target.set_string("target.os"_Str, "windows"_Str);
+    environment.host.set_string("target.os"_Str, "linux"_Str);
+    auto roots     = names("app"_str);
+    auto targets   = library_targets("app"_str);
+    auto selection = lito::package::FeatureSelection { .enabled = names("bridge"_str) };
+    auto selected  = lito::package::select_conditioned_packages(
+        graph, roots, targets, nullptr, None(), selection, environment, false);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_TRUE(selected_name(selected->host, "provider"_str));
+    EXPECT_FALSE(selected_name(selected->target, "provider"_str));
+    ASSERT_TRUE(lito::package::resolve_features(
+                    graph, roots, selected->target, targets, selection, &selected->host)
+                    .is_ok());
+    EXPECT_TRUE(feature_enabled(graph.packages[usize {}], "bridge"_str));
+    const auto& sources = graph.packages[usize {}].features[usize {}].activation_sources;
+    ASSERT_EQ(sources.len(), usize(1));
+    EXPECT_TRUE(sources[usize {}].as_str().contains("generator/bridge"_str));
+}
+
+TEST(PackageFeatures, FeatureEnablesReportMissingFeaturesAndScriptTargets) {
+    for (auto script : { false, true }) {
+        auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+        declarations.push(forwarding_feature("bridge"_str, "provider"_str, "missing"_str));
+        auto edges = Vec<lito::package::ResolvedRequiredDependency>::make();
+        edges.push(script ? lito::package::ResolvedRequiredDependency::Script(
+                                lito::package::ResolvedScriptDependency { .name = "provider"_Str })
+                          : dependency("provider"_str));
+        auto graph = lito::package::ResolvedPackageGraph {};
+        graph.packages.push(package("app"_str, rstd::move(declarations), rstd::move(edges)));
+        graph.packages.push(package("provider"_str));
+        auto selected = lito::package::select_conditioned_packages(
+            graph,
+            names("app"_str),
+            library_targets("app"_str),
+            nullptr,
+            None(),
+            lito::package::FeatureSelection { .enabled = names("bridge"_str) },
+            {},
+            false);
+        ASSERT_TRUE(selected.is_err());
+        auto message = rstd::format("{}", selected.unwrap_err());
+        EXPECT_TRUE(message.as_str().contains("app/bridge"_str));
+        EXPECT_TRUE(message.as_str().contains("provider/missing"_str));
+    }
+}
+
 auto external_condition(ref<str> source) -> lito::dependency::ExternalDependencyCondition {
     return lito::dependency::ExternalDependencyCondition {
         .source     = String::make(source),

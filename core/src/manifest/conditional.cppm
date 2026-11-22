@@ -21,10 +21,16 @@ struct ConditionalConfiguration {
     ConditionalUsage            usage;
 };
 
+struct DependencyFeature {
+    String dependency;
+    String feature;
+};
+
 struct FeatureDeclaration {
-    String name;
-    String macro_name;
-    bool   default_enabled { false };
+    String                 name;
+    String                 macro_name;
+    bool                   default_enabled { false };
+    Vec<DependencyFeature> enables;
 };
 
 auto valid_feature_name(ref<str> value) -> bool {

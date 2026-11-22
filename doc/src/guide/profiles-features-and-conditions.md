@@ -109,6 +109,21 @@ lito build --features luato/vendored
 The second command requires `luato` to be a direct dependency of a selected root. Disable all root
 default features with `--no-default-features`; this does not disable defaults requested by dependencies.
 
+To forward a package feature to a dependency, declare `enables`:
+
+```toml
+[features.tracing]
+enables = ["media/tracing"]
+
+[dependencies]
+media = { version = "0.1" }
+```
+
+Now `--features tracing` also requests `media`'s `tracing` feature. The same forwarding occurs when
+the package feature is enabled by defaults, configuration, or another dependency. Without it, the
+dependency remains available without this extra request. An inactive dependency condition or an
+unused development dependency prevents forwarding; requests from active consumers are unified.
+
 To persist package-specific preferences, use project configuration rather than manifest feature
 declarations:
 

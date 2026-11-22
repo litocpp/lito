@@ -48,11 +48,33 @@ Feature names start with an ASCII letter or `_`, followed by letters, digits, `-
 
 `default` is a boolean and defaults to `false`.
 
+`enables` is an optional array of `dependency/feature` strings. When this feature is enabled,
+each entry requests the named feature through an active direct dependency or development dependency.
+For example:
+
+```toml
+[features.waywallen]
+enables = ["shared-cli/waywallen"]
+
+[dependencies]
+shared-cli = { version = "0.1" }
+```
+
+The dependency remains available with or without the package feature. Its `condition` still controls
+whether the edge is active; forwarding never activates a disabled edge, even if another consumer
+uses the same provider. Development requests apply only when development targets are selected.
+Fixed dependency `features` and forwarded requests are unified across consumers. Forwarding can
+continue through the provider's own feature declarations.
+
+Only C++/plugin/pmacro dependencies support these requests. Entries must reference a declared direct
+dependency; script, runtime, and external dependencies, local feature names, `dep:`, and `?/feature`
+are not supported. Duplicate entries are rejected. A requested provider feature must exist.
+
 Lito derives the package-local macro as `LITO_FEAT_` plus the uppercased feature name with `-`
 changed to `_`. Two features that normalize to the same macro are rejected.
 
-Feature macro names are not configurable. The manifest parser and JSON Schema both accept only
-`default` in a feature declaration and derive the macro from the feature name.
+Feature macro names are not configurable. The manifest parser and JSON Schema accept `default`
+and `enables` in a feature declaration and derive the macro from the feature name.
 
 Command-line `--features` accepts repeated arguments, comma-separated names, and quoted ASCII
 whitespace-separated names. Empty separator items are ignored and repeated selectors are deduplicated.

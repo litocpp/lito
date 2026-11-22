@@ -66,7 +66,8 @@ struct CompileTestCase {
 };
 
 struct Feature {
-    bool default_enabled {};
+    bool        default_enabled {};
+    Vec<String> enables;
 };
 
 using Features = rstd::collections::BTreeMap<String, Feature>;
@@ -257,9 +258,13 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Feature> {
     static auto deserialize(Deserializer& deserializer)
         -> Result<lito::manifest::wire::Feature, typename Deserializer::error_type> {
         auto default_enabled = serde::DefaultedField<bool>("default"_str, false);
+        auto enables = serde::DefaultedField<Vec<String>>("enables"_str, Vec<String>::make());
         rstd_try(serde::deserialize_record(
-            deserializer, serde::UnknownFieldPolicy::Reject, default_enabled));
-        return Ok(lito::manifest::wire::Feature { .default_enabled = default_enabled.take() });
+            deserializer, serde::UnknownFieldPolicy::Reject, default_enabled, enables));
+        return Ok(lito::manifest::wire::Feature {
+            .default_enabled = default_enabled.take(),
+            .enables         = enables.take(),
+        });
     }
 };
 

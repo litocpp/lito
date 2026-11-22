@@ -183,18 +183,34 @@ public:
         return Ok(empty {});
     }
 
-    auto dependency(ref<str> owner, const ResolvedRequiredDependency& edge) -> void {
+    auto dependency(const ResolvedPackage& owner, const ResolvedRequiredDependency& edge) -> void {
         const auto collect = [&](const auto& value) {
-            auto source =
-                rstd::format("dependency '{}' from package '{}'", value.name.as_str(), owner);
+            auto source = rstd::format("dependency '{}' from package '{}'",
+                                       value.name.as_str(),
+                                       owner.manifest.name.as_str());
             for (const auto& feature : value.features)
                 request(value.name.as_str(), feature.as_str(), source.as_str());
             if (value.default_features) defaults(value.name.as_str(), source.as_str());
             for (const auto& entry : dependency_requests_) {
-                if (entry.owner == owner && entry.value.package == value.name)
+                if (entry.owner == owner.manifest.name && entry.value.package == value.name)
                     request(value.name.as_str(),
                             entry.value.feature.as_str(),
                             entry.value.source.as_str());
+            }
+            for (const auto& declaration : owner.manifest.features) {
+                auto enabled = false;
+                for (const auto& feature : owner.features)
+                    if (feature.name == declaration.name && feature.enabled) enabled = true;
+                if (! enabled) continue;
+                for (const auto& forwarded : declaration.enables) {
+                    if (forwarded.dependency != value.name) continue;
+                    auto reason = rstd::format("feature '{}/{}' enables '{}/{}'",
+                                               owner.manifest.name.as_str(),
+                                               declaration.name.as_str(),
+                                               value.name.as_str(),
+                                               forwarded.feature.as_str());
+                    request(value.name.as_str(), forwarded.feature.as_str(), reason.as_str());
+                }
             }
         };
         if (edge.is_Cpp())
@@ -215,6 +231,26 @@ public:
 
     auto resolve(ResolvedPackage& package, bool all_features) const -> PackageResult<empty> {
         const auto name = package.manifest.name.as_str();
+        for (const auto& declaration : package.manifest.features) {
+            for (const auto& forwarded : declaration.enables) {
+                const auto validate = [&](const auto& edges) -> PackageResult<empty> {
+                    for (const auto& edge : edges) {
+                        if (resolved_dependency_name(edge) == forwarded.dependency &&
+                            edge.is_Script())
+                            return Err(PackageError::Message(
+                                rstd::format("feature '{}/{}' enables '{}/{}', but script "
+                                             "dependencies do not support features",
+                                             name,
+                                             declaration.name.as_str(),
+                                             forwarded.dependency.as_str(),
+                                             forwarded.feature.as_str())));
+                    }
+                    return Ok(empty {});
+                };
+                rstd_try(validate(package.dependencies));
+                rstd_try(validate(package.dev_dependencies));
+            }
+        }
         for (const auto& request : requests_) {
             if (request.package != name) continue;
             auto found = false;
@@ -261,40 +297,76 @@ auto resolve_features(ResolvedPackageGraph&       graph,
                       const FeatureSelection&     selection,
                       const Vec<String>*          host_packages = nullptr) -> PackageResult<empty> {
     auto       requests = FeatureRequests {};
-    const auto selected = [&](ref<str> name) {
-        for (const auto& value : selected_packages)
+    const auto contains = [](const Vec<String>& names, ref<str> name) {
+        for (const auto& value : names)
             if (value == name) return true;
-        if (host_packages != nullptr)
-            for (const auto& value : *host_packages)
-                if (value == name) return true;
         return false;
     };
-    rstd_try(requests.select_roots(graph, selected_roots, selection));
-    for (const auto& package : graph.packages) {
-        if (! selected(package.manifest.name.as_str())) continue;
-        for (const auto& edge : package.active_dependencies())
-            if (selected(resolved_dependency_name(edge)))
-                requests.dependency(package.manifest.name.as_str(), edge);
-        auto development = false;
+    const auto selected = [&](ref<str> name) {
+        return contains(selected_packages, name) ||
+               (host_packages != nullptr && contains(*host_packages, name));
+    };
+    const auto dependencies = [&](const ResolvedPackage& package,
+                                  const auto&            visit) -> PackageResult<empty> {
+        const auto name   = package.manifest.name.as_str();
+        const auto target = contains(selected_packages, name);
+        const auto host   = host_packages != nullptr && contains(*host_packages, name);
+        const auto active = [&](const auto& edge) {
+            return ((target && edge.activation.target) || (host && edge.activation.host)) &&
+                   selected(resolved_dependency_name(edge));
+        };
+        for (const auto& edge : package.dependencies)
+            if (active(edge)) rstd_try(visit(edge));
         for (const auto& target : selected_targets) {
-            if (target.package != package.manifest.name.as_str()) continue;
+            if (target.package != name) continue;
             if (target.kind == PackageTargetKind::Test ||
                 target.kind == PackageTargetKind::Benchmark ||
                 target.kind == PackageTargetKind::Example ||
-                target.kind == PackageTargetKind::CompileTest)
-                development = true;
+                target.kind == PackageTargetKind::CompileTest) {
+                for (const auto& edge : package.dev_dependencies)
+                    if (active(edge)) rstd_try(visit(edge));
+                break;
+            }
         }
-        if (development)
-            for (const auto& edge : package.active_dev_dependencies())
-                if (selected(resolved_dependency_name(edge)))
-                    requests.dependency(package.manifest.name.as_str(), edge);
+        return Ok(empty {});
+    };
+    rstd_try(requests.select_roots(graph, selected_roots, selection));
+    auto indices  = rstd::collections::BTreeMap<String, usize>::make();
+    auto incoming = Vec<usize>::make();
+    for (usize index {}; index < graph.packages.len(); ++index) {
+        indices.insert(graph.packages[index].manifest.name.clone(), index);
+        incoming.push(usize {});
     }
-    for (auto& package : graph.packages) {
-        if (selected(package.manifest.name.as_str()))
-            requests.configure(package.manifest.name.as_str(), selection);
-        rstd_try(requests.resolve(
-            package, selection.all_features && selected(package.manifest.name.as_str())));
+    for (const auto& package : graph.packages) {
+        rstd_try(dependencies(package, [&](const auto& edge) -> PackageResult<empty> {
+            auto index = indices.get(resolved_dependency_name(edge));
+            if (index.is_none())
+                return Err(PackageError::Message(
+                    rstd::format("dependency '{}' is missing from resolved graph",
+                                 resolved_dependency_name(edge))));
+            ++incoming[**index];
+            return Ok(empty {});
+        }));
     }
+    auto ready = Vec<usize>::make();
+    for (usize index {}; index < incoming.len(); ++index)
+        if (incoming[index] == usize {}) ready.emplace_back(index);
+    usize visited {};
+    while (! ready.is_empty()) {
+        auto&      package = graph.packages[*ready.pop()];
+        const auto active  = selected(package.manifest.name.as_str());
+        if (active) requests.configure(package.manifest.name.as_str(), selection);
+        rstd_try(requests.resolve(package, selection.all_features && active));
+        rstd_try(dependencies(package, [&](const auto& edge) -> PackageResult<empty> {
+            requests.dependency(package, edge);
+            auto index = **indices.get(resolved_dependency_name(edge));
+            if (--incoming[index] == usize {}) ready.emplace_back(index);
+            return Ok(empty {});
+        }));
+        ++visited;
+    }
+    if (visited != graph.packages.len())
+        return Err(PackageError::Message("package dependency cycle in feature resolution"_Str));
     return Ok(empty {});
 }
 

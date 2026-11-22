@@ -542,7 +542,7 @@ auto parse_library_target(Option<wire::LibraryTarget> value,
     auto archive        = rstd::move(wire.archive);
     auto artifact       = rstd::move(wire.artifact);
     auto linker_options = rstd::move(wire.linker_options);
-    auto output = LibraryOutput::Static(String::make());
+    auto output         = LibraryOutput::Static(String::make());
     if (kind.is_none() || kind->as_str() == "static"_str) {
         if (artifact.is_some()) {
             return Err(ManifestSchemaError::Domain(
@@ -1047,10 +1047,29 @@ auto parse_features(Option<wire::Features> value) -> ManifestSchemaResult<Vec<Fe
                 rstd::move(item), "normalized macro is repeated"_str)));
         }
         macros.insert(macro.clone(), name.clone());
+        auto enables = Vec<DependencyFeature>::make();
+        for (usize index {}; index < specification->enables.len(); ++index) {
+            auto selector = specification->enables[index].as_str();
+            auto parts    = selector.split_once("/"_str);
+            auto location = item.with_field("enables"_str).with_index(index);
+            if (parts.is_none() || ! package_name_is_valid(parts->get<0>()) ||
+                ! valid_feature_name(parts->get<1>())) {
+                return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                    rstd::move(location), "expected dependency/feature"_str)));
+            }
+            for (const auto& previous : enables) {
+                if (previous.dependency == parts->get<0>() && previous.feature == parts->get<1>()) {
+                    return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value(
+                        rstd::move(location), "dependency feature is repeated"_str)));
+                }
+            }
+            enables.push({ parts->get<0>().into(), parts->get<1>().into() });
+        }
         result.push(FeatureDeclaration {
             .name            = name.clone(),
             .macro_name      = rstd::move(macro),
             .default_enabled = specification->default_enabled,
+            .enables         = rstd::move(enables),
         });
     }
     return Ok(rstd::move(result));

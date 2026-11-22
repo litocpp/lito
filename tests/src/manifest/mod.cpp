@@ -66,6 +66,12 @@ TEST_F(Manifest, TypedFieldSchemasRejectInvalidModesAndKeepPaths) {
           Kind::TypeMismatch,
           "bin[0].link-stdlib"_str },
         { R"toml(usage = {threads="false"})toml"_str, Kind::TypeMismatch, "usage.threads"_str },
+        { R"toml(features.bridge = {enables=true})toml"_str,
+          Kind::TypeMismatch,
+          "features.bridge.enables"_str },
+        { R"toml(features.bridge = {enables=[true]})toml"_str,
+          Kind::TypeMismatch,
+          "features.bridge.enables[0]"_str },
         { R"toml(usage = {private-include-directories=[{path="inc", other=true}]})toml"_str,
           Kind::UnknownField,
           "usage.private-include-directories[0].other"_str },
@@ -2769,6 +2775,133 @@ default-features = false
     ASSERT_TRUE(loaded->dependencies[usize {}].features.is_some());
     ASSERT_EQ(loaded->dependencies[usize {}].features->len(), usize(1));
     EXPECT_EQ((*loaded->dependencies[usize {}].features)[usize {}], "api"_str);
+}
+
+TEST_F(Manifest, ParsesFeatureEnablesForWorkspaceAndDevelopmentDependencies) {
+    auto project = manifest("feature-enables-workspace"_str, R"toml([package]
+name = "consumer"
+version = "0.1.0"
+
+[[bin]]
+name = "consumer"
+link-stdlib = false
+
+[features.bridge]
+default = true
+enables = ["normal/bridge", "development/check"]
+
+[dependencies]
+normal = { workspace = true }
+[dev-dependencies]
+development = { version = "0.1" }
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->features.len(), usize(1));
+    const auto& feature = loaded->features[usize {}];
+    EXPECT_TRUE(feature.default_enabled);
+    ASSERT_EQ(feature.enables.len(), usize(2));
+    EXPECT_EQ(feature.enables[usize {}].dependency, "normal"_str);
+    EXPECT_EQ(feature.enables[usize {}].feature, "bridge"_str);
+    EXPECT_EQ(feature.enables[usize(1)].dependency, "development"_str);
+    EXPECT_EQ(feature.enables[usize(1)].feature, "check"_str);
+}
+
+TEST_F(Manifest, FeatureEnablesRejectInvalidReferences) {
+    constexpr ref<str> entries[] = {
+        "\"\""_str,
+        "\"normal\""_str,
+        "\"/bridge\""_str,
+        "\"normal/\""_str,
+        "\"normal/bridge/extra\""_str,
+        "\"normal?/bridge\""_str,
+        "\"dep:normal/bridge\""_str,
+        "\"normal/1bridge\""_str,
+        "\"normal/bridge\", \"normal/bridge\""_str,
+        "\"absent/bridge\""_str,
+        "\"runtime/bridge\""_str,
+        "\"external/bridge\""_str,
+    };
+    usize index {};
+    for (auto entry : entries) {
+        SCOPED_TRACE(entry);
+        auto contents = rstd::format(R"toml([package]
+name = "consumer"
+version = "0.1.0"
+[[bin]]
+name = "consumer"
+[features.bridge]
+enables = [{}]
+[dependencies.normal]
+version = "0.1"
+[runtime-dependencies.runtime]
+version = "0.1"
+[external-dependencies.pkg-config.external]
+module = "external"
+)toml",
+                                     entry);
+        auto project  = manifest(rstd::format("feature-enables-invalid-{}", index++).as_str(),
+                                 contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        const auto& error = loaded.unwrap_err();
+        ASSERT_TRUE(error.is_File());
+        const auto& cause = error.as_File().source.cause;
+        ASSERT_TRUE(cause.is_Schema());
+        const auto& schema = cause.as_Schema().source;
+        if (schema.is_Data()) {
+            EXPECT_EQ(schema.as_Data().source.kind(), rstd::serde::ErrorKind::InvalidValue);
+            auto path = schema.as_Data().source.path().segments();
+            ASSERT_EQ(path.len(), usize(4));
+            EXPECT_EQ(path[usize {}].name().unwrap(), "features"_str);
+            EXPECT_EQ(path[usize(1)].name().unwrap(), "bridge"_str);
+            EXPECT_EQ(path[usize(2)].name().unwrap(), "enables"_str);
+        } else {
+            ASSERT_TRUE(schema.is_Domain());
+            EXPECT_TRUE(schema.as_Domain().message.as_str().contains("enables"_str));
+        }
+    }
+}
+
+TEST_F(Manifest, FeatureEnablesSurviveStandalonePackaging) {
+    auto project = manifest("feature-enables"_str, R"toml([package]
+name = "consumer"
+version = "0.1.0"
+[[bin]]
+name = "consumer"
+link-stdlib = false
+[features.bridge]
+default = true
+enables = ["normal/bridge", "development/check"]
+[dependencies]
+normal = { version = "0.1", condition = "feature.bridge" }
+[dev-dependencies]
+development = { version = "0.1" }
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    auto serialized = lito::manifest::serialize_standalone_package_manifest(
+        *loaded,
+        lito::manifest::StandaloneManifestOptions {
+            .owner_registry =
+                lito::registry::RegistryId::parse("https://registry.example/"_str).unwrap(),
+        });
+    ASSERT_TRUE(serialized.is_ok());
+    auto copy = manifest("feature-enables-copy"_str, serialized->as_str());
+    ASSERT_TRUE(copy.is_ok());
+    auto reloaded = lito::manifest::load_package_manifest(copy->root.as_path());
+    ASSERT_TRUE(reloaded.is_ok());
+    ASSERT_EQ(reloaded->features.len(), usize(1));
+    const auto& feature = reloaded->features[usize {}];
+    EXPECT_TRUE(feature.default_enabled);
+    ASSERT_EQ(feature.enables.len(), usize(2));
+    EXPECT_EQ(feature.enables[usize {}].dependency, "normal"_str);
+    EXPECT_EQ(feature.enables[usize {}].feature, "bridge"_str);
+    EXPECT_EQ(feature.enables[usize(1)].dependency, "development"_str);
+    EXPECT_EQ(feature.enables[usize(1)].feature, "check"_str);
 }
 
 TEST_F(Manifest, UsageSeparatesLocalOptionsFromTypedLinkRequirements) {
