@@ -1,3 +1,6 @@
 [book]
 name = "lito"
 title = "Lito"
+
+[output.html]
+icon = "assets/litocpp.svg"
