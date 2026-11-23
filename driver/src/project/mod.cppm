@@ -422,6 +422,7 @@ struct PreparedBuildProject {
     BuildPlatform                              platform;
     BuildLayout                                layout;
     cpp::PackageMetadata                       metadata;
+    Vec<lito::package::PackageTargetId>        documentation_targets;
     ExternalAssetCatalog                       external_assets;
     Vec<ExternalSourceProvenance>              external_source_provenance;
     Vec<BuiltTargetRuntime>                    target_runtimes;
@@ -1058,16 +1059,17 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   cmake_find_install_prefix));
     auto assets         = rstd::move(external_usage.assets);
     auto provenance     = rstd::move(external_usage.provenance);
-    auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
-                                                            project.selected_package_names,
-                                                            project.selected_targets,
-                                                            project.effective_targets,
-                                                            resolved_configuration,
-                                                            rstd::move(resolved_profile),
-                                                            session.platform,
-                                                            rstd::move(external_usage.usage),
-                                                            rstd::move(external_usage.sources),
-                                                            toolchain.argument_parser());
+    auto metadata = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
+                                                      project.selected_package_names,
+                                                      project.selected_targets,
+                                                      project.effective_targets,
+                                                      resolved_configuration,
+                                                      rstd::move(resolved_profile),
+                                                      session.platform,
+                                                      rstd::move(external_usage.usage),
+                                                      rstd::move(external_usage.sources),
+                                                      toolchain.argument_parser(),
+                                                      project.documentation_targets.as_slice());
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
@@ -1099,22 +1101,25 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const Option<BuildSetupReportSink>& setup_reporter = None(),
                                     const Option<PathBuf>& cmake_find_install_prefix   = None())
     -> ProjectResult<PreparedBuildProject> {
-    auto host_placements = rstd::move(session.host_placements);
-    auto metadata        = resolve_project_metadata(rstd::move(session),
-                                                    configuration,
-                                                    profile,
-                                                    requested_output,
-                                                    sources,
-                                                    cargo,
-                                                    pkg_config,
-                                                    cmake,
-                                                    toolchain,
-                                                    tool_resolver,
-                                                    environment,
-                                                    jobs,
-                                                    observer,
-                                                    setup_reporter,
-                                                    cmake_find_install_prefix);
+    auto host_placements       = rstd::move(session.host_placements);
+    auto documentation_targets = Vec<lito::package::PackageTargetId>::make();
+    for (const auto& target : session.project.selection.documentation_targets)
+        documentation_targets.push(target.clone());
+    auto metadata = resolve_project_metadata(rstd::move(session),
+                                             configuration,
+                                             profile,
+                                             requested_output,
+                                             sources,
+                                             cargo,
+                                             pkg_config,
+                                             cmake,
+                                             toolchain,
+                                             tool_resolver,
+                                             environment,
+                                             jobs,
+                                             observer,
+                                             setup_reporter,
+                                             cmake_find_install_prefix);
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved                    = rstd::move(metadata).unwrap();
     auto aggregate_requests          = rstd_try(proc_macro_aggregate_requests(resolved.metadata));
@@ -1177,6 +1182,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
         .platform                   = rstd::move(resolved.platform),
         .layout                     = rstd::move(resolved.layout),
         .metadata                   = rstd::move(resolved.metadata),
+        .documentation_targets      = rstd::move(documentation_targets),
         .external_assets            = rstd::move(resolved.external_assets),
         .external_source_provenance = rstd::move(resolved.external_source_provenance),
         .target_runtimes            = Vec<BuiltTargetRuntime>::make(),

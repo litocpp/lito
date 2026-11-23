@@ -48,12 +48,10 @@ auto selected_package(const BuildSummary& summary, ref<str> name)
     return None();
 }
 
-auto selected_library_target(const BuildSummary&                   summary,
-                             const lito::package::PackageTargetId& target) -> bool {
-    if (target.kind != lito::package::PackageTargetKind::Library) return false;
-    return summary.selected_targets.iter().any([&](auto selected) {
-        return (*selected) == target;
-    });
+auto documentable_target(lito::package::PackageTargetKind kind) -> bool {
+    return kind == lito::package::PackageTargetKind::Library ||
+           kind == lito::package::PackageTargetKind::Plugin ||
+           kind == lito::package::PackageTargetKind::ProcMacro;
 }
 
 struct DocUnitPlan {
@@ -82,7 +80,10 @@ auto extraction_request_json(const BuildSummary&                 summary,
 
     auto target_json = JsonMap::make();
     target_json.insert("name"_Str, rstd::into<Json>(unit.target.name.as_str()));
-    target_json.insert("kind"_Str, rstd::into<Json>("library"_str));
+    auto target_kind = unit.target.kind == lito::package::PackageTargetKind::Library
+                           ? "library"_str
+                           : lito::package::package_target_kind_name(unit.target.kind);
+    target_json.insert("kind"_Str, rstd::into<Json>(target_kind));
 
     auto unit_json = JsonMap::make();
     unit_json.insert("identity"_Str, rstd::into<Json>(unit.source_identity.as_str()));
@@ -103,8 +104,8 @@ auto extraction_request_json(const BuildSummary&                 summary,
     invocation.insert("arguments"_Str, Json::Array(rstd::move(arguments)));
 
     auto compiler = JsonMap::make();
-    compiler.insert("identity"_Str, rstd::into<Json>(summary.compiler.build_identity.as_str()));
-    compiler.insert("target"_Str, rstd::into<Json>(summary.compiler.target.as_str()));
+    compiler.insert("identity"_Str, rstd::into<Json>(unit.compiler.build_identity.as_str()));
+    compiler.insert("target"_Str, rstd::into<Json>(unit.compiler.target.as_str()));
 
     auto imported = JsonArray::with_capacity(unit.bmi_dependencies.len());
     for (const auto& dependency : unit.bmi_dependencies) {
@@ -178,13 +179,14 @@ auto request_identity(const DocumentationBuildUnit&       unit,
                       const cpp::SelectedPackageMetadata& package,
                       const ResolvedDocTool&              tool) -> DocResult<String> {
     auto invocation_identity = unit.invocation.identity();
-    auto value = rstd::format("lito-doc-extract-v3\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+    auto value = rstd::format("lito-doc-extract-v4\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                               package.source_identity.as_str(),
                               lito::package::package_target_id_text(unit.target).as_str(),
                               unit.source_identity.as_str(),
                               invocation_identity.as_str(),
                               tool.build_identity.as_str(),
                               tool.sdk.identity.as_str(),
+                              unit.compiler.build_identity.as_str(),
                               unit.kind,
                               unit.is_interface);
     for (const auto& dependency : unit.bmi_dependencies) {
@@ -362,6 +364,7 @@ auto execute_extractions(const DocRequest&                 request,
 
 struct PackageResponses {
     const cpp::SelectedPackageMetadata* package {};
+    const DocumentationBuildUnit*       context {};
     String                              root_module;
     struct Response {
         PathBuf path;
@@ -386,6 +389,7 @@ auto site_manifest_json(const BuildSummary&     summary,
         const auto& unit = summary.documentation_units[plan.unit];
         for (auto& package : packages) {
             if (package.package->name.as_str() != unit.target.package.as_str()) continue;
+            if (package.context == nullptr) package.context = rstd::addressof(unit);
             auto contents = rstd::fs::read_to_string(plan.response.as_path());
             if (contents.is_err()) {
                 return Err(DocError::Io("read documentation response"_Str,
@@ -435,9 +439,12 @@ auto site_manifest_json(const BuildSummary&     summary,
         value.insert("root_module"_Str, rstd::into<Json>(package.root_module.as_str()));
         value.insert("profile"_Str, rstd::into<Json>(summary.product.profile.as_str()));
         value.insert("root"_Str, Json::String(rstd::move(root)));
-        value.insert("toolchain_version"_Str, rstd::into<Json>(summary.compiler.version.as_str()));
-        value.insert("toolchain_target"_Str, rstd::into<Json>(summary.compiler.target.as_str()));
-        value.insert("language_standard"_Str, rstd::into<Json>(summary.language_standard.as_str()));
+        value.insert("toolchain_version"_Str,
+                     rstd::into<Json>(package.context->compiler.version.as_str()));
+        value.insert("toolchain_target"_Str,
+                     rstd::into<Json>(package.context->compiler.target.as_str()));
+        value.insert("language_standard"_Str,
+                     rstd::into<Json>(package.context->language_standard.as_str()));
         value.insert("responses"_Str, Json::Array(rstd::move(responses)));
         package_values.push(Json::Object(rstd::move(value)));
     }
@@ -499,17 +506,30 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
         return Err(rstd::into<DocError>(rstd::move(environment).unwrap_err()));
     auto built = build_with_environment(request.build, *environment);
     if (built.is_err()) return Err(rstd::into<DocError>(rstd::move(built).unwrap_err()));
-    auto summary = rstd::move(built).unwrap();
+    auto                    summary  = rstd::move(built).unwrap();
+    const CompilerIdentity* compiler = nullptr;
+    for (const auto& unit : summary.documentation_units) {
+        if (documentable_target(unit.target.kind)) {
+            compiler = rstd::addressof(unit.compiler);
+            break;
+        }
+    }
+    if (compiler == nullptr) {
+        return Err(
+            DocError::Message("selected packages do not contain a documentable source target"_Str));
+    }
     auto tool =
-        resolve_doc_tool(request.build, request.config, summary, *environment, request.observer);
+        resolve_doc_tool(request.build, request.config, *compiler, *environment, request.observer);
     if (tool.is_err()) return Err(rstd::move(tool).unwrap_err());
+    for (const auto& unit : summary.documentation_units)
+        if (documentable_target(unit.target.kind)) rstd_try(tool->validate_compiler(unit.compiler));
 
     auto cache_root =
         summary.product.build_directory.join(PathBuf::from("lito-doc-cache"_str).as_path());
     auto plans = Vec<DocUnitPlan>::make();
     for (usize index {}; index < summary.documentation_units.len(); ++index) {
         const auto& unit = summary.documentation_units[index];
-        if (! selected_library_target(summary, unit.target)) continue;
+        if (! documentable_target(unit.target.kind)) continue;
         auto package = selected_package(summary, unit.target.package.as_str());
         if (package.is_none()) {
             return Err(DocError::Message(
@@ -531,11 +551,6 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
             .response   = rstd::move(response_path),
         });
     }
-    if (plans.is_empty()) {
-        return Err(DocError::Message(
-            "selected packages do not contain a documentable library target"_Str));
-    }
-
     auto reused = execute_extractions(request, summary, *tool, *environment, plans);
     if (reused.is_err()) return Err(rstd::move(reused).unwrap_err());
     auto output = request.output.is_empty()

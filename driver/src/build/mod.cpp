@@ -348,11 +348,11 @@ auto build_link_target(const BuildRequest&                 request,
                                                  platform.effective_target),
         .primary =
             BuiltArtifactFile {
-                .role         = target_spec.id.kind == lito::package::PackageTargetKind::Library &&
-                                        target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
-                                    ? ArtifactFileRole::LinkInput
-                                    : ArtifactFileRole::Runtime,
-                .path         = rstd::move(executable_path),
+                .role = target_spec.id.kind == lito::package::PackageTargetKind::Library &&
+                                target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
+                            ? ArtifactFileRole::LinkInput
+                            : ArtifactFileRole::Runtime,
+                .path = rstd::move(executable_path),
                 .content_type = "application/octet-stream"_Str,
             },
         .package_root  = target_spec.root.clone(),
@@ -1362,20 +1362,32 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     emit_attribute_warnings(package, units, scans);
 
     auto initial_plan_scope = stage_timing.scope(BuildStage::CompilePlan);
-    auto materialized       = materialize_build_actions(package,
-                                                        layout,
-                                                        toolchain,
-                                                        bmi_format,
-                                                        units,
-                                                        scans,
-                                                        rstd::move(semantic_graph),
-                                                        selected_targets.as_slice(),
-                                                        request.result,
-                                                        request.observer);
+    auto materialized = materialize_build_actions(package,
+                                                  layout,
+                                                  toolchain,
+                                                  bmi_format,
+                                                  units,
+                                                  scans,
+                                                  rstd::move(semantic_graph),
+                                                  project.documentation_targets.is_empty()
+                                                      ? selected_targets.as_slice()
+                                                      : project.documentation_targets.as_slice(),
+                                                  request.result,
+                                                  request.observer);
     if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
-    auto actions                = rstd::move(materialized).unwrap();
-    actions.compile.database    = rstd::move(compilation_database);
-    auto documentation_units    = rstd::move(actions.documentation);
+    auto actions             = rstd::move(materialized).unwrap();
+    actions.compile.database = rstd::move(compilation_database);
+    auto documentation_units = rstd::move(actions.documentation);
+    for (auto& unit : documentation_units)
+        unit.language_standard = project.configuration.language_standard.clone();
+    if (plugin_host.is_some()) {
+        for (auto& unit : plugin_host->documentation_units) {
+            auto requested = false;
+            for (const auto& target : project.documentation_targets)
+                if (target == unit.target) requested = true;
+            if (requested) documentation_units.push(rstd::move(unit));
+        }
+    }
     auto documentation_retained = documentation_retained_bytes(documentation_units);
     initial_plan_scope.finish();
 
@@ -2069,7 +2081,8 @@ auto build_prepared_project(const BuildRequest&               request,
     return summary;
 }
 
-namespace {
+namespace
+{
 auto build_and_publish(const BuildRequest&                       request,
                        Option<lito::workspace::WorkspaceCatalog> catalog,
                        Option<ResolvedBuildProject>              resolved            = None(),
@@ -2202,7 +2215,7 @@ auto resolve_pack_script_dependencies(const BuildRequest&               request,
     return Ok(rstd::move(dependencies).unwrap());
 }
 
-auto build_and_publish_resolved_project(BuildRequest request,
+auto build_and_publish_resolved_project(BuildRequest                          request,
                                         lito::workspace::ResolvedProjectEntry project)
     -> BuildResult<BuildSummary> {
     request.selection.root = rstd::move(project.root);

@@ -66,6 +66,7 @@ struct ResolvedPackageSelection {
     Vec<String>                artifact_processor_package_names;
     Vec<String>                host_tool_package_names;
     Vec<PackageTargetId>       selected_targets;
+    Vec<PackageTargetId>       documentation_targets;
     Vec<PackageTargetId>       effective_targets;
     Vec<PackageTargetId>       unavailable_targets;
     EffectiveLanguageStandards standards;
@@ -126,14 +127,15 @@ auto selected_by_purpose(ProjectRootRole         role,
     }
     if (purpose == PackageSelectionPurpose::Example) return kind == PackageTargetKind::Example;
     if (purpose == PackageSelectionPurpose::Documentation) {
-        return kind == PackageTargetKind::Library;
+        return kind == PackageTargetKind::Library || kind == PackageTargetKind::Plugin ||
+               kind == PackageTargetKind::ProcMacro;
     }
     if (purpose == PackageSelectionPurpose::Install) {
         return kind == PackageTargetKind::Binary;
     }
     return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
-           kind == PackageTargetKind::Cdylib ||
-           kind == PackageTargetKind::Plugin || kind == PackageTargetKind::ProcMacro;
+           kind == PackageTargetKind::Cdylib || kind == PackageTargetKind::Plugin ||
+           kind == PackageTargetKind::ProcMacro;
 }
 
 auto append_selected_targets(Vec<PackageTargetId>&   output,
@@ -254,7 +256,7 @@ auto resolve_package_selection_with_environment_impl(
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();
     for (const auto& root : graph.roots) root_roles.insert(root.name.clone(), root.role);
     auto selected_roots      = Vec<String>::make();
-    auto selected_targets   = Vec<PackageTargetId>::make();
+    auto selected_targets    = Vec<PackageTargetId>::make();
     auto unavailable_targets = Vec<PackageTargetId>::make();
     if (selection.packages.is_empty()) {
         auto defaults = StringSet::make();
@@ -346,7 +348,9 @@ auto resolve_package_selection_with_environment_impl(
                 if (unavailable_targets.len() != unavailable_start) {
                     return Err(PackageSelectionError::Message(
                         rstd::format("project package '{}' has no {} target for platform '{}'",
-                                     name.as_str(), purpose, target->triple.as_str())));
+                                     name.as_str(),
+                                     purpose,
+                                     target->triple.as_str())));
                 }
                 return Err(PackageSelectionError::Message(
                     rstd::format("project package '{}' has no {} target", name.as_str(), purpose)));
@@ -357,9 +361,8 @@ auto resolve_package_selection_with_environment_impl(
     }
     if (selected_roots.is_empty()) {
         if (! unavailable_targets.is_empty()) {
-            return Err(PackageSelectionError::Message(
-                rstd::format("project has no {} target for platform '{}'",
-                             purpose, target->triple.as_str())));
+            return Err(PackageSelectionError::Message(rstd::format(
+                "project has no {} target for platform '{}'", purpose, target->triple.as_str())));
         }
         return Err(PackageSelectionError::Message(
             rstd::format("project has no selected {} package", purpose)));
@@ -438,7 +441,10 @@ auto resolve_package_selection_with_environment_impl(
         return Err(rstd::into<PackageSelectionError>(rstd::move(standards).unwrap_err()));
     }
     auto target_selected_targets = Vec<PackageTargetId>::make();
+    auto documentation_targets   = Vec<PackageTargetId>::make();
     for (const auto& selected_target : selected_targets) {
+        if (purpose == PackageSelectionPurpose::Documentation)
+            documentation_targets.push(selected_target.clone());
         if (selected_target.kind != PackageTargetKind::Plugin &&
             selected_target.kind != PackageTargetKind::ProcMacro)
             target_selected_targets.push(selected_target.clone());
@@ -457,6 +463,7 @@ auto resolve_package_selection_with_environment_impl(
         .artifact_processor_package_names = rstd::move(selected_packages->processors),
         .host_tool_package_names          = rstd::move(selected_packages->tools),
         .selected_targets                 = rstd::move(target_selected_targets),
+        .documentation_targets            = rstd::move(documentation_targets),
         .effective_targets                = rstd::move(effective_targets),
         .unavailable_targets              = rstd::move(unavailable_targets),
         .standards                        = rstd::move(standards).unwrap(),
@@ -464,7 +471,7 @@ auto resolve_package_selection_with_environment_impl(
 }
 
 auto resolve_plugin_host_selection(ResolvedPackageSelection selection,
-                                   const TargetInfo& host_target)
+                                   const TargetInfo&        host_target)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     if (selection.host_package_names.is_empty()) {
         return Err(PackageSelectionError::Message("plugin host selection has no packages"_Str));
@@ -543,7 +550,8 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection,
         if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
             return Err(PackageSelectionError::Message(
                 rstd::format("package '{}' has no artifact processor target for host platform '{}'",
-                             name.as_str(), host_target.triple.as_str())));
+                             name.as_str(),
+                             host_target.triple.as_str())));
         }
     }
     for (const auto& name : selection.host_tool_package_names) {
@@ -551,7 +559,8 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection,
         if (! has_selected(name.as_str(), PackageTargetKind::Binary)) {
             return Err(PackageSelectionError::Message(
                 rstd::format("package '{}' has no host-tool target for host platform '{}'",
-                             name.as_str(), host_target.triple.as_str())));
+                             name.as_str(),
+                             host_target.triple.as_str())));
         }
     }
     for (auto& package : selection.graph.packages) package.host_view = true;
@@ -588,7 +597,12 @@ auto resolve_plugin_host_selection(ResolvedPackageSelection selection,
             host_graph.roots.push(SelectedPackageRoot { instance, role });
         }
     }
-    selection.active_graph = rstd::move(host_graph);
+    auto documentation_targets = Vec<PackageTargetId>::make();
+    for (const auto& target : selection.documentation_targets)
+        for (const auto& selected : selected_targets)
+            if (target == selected) documentation_targets.push(target.clone());
+    selection.documentation_targets = rstd::move(documentation_targets);
+    selection.active_graph          = rstd::move(host_graph);
     selection.install_package_names.clear();
     selection.selected_package_names = rstd::move(selection.host_package_names);
     selection.selected_targets       = rstd::move(selected_targets);
@@ -841,6 +855,15 @@ auto merge_host_build_selection(ResolvedPackageSelection& project,
         for (const auto& existing : project.effective_targets)
             if (existing == target) repeated = true;
         if (! repeated) project.effective_targets.push(target.clone());
+        auto documented = false;
+        for (const auto& requested : project.documentation_targets)
+            if (requested == target) documented = true;
+        if (documented) {
+            auto present = false;
+            for (const auto& selected : project.selected_targets)
+                if (selected == target) present = true;
+            if (! present) project.selected_targets.push(target.clone());
+        }
     }
     auto remaining_packages  = Vec<String>::make();
     auto remaining_effective = Vec<PackageTargetId>::make();

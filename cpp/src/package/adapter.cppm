@@ -1072,7 +1072,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                   const BuildPlatform&                       platform,
                                   ExternalUsageCatalog                       external_usage,
                                   ExternalSourceRootCatalog                  external_sources,
-                                  const CppArgumentParser&                   argument_parser)
+                                  const CppArgumentParser&                   argument_parser,
+                                  slice<lito::package::PackageTargetId>      metadata_targets = {})
     -> lito::package::PackageResult<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.cxx.is_empty() || configuration.toolchain.ld.is_empty() ||
@@ -1652,6 +1653,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     for (const auto& target : selected_targets) {
         selected_root_packages.insert(target.package.clone(), empty {});
     }
+    for (const auto& target : metadata_targets)
+        selected_root_packages.insert(target.package.clone(), empty {});
     for (const auto& package : graph.packages) {
         if (selected.contains_key(package.manifest.name.as_str()) &&
             package.manifest.targets.is_empty() && package.manifest.build_script.is_some())

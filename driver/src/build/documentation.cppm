@@ -39,12 +39,19 @@ struct DocumentationBuildUnit {
     Option<String>                  root_module;
     String                          source_identity;
     CompileInvocation               invocation;
+    CompilerIdentity                compiler;
+    String                          language_standard;
     Vec<DocumentationBmiDependency> bmi_dependencies;
 
     auto retained_bytes() const noexcept -> usize {
         auto result = target.package.capacity() + target.name.capacity() + package_root.capacity() +
                       source.capacity() + relative_source.capacity() + source_identity.capacity() +
-                      invocation.retained_bytes() +
+                      invocation.retained_bytes() + compiler.build_identity.capacity() +
+                      compiler.version.capacity() + compiler.c_version.capacity() +
+                      compiler.path.capacity() + compiler.c_path.capacity() +
+                      compiler.resource_directory.capacity() +
+                      compiler.c_resource_directory.capacity() + compiler.target.capacity() +
+                      language_standard.capacity() +
                       bmi_dependencies.capacity() * usize(sizeof(DocumentationBmiDependency));
         if (logical_module.is_some()) result += logical_module->capacity();
         if (root_module.is_some()) result += root_module->capacity();

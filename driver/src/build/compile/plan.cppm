@@ -481,6 +481,7 @@ auto materialize_build_actions(const cpp::PackageSpec&               package,
             materialize_documentation_units(package, units, scans, *compile, selected_targets);
         if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
         documentation = rstd::move(materialized).unwrap();
+        for (auto& unit : documentation) unit.compiler = toolchain.compiler_identity().clone();
     }
     if (observer.is_some()) {
         auto dependencies = usize {};

@@ -14,6 +14,7 @@ import :command.doc.event;
 import :command.doc.request;
 import :command.doc_error;
 import :package;
+import :project;
 import lito.cpp;
 import lito.system;
 import lito.toolchain;
@@ -53,6 +54,19 @@ struct DocToolCapabilities {
     String json;
 };
 
+auto validate_doc_compiler(ref<str>                clang_build,
+                           const CompilerIdentity& compiler,
+                           ref<rstd::path::Path>   executable) -> DocResult<empty> {
+    if (! compiler.version.as_str().contains(clang_build)) {
+        return Err(
+            DocError::Protocol(PathBuf::from(executable),
+                               rstd::format("litodoc Clang '{}' does not match compiler '{}'",
+                                            clang_build,
+                                            compiler.version.as_str())));
+    }
+    return Ok(empty {});
+}
+
 auto parse_capabilities(String                  text,
                         ref<rstd::path::Path>   executable,
                         const CompilerIdentity& compiler) -> DocResult<DocToolCapabilities> {
@@ -78,13 +92,7 @@ auto parse_capabilities(String                  text,
         return Err(
             DocError::Protocol(PathBuf::from(executable), "unsupported litodoc capabilities"_Str));
     }
-    if (! compiler.version.as_str().contains(*(**clang_build).as_str())) {
-        return Err(
-            DocError::Protocol(PathBuf::from(executable),
-                               rstd::format("litodoc Clang '{}' does not match compiler '{}'",
-                                            *(**clang_build).as_str(),
-                                            compiler.version.as_str())));
-    }
+    rstd_try(validate_doc_compiler(*(**clang_build).as_str(), compiler, executable));
     return Ok(DocToolCapabilities {
         .litodoc_build = String::make(*(**build).as_str()),
         .clang_version = String::make(*(**clang_version).as_str()),
@@ -406,18 +414,23 @@ struct ResolvedDocTool {
     String   source_identity;
     String   build_identity;
     ClangSdk sdk;
+    String   clang_build;
+
+    auto validate_compiler(const CompilerIdentity& compiler) const -> DocResult<empty> {
+        return validate_doc_compiler(clang_build.as_str(), compiler, executable.as_path());
+    }
 };
 
 auto resolve_doc_tool(const BuildRequest&               request,
                       const lito::config::DocConfig&    config,
-                      const BuildSummary&               project,
+                      const CompilerIdentity&           compiler,
                       const ResolvedProcessEnvironment& environment,
                       const Option<DocEventSink>&       observer) -> DocResult<ResolvedDocTool> {
-    auto sdk = resolve_clang_sdk(project.compiler, environment);
+    auto sdk = resolve_clang_sdk(compiler, environment);
     if (sdk.is_err()) return Err(rstd::into<DocError>(rstd::move(sdk).unwrap_err()));
     if (config.litodoc_executable.is_some()) {
         auto capabilities =
-            probe_doc_tool(config.litodoc_executable->as_path(), project.compiler, environment);
+            probe_doc_tool(config.litodoc_executable->as_path(), compiler, environment);
         if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
         auto executable_digest = doc_tool_file_digest(config.litodoc_executable->as_path());
         if (executable_digest.is_err()) return Err(rstd::move(executable_digest).unwrap_err());
@@ -427,6 +440,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
             .source_identity = identity.clone(),
             .build_identity  = rstd::move(identity),
             .sdk             = rstd::move(sdk).unwrap(),
+            .clang_build     = capabilities->clang_build.clone(),
         });
     }
     auto resolver =
@@ -436,7 +450,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     auto key_material = rstd::format("lito-doc-tool-v3\n{}\n{}\n{}\n{}\n{}",
                                      source->identity.as_str(),
                                      sdk->identity.as_str(),
-                                     project.compiler.target.as_str(),
+                                     compiler.target.as_str(),
                                      config.litodoc_path.is_some() ? "path"_str : "git"_str,
                                      lito::lock::LOCK_FORMAT_VERSION);
     auto key          = rstd_try(licrypto::sha256_hex(key_material.as_str()));
@@ -452,7 +466,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
         if (cached->is_some()) {
             auto cached_tool = rstd::move(cached).unwrap().unwrap();
             auto capabilities =
-                probe_doc_tool(cached_tool.executable.as_path(), project.compiler, environment);
+                probe_doc_tool(cached_tool.executable.as_path(), compiler, environment);
             if (capabilities.is_ok()) {
                 emit_doc(observer,
                          DocEventKind::ToolReuse,
@@ -463,6 +477,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
                     .source_identity = source->identity.clone(),
                     .build_identity  = rstd::move(key),
                     .sdk             = rstd::move(sdk).unwrap(),
+                    .clang_build     = capabilities->clang_build.clone(),
                 });
             }
         }
@@ -480,8 +495,9 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.build_directory = tool_root->join(PathBuf::from("build"_str).as_path());
     tool_request.environment     = request.environment.clone();
     tool_request.tools           = request.tools.clone();
-    tool_request.configuration   = request.configuration.clone();
-    tool_request.configuration.toolchain.cxx = project.compiler.path.clone();
+    tool_request.configuration   = host_configuration_request(request.configuration);
+    tool_request.configuration.toolchain.cxx = compiler.path.clone();
+    tool_request.configuration.toolchain.cc  = compiler.c_path.clone();
     tool_request.configuration.standard_library =
         lito::config::standard_library_selection(sdk->standard_library);
     tool_request.lock.path              = tool_root->join(PathBuf::from("lito.lock"_str).as_path());
@@ -510,14 +526,14 @@ auto resolve_doc_tool(const BuildRequest&               request,
         return Err(
             DocError::Message("litodoc tool build did not produce the litodoc executable"_Str));
     }
-    auto capabilities = probe_doc_tool(executable->as_path(), project.compiler, environment);
+    auto capabilities = probe_doc_tool(executable->as_path(), compiler, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     auto executable_digest = doc_tool_file_digest(executable->as_path());
     if (executable_digest.is_err()) return Err(rstd::move(executable_digest).unwrap_err());
     auto published = published_doc_tool(
         tool_root->as_path(), executable->as_path(), executable_digest->as_str());
     if (published.is_err()) return Err(rstd::move(published).unwrap_err());
-    capabilities = probe_doc_tool(published->executable.as_path(), project.compiler, environment);
+    capabilities = probe_doc_tool(published->executable.as_path(), compiler, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     rstd_try(write_tool_receipt(receipt.as_path(),
                                 key.as_str(),
@@ -532,6 +548,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
                                ? rstd::move(key)
                                : rstd::format("{}:{}", key.as_str(), published->identity.as_str()),
         .sdk             = rstd::move(sdk).unwrap(),
+        .clang_build     = capabilities->clang_build.clone(),
     });
 }
 

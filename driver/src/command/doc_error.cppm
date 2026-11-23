@@ -99,11 +99,24 @@ struct Impl<fmt::Display, lito::DocError> : ImplBase<lito::DocError> {
                                                             error.as_Json().path.as_path()));
         }
         if (error.is_Execution()) {
-            return formatter.write_fmt(
-                fmt::Arguments::make("{} failed with exit code {} for '{}'",
-                                     error.as_Execution().operation,
-                                     error.as_Execution().exit_code,
-                                     error.as_Execution().executable.as_path()));
+            const auto& execution = error.as_Execution();
+            if (! formatter.write_fmt(fmt::Arguments::make("{} failed with exit code {} for '{}'",
+                                                           execution.operation,
+                                                           execution.exit_code,
+                                                           execution.executable.as_path())))
+                return false;
+            auto write_output = [&](ref<str> stream, ref<str> output) {
+                output = output.trim_ascii();
+                if (output.is_empty()) return true;
+                auto length = rstd::cmp::min(output.len(), usize(16 * 1024));
+                while (! output.is_char_boundary(length)) --length;
+                if (! formatter.write_fmt(fmt::Arguments::make(
+                        "\n{}:\n{}", stream, output.get(usize {}, length).unwrap())))
+                    return false;
+                return length == output.len() || formatter.write_str("\n[output truncated]"_str);
+            };
+            return write_output("stderr"_str, execution.standard_error.as_str()) &&
+                   write_output("stdout"_str, execution.standard_output.as_str());
         }
         if (error.is_Protocol()) {
             return formatter.write_fmt(

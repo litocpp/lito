@@ -33,6 +33,8 @@ sources = [
   "src/command/build.cpp",
   "src/command/compilation_database.cpp",
   "src/command/clean.cpp",
+  "src/command/doc_error.cpp",
+  "src/command/doc_targets.cpp",
   "src/command/format.cpp",
   "src/command/install.cpp",
   "src/command/reporting.cpp",
