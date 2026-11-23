@@ -29,7 +29,7 @@ namespace lito
 {
 
 inline constexpr auto LITODOC_REPOSITORY = "https://github.com/litocpp/litodoc.git"_str;
-inline constexpr auto LITODOC_COMMIT     = "fbee35c87d2120dac8ae3024790aaebfc4610395"_str;
+inline constexpr auto LITODOC_COMMIT     = "ac82e4a86e701df9f86e7211c95120a3e63e9c1d"_str;
 
 auto json_protocol_contains(const Json& value, ref<str> key, u64 expected) -> bool {
     auto member = value.get(key);

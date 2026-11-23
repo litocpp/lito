@@ -1,3 +1,18 @@
+<release version="0.8.11" date="2026-11-23">
+  <description>
+    <ul>
+      <li>Add lito pack with pack.lua hooks.</li>
+      <li>Support cdylib targets.</li>
+      <li>Support target platform predicates.</li>
+      <li>Support feature forwarding.</li>
+      <li>Support runtime dependency features.</li>
+      <li>Update LLVM SDKs to 23.1.6.</li>
+      <li>Update Android NDK to r30.</li>
+      <li>Fix host documentation targets.</li>
+      <li>Preserve documentation error output.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.10" date="2026-11-19">
   <description>
     <ul>
