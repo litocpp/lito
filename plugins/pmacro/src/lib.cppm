@@ -363,8 +363,10 @@ public:
 
     constexpr TokenStream() noexcept = default;
 
-    auto           size() const noexcept -> std::size_t;
-    auto           operator[](std::size_t index) const noexcept -> TokenTree;
+    auto size() const noexcept -> std::size_t;
+    auto operator[](std::size_t index) const noexcept -> TokenTree;
+    auto slice(std::size_t begin, std::size_t end) const noexcept
+        -> std::expected<TokenStream, Error>;
     auto           append(const TokenTree& token) noexcept -> bool;
     auto           append(const TokenStream& stream) noexcept -> bool;
     constexpr auto valid() const noexcept -> bool { return runtime_ != nullptr && handle_ != 0; }
@@ -412,6 +414,11 @@ enum class OutputLocation
     NamespaceEnd,
 };
 
+struct TokenSplice {
+    std::string                          name;
+    std::variant<TokenTree, TokenStream> replacement;
+};
+
 class Context {
 public:
     auto declaration() const noexcept
@@ -426,6 +433,8 @@ public:
     auto group(Delimiter          delimiter,
                const TokenStream& children,
                Span diagnostic_anchor) const noexcept -> std::expected<TokenTree, Error>;
+    auto splice(const TokenStream& input, std::span<const TokenSplice> replacements) const noexcept
+        -> std::expected<TokenStream, Error>;
     auto emit(OutputLocation location, const TokenStream& output) const noexcept
         -> std::expected<void, Error>;
     auto diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept
@@ -470,6 +479,11 @@ struct FunctionInput {
 namespace host
 {
 
+struct SpliceBinding {
+    std::string_view                         name;
+    std::variant<RuntimeToken, StreamHandle> replacement;
+};
+
 class Runtime {
 public:
     virtual auto emit_stream(OutputLocation location, StreamHandle output) noexcept
@@ -502,6 +516,13 @@ public:
     virtual auto macro_identity() const noexcept -> std::string_view        = 0;
     virtual auto provider_identity() const noexcept -> std::string_view     = 0;
     virtual auto target_triple() const noexcept -> std::string_view         = 0;
+    virtual auto slice_stream(StreamHandle handle, std::size_t begin, std::size_t end) noexcept
+        -> std::expected<StreamHandle, Error> = 0;
+    virtual auto append_stream(StreamHandle destination, StreamHandle source) noexcept
+        -> std::expected<void, Error> = 0;
+    virtual auto splice_stream(StreamHandle                   source,
+                               std::span<const SpliceBinding> replacements) noexcept
+        -> std::expected<StreamHandle, Error> = 0;
 
 protected:
     friend class pmacro::Context;
@@ -610,17 +631,21 @@ auto TokenStream::operator[](std::size_t index) const noexcept -> TokenTree {
     return token ? TokenTree(runtime_, *token) : TokenTree {};
 }
 
+auto TokenStream::slice(std::size_t begin, std::size_t end) const noexcept
+    -> std::expected<TokenStream, Error> {
+    if (! valid()) return std::unexpected(Error::InvalidArgument);
+    auto sliced = runtime_->slice_stream(handle_, begin, end);
+    if (! sliced) return std::unexpected(sliced.error());
+    return TokenStream(runtime_, *sliced);
+}
+
 auto TokenStream::append(const TokenTree& token) noexcept -> bool {
     return valid() && token.runtime_ == runtime_ && runtime_->push_token(handle_, token.value_);
 }
 
 auto TokenStream::append(const TokenStream& stream) noexcept -> bool {
-    if (! valid() || ! stream.valid() || runtime_ != stream.runtime_) return false;
-    const auto count = stream.size();
-    for (std::size_t index = 0; index < count; ++index) {
-        if (! append(stream[index])) return false;
-    }
-    return true;
+    return valid() && stream.valid() && runtime_ == stream.runtime_ &&
+           runtime_->append_stream(handle_, stream.handle_);
 }
 
 auto TokenStream::begin() const noexcept -> Iterator {
@@ -680,6 +705,31 @@ auto Context::group(Delimiter          delimiter,
     auto token = runtime_->group_token(delimiter, handle, diagnostic_anchor);
     if (! token) return std::unexpected(token.error());
     return TokenTree(runtime_, *token);
+}
+
+auto Context::splice(const TokenStream&           input,
+                     std::span<const TokenSplice> replacements) const noexcept
+    -> std::expected<TokenStream, Error> {
+    if (! runtime_) return std::unexpected(Error::InvalidArgument);
+    const auto source = runtime_->token_stream_handle(input);
+    if (! source) return std::unexpected(Error::InvalidArgument);
+
+    std::vector<host::SpliceBinding> bindings;
+    bindings.reserve(replacements.size());
+    for (const auto& replacement : replacements) {
+        if (const auto* token = std::get_if<TokenTree>(&replacement.replacement)) {
+            if (token->runtime_ != runtime_) return std::unexpected(Error::InvalidArgument);
+            bindings.push_back({ replacement.name, token->value_ });
+        } else {
+            const auto& stream = std::get<TokenStream>(replacement.replacement);
+            const auto  handle = runtime_->token_stream_handle(stream);
+            if (! handle) return std::unexpected(Error::InvalidArgument);
+            bindings.push_back({ replacement.name, handle });
+        }
+    }
+    auto output = runtime_->splice_stream(source, bindings);
+    if (! output) return std::unexpected(output.error());
+    return runtime_->make_token_stream(*output);
 }
 
 auto Context::diagnostic(DiagnosticLevel level, Span span, std::string_view message) const noexcept

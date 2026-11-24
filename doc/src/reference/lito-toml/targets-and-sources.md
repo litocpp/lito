@@ -211,6 +211,23 @@ be rebuilt with the matching builtin pmacro package.
 pmacro 0.9.0. Providers and aggregate plugins must be rebuilt with the matching builtin package;
 Lito's aggregate recipe identity invalidates previous plugin artifacts.
 
+`TokenStream::slice(begin, end)` copies the half-open range of top-level tokens into a new stream.
+It preserves spans, spacing, and group boundaries. Nested groups retain their original child
+streams. Empty ranges are valid. Invalid streams and out-of-bounds or reversed ranges return
+`Error::InvalidArgument`.
+
+`TokenStream::append` separates the input from preceding tokens and preserves the spacing inside
+an appended stream. Use `Context::parse` to create compounds such as `::` as single tokens.
+`Context::splice(input, replacements)` accepts `TokenSplice` bindings from identifier names to
+individual tokens or streams. It replaces matching identifiers inside nested groups and preserves
+source locations on both the surrounding tokens and the replacements. Inserted tokens are copied
+as supplied, without applying the replacement rules to them. An empty replacement stream removes
+the identifier. Duplicate or empty binding names and invalid or foreign inputs return
+`Error::InvalidArgument`.
+
+These changes extend the host C++ ABI in pmacro 0.10.0. Build providers and aggregate plugins with
+the matching builtin package.
+
 `TypeInfo::display` is diagnostic text. Available `type_id` fragments are C++ code representations,
 not stable type identities. `Context::tokens(fragment)` validates the fragment's source context and
 preserves its available diagnostic location. The model does not expose Clang objects, global type

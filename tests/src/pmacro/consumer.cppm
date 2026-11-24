@@ -28,12 +28,21 @@ export {
         "pmacro-basic-provider::invoke_tokens", struct InvokedFirst { int value; };
         struct InvokedSecond { InvokedFirst first; };
         inline constexpr InvokedSecond invoked_pair { { 42 } };
+        inline constexpr int invoked_spaced_number = 0xe + 1;
+        static_assert(invoked_spaced_number == 15);
         namespace invoked_generated {
             struct [[pmacro::derive("pmacro-basic::scoped_derive")]] InvokedDerived {};
         })]];
 
     [[pmacro::attr("pmacro-basic-provider::identity")]]
     inline constexpr int prefix_value = 7;
+
+    [[pmacro::invoke("pmacro-basic-provider::splice_tokens",
+                     2,
+                     { 0xe + 1 },
+                     inline constexpr int spliced_value = (slot + (nested));
+                     inline constexpr char spliced_literal[] = "slot";)]];
+    static_assert(spliced_value == 17 && spliced_literal[0] == 's');
 
     struct [[pmacro::attr("pmacro-basic-provider::identity")]] Value {
         int value;

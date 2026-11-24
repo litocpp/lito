@@ -581,21 +581,24 @@ public:
             std::size_t                token;
             clang::tok::TokenKind      closing;
         };
-        auto frames  = std::vector<GroupFrame> {};
-        auto current = root;
-        auto lexer   = clang::Lexer(clang::SourceLocation {},
-                                    compiler_.getLangOpts(),
-                                    input.begin(),
-                                    input.begin(),
-                                    input.end());
+        auto        frames       = std::vector<GroupFrame> {};
+        auto        current      = root;
+        auto        lexer        = clang::Lexer(clang::SourceLocation {},
+                                                compiler_.getLangOpts(),
+                                                input.begin(),
+                                                input.begin(),
+                                                input.end());
+        const char* previous_end = input.begin();
         for (;;) {
             auto token = clang::Token {};
             lexer.LexFromRawLexer(token);
             if (token.is(clang::tok::eof)) break;
             if (token.is(clang::tok::comment)) continue;
-            const auto* end    = lexer.getBufferLocation();
-            const auto* begin  = end - token.getLength();
-            const auto  offset = static_cast<std::uint32_t>(begin - input.begin());
+            const auto* end           = lexer.getBufferLocation();
+            const auto* begin         = end - token.getLength();
+            const auto  leading_space = begin != previous_end;
+            previous_end              = end;
+            const auto offset         = static_cast<std::uint32_t>(begin - input.begin());
             auto token_span = exact_spans ? pmacro::Span(span.source(),
                                                          span.begin() + offset,
                                                          span.begin() + offset + token.getLength())
@@ -612,7 +615,7 @@ public:
                     .origin =
                         exact_spans && span.source() ? CodeOrigin::Spelled : CodeOrigin::Rendered,
                     .children      = children,
-                    .leading_space = token.hasLeadingSpace(),
+                    .leading_space = leading_space,
                 });
                 frames.push_back(GroupFrame {
                     .parent  = current,
@@ -643,7 +646,7 @@ public:
             auto  spelling = std::string(begin, token.getLength());
             auto& stream   = *get_stream(current);
             if (! stream.tokens.empty() && stream.tokens.back().kind == pmacro::TokenKind::Punct &&
-                kind == pmacro::TokenKind::Punct && ! token.hasLeadingSpace()) {
+                kind == pmacro::TokenKind::Punct && ! leading_space) {
                 stream.tokens.back().spacing = pmacro::Spacing::Joint;
             }
             stream.tokens.push_back(StoredToken {
@@ -651,7 +654,7 @@ public:
                 .spelling = std::move(spelling),
                 .span     = token_span,
                 .origin = exact_spans && span.source() ? CodeOrigin::Spelled : CodeOrigin::Rendered,
-                .leading_space = token.hasLeadingSpace(),
+                .leading_space = leading_space,
             });
         }
         if (validate_groups && ! frames.empty()) return 0;
@@ -889,6 +892,18 @@ private:
         return stream->tokens.size();
     }
 
+    auto
+    slice_stream(pmacro::host::StreamHandle handle, std::size_t begin, std::size_t end) noexcept
+        -> std::expected<pmacro::host::StreamHandle, Error> override {
+        const auto* stream = get_stream(handle);
+        if (! stream || begin > end || end > stream->tokens.size())
+            return std::unexpected(Error::InvalidArgument);
+        auto first = stream->tokens.begin();
+        auto slice = std::vector<StoredToken>(first + begin, first + end);
+        streams_.push_back(StoredStream { std::move(slice) });
+        return streams_.size();
+    }
+
     auto stream_token(pmacro::host::StreamHandle handle, std::size_t index) const noexcept
         -> std::expected<pmacro::host::RuntimeToken, pmacro::Error> override {
         const auto* stream = get_stream(handle);
@@ -910,46 +925,142 @@ private:
                     const pmacro::host::RuntimeToken& token) noexcept
         -> std::expected<void, pmacro::Error> override {
         auto* stream = get_stream(handle);
-        if (stream == nullptr) return std::unexpected(pmacro::Error::InvalidArgument);
-        if (token.kind == pmacro::TokenKind::Group) {
-            if (token.delimiter == pmacro::Delimiter::None || get_stream(token.children) == nullptr)
-                return std::unexpected(pmacro::Error::InvalidArgument);
-            std::vector<pmacro::host::StreamHandle>        pending { token.children };
-            std::unordered_set<pmacro::host::StreamHandle> visited;
-            while (! pending.empty()) {
-                const auto child = pending.back();
-                pending.pop_back();
-                if (child == handle) return std::unexpected(pmacro::Error::InvalidArgument);
-                if (! visited.insert(child).second) continue;
-                for (const auto& item : get_stream(child)->tokens)
-                    if (item.kind == TokenKind::Group) pending.push_back(item.children);
-            }
-        } else if (token.delimiter != pmacro::Delimiter::None || token.children != 0) {
-            return std::unexpected(pmacro::Error::InvalidArgument);
-        }
-        auto leading_space = false;
-        if (! stream->tokens.empty()) {
-            const auto& previous = stream->tokens.back();
-            leading_space        = (previous.kind == pmacro::TokenKind::Ident ||
-                                    previous.kind == pmacro::TokenKind::Literal) &&
-                                   (token.kind == pmacro::TokenKind::Ident ||
-                                    token.kind == pmacro::TokenKind::Literal);
-            if (previous.kind == pmacro::TokenKind::Punct &&
-                token.kind == pmacro::TokenKind::Punct) {
-                leading_space = previous.spacing == pmacro::Spacing::Alone;
-            }
-        }
-        stream->tokens.push_back(StoredToken {
-            .kind          = token.kind,
-            .delimiter     = token.delimiter,
-            .spacing       = token.spacing,
-            .spelling      = std::string(token.spelling),
-            .span          = token.span,
-            .origin        = token.origin,
-            .children      = token.children,
-            .leading_space = leading_space,
-        });
+        auto  copied = store_token(token);
+        if (! stream || ! can_append(handle, copied))
+            return std::unexpected(Error::InvalidArgument);
+        const auto position = stream->tokens.size();
+        stream->tokens.push_back(std::move(copied));
+        separate_tokens(stream->tokens, position);
         return {};
+    }
+
+    auto append_stream(pmacro::host::StreamHandle destination,
+                       pmacro::host::StreamHandle source) noexcept
+        -> std::expected<void, Error> override {
+        auto*       output = get_stream(destination);
+        const auto* input  = get_stream(source);
+        if (! output || ! input ||
+            ! std::ranges::all_of(input->tokens, [&](const StoredToken& token) {
+                return can_append(destination, token);
+            }))
+            return std::unexpected(Error::InvalidArgument);
+        if (destination == source) {
+            const auto copy = input->tokens;
+            append_tokens(output->tokens, copy);
+        } else {
+            append_tokens(output->tokens, input->tokens);
+        }
+        return {};
+    }
+
+    auto splice_stream(pmacro::host::StreamHandle                   source,
+                       std::span<const pmacro::host::SpliceBinding> replacements) noexcept
+        -> std::expected<pmacro::host::StreamHandle, Error> override {
+        const auto* input = get_stream(source);
+        if (! input) return std::unexpected(Error::InvalidArgument);
+        const auto     count = input->tokens.size();
+        SpliceBindings bindings;
+        bindings.reserve(replacements.size());
+        for (const auto& binding : replacements) {
+            if (binding.name.empty() || ! bindings.emplace(binding.name, &binding).second)
+                return std::unexpected(Error::InvalidArgument);
+            if (const auto* handle =
+                    std::get_if<pmacro::host::StreamHandle>(&binding.replacement)) {
+                if (! get_stream(*handle)) return std::unexpected(Error::InvalidArgument);
+            }
+        }
+        if (! bindings.empty()) {
+            auto output = splice_groups(source, bindings);
+            if (output != source) return output;
+        }
+        return slice_stream(source, 0, count);
+    }
+
+    static auto store_token(const pmacro::host::RuntimeToken& token) -> StoredToken {
+        return StoredToken {
+            .kind      = token.kind,
+            .delimiter = token.delimiter,
+            .spacing   = token.spacing,
+            .spelling  = std::string(token.spelling),
+            .span      = token.span,
+            .origin    = token.origin,
+            .children  = token.children,
+        };
+    }
+
+    static auto separate_tokens(std::vector<StoredToken>& tokens, std::size_t position) -> void {
+        if (position == 0 || position == tokens.size()) return;
+        tokens[position - 1].spacing   = Spacing::Alone;
+        tokens[position].leading_space = true;
+    }
+
+    static auto append_tokens(std::vector<StoredToken>& output, std::span<const StoredToken> input)
+        -> void {
+        const auto position = output.size();
+        output.insert(output.end(), input.begin(), input.end());
+        separate_tokens(output, position);
+    }
+
+    auto can_append(pmacro::host::StreamHandle destination, const StoredToken& token) const
+        -> bool {
+        if (token.kind != TokenKind::Group)
+            return token.delimiter == Delimiter::None && token.children == 0;
+        if (token.delimiter == Delimiter::None || ! get_stream(token.children)) return false;
+        std::vector<pmacro::host::StreamHandle>        pending { token.children };
+        std::unordered_set<pmacro::host::StreamHandle> visited;
+        while (! pending.empty()) {
+            const auto child = pending.back();
+            pending.pop_back();
+            if (child == destination) return false;
+            if (! visited.insert(child).second) continue;
+            for (const auto& item : get_stream(child)->tokens)
+                if (item.kind == TokenKind::Group) pending.push_back(item.children);
+        }
+        return true;
+    }
+
+    using SpliceBindings = std::unordered_map<std::string_view, const pmacro::host::SpliceBinding*>;
+
+    auto splice_groups(pmacro::host::StreamHandle source, const SpliceBindings& bindings)
+        -> pmacro::host::StreamHandle {
+        // Storing rewritten groups can move stream objects while their token buffers stay fixed.
+        const auto input  = std::span<const StoredToken>(get_stream(source)->tokens);
+        auto       output = StoredStream {};
+        output.tokens.reserve(input.size());
+        bool changed           = false;
+        bool after_replacement = false;
+        for (const auto& token : input) {
+            if (token.kind == TokenKind::Ident) {
+                auto found = bindings.find(token.spelling);
+                if (found != bindings.end()) {
+                    const auto& replacement = found->second->replacement;
+                    if (const auto* single =
+                            std::get_if<pmacro::host::RuntimeToken>(&replacement)) {
+                        const auto copy = store_token(*single);
+                        append_tokens(output.tokens, std::span(&copy, 1));
+                    } else {
+                        const auto* stream =
+                            get_stream(std::get<pmacro::host::StreamHandle>(replacement));
+                        append_tokens(output.tokens, stream->tokens);
+                    }
+                    changed           = true;
+                    after_replacement = true;
+                    continue;
+                }
+            }
+            auto copy = token;
+            if (token.kind == TokenKind::Group) {
+                copy.children = splice_groups(token.children, bindings);
+                changed |= copy.children != token.children;
+            }
+            const auto position = output.tokens.size();
+            output.tokens.push_back(std::move(copy));
+            if (after_replacement) separate_tokens(output.tokens, position);
+            after_replacement = false;
+        }
+        if (! changed) return source;
+        streams_.push_back(std::move(output));
+        return streams_.size();
     }
 
     auto current_declaration() noexcept

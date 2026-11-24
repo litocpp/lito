@@ -57,26 +57,65 @@ auto scoped_invoke(pmacro::FunctionInput input, pmacro::Context& context) noexce
 }
 
 [[pmacro::define]]
-auto invoke_tokens(pmacro::FunctionInput input, pmacro::Context&) noexcept
+auto invoke_tokens(pmacro::FunctionInput input, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
-    return input.arguments;
+    auto selected = input.arguments.slice(0, input.arguments.size());
+    auto output   = context.stream();
+    if (! selected || ! output || ! output->append(*selected))
+        return std::unexpected(pmacro::Error::Failure);
+    return output;
+}
+
+[[pmacro::define]]
+auto splice_tokens(pmacro::FunctionInput input, pmacro::Context& context) noexcept
+    -> std::expected<pmacro::TokenStream, pmacro::Error> {
+    const auto args = input.arguments;
+    if (args.size() < 5 || args[2].delimiter() != pmacro::Delimiter::Brace)
+        return std::unexpected(pmacro::Error::InvalidArgument);
+    auto scaffold = args.slice(4, args.size());
+    if (! scaffold) return std::unexpected(scaffold.error());
+    const std::array bindings {
+        pmacro::TokenSplice { "slot", args[0] },
+        pmacro::TokenSplice { "nested", args[2].children() },
+    };
+    const std::array duplicate { bindings[0], bindings[0] };
+    auto             rejected = context.splice(*scaffold, duplicate);
+    if (rejected || rejected.error() != pmacro::Error::InvalidArgument)
+        return std::unexpected(pmacro::Error::Failure);
+    return context.splice(*scaffold, bindings);
 }
 
 [[pmacro::define]]
 auto token_model(pmacro::AttributeInput input, pmacro::Context& context) noexcept
     -> std::expected<pmacro::TokenStream, pmacro::Error> {
-    auto call_site   = context.call_site();
-    auto joined      = context.join(input.attribute_span, input.item_span);
-    auto prefix      = context.subspan(input.item_span, 0, 1);
-    auto identifiers = 0;
-    auto groups      = 0;
-    auto literals    = 0;
-    auto punctuation = 0;
-    for (auto token : input.item) {
+    auto       call_site   = context.call_site();
+    auto       joined      = context.join(input.attribute_span, input.item_span);
+    auto       prefix      = context.subspan(input.item_span, 0, 1);
+    auto       identifiers = 0;
+    auto       groups      = 0;
+    auto       literals    = 0;
+    auto       punctuation = 0;
+    const auto count       = input.item.size();
+    const auto empty       = input.item.slice(count, count);
+    if (! empty || ! empty->valid() || empty->size() != 0 || input.item.slice(0, count + 1) ||
+        input.item.slice(1, 0) || pmacro::TokenStream {}.slice(0, 0))
+        return std::unexpected(pmacro::Error::Failure);
+    for (std::size_t index = 0; index < count; ++index) {
+        auto token = input.item[index];
         if (token.kind() == pmacro::TokenKind::Ident) ++identifiers;
         if (token.kind() != pmacro::TokenKind::Group) continue;
         ++groups;
         if (token.delimiter() != pmacro::Delimiter::Brace) continue;
+        auto selected = input.item.slice(index, index + 1);
+        if (! selected || selected->size() != 1) return std::unexpected(pmacro::Error::Failure);
+        auto copied = (*selected)[0];
+        if (copied.delimiter() != token.delimiter() || copied.origin() != token.origin() ||
+            copied.span().source() != token.span().source() ||
+            copied.span().begin() != token.span().begin() ||
+            copied.span().end() != token.span().end() ||
+            copied.children().size() != token.children().size() ||
+            ! selected->append(input.item[0]) || input.item.size() != count)
+            return std::unexpected(pmacro::Error::Failure);
         for (auto child : token.children()) {
             if (child.kind() == pmacro::TokenKind::Literal) ++literals;
             if (child.kind() == pmacro::TokenKind::Punct) ++punctuation;
