@@ -744,31 +744,10 @@ public:
                                ? "libc++.dylib"_str
                                : "libstdc++.dylib"_str;
         }
-        auto library_command = Vec<String>::make();
-        pushed               = toolchain::command::push_path(library_command, compiler_.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         auto library_stdlib_option =
             toolchain::clang_options::standard_library(options.abi.standard_library, target);
-        if (! library_stdlib_option.is_empty()) {
-            toolchain::command::push_option(library_command, library_stdlib_option);
-        }
-        library_command.push(rstd::format("--target={}", target.triple.as_str()));
-        if (options.common.target.sysroot.is_some()) {
-            library_command.push(
-                rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
-        }
-        library_command.push(rstd::format("-print-file-name={}", library_name));
-        auto library = run_command(library_command, environment_);
-        if (library.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(library).unwrap_err()));
-        }
-        if (library->exit_code != i32 {}) {
-            return Err(ToolchainError::Message(
-                rstd::format("cannot resolve selected C++ standard library artifact\n{}\n{}",
-                             command_text(library_command).as_str(),
-                             library->standard_error.as_str())));
-        }
-        auto binary_path_text = trim_ascii(rstd::move(library->standard_output));
+        auto binary_path_text = rstd_try(query_standard_library_file(
+            library_name, library_stdlib_option, target.triple.as_str(), options));
         if (target.is_msvc()) {
             auto probe_command = Vec<String>::make();
             pushed             = toolchain::command::push_path(probe_command, compiler_.as_path());
@@ -919,15 +898,13 @@ public:
             target.triple.as_str(),
             target.environment_name(),
             rstd_try(licrypto::sha256_hex(queried->standard_output.as_str())).as_str());
-        auto identity      = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
-                                          headers_identity.as_str(),
-                                          binary_identity.as_str(),
-                                          thread_backend.as_str());
-        auto manifest_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
-                                 ? "libc++.modules.json"_str
-                                 : "libstdc++.modules.json"_str;
-        auto manifest_candidates   = Vec<PathBuf>::make();
-        const auto append_manifest = [&](ref<rstd::path::Path> artifact) {
+        auto       identity      = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
+                                                headers_identity.as_str(),
+                                                binary_identity.as_str(),
+                                                thread_backend.as_str());
+        auto       manifest_name = standard_library_manifest_name(*detected_family);
+        auto       manifest_candidates = Vec<PathBuf>::make();
+        const auto append_manifest     = [&](ref<rstd::path::Path> artifact) {
             auto parent = artifact.parent();
             if (parent.is_none()) return;
             auto candidate = PathBuf::from(*parent).join(PathBuf::from(manifest_name).as_path());
@@ -960,7 +937,29 @@ public:
             return Err(ToolchainError::Message(
                 "C++ standard library must be resolved before its modules"_Str));
         }
-        return read_standard_library_module_catalog(*options.abi.resolved_standard_library);
+        const auto& library = *options.abi.resolved_standard_library;
+        auto        modules = read_standard_library_module_catalog(library);
+        if (modules.is_ok() || library.family != lito::config::StandardLibrary::Libstdcxx) {
+            return modules;
+        }
+        auto error = rstd::move(modules).unwrap_err();
+        if (! error.is_StandardLibraryModule() ||
+            ! error.as_StandardLibraryModule().source.is_Missing()) {
+            return Err(rstd::move(error));
+        }
+
+        // Some GCC layouts install the manifest outside the directory of the selected library.
+        auto manifest_path = rstd_try(query_standard_library_file(
+            standard_library_manifest_name(library.family),
+            toolchain::clang_options::standard_library(library.family, target_info()),
+            library.target.as_str(),
+            options));
+        auto candidate     = PathBuf::from(manifest_path.as_str());
+        if (! candidate.as_path().is_absolute()) return Err(rstd::move(error));
+
+        auto resolved = library.clone();
+        resolved.module_manifest.paths.push(rstd::move(candidate));
+        return read_standard_library_module_catalog(resolved);
     }
 
     auto validate(const cpp::CppCompileOptions& cpp, const cpp::BmiRequest& bmi) const
@@ -1994,6 +1993,39 @@ public:
     }
 
 private:
+    static constexpr auto standard_library_manifest_name(lito::config::StandardLibrary family)
+        -> ref<str> {
+        return family == lito::config::StandardLibrary::Libcxx ? "libc++.modules.json"_str
+                                                               : "libstdc++.modules.json"_str;
+    }
+
+    auto query_standard_library_file(ref<str>                      name,
+                                     ref<str>                      stdlib_option,
+                                     ref<str>                      target,
+                                     const cpp::CppCompileOptions& options) const
+        -> ToolchainResult<String> {
+        auto command = Vec<String>::make();
+        rstd_try(toolchain::command::push_path(command, compiler_.as_path()));
+        if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
+        command.push(rstd::format("--target={}", target));
+        if (options.common.target.sysroot.is_some()) {
+            command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
+        }
+        command.push(rstd::format("-print-file-name={}", name));
+        auto queried = run_command(command, environment_);
+        if (queried.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(queried).unwrap_err()));
+        }
+        if (queried->exit_code != i32 {}) {
+            return Err(ToolchainError::Message(
+                rstd::format("cannot resolve C++ standard library file '{}'\n{}\n{}",
+                             name,
+                             command_text(command).as_str(),
+                             queried->standard_error.as_str())));
+        }
+        return Ok(trim_ascii(rstd::move(queried->standard_output)));
+    }
+
     ClangToolchain(PathBuf                       compiler,
                    PathBuf                       c_compiler,
                    LinkerIdentity                linker_identity,
