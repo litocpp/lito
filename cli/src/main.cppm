@@ -1342,7 +1342,8 @@ extern "C++" int main() {
             auto directory = rstd::fs::canonicalize(invocation.working_directory.as_path());
             if (directory.is_err()) {
                 rstd::io::eprintln("lito: cannot resolve pack output directory '{}': {}",
-                                   invocation.working_directory.as_path(), directory.unwrap_err());
+                                   invocation.working_directory.as_path(),
+                                   directory.unwrap_err());
                 return 1;
             }
             options.output = Some(directory->join(options.output->as_path()));
@@ -1353,7 +1354,7 @@ extern "C++" int main() {
             .output   = rstd::move(options.output),
             .no_build = options.no_build,
         };
-        auto& build = request.build;
+        auto& build                         = request.build;
         build.selection.root                = rstd::move(project.root);
         build.selection.packages            = rstd::move(options.packages);
         build.selection.features            = rstd::move(options.features);
@@ -1374,8 +1375,8 @@ extern "C++" int main() {
         build.cmake_build_overrides         = rstd::move(project.cmake_build_overrides);
         build.locked                        = options.locked || options.frozen || options.no_build;
         build.profile                       = rstd::move(options.profile);
-        build.execution.scan.jobs          = options.jobs;
-        build.execution.compile.jobs       = options.jobs;
+        build.execution.scan.jobs           = options.jobs;
+        build.execution.compile.jobs        = options.jobs;
         if (options.build_directory.is_some()) {
             build.build_directory = rstd::move(options.build_directory).unwrap();
         }

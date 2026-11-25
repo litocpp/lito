@@ -51,10 +51,10 @@ struct CompletedBuildProduct {
 };
 
 struct BuildProductPublication {
-    PathBuf base_directory;
-    PathBuf state;
-    PathBuf lock;
-    String  generation;
+    PathBuf         base_directory;
+    PathBuf         state;
+    PathBuf         lock;
+    String          generation;
     Option<PathBuf> latest_state;
 };
 

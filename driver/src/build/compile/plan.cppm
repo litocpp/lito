@@ -368,9 +368,9 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
             });
         }
 
-        const auto* scan_cpp = scans[unit].language.is_Cpp()
-                                   ? rstd::addressof(scans[unit].language.as_Cpp().facts)
-                                   : nullptr;
+        const auto* scan_cpp     = scans[unit].language.is_Cpp()
+                                       ? rstd::addressof(scans[unit].language.as_Cpp().facts)
+                                       : nullptr;
         auto        safety_usage = safety.usage_for(package, units[unit].unit);
         if (scan_cpp != nullptr && scan_cpp->provided.is_some()) {
             if (! units[unit].unit.context->language.is_Cpp()) {

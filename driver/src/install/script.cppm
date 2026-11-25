@@ -108,7 +108,7 @@ auto known_fields(luato::Table& table, initializer_list<ref<str>> names) -> luat
 auto recipe_target(luato::Table table, ref<str> owner, ref<str> context)
     -> luato::Result<lito::package::PackageTargetId> {
     rstd_try(known_fields(table, { "kind"_str, "name"_str }));
-    auto kind = rstd_try(table.required<String>("kind"_str));
+    auto kind        = rstd_try(table.required<String>("kind"_str));
     auto target_kind = lito::package::PackageTargetKind::Binary;
     if (kind == "lib"_str)
         target_kind = lito::package::PackageTargetKind::Library;

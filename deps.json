@@ -2,8 +2,8 @@
   "rstd": {
     "owner": "litocpp",
     "repo": "rstd",
-    "rev": "c5a080604370563298a0dac46012e717f35fe643",
-    "narHash": "sha256-8XVwMJF7K54ZyddXlJXDtzGqVeLdzU0dFvLJcgv+G70="
+    "rev": "a664da0e8bdd62f5e60c2862b6bd481006ca4218",
+    "narHash": "sha256-u6KH0e9Vu4s8lugard04mEpwTHN/21fnCH+RR3i3VIQ="
   },
   "ligraph": {
     "owner": "litocpp",

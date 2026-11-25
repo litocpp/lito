@@ -182,12 +182,12 @@ auto parse_pack_recipe(luato::TableHandle table, ref<str> package_name)
                 luato::Error::binding(rstd::format("unknown Lua pack recipe field '{}'", text)));
         }
     }
-    auto name   = rstd_try(recipe_value(table, "name"_str));
-    auto output = rstd_try(recipe_value(table, "output"_str));
-    auto recipe = rstd_try(pack_name_and_output(String::make(rstd_try(name.as_utf8())),
-                                                String::make(rstd_try(output.as_utf8()))));
+    auto name           = rstd_try(recipe_value(table, "name"_str));
+    auto output         = rstd_try(recipe_value(table, "output"_str));
+    auto recipe         = rstd_try(pack_name_and_output(String::make(rstd_try(name.as_utf8())),
+                                                        String::make(rstd_try(output.as_utf8()))));
     recipe.android_abis = rstd_try(parse_pack_android_abis(table));
-    auto inputs = rstd_try(recipe_value(table, "inputs"_str));
+    auto inputs         = rstd_try(recipe_value(table, "inputs"_str));
     if (! inputs.is_Table()) {
         return Err(luato::Error::binding("pack recipe inputs must be an array"_Str));
     }

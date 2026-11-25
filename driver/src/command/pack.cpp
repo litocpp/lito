@@ -271,7 +271,7 @@ auto execute_pack_tool(const PackRecipe&                 recipe,
 
 auto pack_callback_target(const PackRecipe& recipe, const CompletedBuildProduct& product)
     -> CommandResult<PackCallbackTarget> {
-    auto        artifacts = Vec<PackCallbackArtifact>::with_capacity(recipe.inputs.len());
+    auto artifacts = Vec<PackCallbackArtifact>::with_capacity(recipe.inputs.len());
     for (const auto& target : recipe.inputs) {
         auto artifact = rstd_try(pack_artifact(product, target));
         artifacts.push(PackCallbackArtifact {

@@ -497,8 +497,8 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.tools           = request.tools.clone();
     tool_request.configuration   = host_configuration_request(request.configuration);
     tool_request.configuration.global_options.safety = false;
-    tool_request.configuration.toolchain.cxx = compiler.path.clone();
-    tool_request.configuration.toolchain.cc  = compiler.c_path.clone();
+    tool_request.configuration.toolchain.cxx         = compiler.path.clone();
+    tool_request.configuration.toolchain.cc          = compiler.c_path.clone();
     tool_request.configuration.standard_library =
         lito::config::standard_library_selection(sdk->standard_library);
     tool_request.lock.path              = tool_root->join(PathBuf::from("lito.lock"_str).as_path());

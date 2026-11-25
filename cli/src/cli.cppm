@@ -1346,15 +1346,15 @@ auto make_pack_definition() -> CommandDefinition<PackSchema> {
             .long_name("list"_str)
             .help("List the selected package files without writing an archive"_str));
     auto recipe = command.add_arg(Arg<String>::value("recipe"_str, string_parser())
-                                       .long_name("recipe"_str)
-                                       .value_name("NAME"_str)
-                                       .help("Select a distribution recipe from pack.lua"_str));
-    auto build_directory = command.add_arg(build_directory_arg());
-    auto no_build        = command.add_arg(Arg<bool>::flag("no-build"_str)
-                                               .long_name("no-build"_str)
-                                               .help("Pack completed build artifacts"_str));
+                                      .long_name("recipe"_str)
+                                      .value_name("NAME"_str)
+                                      .help("Select a distribution recipe from pack.lua"_str));
+    auto build_directory    = command.add_arg(build_directory_arg());
+    auto no_build           = command.add_arg(Arg<bool>::flag("no-build"_str)
+                                                  .long_name("no-build"_str)
+                                                  .help("Pack completed build artifacts"_str));
     auto source_acquisition = add_source_acquisition_args(command);
-    auto verbose = command.add_arg(
+    auto verbose            = command.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto jobs = command.add_arg(jobs_arg());
     command.conflicts(recipe, registry);
@@ -2167,14 +2167,15 @@ auto PackSchema::decode(const Matches& matches) const -> Result<CliCommand, CliD
             ! selected.features.default_features || directory.is_some() || reuse || report ||
             workers.is_some() || source.locked || source.offline || source.frozen ||
             ! source.source_bundles.is_empty()) {
-            return Err(CliDecodeError::InvalidUsage("pack build options require --recipe NAME"_Str));
+            return Err(
+                CliDecodeError::InvalidUsage("pack build options require --recipe NAME"_Str));
         }
         if (selected.packages.len() > usize(1)) {
             return Err(CliDecodeError::InvalidUsage("pack accepts at most one --package NAME"_Str));
         }
         return Ok(CliCommand::Pack(PackOptions {
-            .package  = selected.packages.is_empty() ? Option<String> {}
-                                                     : Some(rstd::move(selected.packages[usize {}])),
+            .package = selected.packages.is_empty() ? Option<String> {}
+                                                    : Some(rstd::move(selected.packages[usize {}])),
             .registry = rstd_try(optional_string(matches, registry)),
             .output   = rstd::move(file),
             .list     = rstd_try(flag_value(matches, list)),

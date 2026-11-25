@@ -824,10 +824,10 @@ auto resolve_source_selection(const PackageMetadata&                     package
             if (found == nullptr) {
                 for (const auto& unavailable : package.unavailable_targets) {
                     if (unavailable == exact) {
-                        return Err(lito::package::PackageError::Message(rstd::format(
-                            "target '{}' is unavailable for platform '{}'",
-                            lito::package::package_target_id_text(exact),
-                            package.target_triple.as_str())));
+                        return Err(lito::package::PackageError::Message(
+                            rstd::format("target '{}' is unavailable for platform '{}'",
+                                         lito::package::package_target_id_text(exact),
+                                         package.target_triple.as_str())));
                     }
                 }
                 return Err(lito::package::PackageError::Message(rstd::format(
@@ -900,13 +900,12 @@ auto resolve_source_selection(const PackageMetadata&                     package
             }
             if (matches == usize {}) {
                 for (const auto& unavailable : package.unavailable_targets) {
-                    if (unavailable.name != name ||
-                        (kind.is_some() && unavailable.kind != *kind))
+                    if (unavailable.name != name || (kind.is_some() && unavailable.kind != *kind))
                         continue;
-                    return Err(lito::package::PackageError::Message(rstd::format(
-                        "target '{}' is unavailable for platform '{}'",
-                        lito::package::package_target_id_text(unavailable),
-                        package.target_triple.as_str())));
+                    return Err(lito::package::PackageError::Message(
+                        rstd::format("target '{}' is unavailable for platform '{}'",
+                                     lito::package::package_target_id_text(unavailable),
+                                     package.target_triple.as_str())));
                 }
                 if (kind == Some(lito::package::PackageTargetKind::Example)) {
                     auto available = String::make();

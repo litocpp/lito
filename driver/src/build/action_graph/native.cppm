@@ -184,17 +184,17 @@ auto extend_native_action_graph(NativeActionGraph&            result,
             if (existing_id.is_none()) continue;
             const auto& existing = (*result.graph.artifacts())[existing_id->value];
             if (existing.path.is_some() && existing.path->as_path() == path.as_path()) {
-                return Err(BuildError::Message(rstd::format(
-                    "targets '{}' and '{}' write the same output '{}'",
-                    existing.identity.as_str(),
-                    lito::package::package_target_id_text(spec.id),
-                    path.as_path())));
+                return Err(BuildError::Message(
+                    rstd::format("targets '{}' and '{}' write the same output '{}'",
+                                 existing.identity.as_str(),
+                                 lito::package::package_target_id_text(spec.id),
+                                 path.as_path())));
             }
         }
         result.target_artifacts[target] =
             Some(rstd_try(result.graph.add_artifact(BuildArtifactSpec {
-                .identity = rstd::format(
-                    "target:{}", lito::package::package_target_id_text(spec.id)),
+                .identity =
+                    rstd::format("target:{}", lito::package::package_target_id_text(spec.id)),
                 .domain = domain.clone(),
                 .kind   = *kind,
                 .path   = Some(rstd::move(path)),

@@ -110,7 +110,7 @@ struct Impl<serde::Deserialize, lito::manifest::wire::Target<Kind>> {
             result.artifact       = artifact.take();
             result.linker_options = linker_options.take();
         } else {
-            auto name = serde::RequiredField<String>("name"_str);
+            auto name        = serde::RequiredField<String>("name"_str);
             auto link_stdlib = serde::DefaultedField<bool>("link-stdlib"_str, true);
             if constexpr (Kind == TargetKind::Binary) {
                 auto target = serde::OptionalField<lito::manifest::wire::Predicate>("target"_str);

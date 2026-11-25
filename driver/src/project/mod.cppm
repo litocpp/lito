@@ -1102,8 +1102,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const Option<BuildSetupReportSink>& setup_reporter = None(),
                                     const Option<PathBuf>& cmake_find_install_prefix   = None())
     -> ProjectResult<PreparedBuildProject> {
-    auto host_placements       = rstd::move(session.host_placements);
-    auto project_roots         = Vec<lito::package::ResolvedProjectRoot>::make();
+    auto host_placements = rstd::move(session.host_placements);
+    auto project_roots   = Vec<lito::package::ResolvedProjectRoot>::make();
     for (const auto& root : session.project.selection.graph.roots) {
         project_roots.push(lito::package::ResolvedProjectRoot {
             .name            = root.name.clone(),

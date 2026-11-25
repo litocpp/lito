@@ -43,7 +43,7 @@ export namespace lito
 
 auto build_resolved_project(BuildRequest request, lito::workspace::ResolvedProjectEntry project)
     -> BuildResult<BuildSummary>;
-auto build_and_publish_resolved_project(BuildRequest request,
+auto build_and_publish_resolved_project(BuildRequest                          request,
                                         lito::workspace::ResolvedProjectEntry project)
     -> BuildResult<BuildSummary>;
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary>;

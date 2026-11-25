@@ -374,7 +374,7 @@ auto convention_import_owner(const cpp::PackageMetadata&          package,
         auto& candidate = candidates[index];
         if (selected.is_some() && candidate.priority < candidates[*selected].priority) break;
         auto completed = graph.completed_project_module(candidate.target,
-                                                       candidate.source.canonical_path.as_path());
+                                                        candidate.source.canonical_path.as_path());
         auto provided  = Option<ref<str>> {};
         if (completed.is_some()) {
             provided = *completed;
@@ -389,13 +389,13 @@ auto convention_import_owner(const cpp::PackageMetadata&          package,
             if (cached.is_none()) {
                 const auto& target = package.targets[candidate.target];
                 auto analysis = analysis_service.analyze(target.id,
-                                                        candidate.source.relative_path.as_path(),
-                                                        candidate.source.origin_identity.as_str(),
-                                                        candidate.source.canonical_path.as_path(),
-                                                        compile_context,
-                                                        target.compile_metadata,
-                                                        candidate.source.cpp_dialect,
-                                                        candidate.source.source_root.as_path());
+                                                         candidate.source.relative_path.as_path(),
+                                                         candidate.source.origin_identity.as_str(),
+                                                         candidate.source.canonical_path.as_path(),
+                                                         compile_context,
+                                                         target.compile_metadata,
+                                                         candidate.source.cpp_dialect,
+                                                         candidate.source.source_root.as_path());
                 if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
                 auto projected =
                     analysis_service.project(rstd::move(analysis).unwrap(), target.language);
@@ -826,10 +826,10 @@ auto discover_sources(const cpp::PackageMetadata&    package,
         discovered.emplace_back();
         inferred_modules.emplace_back();
     }
-    auto queue            = Vec<DiscoveryCandidate>::make();
-    auto path_names       = StringMap::make();
-    auto name_paths       = StringMap::make();
-    auto queued           = StringMap::make();
+    auto queue             = Vec<DiscoveryCandidate>::make();
+    auto path_names        = StringMap::make();
+    auto name_paths        = StringMap::make();
+    auto queued            = StringMap::make();
     auto provisional_scans = ProvisionalScans::make();
 
     for (auto target : selected_targets) {
