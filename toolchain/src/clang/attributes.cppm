@@ -813,6 +813,7 @@ auto append_clang_attribute_queries(Vec<frontend::preprocessor::BuiltinQueryKey>
     }
     queries.push(pp::BuiltinQueryKey::make<pp::HasCppAttributeQuery>("omp::directive"_str));
     queries.push(pp::BuiltinQueryKey::make<pp::HasCppAttributeQuery>("omp::sequence"_str));
+    queries.push(pp::BuiltinQueryKey::make<pp::HasCppAttributeQuery>("unsafe"_str));
     for (const auto& spelling : CLANG_ATTRIBUTE_SPELLINGS) {
         if ((spelling.syntaxes & 1) != 0)
             queries.push(pp::BuiltinQueryKey::make<pp::HasAttributeQuery>(spelling.name));

@@ -30,6 +30,7 @@ import :build.profiling;
 import :build.project;
 import :package.module_catalog;
 import :build.plugin;
+import :build.safety;
 import :build.proc_macro;
 import :cache.error;
 import :project.error;
@@ -755,6 +756,23 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
     }
     auto native_target_plan = rstd::move(resolved).unwrap();
+    auto safety_plugin      = Option<ResolvedCompilerPluginUsage> {};
+    if (project.configuration.global_options.safety &&
+        native_target_plan.target_order.iter().any([&](auto target) {
+            return native_target_plan.contexts[*target].language.is_Cpp();
+        })) {
+        auto resolved_safety = stage_timing.measure(BuildStage::Plugin, [&] {
+            return resolve_safety_plugin(
+                request.registries, request.tools, toolchain, process_environment);
+        });
+        if (resolved_safety.is_err()) return Err(rstd::move(resolved_safety).unwrap_err());
+        safety_plugin = Some(rstd::move(resolved_safety).unwrap());
+        toolchain.set_preprocessor_plugin(*safety_plugin);
+    }
+    const auto safety = SafetyCompilePolicy {
+        .plugin = safety_plugin.is_some() ? rstd::addressof(*safety_plugin) : nullptr,
+        .roots  = project.project_roots.as_slice(),
+    };
     auto compiler_plugin_sdk =
         prepare_compiler_plugin_sdk(metadata, native_target_plan, toolchain, process_environment);
     if (compiler_plugin_sdk.is_err()) {
@@ -1115,7 +1133,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                          rstd::move(semantics).unwrap(),
                                                          host_tool_targets.as_slice(),
                                                          BuildResultProjection {},
-                                                         request.observer);
+                                                         request.observer,
+                                                         safety);
         if (host_actions.is_err()) return Err(rstd::move(host_actions).unwrap_err());
         auto host_action_plan = rstd::move(host_actions).unwrap();
         host_plan_scope.finish();
@@ -1373,7 +1392,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                       ? selected_targets.as_slice()
                                                       : project.documentation_targets.as_slice(),
                                                   request.result,
-                                                  request.observer);
+                                                  request.observer,
+                                                  safety);
     if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
     auto actions             = rstd::move(materialized).unwrap();
     actions.compile.database = rstd::move(compilation_database);

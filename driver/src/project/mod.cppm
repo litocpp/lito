@@ -422,6 +422,7 @@ struct PreparedBuildProject {
     BuildPlatform                              platform;
     BuildLayout                                layout;
     cpp::PackageMetadata                       metadata;
+    Vec<lito::package::ResolvedProjectRoot>    project_roots;
     Vec<lito::package::PackageTargetId>        documentation_targets;
     ExternalAssetCatalog                       external_assets;
     Vec<ExternalSourceProvenance>              external_source_provenance;
@@ -1102,6 +1103,14 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const Option<PathBuf>& cmake_find_install_prefix   = None())
     -> ProjectResult<PreparedBuildProject> {
     auto host_placements       = rstd::move(session.host_placements);
+    auto project_roots         = Vec<lito::package::ResolvedProjectRoot>::make();
+    for (const auto& root : session.project.selection.graph.roots) {
+        project_roots.push(lito::package::ResolvedProjectRoot {
+            .name            = root.name.clone(),
+            .source_identity = root.source_identity.clone(),
+            .role            = root.role,
+        });
+    }
     auto documentation_targets = Vec<lito::package::PackageTargetId>::make();
     for (const auto& target : session.project.selection.documentation_targets)
         documentation_targets.push(target.clone());
@@ -1182,6 +1191,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
         .platform                   = rstd::move(resolved.platform),
         .layout                     = rstd::move(resolved.layout),
         .metadata                   = rstd::move(resolved.metadata),
+        .project_roots              = rstd::move(project_roots),
         .documentation_targets      = rstd::move(documentation_targets),
         .external_assets            = rstd::move(resolved.external_assets),
         .external_source_provenance = rstd::move(resolved.external_source_provenance),

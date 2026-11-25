@@ -43,6 +43,7 @@ function(lito_embed_package id source)
 endfunction()
 
 lito_embed_package(pmacro "${PROJECT_SOURCE_DIR}/plugins/pmacro")
+lito_embed_package(safety "${PROJECT_SOURCE_DIR}/plugins/safety")
 lito_embed_package(
   libxml2 "${PROJECT_SOURCE_DIR}/data/sdk/libxml2/2.13.8-minimal-elf-v1")
 add_custom_target(lito-builtin-packages DEPENDS ${lito_builtin_outputs})

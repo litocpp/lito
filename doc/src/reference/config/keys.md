@@ -235,6 +235,19 @@ option appends them to the C, C++, and link streams respectively for build-orien
 contents use command-fragment tokenization; malformed quoting or non-UTF-8 values are errors that
 name the variable.
 
+`build.safety` enables Lito's built-in C++ safety checks. It defaults to `false`. Enable it in
+`lito-config.toml` or `.lito/config.toml`:
+
+```toml
+[build]
+safety = true
+```
+
+Use `lito build -c build.safety=true` to enable checks for one invocation or
+`lito build -c build.safety=false` to override a project setting. Lito checks workspace C++
+sources and preserves unsafe annotations in its external C++ dependencies. The selected Clang
+compiler needs a matching SDK to load the plugin.
+
 ## `[lock]`
 
 `path` is a non-empty file path and defaults to `lito.lock` in the project root. A relative path is

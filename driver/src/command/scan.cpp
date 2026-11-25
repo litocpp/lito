@@ -13,6 +13,7 @@ import lito.toolchain;
 import lito.frontend;
 import lito.system;
 import :build.layout;
+import :build.safety;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -132,6 +133,14 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
         return Err(rstd::into<CommandError>(rstd::move(selected).unwrap_err()));
     }
     auto source_target = *selected;
+
+    if (project.configuration.global_options.safety &&
+        discovery.contexts[source_target].language.is_Cpp()) {
+        auto safety =
+            resolve_safety_plugin(request.registries, request.tools, toolchain, *environment);
+        if (safety.is_err()) return Err(CommandError::Build(rstd::move(safety).unwrap_err()));
+        toolchain.set_preprocessor_plugin(*safety);
+    }
 
     const auto& target          = metadata.targets[source_target];
     auto        relative_source = source.as_path().strip_prefix(target.source_root.as_path());

@@ -8,17 +8,18 @@ module;
 #include <clang/AST/ExprConcepts.h>
 #include <clang/AST/ExprCXX.h>
 #include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/AST/StmtCXX.h>
 #include <clang/AST/TypeLoc.h>
 #include <clang/Basic/DiagnosticFrontend.h>
 #include <clang/Frontend/CompilerInstance.h>
 
-module unsafe;
+module safety;
 
 import std;
 
 #include "checker.hpp"
 
-namespace unsafe_plugin
+namespace safety_plugin
 {
 
 auto has_unsafe_annotation(const clang::Decl& declaration) -> bool {
@@ -54,6 +55,7 @@ enum class Operation : unsigned
 
 struct Evaluation {
     bool                  allowed {};
+    bool                  range_lowering {};
     const clang::Expr*    direct_reference {};
     clang::SourceLocation use;
 };
@@ -109,13 +111,13 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
         if (llvm::isa<clang::CXXDestructorDecl>(function))
             report(function.getLocation(),
                    Operation::Destructor,
-                   "unsafe: destructor declarations cannot have an unsafe contract");
+                   "safety: destructor declarations cannot have an unsafe contract");
         if (const auto* method = llvm::dyn_cast<clang::CXXMethodDecl>(&function))
             for (const auto* overridden : method->overridden_methods())
                 if (! contract(*overridden)) {
                     report(function.getLocation(),
                            Operation::Override,
-                           "unsafe: override cannot strengthen a safe base contract");
+                           "safety: override cannot strengthen a safe base contract");
                     break;
                 }
     }
@@ -153,11 +155,19 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
             require(expression,
                     evaluation,
                     Operation::Address,
-                    "unsafe: taking an unsafe function address requires an unsafe block");
+                    "safety: taking an unsafe function address requires an unsafe block");
     }
 
     static auto pointer(clang::QualType type) -> bool {
         return ! type.isNull() && ! type->isDependentType() && type->isPointerType();
+    }
+
+    static auto implicit_range_operand(const clang::Expr& expression, Evaluation evaluation)
+        -> bool {
+        if (! evaluation.range_lowering) return false;
+        const auto* reference =
+            llvm::dyn_cast<clang::DeclRefExpr>(expression.IgnoreParenImpCasts());
+        return reference != nullptr && reference->getDecl()->isImplicit();
     }
 
     static auto safe_arrow_base(const clang::Expr& expression) -> bool {
@@ -208,8 +218,8 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
             require(call,
                     evaluation,
                     Operation::Call,
-                    callee == nullptr ? "unsafe: indirect call requires an unsafe block"
-                                      : "unsafe: unsafe function call requires an unsafe block");
+                    callee == nullptr ? "safety: indirect call requires an unsafe block"
+                                      : "safety: unsafe function call requires an unsafe block");
         auto callee_evaluation             = evaluation;
         callee_evaluation.direct_reference = call.getCallee()->IgnoreParenImpCasts();
         statement(call.getCallee(), callee_evaluation);
@@ -223,7 +233,7 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
             require(expression,
                     evaluation,
                     Operation::Call,
-                    "unsafe: unsafe constructor call requires an unsafe block");
+                    "safety: unsafe constructor call requires an unsafe block");
         for (auto* argument : expression.arguments()) statement(argument, evaluation);
         if (constructor != nullptr)
             for (const auto* initializer : constructor->inits())
@@ -247,7 +257,7 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
                     else
                         report(attribute->getLocation(),
                                Operation::Annotation,
-                               "unsafe: a statement annotation requires a compound block");
+                               "safety: a statement annotation requires a compound block");
                 }
             statement(attributes->getSubStmt(), evaluation);
             return;
@@ -291,6 +301,19 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
                 statement(*chosen, evaluation);
             return;
         }
+        if (auto* range = llvm::dyn_cast<clang::CXXForRangeStmt>(node)) {
+            statement(range->getInit(), evaluation);
+            statement(range->getRangeStmt(), evaluation);
+            auto lowered           = evaluation;
+            lowered.range_lowering = true;
+            statement(range->getBeginStmt(), lowered);
+            statement(range->getEndStmt(), lowered);
+            statement(range->getCond(), lowered);
+            statement(range->getInc(), lowered);
+            statement(range->getLoopVarStmt(), lowered);
+            statement(range->getBody(), evaluation);
+            return;
+        }
         if (auto* selection = llvm::dyn_cast<clang::GenericSelectionExpr>(node)) {
             if (! selection->isResultDependent()) statement(selection->getResultExpr(), evaluation);
             return;
@@ -309,32 +332,38 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
             return;
         }
         if (const auto* unary = llvm::dyn_cast<clang::UnaryOperator>(node)) {
-            if (unary->getOpcode() == clang::UO_Deref && pointer(unary->getSubExpr()->getType()) &&
-                ! llvm::isa<clang::CXXThisExpr>(unary->getSubExpr()->IgnoreParenImpCasts()))
+            const auto& operand = *unary->getSubExpr();
+            const auto  raw =
+                pointer(operand.getType()) && ! implicit_range_operand(operand, evaluation);
+            if (unary->getOpcode() == clang::UO_Deref && raw &&
+                ! llvm::isa<clang::CXXThisExpr>(operand.IgnoreParenImpCasts()))
                 require(*unary,
                         evaluation,
                         Operation::Dereference,
-                        "unsafe: dereference requires an unsafe block");
-            if (unary->isIncrementDecrementOp() && pointer(unary->getSubExpr()->getType()))
+                        "safety: dereference requires an unsafe block");
+            if (unary->isIncrementDecrementOp() && raw)
                 require(*unary,
                         evaluation,
                         Operation::Arithmetic,
-                        "unsafe: pointer arithmetic requires an unsafe block");
+                        "safety: pointer arithmetic requires an unsafe block");
         }
         if (const auto* binary = llvm::dyn_cast<clang::BinaryOperator>(node)) {
             const auto opcode = binary->getOpcode();
             if ((opcode == clang::BO_Add || opcode == clang::BO_Sub ||
                  opcode == clang::BO_AddAssign || opcode == clang::BO_SubAssign) &&
-                (pointer(binary->getLHS()->getType()) || pointer(binary->getRHS()->getType())))
+                ((pointer(binary->getLHS()->getType()) &&
+                  ! implicit_range_operand(*binary->getLHS(), evaluation)) ||
+                 (pointer(binary->getRHS()->getType()) &&
+                  ! implicit_range_operand(*binary->getRHS(), evaluation))))
                 require(*binary,
                         evaluation,
                         Operation::Arithmetic,
-                        "unsafe: pointer arithmetic requires an unsafe block");
+                        "safety: pointer arithmetic requires an unsafe block");
             if (opcode == clang::BO_PtrMemI)
                 require(*binary,
                         evaluation,
                         Operation::Arrow,
-                        "unsafe: raw pointer arrow requires an unsafe block");
+                        "safety: raw pointer arrow requires an unsafe block");
         }
         if (const auto* member = llvm::dyn_cast<clang::MemberExpr>(node)) {
             if (member->isArrow() && pointer(member->getBase()->getType()) &&
@@ -342,7 +371,7 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
                 require(*member,
                         evaluation,
                         Operation::Arrow,
-                        "unsafe: raw pointer arrow requires an unsafe block");
+                        "safety: raw pointer arrow requires an unsafe block");
             if (const auto* method = llvm::dyn_cast<clang::FunctionDecl>(member->getMemberDecl()))
                 function_address(*method, *member, evaluation);
         }
@@ -350,25 +379,26 @@ class Checker : public clang::RecursiveASTVisitor<Checker> {
             if (const auto* function = llvm::dyn_cast<clang::FunctionDecl>(reference->getDecl()))
                 function_address(*function, *reference, evaluation);
         if (const auto* subscript = llvm::dyn_cast<clang::ArraySubscriptExpr>(node);
-            subscript != nullptr && ! subscript->isTypeDependent())
+            subscript != nullptr && ! subscript->isTypeDependent() &&
+            ! llvm::isa<clang::ArrayInitIndexExpr>(subscript->getIdx()->IgnoreParenImpCasts()))
             require(*subscript,
                     evaluation,
                     Operation::Subscript,
-                    "unsafe: built-in subscript requires an unsafe block");
+                    "safety: built-in subscript requires an unsafe block");
         if (const auto* allocation = llvm::dyn_cast<clang::CXXNewExpr>(node))
             require(
-                *allocation, evaluation, Operation::New, "unsafe: new requires an unsafe block");
+                *allocation, evaluation, Operation::New, "safety: new requires an unsafe block");
         if (const auto* deletion = llvm::dyn_cast<clang::CXXDeleteExpr>(node))
             require(*deletion,
                     evaluation,
                     Operation::Delete,
-                    "unsafe: delete requires an unsafe block");
+                    "safety: delete requires an unsafe block");
         if (const auto* cast = llvm::dyn_cast<clang::ExplicitCastExpr>(node);
             cast != nullptr && unsafe_cast(*cast))
             require(*cast,
                     evaluation,
                     Operation::Cast,
-                    "unsafe: pointer or reference cast requires an unsafe block");
+                    "safety: pointer or reference cast requires an unsafe block");
         for (auto* child : node->children()) statement(child, evaluation);
     }
 
@@ -390,7 +420,7 @@ public:
         if (has_unsafe_annotation(*node) && ! llvm::isa<clang::FunctionDecl>(node))
             report(node->getLocation(),
                    Operation::Annotation,
-                   "unsafe: declaration annotation requires a function");
+                   "safety: declaration annotation requires a function");
         if (auto* callable = llvm::dyn_cast<clang::FunctionDecl>(node)) {
             function(*callable);
             return true;
@@ -412,11 +442,11 @@ public:
     }
 };
 
-class UnsafeConsumer final : public clang::ASTConsumer {
+class SafetyConsumer final : public clang::ASTConsumer {
     Checker checker_;
 
 public:
-    explicit UnsafeConsumer(clang::CompilerInstance& compiler): checker_(compiler) {}
+    explicit SafetyConsumer(clang::CompilerInstance& compiler): checker_(compiler) {}
 
     auto HandleTranslationUnit(clang::ASTContext& context) -> void override {
         checker_.TraverseAST(context);
@@ -424,7 +454,7 @@ public:
 };
 
 auto make_consumer(clang::CompilerInstance& compiler) -> std::unique_ptr<clang::ASTConsumer> {
-    return std::make_unique<UnsafeConsumer>(compiler);
+    return std::make_unique<SafetyConsumer>(compiler);
 }
 
-} // namespace unsafe_plugin
+} // namespace safety_plugin

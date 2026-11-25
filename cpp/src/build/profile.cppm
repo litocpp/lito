@@ -541,7 +541,7 @@ auto parse_build_arguments(const BuildConfiguration& configuration, const CppArg
 auto project_host_profile_options(const lito::config::ProjectBuildOptions& options,
                                   const CppArgumentParser&                 parser)
     -> lito::manifest::BuildProfileResult<lito::config::ProjectBuildOptions> {
-    auto       result = lito::config::ProjectBuildOptions {};
+    auto       result = lito::config::ProjectBuildOptions { .safety = options.safety };
     const auto append = [](Vec<lito::config::BuildOptionInput>& output,
                            const Vec<String>&                   arguments,
                            ref<str>                             source) -> void {

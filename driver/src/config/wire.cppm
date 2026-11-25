@@ -93,6 +93,7 @@ struct Build {
     Option<Vec<String>> linker_options;
     Option<CBuild>      c;
     Option<BuildTarget> target;
+    Option<bool>        safety;
 };
 
 struct Package {
@@ -415,13 +416,20 @@ struct Impl<serde::Deserialize, lito::config::wire::Build> {
         auto linker_options = serde::OptionalField<Vec<String>>("linker-options"_str);
         auto c              = serde::OptionalField<lito::config::wire::CBuild>("c"_str);
         auto target         = serde::OptionalField<lito::config::wire::BuildTarget>("target"_str);
-        rstd_try(serde::deserialize_record(
-            deserializer, serde::UnknownFieldPolicy::Reject, options, linker_options, c, target));
+        auto safety         = serde::OptionalField<bool>("safety"_str);
+        rstd_try(serde::deserialize_record(deserializer,
+                                           serde::UnknownFieldPolicy::Reject,
+                                           options,
+                                           linker_options,
+                                           c,
+                                           target,
+                                           safety));
         return Ok(lito::config::wire::Build {
             .options        = options.take(),
             .linker_options = linker_options.take(),
             .c              = c.take(),
             .target         = target.take(),
+            .safety         = safety.take(),
         });
     }
 };

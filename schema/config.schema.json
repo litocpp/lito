@@ -235,6 +235,11 @@
         },
         "c": {
           "$ref": "#/definitions/cBuild"
+        },
+        "safety": {
+          "description": "Enable Lito's built-in C++ safety checks.",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false

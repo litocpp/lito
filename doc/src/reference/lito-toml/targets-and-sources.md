@@ -76,34 +76,38 @@ queries still use the active compiler, language mode, and target. Plugin package
 are handled by their plugins, and the unscoped `unsafe` attribute never produces an
 unknown-attribute warning. `-Wno-unknown-attributes` disables Lito's warnings too.
 
-The optional `unsafe` checker is available as an ordinary plugin package in
-`plugins/unsafe`. Add it as a path dependency to enable checks for a target:
+### Project safety checks
+
+Lito provides the `safety` checker as a project build option. Enable it in `lito-config.toml`:
 
 ```toml
-[dependencies]
-unsafe = { path = "path/to/lito/plugins/unsafe" }
+[build]
+safety = true
 ```
 
-It checks local raw-pointer operations and calls to unsafe functions. An unsafe function
-declaration imposes a requirement on its callers; its body still needs explicit unsafe blocks.
-Clang accepts the following annotation even when the plugin is not loaded:
+Use `-c build.safety=true` or `-c build.safety=false` to override the setting for one
+invocation. Lito runs the checker on workspace C++ targets, including sources without any
+annotations. For external packages compiled by Lito, the plugin registers `[[unsafe]]` so
+function annotations survive in BMI files. External CMake projects use their own build settings.
+Safety checks require a Clang SDK matching the compiler, and Lito builds and caches its bundled
+host plugin on demand.
+
+The checker diagnoses raw-pointer operations and calls to unsafe functions. An unsafe function
+declaration imposes a requirement on its callers, and its body still needs explicit unsafe blocks.
 
 ```cpp
-[[clang::annotate("unsafe")]] int load(const int* pointer);
+[[unsafe]] int load(const int* pointer);
 
 int consume(const int* pointer) {
-    [[clang::annotate("unsafe")]] {
+    [[unsafe]] {
         return load(pointer);
     }
 }
 ```
 
-With the plugin loaded, `[[unsafe]]` is a shorthand for the same annotation. Without the
-plugin, it is ignored and does not preserve a function contract in BMI files. Libraries that
-must also compile without the plugin should use `[[clang::annotate("unsafe")]]` directly;
-the function annotation is preserved in BMI files without separate metadata. Unsafe blocks
-do not authorize the bodies of nested lambdas or local-class methods. The checker runs on
-sources without annotations too and therefore uses `attribute-only = false`.
+Build the producer and consumer modules with the same safety setting. With safety enabled,
+function contracts are preserved in BMI files. With safety disabled, Lito ignores `[[unsafe]]`.
+Unsafe blocks do not authorize the bodies of nested lambdas or local-class methods.
 
 The initial checker does not insert bounds checks or implement ownership, borrow, or
 `Send`/`Sync` analysis. Raw indirect function calls require an unsafe block; unsafe destructors

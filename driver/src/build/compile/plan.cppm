@@ -275,14 +275,46 @@ auto materialize_documentation_units(const cpp::PackageSpec&               packa
     return Ok(rstd::move(result));
 }
 
+struct SafetyCompilePolicy {
+    const ResolvedCompilerPluginUsage*        plugin {};
+    slice<lito::package::ResolvedProjectRoot> roots;
+
+    auto usage_for(const cpp::PackageSpec& package, const cpp::UnitSpec& unit) const
+        -> Option<ResolvedCompilerPluginUsage> {
+        if (plugin == nullptr || unit.language.is_C()) return None();
+        auto target = cpp::project_target(unit);
+        auto check  = false;
+        if (target.is_some()) {
+            const auto& spec = package.targets[*target];
+            for (const auto& root : roots) {
+                if (root.name == spec.id.package &&
+                    root.source_identity == spec.package_source_identity) {
+                    check = true;
+                    break;
+                }
+            }
+        }
+        auto arguments = plugin->arguments.clone();
+        if (! check) arguments.push("annotations-only"_Str);
+        return Some(ResolvedCompilerPluginUsage {
+            .plugin    = plugin->plugin.clone(),
+            .name      = plugin->name.clone(),
+            .arguments = rstd::move(arguments),
+            .identity  = rstd::format("{}\nmode={}",
+                                      plugin->identity.as_str(),
+                                      check ? "check"_str : "annotations-only"_str),
+        });
+    }
+};
+
 auto materialize_compile_plan(const cpp::PackageSpec&         package,
                               const BuildLayout&              layout,
                               const ClangToolchain&           toolchain,
                               const cpp::BmiFormatIdentity&   bmi_format,
                               Vec<cpp::PreparedUnit>&         units,
                               const Vec<cpp::ScanResult>&     scans,
-                              cpp::ResolvedSemanticBuildGraph semantics)
-    -> BuildResult<CompilePlan> {
+                              cpp::ResolvedSemanticBuildGraph semantics,
+                              const SafetyCompilePolicy&      safety) -> BuildResult<CompilePlan> {
     if (scans.len() != units.len() || semantics.direct_inputs.len() != units.len() ||
         semantics.resolved_inputs.len() != units.len() ||
         semantics.public_inputs.len() != units.len() ||
@@ -339,6 +371,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
         const auto* scan_cpp = scans[unit].language.is_Cpp()
                                    ? rstd::addressof(scans[unit].language.as_Cpp().facts)
                                    : nullptr;
+        auto        safety_usage = safety.usage_for(package, units[unit].unit);
         if (scan_cpp != nullptr && scan_cpp->provided.is_some()) {
             if (! units[unit].unit.context->language.is_Cpp()) {
                 return Err(BuildError::Message("C source unexpectedly provided a BMI"_Str));
@@ -375,6 +408,8 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
                     cpp::cpp_public_requirements_identity(cpp_context.public_requirements),
                 .format_identity     = format_identity.clone(),
                 .direct_dependencies = rstd::move(recipe_dependencies),
+                .compiler_plugin_identity =
+                    safety_usage.is_some() ? Some(safety_usage->identity.clone()) : None(),
             });
             auto bmi_path = layout.bmi(
                 format_key.as_str(), key.value.as_str(), scan_cpp->provided->logical_name.as_str());
@@ -430,6 +465,12 @@ auto materialize_compile_plan(const cpp::PackageSpec&         package,
         if (invocation.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
         }
+        if (safety_usage.is_some()) {
+            auto attached = toolchain.attach_compile_plugin(*invocation, *safety_usage);
+            if (attached.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(attached).unwrap_err()));
+            }
+        }
         dependencies[unit] = Some(rstd::move(direct_artifacts));
         invocations[unit]  = Some(rstd::move(invocation).unwrap());
     }
@@ -468,11 +509,12 @@ auto materialize_build_actions(const cpp::PackageSpec&               package,
                                cpp::ResolvedSemanticBuildGraph       semantics,
                                slice<lito::package::PackageTargetId> selected_targets,
                                BuildResultProjection                 projection,
-                               const Option<BuildEventSink>&         observer)
+                               const Option<BuildEventSink>&         observer,
+                               const SafetyCompilePolicy&            safety)
     -> BuildResult<MaterializedBuildActions> {
     auto started = rstd::time::Instant::now();
     auto compile = materialize_compile_plan(
-        package, layout, toolchain, bmi_format, units, scans, rstd::move(semantics));
+        package, layout, toolchain, bmi_format, units, scans, rstd::move(semantics), safety);
     if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
 
     auto documentation = Vec<DocumentationBuildUnit>::make();

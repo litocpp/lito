@@ -72,6 +72,7 @@ struct BmiRecipe {
     String                   public_requirements_identity;
     String                   format_identity;
     Vec<BmiRecipeDependency> direct_dependencies;
+    Option<String>           compiler_plugin_identity;
 };
 
 struct BmiArtifactKey {
@@ -145,6 +146,10 @@ auto make_bmi_artifact_key(const BmiRecipe& recipe) -> BmiArtifactKey {
     append_bmi_identity_value(
         identity, "public-requirements"_str, recipe.public_requirements_identity.as_str());
     append_bmi_identity_value(identity, "format"_str, recipe.format_identity.as_str());
+    if (recipe.compiler_plugin_identity.is_some()) {
+        append_bmi_identity_value(
+            identity, "compiler-plugin"_str, recipe.compiler_plugin_identity->as_str());
+    }
     auto dependencies = rstd::collections::BTreeMap<String, String>::make();
     for (const auto& dependency : recipe.direct_dependencies) {
         dependencies.insert(dependency.logical_name.clone(), dependency.artifact_key.clone());

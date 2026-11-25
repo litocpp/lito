@@ -194,8 +194,9 @@ auto configured_build_options(const Option<lito::config::wire::Build>& build)
     -> ConfigResult<ProjectBuildOptions> {
     auto result = ProjectBuildOptions {};
     if (build.is_none()) return Ok(rstd::move(result));
-    auto root = rstd::serde::DataPath().with_field("build"_str);
-    auto cpp  = rstd_try(configured_build_option_input(
+    result.safety = build->safety.is_some() && *build->safety;
+    auto root     = rstd::serde::DataPath().with_field("build"_str);
+    auto cpp      = rstd_try(configured_build_option_input(
         build->options, root.with_field("options"_str), "config.build.options"_str));
     if (cpp.is_some()) result.cpp.push(rstd::move(cpp).unwrap_unchecked());
     auto linker = rstd_try(configured_build_option_input(build->linker_options,

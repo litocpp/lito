@@ -36,4 +36,5 @@ local function embed(id, source_name)
 end
 
 embed("pmacro", "builtin-pmacro")
+embed("safety", "builtin-safety")
 embed("libxml2", "builtin-libxml2")

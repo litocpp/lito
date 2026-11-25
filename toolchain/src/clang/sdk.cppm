@@ -308,6 +308,37 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
     return inspect_clang_sdk(compiler, *target, *prefix, layout, environment);
 }
 
+auto clang_sdk_version(const ClangSdk& sdk, const ResolvedProcessEnvironment& environment)
+    -> ToolchainResult<String> {
+    auto command = Vec<String>::make();
+    rstd_try(toolchain::command::push_path(command, sdk.llvm_config.as_path()));
+    toolchain::command::push_option(command, "--version"_str);
+    return toolchain::command::tool_output(
+        rstd::move(command), "llvm-config --version"_str, environment);
+}
+
+auto verify_clang_sdk_version(const ClangSdk&                   sdk,
+                              const CompilerIdentity&           compiler,
+                              const ResolvedProcessEnvironment& environment)
+    -> ToolchainResult<empty> {
+    auto reported = compiler.version.as_str().split_once("clang version "_str);
+    if (reported.is_none()) {
+        return Err(ToolchainError::Message("cannot parse the Clang version"_Str));
+    }
+    auto version = reported->get<1>();
+    if (auto earlier = version.split_once("\n"_str); earlier.is_some()) version = earlier->get<0>();
+    if (auto suffix = version.split_once(" "_str); suffix.is_some()) version = suffix->get<0>();
+    auto clang_version = trim_ascii(String::make(version));
+    auto sdk_version   = rstd_try(clang_sdk_version(sdk, environment));
+    if (sdk_version.as_str() != clang_version.as_str()) {
+        return Err(ToolchainError::Message(
+            rstd::format("LLVM SDK version '{}' does not match Clang version '{}'",
+                         sdk_version.as_str(),
+                         clang_version.as_str())));
+    }
+    return Ok(empty {});
+}
+
 auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                       ref<str>                          expected_version,
                       const LlvmSdkPaths&               paths,
@@ -400,11 +431,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         return Err(rstd::into<ToolchainError>(rstd::move(formatter).unwrap_err()));
     }
 
-    auto llvm_version_command = Vec<String>::make();
-    rstd_try(lito::toolchain::command::push_path(llvm_version_command, sdk->llvm_config.as_path()));
-    lito::toolchain::command::push_option(llvm_version_command, "--version"_str);
-    auto llvm_version = lito::toolchain::command::tool_output(
-        rstd::move(llvm_version_command), "llvm-config --version"_str, certification_environment);
+    auto llvm_version = clang_sdk_version(*sdk, certification_environment);
     if (llvm_version.is_err()) return Err(rstd::move(llvm_version).unwrap_err());
     if (llvm_version->as_str() != expected_version) {
         return Err(ToolchainError::Message(rstd::format(

@@ -52,6 +52,7 @@ target_sources(
          src/build/proc_macro/mod.cppm
          src/build/request.cppm
          src/build/result.cppm
+         src/build/safety.cppm
          src/build/script/error.cppm
          src/build/setup/mod.cppm
          src/build/generated/error.cppm

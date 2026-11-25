@@ -1,13 +1,12 @@
 [package]
-name = "unsafe"
+name = "safety"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 standard = "c++23"
 
 [plugin]
-module = "unsafe"
+module = "safety"
 sources = ["src/lib.cppm", "src/plugin.cpp", "src/checker.cpp"]
-attribute-only = false
 
 [profile.base]
 exceptions = false

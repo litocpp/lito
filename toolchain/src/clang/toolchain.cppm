@@ -1280,24 +1280,44 @@ private:
     }
 
 public:
+    auto set_preprocessor_plugin(const ResolvedCompilerPluginUsage& usage) -> void {
+        preprocessor_plugin_ = Some(ResolvedCompilerPluginUsage {
+            .plugin    = usage.plugin.clone(),
+            .name      = usage.name.clone(),
+            .arguments = usage.arguments.clone(),
+            .identity  = usage.identity.clone(),
+        });
+        preprocessor_environments_.clear();
+        builtin_environment_snapshots_.clear();
+    }
+
     auto attach_compile_plugin(CompileInvocation&                 invocation,
                                const ResolvedCompilerPluginUsage& usage) const
+        -> ToolchainResult<empty> {
+        rstd_try(append_plugin_arguments(invocation.arguments, usage));
+        invocation.identity_inputs.push(usage.identity.clone());
+        return Ok(empty {});
+    }
+
+private:
+    static auto append_plugin_arguments(Vec<String>&                       arguments,
+                                        const ResolvedCompilerPluginUsage& usage)
         -> ToolchainResult<empty> {
         if (usage.name.is_empty() || usage.identity.is_empty()) {
             return Err(
                 ToolchainError::Message("compiler plugin usage requires name and identity"_Str));
         }
         auto pushed = toolchain::command::push_path_option(
-            invocation.arguments, "-fplugin="_str, usage.plugin.as_path());
+            arguments, "-fplugin="_str, usage.plugin.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         for (const auto& argument : usage.arguments) {
-            invocation.arguments.push(
+            arguments.push(
                 rstd::format("-fplugin-arg-{}-{}", usage.name.as_str(), argument.as_str()));
         }
-        invocation.identity_inputs.push(usage.identity.clone());
         return Ok(empty {});
     }
 
+public:
     auto prepare_frontend_plugin(const cpp::CompileContext&                compile_context,
                                  ref<rstd::path::Path>                     source,
                                  ref<rstd::path::Path>                     working_directory,
@@ -2065,6 +2085,9 @@ private:
         auto command = Vec<String>::make();
         auto context = append_compile_context(command, compile_context, true);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        if (language != toolchain::PreprocessorLanguage::C && preprocessor_plugin_.is_some()) {
+            rstd_try(append_plugin_arguments(command, *preprocessor_plugin_));
+        }
         ++toolchain_statistics_.preprocessor_environment_queries;
         auto macros = Vec<toolchain::PreprocessorMacroDirective>::make();
         if (compile_context.language.is_C()) {
@@ -2165,6 +2188,9 @@ private:
             cpp_options.abi.standard_library, compile_target_.info);
         if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
         append_typed_options(command, cpp_options, compile_target_.info, true);
+        if (preprocessor_plugin_.is_some()) {
+            rstd_try(append_plugin_arguments(command, *preprocessor_plugin_));
+        }
         auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::preprocessor_language_name(language));
         key.push_ascii('\n');
@@ -2177,6 +2203,10 @@ private:
                                   compiler_identity_.modified_seconds,
                                   compiler_identity_.modified_nanoseconds)
                          .as_str());
+        if (preprocessor_plugin_.is_some()) {
+            key.push_ascii('\n');
+            key.push_str(preprocessor_plugin_->identity.as_str());
+        }
         return Ok(ClangBuiltinContext {
             .query_command = rstd::move(command),
             .semantic =
@@ -2271,6 +2301,7 @@ private:
     cpp::CppToolchainCapabilities                                 capabilities_;
     cpp::CppArgumentParser                                        argument_parser_;
     ResolvedProcessEnvironment                                    environment_;
+    Option<ResolvedCompilerPluginUsage>                           preprocessor_plugin_;
     mutable ToolchainStatistics                                   toolchain_statistics_;
     mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot> builtin_environment_snapshots_;
     mutable Vec<toolchain::SharedPreprocessorEnvironment>         preprocessor_environments_;

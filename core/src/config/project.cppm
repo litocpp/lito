@@ -33,6 +33,7 @@ struct ProjectBuildOptions {
     Vec<BuildOptionInput> cpp;
     Vec<BuildOptionInput> c;
     Vec<BuildOptionInput> linker;
+    bool                  safety { false };
 
     auto clone() const -> ProjectBuildOptions {
         auto clone_inputs = [](const Vec<BuildOptionInput>& inputs) {
@@ -46,6 +47,7 @@ struct ProjectBuildOptions {
             .cpp    = clone_inputs(cpp),
             .c      = clone_inputs(c),
             .linker = clone_inputs(linker),
+            .safety = safety,
         };
     }
 };

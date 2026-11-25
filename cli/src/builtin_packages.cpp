@@ -11,6 +11,7 @@ using namespace rstd::literals;
 namespace lito::builtin
 {
 auto pmacro_resources() -> liresto::ResourceBundle;
+auto safety_resources() -> liresto::ResourceBundle;
 auto libxml2_resources() -> liresto::ResourceBundle;
 } // namespace lito::builtin
 
@@ -25,6 +26,7 @@ struct PackageResources {
 auto resolve_package(void*, ref<str> id) noexcept -> Option<lito::registry::EmbeddedPackageInput> {
     static const PackageResources packages[] = {
         { "pmacro"_str, lito::builtin::pmacro_resources() },
+        { "safety"_str, lito::builtin::safety_resources() },
         { "libxml2"_str, lito::builtin::libxml2_resources() },
     };
     for (const auto& package : packages) {
