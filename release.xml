@@ -1,3 +1,10 @@
+<release version="0.8.13" date="2026-11-26">
+  <description>
+    <ul>
+      <li>Find the libstdc++ module manifest in Conda toolchains.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.8.12" date="2026-11-25">
   <description>
     <ul>
